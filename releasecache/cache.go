@@ -7,13 +7,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const DefaultRoot = "/var/lib/youeye-state/release-cache"
@@ -148,10 +151,41 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		f, n, e = Open(Root(), req.URL.String())
 	}
 	if os.IsNotExist(e) {
-		return t.next.RoundTrip(req)
+		return roundTripRetryingConnect(t.next, req)
 	}
 	if e != nil {
 		return nil, e
 	}
 	return &http.Response{StatusCode: 200, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/octet-stream"}, "X-YouEye-Release-Transport": []string{"verified-local-cache"}}, Body: f, ContentLength: n, Request: req}, nil
+}
+
+// connectRetryDelays are the waits before retrying a GET that never reached the server. A home resolver can time
+// out for a moment (installs on a LAN with a flaky DNS server failed on one lookup).
+var connectRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second}
+
+// roundTripRetryingConnect retries a GET only when no connection was made (DNS lookup or dial failed): nothing
+// was sent, so a retry cannot repeat an effect. Any response, or a failure after connecting, is returned as is.
+func roundTripRetryingConnect(next http.RoundTripper, req *http.Request) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := next.RoundTrip(req)
+		if err == nil || attempt >= len(connectRetryDelays) || !isConnectFailure(err) {
+			return resp, err
+		}
+		timer := time.NewTimer(connectRetryDelays[attempt])
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, err
+		case <-timer.C:
+		}
+	}
+}
+
+func isConnectFailure(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return !dnsErr.IsNotFound
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }

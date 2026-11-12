@@ -12,7 +12,8 @@ import {
   getBridgesForApp, getPendingBridgesForTarget, loadBridges,
 } from './store';
 import {
-  grantBridgeAccess, revokeBridgeAccess,
+  appContainerAddress,
+  grantBridgeAccess, refreshBridgeAccess, revokeBridgeAccess,
   SYSTEM_APP_IDS,
   withAppNetworkOperationLock,
 } from '../incus/app-network';
@@ -21,7 +22,7 @@ import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { incusDownloadFile, incusRequest, incusUploadFile } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata, listInstalledApps } from '../market/metadata';
-import { fetchManifest, fetchManifestFromSource } from '../market/catalog';
+import { readInstalledAppManifest } from '../market/frozen-manifest';
 import { injectCaddyRootCA } from '../market/caddy-ca';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
@@ -29,6 +30,8 @@ import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/clie
 import type { ContainerMeta, InstallMetadata } from '../market/types';
 import { managedProxyTransport } from '../../../../shared/managed-proxy';
 import { sameConnectionProjection } from './connection-projection';
+import { describeErrorChainForLog } from '../market/install-tracker';
+import { runConnectionWiring } from '../market/wire-runner';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -150,7 +153,7 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
     };
   }
   try {
-    const manifest = await fetchManifest(appId);
+    const manifest = await readInstalledAppManifest(appId);
     const wants = manifest.wants ?? [];
     const allMeta = await listInstalledApps();
     const installedById = new Map(allMeta.map(m => [m.appId, m]));
@@ -179,7 +182,7 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
           let providesType = meta.provides?.some(p => p.type === want.type) ?? false;
           if (!providesType) {
             try {
-              const m = await fetchManifest(meta.appId);
+              const m = await readInstalledAppManifest(meta.appId);
               providesType = m.provides?.some((provider) => provider.type === want.type) ?? false;
               name = m.metadata.name;
             } catch {
@@ -208,21 +211,13 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
 
 async function computeInternetProxyScopes(appId: string): Promise<Array<Record<string, unknown>>> {
   try {
-    const manifest = await fetchManifest(appId);
-    const scopes = manifest.internet?.proxy ?? [];
-    if (scopes.length > 0) {
-      return scopes.map((scope) => ({
-        host: scope.host,
-        paths: scope.paths,
-        methods: scope.methods?.length ? scope.methods : ['GET'],
-        scope: scope.scope ?? 'user',
-      }));
-    }
-    return (manifest.internet?.hosts ?? []).map((host) => ({
-      host,
-      paths: ['/*'],
-      methods: ['GET'],
-      scope: 'user',
+    // `proxy:` scopes are the only per-host internet mechanism (`internet:` is NAT on/off).
+    const manifest = await readInstalledAppManifest(appId);
+    return (manifest.internet?.proxy ?? []).map((scope) => ({
+      host: scope.host,
+      paths: scope.paths,
+      methods: scope.methods?.length ? scope.methods : ['GET'],
+      scope: scope.scope ?? 'user',
     }));
   } catch {
     return [];
@@ -339,41 +334,6 @@ async function resolveContainerName(appId: string): Promise<string> {
 }
 
 /**
- * Parse env_mapping for ${containers.NAME.*} references
- * to detect which other apps this app needs bridges to.
- */
-export function detectBridgeDependencies(
-  envMapping: Record<string, string>,
-  appId: string,
-): { targetAppId: string; envMappings: EnvMapping[] }[] {
-  const deps = new Map<string, EnvMapping[]>();
-  const pattern = /\$\{containers\.([^.]+)\.(internal_url|internal_host|url)\}/g;
-
-  for (const [envKey, template] of Object.entries(envMapping)) {
-    let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(template)) !== null) {
-      const containerRef = match[1];
-      // Skip self-references (containers in the same app use the app's own container names)
-      // External references use short names like "jellyfin", "sonarr" etc.
-      if (!deps.has(containerRef)) {
-        deps.set(containerRef, []);
-      }
-      deps.get(containerRef)!.push({
-        container: appId,
-        key: envKey,
-        template,
-      });
-    }
-  }
-
-  return Array.from(deps.entries()).map(([targetAppId, envMappings]) => ({
-    targetAppId,
-    envMappings,
-  }));
-}
-
-/**
  * Create a bridge record. Does NOT activate it — call activateBridge() separately.
  */
 export async function createBridge(params: {
@@ -452,8 +412,7 @@ function getScopedGrantRouteId(from: string, to: string): string {
 
 async function getProxyScopeSpec(from: string, to: string): Promise<{ paths: string[]; methods: string[] } | null> {
   try {
-    const sourceMeta = await readInstallMetadata(from);
-    const manifest = await fetchManifestFromSource(from, sourceMeta?.sourceId);
+    const manifest = await readInstalledAppManifest(from);
     const want = manifest.wants?.find((w) => w.appId === to && w.proxy?.paths?.length);
     if (want?.proxy?.paths?.length) {
       return {
@@ -489,8 +448,7 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
 
   const targetPrimary = primaryContainer(targetMeta);
   const targetContainer = targetPrimary?.containerName || toContainer;
-  const targetIp = await getIncusContainerIP(targetContainer);
-  if (!targetIp) throw new Error(`Could not resolve target IP for ${targetContainer}`);
+  const targetIp = await appContainerAddress(targetContainer, bridge.to);
 
   const targetPort = targetPrimary?.port || 8080;
   const hostname = `${targetMeta.subdomain}.${targetMeta.domain}`;
@@ -522,19 +480,66 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
   };
 }
 
+/** A connection through a NIC on the peer's network (not a scoped UI-gateway grant). */
+function isNetworkConnection(bridge: Bridge): boolean {
+  return bridge.accessMode !== 'proxy' && bridge.accessMode !== 'caddy';
+}
+
 /**
- * Activate a bridge: grant network access + inject env vars + restart source container.
- *
- * Per-app bridge apps: NIC hot-plug (container gets NIC on target's bridge)
- * Legacy apps (incusbr0): ACL rules
+ * Activate a bridge: grant network access + inject env vars + restart source container, then run
+ * the consumer's connect setup file (every activation path; idempotent, so an already active
+ * connection is wired again). A wiring failure is logged and never undoes the activation.
  */
 export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
-  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-activate', null, () => activateBridgeLocked(bridgeId));
+  const bridge = await withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-activate', null, () => activateBridgeLocked(bridgeId));
+  if (bridge?.active && isNetworkConnection(bridge)) await runConnectionWiring(bridge.from, bridge.to);
+  return bridge;
+}
+
+/** Before a connection goes away: run the `remove:` steps of the consumer's connect file (non-fatal). */
+async function unwireBridge(bridgeId: string): Promise<void> {
+  const bridge = await getBridge(bridgeId);
+  if (bridge?.active && isNetworkConnection(bridge)) {
+    await runConnectionWiring(bridge.from, bridge.to, undefined, { remove: true });
+  }
+}
+
+/** Point an active network connection's ACLs (both ways if it has two) at the peers' current addresses. */
+async function refreshBridgeGrants(bridge: Bridge): Promise<void> {
+  if (!bridge.active || !isNetworkConnection(bridge)) return;
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
+  await refreshBridgeAccess(fromContainer, bridge.to, toContainer);
+  if (bridge.direction === 'both-ways') await refreshBridgeAccess(toContainer, bridge.from, fromContainer);
+}
+
+/**
+ * Refresh the ACLs of every active network connection (of `appId` only, when given). Run after an
+ * app starts and on every reconcile pass, so a recreated peer's new address is picked up. Takes no
+ * locks: `refreshBridgeAccess` only replaces ACLs that exist. Returns the bridges it could not check.
+ */
+export async function refreshConnectionGrants(appId?: string): Promise<string[]> {
+  const failed: string[] = [];
+  for (const bridge of await loadBridges()) {
+    if (appId && bridge.from !== appId && bridge.to !== appId) continue;
+    try {
+      await refreshBridgeGrants(bridge);
+    } catch (error) {
+      failed.push(bridge.id);
+      console.error(`[bridges] Refreshing connection ${bridge.id} failed: ${describeErrorChainForLog(error)}`);
+    }
+  }
+  return failed;
 }
 
 async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
   const bridge = await getBridge(bridgeId);
-  if (!bridge || bridge.active) return bridge;
+  if (!bridge) return bridge;
+  if (bridge.active) {
+    // Re-activation: the peer may have a new address since the grant.
+    await refreshBridgeGrants(bridge);
+    return bridge;
+  }
 
   // Resolve actual container names (handles multi-container apps)
   const fromContainer = await resolveContainerName(bridge.from);
@@ -550,10 +555,10 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
     scopedGrant = await createScopedProxyGrant(bridge);
 
     if (!scopedGrant) {
-      await grantBridgeAccess(fromContainer, bridge.to);
+      await grantBridgeAccess(fromContainer, bridge.to, toContainer);
       forwardGranted = true;
       if (bridge.direction === 'both-ways') {
-        await grantBridgeAccess(toContainer, bridge.from);
+        await grantBridgeAccess(toContainer, bridge.from, fromContainer);
         reverseGranted = true;
       }
     }
@@ -588,7 +593,8 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
     }
 
     return updated;
-  } catch {
+  } catch (error) {
+    console.error(`[bridges] Activation of ${bridgeId} failed: ${describeErrorChainForLog(error)}`);
     const rollbackErrors: string[] = [];
     if (envModified && envFile && previousEnv) {
       try {
@@ -628,6 +634,7 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
+  await unwireBridge(bridgeId);
   return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-deactivate', null, () => deactivateBridgeLocked(bridgeId));
 }
 
@@ -674,6 +681,7 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
  * Delete a bridge entirely.
  */
 export async function deleteBridge(bridgeId: string): Promise<boolean> {
+  await unwireBridge(bridgeId);
   return withBridgeAdmission(bridgeId, 'bridge-delete', false, () => deleteBridgeLocked(bridgeId));
 }
 
@@ -700,8 +708,9 @@ async function deleteBridgeLocked(bridgeId: string): Promise<boolean> {
 }
 
 /**
- * Called when a new app is installed. Checks for pending bridges
- * targeting this app and activates them.
+ * Called when a new app is installed (after its network lease is active). Activates the pending
+ * bridges targeting this app and wires them; one failing bridge is logged and does not stop the
+ * others.
  */
 export async function activatePendingBridges(
   targetAppId: string,
@@ -714,19 +723,23 @@ export async function activatePendingBridges(
   const activated: Bridge[] = [];
 
   for (const bridge of pending) {
-    const resolvedMappings = await resolveBridgeMappings(
-      bridge.envMappings,
-      targetContainerName,
-      targetPort,
-      targetSubdomain,
-      domain,
-    );
+    try {
+      const resolvedMappings = await resolveBridgeMappings(
+        bridge.envMappings,
+        targetContainerName,
+        targetPort,
+        targetSubdomain,
+        domain,
+      );
 
-    await updateBridge(bridge.id, { envMappings: resolvedMappings });
+      await updateBridge(bridge.id, { envMappings: resolvedMappings });
 
-    const result = await activateBridge(bridge.id);
-    if (result?.active) {
-      activated.push(result);
+      const result = await activateBridge(bridge.id);
+      if (result?.active) {
+        activated.push(result);
+      }
+    } catch (error) {
+      console.error(`[bridges] Waiting connection ${bridge.id} could not be activated: ${describeErrorChainForLog(error)}`);
     }
   }
 

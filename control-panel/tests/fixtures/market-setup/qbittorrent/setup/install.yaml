@@ -1,0 +1,7 @@
+# The shared library folders Sonarr and Radarr use. The WebUI keeps its password: connected apps
+# sign in with it (qBittorrent's api_key is its admin password secret), so no subnet bypasses auth.
+schema: youeye.setup.v1
+for: install
+steps:
+  - exec:
+      run: [mkdir, -p, /data/torrents/incomplete, /data/media/tv, /data/media/movies]

@@ -86,3 +86,21 @@ func corePayloadVerificationFailure(role string, err error) (CoreActionObservati
 	}
 	return CoreActionObservation{State: "failed", Stage: "execute", Code: "native_action_failed", EffectState: "started", Evidence: fmt.Sprintf("verify-members: %s %s: %s; installed payload verification failed before activation", role, diagnostic.PathClass, diagnostic.Reason)}, true
 }
+
+// coreCheckpointPreflightRefused marks a checkpoint that ended in its read-only preflight. It is set only below,
+// before Quiesce is called, so it proves that no ingress gate, power hold, stop or snapshot was made.
+const coreCheckpointPreflightRefused = "checkpoint_preflight_refused"
+
+// coreCheckpointPreflightFailure turns a refused checkpoint preflight into a definite failure with no effect. The
+// preflight only reads; the lifecycle reservation taken at admission is its one effect. "unknown" here would hold
+// the box in needs-recovery for good (an unknown step is never re-run), and paired recovery would run the same
+// refused inspection in its fence. The coordinator instead ends the request through verified cancellation, which
+// also releases the reservation (CoreManager.Cancel, NativeCoreRuntime's CancelPreparationAction).
+func coreCheckpointPreflightFailure(err error) CoreActionObservation {
+	msg := err.Error()
+	if len(msg) > 1024 {
+		msg = msg[:1024] + "…"
+	}
+	return CoreActionObservation{State: "failed", Stage: "execute", Code: coreCheckpointPreflightRefused, EffectState: "not-started",
+		Evidence: "checkpoint preflight refused before any writer was stopped: " + msg}
+}

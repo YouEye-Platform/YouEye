@@ -1,0 +1,85 @@
+schema: youeye.app.v1
+id: sonarr
+version: 4.0.20.3014
+name: Sonarr
+listing:
+  tagline: Your TV library, automated
+  description: Smart PVR for your TV series
+  long_description: |
+    Sonarr is a PVR for Usenet and BitTorrent users. It monitors your indexers (via Prowlarr)
+    for new episodes of the shows you follow, grabs them through your download client, then
+    renames and organises them into your library — automatically. Quality profiles, season
+    packs, failed-download handling, and calendar tracking are all built in.
+  release_notes: |
+    Sonarr 4.0.20.3014 handles unknown database languages safely, updates
+    Jellyfin/Emby connection authentication, and avoids unnecessary disk-space
+    checks when prior specifications already reject a download.
+  category: media
+  tags: [media, tv, pvr, automation, arr]
+  icon: tv
+  icon_file: icon.svg
+  screenshots:
+    - path: screenshots/platform-admin-series-library-4.0.19.2979.png
+      caption: Historical 4.0.19.2979 series view; artwork and synopsis redacted
+    - path: screenshots/standard-profile-series-library-4.0.19.2979.png
+      caption: Historical 4.0.19.2979 persisted series view; artwork and synopsis redacted
+  website: https://sonarr.tv
+  developer: Team Sonarr
+  license: GPL-3.0-only
+  source_code: https://github.com/Sonarr/Sonarr
+  support: https://wiki.servarr.com/sonarr
+  docs: https://wiki.servarr.com/sonarr
+image: docker.io/linuxserver/sonarr@sha256:c5a8178dc6d1f2e2c34b5e254716230d9769af34b4090e61cc116dc055a3083f
+port: 8989
+health: /ping
+internet: true
+data:
+  - {path: /config, kind: config}
+  - {path: /custom-cont-init.d, kind: config}
+shared:
+  media: /data
+env:
+  PUID: '0'
+  PGID: '0'
+  TZ: Etc/UTC
+secrets:
+  api_key: {kind: key}
+files:
+  - path: /config/config.xml
+    mode: '0600'
+    template: |
+      <Config>
+        <BindAddress>*</BindAddress>
+        <Port>8989</Port>
+        <SslPort>9898</SslPort>
+        <EnableSsl>False</EnableSsl>
+        <LaunchBrowser>False</LaunchBrowser>
+        <ApiKey>${secret.api_key}</ApiKey>
+        <AuthenticationMethod>External</AuthenticationMethod>
+        <AuthenticationRequired>Enabled</AuthenticationRequired>
+        <Branch>main</Branch>
+        <LogLevel>info</LogLevel>
+        <UrlBase></UrlBase>
+        <InstanceName>Sonarr</InstanceName>
+      </Config>
+  - path: /custom-cont-init.d/10-youeye-media-paths
+    mode: '0700'
+    template: |
+      #!/usr/bin/with-contenv bash
+      set -euo pipefail
+      install -d -m 0775 /data/torrents /data/torrents/incomplete /data/media/tv /data/media/movies
+provides:
+  - {type: pvr, description: TV series PVR (Sonarr), port: 8989, scope: service}
+connects:
+  - app: prowlarr
+    name: Prowlarr
+    description: Manage indexers for Sonarr in Prowlarr
+    scope: service
+    setup: setup/connect-prowlarr.yaml
+  - app: qbittorrent
+    name: qBittorrent
+    description: Send TV downloads to qBittorrent
+    scope: service
+    setup: setup/connect-qbittorrent.yaml
+# How connected apps read this app's API key (${peer.api_key} in their connect setup).
+api_key: {secret: api_key}

@@ -1,0 +1,55 @@
+schema: youeye.app.v1
+id: memos
+version: 0.30.0
+name: Memos
+listing:
+  tagline: Capture ideas quickly in a private Markdown-first notebook
+  description: Lightweight self-hosted memo hub
+  long_description: |
+    A privacy-first, lightweight note-taking service. Easily capture and share your great thoughts.
+    Built with Go and React.
+  release_notes: |
+    Memos 0.30.0 introduces a rebuilt Markdown editor, richer memo details,
+    configurable multi-column feeds, faster rendering, file-backed deployment
+    settings, a redesigned MCP surface, and stronger authentication and sharing
+    boundaries.
+  category: productivity
+  tags: [notes, memo, markdown]
+  icon: sticky-note
+  icon_file: icon.svg
+  screenshots:
+    - path: screenshots/platform-admin-memos.png
+      caption: Platform administrator composing and reviewing private Markdown memos
+    - path: screenshots/standard-user-memos.png
+      caption: Standard user working in an independently provisioned memo timeline
+  website: https://usememos.com
+  developer: Memos contributors
+  license: MIT
+  source_code: https://github.com/usememos/memos
+  support: https://github.com/usememos/memos/issues
+  docs: https://www.usememos.com/docs
+image: docker.io/neosmemo/memos@sha256:71a5b4738d1bed96e92112004054f0888e92791b64eb78afd79077c96e6f9327
+port: 5230
+health: /healthz
+internet: true
+database: postgres
+data:
+  - /var/opt/memos
+env:
+  MEMOS_DRIVER: postgres
+  MEMOS_DSN: ${database.url}?sslmode=disable
+  MEMOS_INSTANCE_URL: ${app.url}
+secrets:
+  admin_password: {length: 24}
+credentials:
+  - {label: Admin Account, username: admin, password: admin_password}
+sso:
+  callback: /auth/callback
+surfaces:
+  - id: memo-alert
+    kind: notification
+    placement: notification-center
+    name: Memos notification
+    description: Render a Memos notification embed inside YouEye notifications.
+    embed: /embed/notification/memo-alert
+    permissions: ['notifications:send']

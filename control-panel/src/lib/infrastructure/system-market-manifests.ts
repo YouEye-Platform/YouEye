@@ -34,7 +34,7 @@ export async function resolveSystemImageOverrides(): Promise<SystemImageOverride
   const byId = new Map(systemApps.map((item) => [item.id, item]));
   const resolved = {} as SystemImageOverrides;
 
-  for (const [id, expected] of Object.entries(REQUIRED_SYSTEM_APPS) as Array<[RequiredSystemAppId, { containerName: string }]>) {
+  for (const id of REQUIRED_SYSTEM_APP_IDS) {
     const item = byId.get(id);
     if (!item) {
       throw new Error(`Required Market system manifest "${id}" was not found`);
@@ -47,11 +47,6 @@ export async function resolveSystemImageOverrides(): Promise<SystemImageOverride
     }
     if (!item.version) {
       throw new Error(`Market system manifest "${id}" does not declare version`);
-    }
-    if (item.system.containerName !== expected.containerName) {
-      throw new Error(
-        `Market system manifest "${id}" containerName mismatch: expected ${expected.containerName}, got ${item.system.containerName || 'missing'}`
-      );
     }
     resolved[id] = {
       image: item.system.image,

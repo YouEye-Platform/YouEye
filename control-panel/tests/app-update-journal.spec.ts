@@ -424,20 +424,6 @@ test('SIGKILL of an async admission owner releases admission while preserving in
   } finally { lease.release(); }
 });
 
-test('an empty legacy admission guard is recovered, but nonempty or insecure guards fail closed', () => temporary(directory => {
-  const store = new AppUpdateJournalStore(directory);
-  const legacy = path.join(directory, 'admission.lock');
-  mkdirSync(legacy, { mode: 0o700 });
-  assert.equal(store.withAdmission(() => 7), 7);
-  assert.throws(() => lstatSync(legacy), /ENOENT/);
-  mkdirSync(legacy, { mode: 0o700 });
-  writeFileSync(path.join(legacy, 'unknown'), 'unknown');
-  assert.throws(() => store.withAdmission(() => {}), /ENOTEMPTY/);
-  rmSync(legacy, { recursive: true });
-  mkdirSync(legacy, { mode: 0o755 });
-  assert.throws(() => store.withAdmission(() => {}), /corrupt or insecure/);
-}));
-
 test('recovery can release missing reservations but never deletes a foreign owner', () => temporary(directory => {
   const store = new AppUpdateJournalStore(directory);
   const original = store.create(input);

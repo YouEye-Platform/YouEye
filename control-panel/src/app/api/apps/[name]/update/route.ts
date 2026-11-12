@@ -15,6 +15,7 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { handleMarketUpdate } from '@/lib/market/update-http';
 import { spineClient } from '@/lib/spine/client';
 
@@ -56,7 +57,7 @@ export async function POST(
 
       try {
         if (appDef.updatedBy === 'control-panel' && appDef.type === 'lxd') {
-          await updateLXDApp(appDef, emit);
+          await withUserOperationLockWait(() => updateLXDApp(appDef, emit));
         } else if (appDef.updatedBy === 'control-panel') {
           // Infrastructure OCI apps
           await updateOCIApp(appDef, emit);

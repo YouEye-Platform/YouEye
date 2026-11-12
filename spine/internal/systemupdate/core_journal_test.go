@@ -88,7 +88,7 @@ func coreJournalFixture(t *testing.T) (CoreManager, *coreTestExecutor, releaseca
 	if err := atomicWrite(filepath.Join(m.Root, "committed.json"), encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	r.Version = "0.5.38"
+	r.Version, r.Build = "0.5.38", "0.5.38"
 	r.Tag = "youeye-v0.5.38"
 	r.Sequence = 2
 	// The default fixture changes CP. Promotion-only tests explicitly retain all
@@ -185,7 +185,7 @@ func TestCoreJournalUnknownDoesNotReplayAndTargetCannotChange(t *testing.T) {
 	if err != nil || j.Phase == "committed" || e.starts["apply-ui"] != 1 {
 		t.Fatal("unknown effect was replayed", j.Phase, err)
 	}
-	r.Version = "0.5.39"
+	r.Version, r.Build = "0.5.39", "0.5.39"
 	r.Tag = "youeye-v0.5.39"
 	raw, _ := json.Marshal(r)
 	_, digest, _ := releasecache.ParseCoreRelease(raw)

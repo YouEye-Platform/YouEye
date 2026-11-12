@@ -1,8 +1,31 @@
 import { execShell } from '../incus/server';
-import { chmod, mkdir, readFile, rename, writeFile } from 'fs/promises';
+import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'fs/promises';
 import { X509Certificate } from 'crypto';
+import path from 'path';
 
 const CONTAINER_TRUST_BUNDLE = '/etc/youeye/trust/ca-bundle.crt';
+const APP_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** The app's generated CA directory (`<base>/apps/<id>`; the bundle is in its `trust/`). */
+export function caddyTrustAppDirectory(appId: string, baseDir = '/var/lib/youeye'): string {
+  if (!APP_ID.test(appId)) throw new Error('Invalid app ID for trust staging');
+  return path.join(baseDir, 'apps', appId);
+}
+
+/**
+ * Remove the app's generated CA directory. It is regenerated on every install, holds no app
+ * data, and a leftover copy would make the next install's preflight refuse the app.
+ */
+export async function removeCaddyTrustBundle(appId: string, baseDir = '/var/lib/youeye'): Promise<void> {
+  const directory = caddyTrustAppDirectory(appId, baseDir);
+  await rm(directory, { recursive: true, force: true });
+  try {
+    await lstat(directory);
+    throw new Error('Generated CA directory remains after removal');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
 
 /** Platform trust is a current read-only input, never app data to rewind. */
 export function isManagedTrustMount(appId: string, device: Record<string, string>): boolean {
@@ -33,13 +56,12 @@ export async function stageCaddyTrustBundle(appId: string): Promise<{
   hostPath: string;
   containerPath: string;
 }> {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(appId)) throw new Error('Invalid app ID for trust staging');
+  const hostDirectory = `${caddyTrustAppDirectory(appId)}/trust`;
   const [{ stdout: certPem }, systemBundle] = await Promise.all([
     execShell('youeye-caddy', 'cat /data/caddy/pki/authorities/local/root.crt', { timeout: 5_000 }),
     readFile('/etc/ssl/certs/ca-certificates.crt', 'utf8'),
   ]);
   const bundle = buildTrustBundle(systemBundle, certPem || '');
-  const hostDirectory = `/var/lib/youeye/apps/${appId}/trust`;
   const hostPath = `${hostDirectory}/ca-bundle.crt`;
   const temporary = `${hostPath}.tmp-${process.pid}-${Date.now()}`;
   await mkdir(hostDirectory, { recursive: true, mode: 0o755 });

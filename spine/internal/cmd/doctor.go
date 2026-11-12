@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	"gopkg.in/yaml.v3"
 )
 
@@ -499,8 +500,16 @@ func checkHostIPFiles() doctorCheck {
 	return doctorCheck{Section: "platform", Name: ".host_ip", Status: doctorOK, Summary: ".host_ip matches live IP"}
 }
 
+// doctorSystemIP is the static incusbr0 address of a system container (overridable in tests).
+var doctorSystemIP = incus.GetSystemContainerIP
+
 func checkCaddyAdminInContainer(container string) doctorCheck {
-	out, err := doctorRunCommand("incus", "exec", container, "--", "sh", "-lc", `curl -s -o /dev/null -w "%{http_code}" http://localhost:2019/config/`)
+	// Caddy's admin API listens only on its static incusbr0 address (never localhost or app networks).
+	ip, err := doctorSystemIP(container)
+	if err != nil || ip == "" {
+		return doctorCheck{Section: "platform", Name: "Caddy admin", Status: doctorWarn, Summary: "Caddy's static address is unknown", Detail: fmt.Sprint(err)}
+	}
+	out, err := doctorRunCommand("incus", "exec", container, "--", "sh", "-lc", `curl -s -o /dev/null -w "%{http_code}" http://`+ip+`:2019/config/`)
 	if err != nil {
 		return doctorCheck{Section: "platform", Name: "Caddy admin", Status: doctorWarn, Summary: "Caddy admin API is not reachable inside " + container, Detail: strings.TrimSpace(out)}
 	}

@@ -15,6 +15,7 @@ import {
   verifyApplianceOwner,
 } from '@/lib/identity/store';
 import { validateIdentityPassword } from '@/lib/identity/password-policy';
+import { validateIdentityUsername } from '@/lib/identity/username-policy';
 
 const CLAIM_CSRF_COOKIE = 'ye-claim-csrf';
 const MAX_ATTEMPTS = 10;
@@ -50,8 +51,9 @@ function validateAccount(input: Record<string, unknown>): string | null {
   const firstName = typeof input.firstName === 'string' ? input.firstName.trim() : '';
   const lastName = typeof input.lastName === 'string' ? input.lastName.trim() : '';
   const email = typeof input.email === 'string' ? input.email.trim() : '';
-  if (!/^[a-z][a-z0-9._-]{2,31}$/.test(username)) {
-    return 'Username must be 3-32 characters and start with a lowercase letter.';
+  const usernameError = validateIdentityUsername(username);
+  if (usernameError) {
+    return usernameError;
   }
   const passwordError = validateIdentityPassword(password);
   if (passwordError) return passwordError;

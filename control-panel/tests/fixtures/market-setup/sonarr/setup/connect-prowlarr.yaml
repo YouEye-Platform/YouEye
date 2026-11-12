@@ -1,0 +1,34 @@
+schema: youeye.setup.v1
+for: connect:prowlarr
+steps:
+  - http:
+      method: DELETE
+      path: /api/v1/applications/${item.id}
+      target: peer
+      headers:
+        X-Api-Key: ${peer.api_key}
+      for_each:
+        path: /api/v1/applications
+        where: {name: Sonarr}
+  - http:
+      method: POST
+      path: /api/v1/applications
+      target: peer
+      headers:
+        X-Api-Key: ${peer.api_key}
+      body:
+        name: Sonarr
+        implementation: Sonarr
+        configContract: SonarrSettings
+        syncLevel: fullSync
+        tags: []
+        fields:
+          - name: prowlarrUrl
+            value: ${peer.url}
+          - name: baseUrl
+            value: ${self.url}
+          - name: apiKey
+            value: ${self.api_key}
+          - name: syncCategories
+            value: [5000, 5010, 5020, 5030, 5040, 5045, 5050]
+      allow_failure: true

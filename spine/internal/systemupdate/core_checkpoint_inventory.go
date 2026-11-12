@@ -143,8 +143,11 @@ func coreCheckpointSnapshot(request string) string {
 	return fmt.Sprintf("youeye-core-%x", sha256.Sum256([]byte(request)))[:44]
 }
 
+// installedOwners maps every owned container name to whether it must exist. Pointer is optional, and so are the
+// containers of an app whose uninstall already deleted them and left `cleanupPending` for a retry, and the retained
+// app roots below.
 func (p NativeCoreCheckpoint) installedOwners() (map[string]bool, string, error) {
-	owned := map[string]bool{"youeye-control": true, "youeye-ui": true, "youeye-postgres": true, "youeye-caddy": true, "youeye-pihole": true, "youeye-pointer": true}
+	owned := map[string]bool{"youeye-control": true, "youeye-ui": true, "youeye-postgres": true, "youeye-caddy": true, "youeye-pihole": true, "youeye-pointer": false}
 	entries, err := os.ReadDir(p.DataRoot)
 	if err != nil {
 		return nil, "", err
@@ -157,6 +160,9 @@ func (p NativeCoreCheckpoint) installedOwners() (map[string]bool, string, error)
 		if !entry.IsDir() {
 			return nil, "", fmt.Errorf("application ownership path is not a directory")
 		}
+		if err := p.retainedOwners(entry.Name(), owned, hash); err != nil {
+			return nil, "", err
+		}
 		raw, err := ReadCoreState(filepath.Join(p.DataRoot, entry.Name(), "install.json"), 4<<20)
 		if os.IsNotExist(err) {
 			continue
@@ -165,8 +171,9 @@ func (p NativeCoreCheckpoint) installedOwners() (map[string]bool, string, error)
 			return nil, "", err
 		}
 		var meta struct {
-			AppID      string `json:"appId"`
-			Containers []struct {
+			AppID          string `json:"appId"`
+			CleanupPending bool   `json:"cleanupPending"`
+			Containers     []struct {
 				ContainerName string `json:"containerName"`
 			} `json:"containers"`
 			Lifecycle *struct {
@@ -180,16 +187,52 @@ func (p NativeCoreCheckpoint) installedOwners() (map[string]bool, string, error)
 			return nil, "", fmt.Errorf("application lifecycle must settle before core checkpoint")
 		}
 		for _, c := range meta.Containers {
-			if !coreContainerName.MatchString(c.ContainerName) || owned[c.ContainerName] {
+			if _, taken := owned[c.ContainerName]; !coreContainerName.MatchString(c.ContainerName) || taken {
 				return nil, "", fmt.Errorf("application container ownership is ambiguous")
 			}
-			owned[c.ContainerName] = true
+			owned[c.ContainerName] = !meta.CleanupPending
 		}
 		_, _ = hash.Write([]byte(entry.Name() + "\x00"))
 		_, _ = hash.Write(raw)
 		_, _ = hash.Write([]byte{0})
 	}
 	return owned, fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+// retainedOwners adds the stopped `ye-retained-*` root copies that a keep-data uninstall records in the Control
+// Panel's retained.json (control-panel/src/lib/admission/retained-data.ts). They are owned app data, not foreign
+// workloads. They are optional: a record still "preparing" may lack some copies, and an "adopted" one may already
+// have lost some to cleanup. Like every listed container they are held and fenced, and their stopped power state
+// and autostart are restored as recorded; the checkpoint never starts them.
+func (p NativeCoreCheckpoint) retainedOwners(dir string, owned map[string]bool, hash io.Writer) error {
+	raw, err := ReadCoreState(filepath.Join(p.DataRoot, dir, "retained.json"), 4<<20)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var meta struct {
+		AppID         string `json:"appId"`
+		RetainedRoots *struct {
+			Roots []struct {
+				RetainedName string `json:"retainedName"`
+			} `json:"roots"`
+		} `json:"retainedRoots"`
+	}
+	if json.Unmarshal(raw, &meta) != nil || dir != "app-"+meta.AppID || meta.AppID == "" || meta.RetainedRoots == nil || len(meta.RetainedRoots.Roots) == 0 || len(meta.RetainedRoots.Roots) > 100 {
+		return fmt.Errorf("retained application metadata is invalid")
+	}
+	for _, root := range meta.RetainedRoots.Roots {
+		if _, taken := owned[root.RetainedName]; !strings.HasPrefix(root.RetainedName, "ye-retained-") || !coreContainerName.MatchString(root.RetainedName) || taken {
+			return fmt.Errorf("retained application container ownership is ambiguous")
+		}
+		owned[root.RetainedName] = false
+	}
+	_, _ = hash.Write([]byte(dir + "/retained.json\x00"))
+	_, _ = hash.Write(raw)
+	_, _ = hash.Write([]byte{0})
+	return nil
 }
 
 func coreCheckpointContainers(raw []byte, owned map[string]bool, snapshot string) ([]CoreCheckpointContainer, error) {
@@ -205,7 +248,7 @@ func coreCheckpointContainers(raw []byte, owned map[string]bool, snapshot string
 	seen := map[string]bool{}
 	var out []CoreCheckpointContainer
 	for _, c := range observed {
-		if !owned[c.Name] || seen[c.Name] || c.Config["volatile.uuid"] == "" {
+		if _, ok := owned[c.Name]; !ok || seen[c.Name] || c.Config["volatile.uuid"] == "" {
 			return nil, fmt.Errorf("foreign or ambiguous container prevents writer closure")
 		}
 		if c.Status != "Running" && c.Status != "Stopped" {
@@ -239,8 +282,8 @@ func coreCheckpointContainers(raw []byte, owned map[string]bool, snapshot string
 			return nil, fmt.Errorf("required platform container is missing")
 		}
 	}
-	for name := range owned {
-		if name != "youeye-pointer" && !seen[name] {
+	for name, required := range owned {
+		if required && !seen[name] {
 			return nil, fmt.Errorf("installed application container is missing")
 		}
 	}

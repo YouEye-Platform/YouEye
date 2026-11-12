@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { parseReleaseVersion } from '../version';
 import { SpineAPIError, spineClient } from '../spine/client';
 import { releaseCacheFetch } from './cache';
 import { canonicalReleaseRepository, uniqueJSON, validReleaseTag } from './core-release';
-import { loadProductBlob, verifyProductRelease, type VerifiedProductRelease } from './product-release';
+import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProductRelease, type VerifiedProductRelease } from './product-release';
 
 /**
  * The box's channel index (`youeye.channel.v1`) names the current release of
@@ -143,7 +147,7 @@ function rateLimited(host: string, status: number): Error {
  * Download one release file with a size limit. 403/429 → ReleaseHostRateLimited
  * (with back-off), 404 → ReleaseFileNotFound. The caller verifies the digest.
  */
-export async function downloadReleaseFile(url: string, maximumBytes: number, fetchImpl: typeof fetch = releaseCacheFetch, timeoutMs = 120_000): Promise<Buffer> {
+async function openReleaseDownload(url: string, maximumBytes: number, fetchImpl: typeof fetch, timeoutMs: number): Promise<ReadableStream<Uint8Array>> {
   const initial = assertReleaseDownloadURL(url);
   const waiting = backoff.get(initial.host);
   if (waiting && Date.now() < waiting.until) {
@@ -175,9 +179,14 @@ export async function downloadReleaseFile(url: string, maximumBytes: number, fet
   const declared = Number(response.headers.get('content-length') || '0');
   if (declared > maximumBytes) throw new Error(`Release file ${url} exceeds ${maximumBytes} bytes`);
   if (!response.body) throw new Error(`Release file ${url} has no body`);
+  return response.body;
+}
+
+export async function downloadReleaseFile(url: string, maximumBytes: number, fetchImpl: typeof fetch = releaseCacheFetch, timeoutMs = 120_000): Promise<Buffer> {
+  const body = await openReleaseDownload(url, maximumBytes, fetchImpl, timeoutMs);
   const chunks: Buffer[] = [];
   let total = 0;
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -215,7 +224,43 @@ export async function resolveChannelProduct(product: string, options: ProductRes
   return selected;
 }
 
+/**
+ * Stream one release file to a new local file, counting and hashing on the way,
+ * so memory use stays bounded whatever the file's size. The caller checks the
+ * returned size and digest. A large file gets time in proportion to its size
+ * (at least 256 KiB/s) on top of the usual two minutes.
+ */
+export async function downloadReleaseFileTo(url: string, path: string, maximumBytes: number,
+  fetchImpl: typeof fetch = releaseCacheFetch,
+  timeoutMs = 120_000 + Math.ceil(maximumBytes / (256 * 1024)) * 1000): Promise<{ bytes: number; sha256: string }> {
+  const body = await openReleaseDownload(url, maximumBytes, fetchImpl, timeoutMs);
+  const hash = createHash('sha256');
+  let total = 0;
+  const counted = new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      total += chunk.byteLength;
+      if (total > maximumBytes) { done(new Error(`Release file ${url} exceeds ${maximumBytes} bytes`)); return; }
+      hash.update(chunk);
+      done(null, chunk);
+    },
+  });
+  await pipeline(Readable.fromWeb(body as NodeReadableStream<Uint8Array>), counted, createWriteStream(path, { flags: 'wx', mode: 0o600 }));
+  if (!total) throw new Error(`Release file ${url} is empty`);
+  return { bytes: total, sha256: hash.digest('hex') };
+}
+
 /** Download one asset of a verified product release (digest and size checked). */
 export function downloadProductAsset(selected: VerifiedProductRelease, name: string, maximumBytes = 1024 * 1024, fetchImpl?: typeof fetch): Promise<Buffer> {
   return loadProductBlob(selected, name, (url, max) => downloadReleaseFile(url, max, fetchImpl), maximumBytes);
+}
+
+/**
+ * Download one large asset of a verified product release straight to `path`
+ * (a new file), checking its size and digest without holding it in memory.
+ */
+export async function downloadProductAssetTo(selected: VerifiedProductRelease, name: string, path: string, maximumBytes: number, fetchImpl?: typeof fetch): Promise<number> {
+  const blob = productBlobWithinLimit(selected, name, maximumBytes);
+  const written = await downloadReleaseFileTo(productAssetURL(selected, blob), path, blob.size_bytes, fetchImpl);
+  if (written.bytes !== blob.size_bytes || written.sha256 !== blob.sha256) throw new Error('Product artifact differs from its original build digest');
+  return written.bytes;
 }

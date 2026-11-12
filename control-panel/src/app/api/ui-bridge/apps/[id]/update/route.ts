@@ -7,10 +7,11 @@
  */
 
 import { type NextRequest } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { spineClient } from '@/lib/spine/client';
 
 function sseMessage(data: unknown): string {
@@ -21,7 +22,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
   }
@@ -45,7 +46,7 @@ export async function POST(
 
       try {
         if (appDef.updatedBy === 'control-panel' && appDef.type === 'lxd') {
-          await updateLXDApp(appDef, emit);
+          await withUserOperationLockWait(() => updateLXDApp(appDef, emit));
         } else if (appDef.updatedBy === 'control-panel') {
           await updateOCIApp(appDef, emit);
         } else {

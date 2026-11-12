@@ -1,0 +1,11 @@
+{
+  "name": "youeye-market-sso-tests",
+  "private": true,
+  "description": "Browser tests: every Market app's YouEye ID sign-in for an admin and a standard user (sessions saved once, no passwords in tests).",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0"
+  }
+}

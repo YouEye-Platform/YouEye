@@ -14,8 +14,8 @@ var orphansCmd = &cobra.Command{
 This includes containers running in Incus that aren't associated with any installed
 app, Caddy routes pointing to unknown upstreams, and orphaned database entries.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/admin/orphans")
 		if err != nil {
@@ -64,8 +64,8 @@ var orphansCleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove orphaned resources",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		result, err := controlClient.Post("/api/admin/orphans", nil)
 		if err != nil {

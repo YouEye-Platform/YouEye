@@ -3,6 +3,7 @@ import { getSession, verifyCSRFToken } from '@/lib/auth/session';
 import { spineClient } from '@/lib/spine/client';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { updateOCIApp } from '@/lib/apps/updater';
 import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
@@ -83,7 +84,7 @@ export async function POST(
     const appDef = getAppDefinition(appId);
     if (appDef?.lxdConfig) {
       let lastMessage = '';
-      await updateLXDApp(appDef, (event) => {
+      await withUserOperationLockWait(() => updateLXDApp(appDef, (event) => {
         lastMessage = event.message;
         const stageToStatus: Record<string, Parameters<typeof writeStatus>[1]> = {
           starting: 'checking',
@@ -101,7 +102,7 @@ export async function POST(
           event.progress ?? 0,
           event.message,
         );
-      });
+      }));
       await markCompleted(component);
       return NextResponse.json({ status: 'success', message: lastMessage || `${appDef.displayName} updated` });
     }

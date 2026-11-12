@@ -8,14 +8,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { setBlocking } from '@/lib/apps/pihole-api';
 
 const VALID_ACTIONS = ['enable', 'disable'] as const;
 type DnsAction = (typeof VALID_ACTIONS)[number];
 
 export async function POST(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

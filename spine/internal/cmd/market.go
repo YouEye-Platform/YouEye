@@ -18,8 +18,8 @@ var marketSearchCmd = &cobra.Command{
 	Short: "Search the Market catalog",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		query := strings.ToLower(args[0])
 
@@ -60,8 +60,8 @@ var marketInfoCmd = &cobra.Command{
 	Short: "Show detailed Market entry",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/market/app/" + args[0])
 		if err != nil {
@@ -95,8 +95,8 @@ var marketRepoGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Show the Market repository",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/market/source")
 		if err != nil {
@@ -121,8 +121,8 @@ var marketRepoSetCmd = &cobra.Command{
 	Short: "Set the Market repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Patch("/api/market/source", map[string]interface{}{
 			"repo_url": args[0],

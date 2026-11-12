@@ -130,6 +130,25 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 		if !checkpointStarted {
 			return j, fmt.Errorf("no activation checkpoint exists; use staged cancellation")
 		}
+		// A checkpoint refused in its read-only preflight touched no writer; paired
+		// recovery would only repeat the refused inspection in its fence and hold the
+		// box. With verified proof, end the request as Advance does. Any error or
+		// missing proof falls through to ordinary recovery.
+		for i := range j.Steps {
+			s := &j.Steps[i]
+			if s.Name != "checkpoint" || (s.State != "started" && s.State != "failed") {
+				continue
+			}
+			observation, err := m.Executor.Observe(ctx, j, *s)
+			if err != nil || observation.State != "failed" || observation.Code != coreCheckpointPreflightRefused {
+				break
+			}
+			s.State, s.Evidence = "failed", observation.Evidence
+			if m.verifyCheckpointRefusal(ctx, j) == nil {
+				j.Error = coreCheckpointRefusedError
+				return m.cancelLocked(ctx, j)
+			}
+		}
 		// Persist the authorized recovery intent before reconciling interrupted
 		// apply work. Otherwise an applying journal still invokes forward schema
 		// probes, which cannot complete a partially staged service. This admits

@@ -6,6 +6,7 @@
  */
 
 import { incusRequest, execShell } from './server';
+import { retryImageFetch } from '../infrastructure/image-fetch-retry';
 
 // ─── Operation Helpers ───────────────────────────────────────────────────────
 
@@ -179,14 +180,17 @@ export function buildOCIRebuildRequest(image: string) {
  * IMPORTANT: Snapshots must be deleted before rebuild (Incus requirement).
  */
 export async function rebuildContainer(name: string, image: string): Promise<void> {
-  const resp = await incusRequest<Record<string, unknown>>(
-    'POST', `/1.0/instances/${name}/rebuild`,
-    buildOCIRebuildRequest(image),
-    { timeout: 660_000 } // 11 min for image download
-  );
+  // Rebuilding from an image is repeatable, so brief DNS/registry failures are retried.
+  await retryImageFetch(async () => {
+    const resp = await incusRequest<Record<string, unknown>>(
+      'POST', `/1.0/instances/${name}/rebuild`,
+      buildOCIRebuildRequest(image),
+      { timeout: 660_000 } // 11 min for image download
+    );
 
-  if (resp.error && resp.error !== '') throw new Error(`Rebuild failed: ${resp.error}`);
-  if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 600);
+    if (resp.error && resp.error !== '') throw new Error(`Rebuild failed: ${resp.error}`);
+    if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 600);
+  }, { label: `Image fetch for rebuilding ${name}` });
 }
 
 function assertInstanceOperation(

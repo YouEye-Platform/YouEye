@@ -8,6 +8,8 @@ import { verifyCSRFToken } from '@/lib/auth/session';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { updateMarketApp } from '@/lib/market/updater';
 import { getAppUpdateOperation } from '@/lib/market/update-operations';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 
 function publicUpdateFailure(code: unknown): string {
   if (code === 'unsupported-shared-resource') {
@@ -17,6 +19,7 @@ function publicUpdateFailure(code: unknown): string {
   if (code === 'foreign-volume' || code === 'unknown-mutable-volume'
     || code === 'foreign-or-missing-container') return 'Update blocked: app storage or runtime ownership could not be verified.';
   if (code === 'old-runtime-unavailable') return 'Update blocked: the previous runtime is unavailable for recovery.';
+  if (code === 'operation_in_progress') return 'Another operation on this app is in progress; try again in a moment.';
   return 'Update failed. Check the operation status.';
 }
 
@@ -51,7 +54,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
 
   if (format === 'json') {
     try {
-      const result = await updateMarketApp({ appId }, () => {});
+      const result = await withUserOperationLockWait(() => updateMarketApp({ appId }, () => {}));
       const operation = getAppUpdateOperation(appId);
       if (operation?.pending) {
         return NextResponse.json({ status: 'pending', code: 'operation_pending',
@@ -62,6 +65,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
         message: result.success ? 'Update complete' : publicUpdateFailure(result.errorCode),
         previous_version: result.previousVersion, new_version: result.newVersion }, { status: result.success ? 200 : 500 });
     } catch (error) {
+      logOperationFailure(`Update of ${appId}`, error);
       const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
       return NextResponse.json({ status: 'error', message: publicUpdateFailure(code) }, { status: 500 });
     }
@@ -78,7 +82,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
         } catch { /* The durable operation continues after a client disconnect. */ }
       };
       try {
-        const result = await updateMarketApp(
+        const result = await withUserOperationLockWait(() => updateMarketApp(
           { appId },
           (event) => {
             // Provider messages can contain command output, paths or secrets.
@@ -86,7 +90,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
               ? Math.max(0, Math.min(99, Math.round(event.step / event.totalSteps * 100)))
               : 0);
           },
-        );
+        ));
         const operation = getAppUpdateOperation(appId);
         if (operation?.pending) {
           emit('pending', operation.committed
@@ -97,6 +101,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
             result.success ? 'Update complete' : publicUpdateFailure(result.errorCode), 100);
         }
       } catch (error) {
+        logOperationFailure(`Update of ${appId}`, error);
         // Only known public codes select copy; never serialize an exception.
         const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
         emit('failed', publicUpdateFailure(code));

@@ -11,8 +11,9 @@
  */
 
 import { listInstalledApps } from '@/lib/market/metadata';
-import { fetchManifest } from '@/lib/market/catalog';
-import { getContainerIP } from '@/lib/incus/container-ip';
+import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
+import { appContainerAddress } from '@/lib/incus/app-network';
+import { setupContainers } from '@/lib/market/setup-context';
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -40,21 +41,17 @@ async function deliverToApps(event: PlatformEvent): Promise<void> {
 
   for (const app of installedApps) {
     try {
-      const manifest = await fetchManifest(app.appId);
+      const manifest = await readInstalledAppManifest(app.appId);
       const subscribedEvents = manifest?.capabilities?.events;
       if (!subscribedEvents || !subscribedEvents.includes(event.event)) continue;
 
-      // Find the primary container's IP
-      const firstContainer = app.containers?.[0];
-      if (!firstContainer) continue;
-      const primaryContainer = typeof firstContainer === 'string' ? firstContainer : (firstContainer as any).containerName;
-
-      const ip = await getContainerIP(primaryContainer);
-      if (!ip) continue;
-
-      // Derive port from manifest
-      const primarySpec = manifest?.containers?.find((c) => c.primary) || manifest?.containers?.[0];
-      const port = primarySpec?.port || 3000;
+      // The primary container (sidecars come first in the container list), by its recorded name,
+      // at an address checked to lie on the app's own network.
+      const primarySpec = manifest.containers.find((c) => c.primary) || manifest.containers[0];
+      if (!primarySpec) continue;
+      const primaryContainer = setupContainers(manifest, app)[primarySpec.name];
+      const ip = await appContainerAddress(primaryContainer, app.appId);
+      const port = primarySpec.port || 3000;
 
       const payload = JSON.stringify(event);
 

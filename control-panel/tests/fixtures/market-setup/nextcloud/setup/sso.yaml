@@ -1,0 +1,47 @@
+schema: youeye.setup.v1
+for: sso
+steps:
+  - exec:
+      run:
+        - runuser
+        - -u
+        - www-data
+        - --
+        - php
+        - /var/www/html/occ
+        - config:system:set
+        - allow_local_remote_servers
+        - --value
+        - 'true'
+        - --type
+        - boolean
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'app:install', user_oidc]
+      timeout: 120
+      allow_failure: true
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'app:enable', user_oidc]
+  - exec:
+      run:
+        - runuser
+        - -u
+        - www-data
+        - --
+        - php
+        - /var/www/html/occ
+        - user_oidc:provider
+        - ${identity.name}
+        - --clientid=${sso.client_id}
+        - --clientsecret=${sso.client_secret}
+        - --discoveryuri=${sso.discovery_url}
+        - --scope=openid email profile groups
+        - --unique-uid=0
+        - --mapping-uid=preferred_username
+        - --mapping-display-name=name
+        - --mapping-email=email
+        - --mapping-groups=groups
+        - --group-provisioning=1
+        - --check-bearer=0
+remove:
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'user_oidc:provider:delete', --force, '${identity.name}']

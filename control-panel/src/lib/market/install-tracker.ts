@@ -23,6 +23,9 @@ import {
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { InstallEvent } from './types';
+import {
+  errorChainText, isTransientImageFetchError, isUnavailableImageError,
+} from '../infrastructure/image-fetch-retry';
 
 interface TrackedInstall {
   schema: 'youeye.install-operation/1';
@@ -68,20 +71,68 @@ function isRuntimeOwnerAlive(owner: string | undefined): boolean {
   return processRuntimeOwner(Number(match[1])) === owner;
 }
 
-export function sensitivitySafeInstallError(error: unknown): string {
-  let current = error;
+const GENERIC_INSTALL_ERROR = 'Installation failed; use the supported Health and repair views for sensitivity-safe diagnostics.';
+
+/** Fixed user-facing messages for well-known failure causes. */
+export const PUBLIC_INSTALL_ERRORS = {
+  imageNetwork: 'Downloading the app image failed (network/DNS timeout); try again',
+  imageUnavailable: 'The app image is not available from its registry',
+  busy: 'Another operation on this app is in progress; try again in a moment',
+  cancelled: 'Installation was cancelled',
+} as const;
+const KNOWN_PUBLIC_ERRORS = new Set<string>(Object.values(PUBLIC_INSTALL_ERRORS));
+
+const IMAGE_FETCH_CONTEXT = /Failed getting remote image|skopeo|docker:\/\/|remote image|image download|ImageFetch/i;
+
+function errorChain(error: unknown): Error[] {
+  const chain: Error[] = [];
   const seen = new Set<unknown>();
+  let current = error;
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
+    chain.push(current);
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return chain;
+}
+
+export function sensitivitySafeInstallError(error: unknown): string {
+  const chain = errorChain(error);
+  for (const current of chain) {
     if (['AppNetworkCapacityError', 'AppNetworkOperationConflictError', 'AppNetworkStateError'].includes(current.name)) {
       return sanitiseText(current.message) ?? 'App network preflight failed';
     }
     if (current.name === 'MarketNativeArtifactPolicyError') {
       return sanitiseText(current.message) ?? 'App package preflight failed';
     }
-    current = (current as Error & { cause?: unknown }).cause;
   }
-  return 'Installation failed; use the supported Health and repair views for sensitivity-safe diagnostics.';
+  const text = errorChainText(error);
+  if (chain.some(e => e.name === 'AppLifecycleBusyError') || /executor lock is busy/i.test(text)) {
+    return PUBLIC_INSTALL_ERRORS.busy;
+  }
+  if (chain.some(e => ['ImageFetchCancelledError', 'AppLifecycleWaitCancelledError'].includes(e.name))
+    || /Installation cancelled by user/.test(text)) {
+    return PUBLIC_INSTALL_ERRORS.cancelled;
+  }
+  if (IMAGE_FETCH_CONTEXT.test(text)) {
+    if (isUnavailableImageError(error)) return PUBLIC_INSTALL_ERRORS.imageUnavailable;
+    if (isTransientImageFetchError(error)) return PUBLIC_INSTALL_ERRORS.imageNetwork;
+  }
+  return GENERIC_INSTALL_ERROR;
+}
+
+/** Full cause chain for the server journal, with credentials and URL queries removed. */
+export function describeErrorChainForLog(error: unknown): string {
+  const chain = errorChain(error);
+  const text = chain.length > 0
+    ? chain.map(e => `${e.name && e.name !== 'Error' ? `${e.name}: ` : ''}${e.message}`).join(' <cause> ')
+    : String(error);
+  return sanitiseText(text, 8_192) ?? '';
+}
+
+/** Log one failed user operation server-side, once, before mapping it to a public message. */
+export function logOperationFailure(operation: string, error: unknown): void {
+  console.error(`[Market] ${operation} failed: ${describeErrorChainForLog(error)}`);
 }
 
 function assertAppId(appId: string): void {
@@ -93,13 +144,16 @@ function operationPath(appId: string): string {
   return path.join(OPERATIONS_DIR, `${appId}.json`);
 }
 
-function sanitiseText(value: string | undefined): string | undefined {
+function sanitiseText(value: string | undefined, maxLength = 4_096): string | undefined {
   if (!value) return value;
   return value
+    // Signed CDN/registry URLs carry credentials in their query (?Expires=…&Signature=…).
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"'<>]+@/gi, '$1')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)[?#][^\s"'<>]*/gi, '$1')
     .replace(/ye_app_v1_[A-Za-z0-9_-]{43}/g, '[REDACTED]')
     .replace(/\b(Bearer)\s+[^\s"']+/gi, '$1 [REDACTED]')
     .replace(/\b(password|token|secret|authorization)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
-    .slice(0, 4_096);
+    .slice(0, maxLength);
 }
 
 export function sanitiseInstallEvent(event: InstallEvent): InstallEvent {
@@ -262,7 +316,9 @@ export function finishTracking(appId: string, error?: string): void {
   if (!install) throw new Error(`No durable install operation exists for ${appId}`);
   install.done = true;
   install.error = error
-    ? 'Installation failed; use the supported Health and repair views for sensitivity-safe details.'
+    ? (KNOWN_PUBLIC_ERRORS.has(error)
+      ? error
+      : 'Installation failed; use the supported Health and repair views for sensitivity-safe details.')
     : undefined;
   install.updatedAt = Date.now();
   delete install.abortController;

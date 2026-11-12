@@ -59,7 +59,7 @@ test('blocklists endpoint added (session-authed, GET/POST/PATCH/DELETE)', () => 
   assert.match(r, /piholeRequest/);
   // session auth (not the embed-gated bridge wrapper)
   assert.match(r, /getSession/);
-  assert.doesNotMatch(r, /validateBridgeToken/);
+  assert.doesNotMatch(r, /requireEmbedAdmin/);
 });
 
 test('Routes tab reaches Caddy via /settings/api/caddy/* proxies (root /api/caddy 404s from settings)', () => {

@@ -1,14 +1,12 @@
 /**
- * Unified App Updater — v2 app engine.
+ * Unified App Updater.
  *
  * Supports two update paths based on container.type:
  *   - LXD (container.type === 'lxd'): fetch tarball from the configured release source, extract, restart service
  *   - OCI (container.type === 'oci'): stop → rebuild with new image → start
  *
  * Both paths support:
- *   - Migration steps (exec commands, SQL) before container rebuild/replace
- *   - Pre/post update hooks (exec commands in specified containers)
- *   - Version constraint checking (e.g. major-sequential)
+ *   - `requires.youeye`: an update that needs a newer platform is refused
  *   - Durable scoped runtime, volume, database and metadata recovery
  *   - SSE event emission for real-time progress
  *   - Version tracking in installed_apps DB
@@ -22,7 +20,7 @@
 
 import { appUpdateJournalStore, withAppLifecycle } from './update-admission';
 import { prepareIncusAppUpdate } from './update-provider';
-import { runAppUpdateTransaction, type AppUpdateTransaction } from './update-transaction';
+import { runAppUpdateTransaction } from './update-transaction';
 import { updateDigest } from './update-workspace';
 import { freezeUpdateOCIImage } from './update-oci';
 import { execShell, incusUploadFile } from '@/lib/incus/server';
@@ -34,7 +32,7 @@ import {
   waitForContainerExec,
   waitForRunning,
 } from '@/lib/incus/snapshot';
-import { fetchUpdatePlanMigrationsFromSource, clearCatalogCache, resolveCatalogApp } from './catalog';
+import { clearCatalogCache, resolveCatalogApp } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import {
   getInstalledApp,
@@ -42,10 +40,9 @@ import {
   recordCatalogAppUpdate,
 } from './installed-apps';
 import { getContainerName } from './engine-helpers';
-import { resolveVariables } from './variables';
-import { buildCanonicalContext, generateAppToken } from './platform-env';
+import { assertYouEyeRequirement, buildCanonicalContext, generateAppToken } from './platform-env';
 import { withAppNetworkOperationLock } from '../incus/app-network';
-import { readSecret } from '../infrastructure/secrets';
+import { readAppSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { isNewer } from '@/lib/version';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
@@ -53,23 +50,14 @@ import {
   classifyAppUpdateRouting,
   recordedCatalogSourceIds,
 } from './update-routing';
-import {
-  describeUpdatePath,
-  findApplicableMigrations,
-  mergeMigrationSources,
-  type MigrationWithSource,
-} from './migration-planner';
 import { refreshDirectMarketApp } from './direct-apps';
-import { nativeManifestFromRelease, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
+import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
 import type {
   AppManifest,
   InstallEventCallback,
   InstallEvent,
-  MigrationStep,
-  InstallMetadata,
-  VariableContext,
 } from './types';
 
 // ─── Types ────────────────────────────────────────────────
@@ -100,125 +88,6 @@ function emit(
   detail?: string
 ) {
   cb({ step, totalSteps, status, message, detail });
-}
-
-// ─── Version Constraint Helpers ──────────────────────────
-
-function parseMajorVersion(version: string): number {
-  const parts = version.replace(/^v/, '').split('.');
-  return parseInt(parts[0], 10) || 0;
-}
-
-function checkVersionConstraint(
-  constraint: string | undefined,
-  fromVersion: string,
-  toVersion: string
-): string | null {
-  if (!constraint) return null;
-  if (constraint === 'major-sequential') {
-    const fromMajor = parseMajorVersion(fromVersion);
-    const toMajor = parseMajorVersion(toVersion);
-    if (toMajor - fromMajor > 1) {
-      return `Version constraint 'major-sequential' violated: cannot jump from major ${fromMajor} to ${toMajor}. Update one major version at a time.`;
-    }
-  }
-  return null;
-}
-
-// ─── Update Hook Helpers ─────────────────────────────────
-
-interface UpdateHookStep {
-  exec_in: string;
-  run: string;
-  timeout: number;
-}
-
-async function runUpdateHooks(
-  hooks: UpdateHookStep[] | undefined,
-  appId: string,
-  containerSpecs: Array<{ name: string; type: string }>,
-  onEvent: InstallEventCallback,
-  step: number,
-  totalSteps: number,
-  label: string,
-  transaction: AppUpdateTransaction,
-  runner: <T>(name: string, run: () => Promise<T>) => Promise<T>,
-): Promise<number> {
-  if (!hooks || hooks.length === 0) return step;
-  for (const hook of hooks) {
-    step++;
-    const containerName = getContainerName(appId, hook.exec_in, containerSpecs.length);
-    emit(onEvent, step, totalSteps, 'running', `${label}: running hook in ${containerName}`);
-    await transaction.mutate(`hook-${label.toLowerCase()}-${step}`, () => runner(containerName, async () => {
-      const result = await execShell(containerName, hook.run, { timeout: hook.timeout || 60_000 });
-      if (result.exitCode !== 0) throw new Error(`${label} hook failed in ${containerName}`);
-    }));
-    emit(onEvent, step, totalSteps, 'success', `${label} step complete`);
-  }
-  return step;
-}
-
-// ─── Migration Helpers ────────────────────────────────────
-
-// Stage an applied-migration gate IN MEMORY only. It is persisted later by the single
-// post-rebuild `saveInstallMetadata` (after the container rebuild + health check + version
-// bump all succeed). Persisting here — per migration step, before the rebuild — was a bug:
-// a migration runs its SQL, the gate gets marked applied, then the rebuild fails and the
-// container rolls back to the OLD image. That left "SQL migrated + gate done + old binary",
-// and because `findApplicableMigrations` skips already-applied gates the migration would
-// never re-run on retry → schema/binary mismatch + crash-loop. Staging in memory means a
-// failed update (which never reaches the final save) leaves NO half-applied gate, so the
-// gate re-runs on the next attempt.
-function stageAppliedMigration(
-  installMeta: InstallMetadata,
-  migration: MigrationWithSource,
-): void {
-  if (!migration.idempotencyKey) return;
-
-  const existing = installMeta.appliedMigrations ?? [];
-  if (existing.some((item) => item.key === migration.idempotencyKey)) return;
-
-  installMeta.appliedMigrations = [
-    ...existing,
-    {
-      key: migration.idempotencyKey,
-      fromVersion: migration.fromVersion,
-      toVersion: migration.toVersion,
-      appliedAt: new Date().toISOString(),
-      source: migration.source,
-    },
-  ];
-}
-
-/**
- * Execute a single migration step.
- * Container name is derived from the container spec name via getContainerName.
- */
-async function executeMigrationStep(
-  step: MigrationStep,
-  appId: string,
-  totalContainers: number,
-  ctx: Partial<VariableContext>,
-  databases: Array<{ engine: string; name: string; ownerRole: string }>,
-  sqlRunner: (sql: string) => Promise<void>,
-): Promise<void> {
-  if (step.type === 'exec') {
-    const containerName = getContainerName(appId, step.container, totalContainers);
-    const command = resolveVariables(step.command, ctx);
-    const result = await execShell(containerName, command, {
-      timeout: step.timeout || 60_000,
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(`Migration command failed in ${containerName}`);
-    }
-  } else if (step.type === 'sql') {
-    const dbName = resolveVariables(step.database, ctx);
-    const database = databases.find(db => db.name === dbName);
-    if (!database || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database.ownerRole)) {
-      throw new Error('Migration targets a database outside this app recovery set');
-    }
-    await sqlRunner(resolveVariables(step.command, ctx));
-  }
 }
 
 async function pushFileToContainer(
@@ -376,8 +245,7 @@ async function updateMarketAppLocked(
       // No downgrade: an older channel head is rejected here (the box waits).
       acceptProductSequence(installMeta.productReleaseFloors, productRelease);
       manifest = native.manifest;
-      channelManifestReference = { path: 'youeye-app.yaml', repo: productRelease.repository, branch: productRelease.release.tag,
-        digest: `sha256:${updateDigest(native.contract)}` };
+      channelManifestReference = nativeManifestReference(productRelease, manifest);
     } catch (err) {
       throw new Error(`Failed to resolve the ${appId} release of this channel: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -389,7 +257,6 @@ async function updateMarketAppLocked(
   const targetVersion = productRelease ? productRelease.release.version : (manifest.version || '0.0.0');
   const containerSpecs = manifest.containers || [];
   const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
-  let durableMigrationPlan: Awaited<ReturnType<typeof fetchUpdatePlanMigrationsFromSource>> = { migrations: [], references: [] };
   if (productRelease) {
     // Only no-op when the exact release document is what's installed.
     const installedRelease = installMeta.nativeArtifacts?.[0]?.productReleaseSHA256;
@@ -410,50 +277,24 @@ async function updateMarketAppLocked(
       return adopted;
     }
   }
-  if (!directEntry) {
-    try { durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId); }
-    catch (err) { throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`); }
+  // An update that needs a newer YouEye waits for the platform (it is never offered).
+  try {
+    await assertYouEyeRequirement(manifest);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(onEvent, 1, 1, 'error', message);
+    return { success: false, previousVersion: installedVersion, newVersion: targetVersion, migrationsRun: 0, error: message, errorCode: 'requires-newer-youeye' };
   }
 
-  // ── Version constraint check ───────────────────────────
-  const constraintError = checkVersionConstraint(
-    manifest.update?.version_constraint,
-    installedVersion,
-    targetVersion
-  );
-  if (constraintError && !config.force) {
-    emit(onEvent, 1, 1, 'error', constraintError);
-    return {
-      success: false, previousVersion: installedVersion, newVersion: targetVersion,
-      migrationsRun: 0, error: constraintError,
-    };
-  }
-
-  // ── Determine update path ──────────────────────────────
-
-  const allMigrations = mergeMigrationSources(manifest.update?.migrations || [], durableMigrationPlan.migrations);
-  const strategy = (manifest.update?.strategy === 'migrate' || allMigrations.length > 0) ? 'migrate' : 'replace';
-
-  // v2: each container has an explicit type ('lxd' | 'oci')
+  // Each container has an explicit type ('lxd' | 'oci')
   const containerNames = containerSpecs.map((c) => getContainerName(appId, c.name, containerSpecs.length));
   const lxdContainers = containerSpecs.filter((c) => c.type === 'lxd');
   const ociContainers = containerSpecs.filter((c) => c.type === 'oci');
 
   // ── Count total steps ──────────────────────────────────
 
-  const migrations = strategy === 'migrate'
-    ? findApplicableMigrations(allMigrations, installedVersion, targetVersion, installMeta.appliedMigrations)
-    : [];
-  const migrationStepCount = migrations.reduce((sum, m) => sum + m.steps.length, 0);
-  const updatePath = describeUpdatePath(installedVersion, targetVersion, migrations);
-
-  const preUpdateHooks = manifest.update?.pre_update as UpdateHookStep[] | undefined;
-  const postUpdateHooks = manifest.update?.post_update as UpdateHookStep[] | undefined;
-
   let totalSteps = 1; // preflight
   totalSteps += containerNames.length; // snapshots
-  totalSteps += (preUpdateHooks?.length || 0); // pre-update hooks
-  totalSteps += migrationStepCount; // migration steps
 
   // LXD containers: fetch metadata + stop service + CP download/stage + extract + start + health each
   totalSteps += lxdContainers.length * 6;
@@ -462,7 +303,6 @@ async function updateMarketAppLocked(
   // Health checks for OCI containers that have them
   totalSteps += ociContainers.filter((c) => c.healthCheck).length;
 
-  totalSteps += (postUpdateHooks?.length || 0); // post-update hooks
   totalSteps += 3; // sync UI manifest + save metadata + cleanup
 
   let step = 0;
@@ -472,7 +312,7 @@ async function updateMarketAppLocked(
   const containerTypes = containerSpecs.map((c) => c.type).join(', ');
   step++;
   emit(onEvent, step, totalSteps, 'running',
-    `Updating ${appId} from v${installedVersion} to v${targetVersion} (path: ${updatePath}; containers: ${containerTypes}; strategy: ${strategy})`);
+    `Updating ${appId} from v${installedVersion} to v${targetVersion} (containers: ${containerTypes})`);
 
   // Build variable context — preserves existing secrets
   let ctx = await buildCanonicalContext(
@@ -481,13 +321,14 @@ async function updateMarketAppLocked(
     undefined, undefined, await generateAppToken(appId),
     installMeta.usePerAppBridge === true,
   );
-  if (!ctx.secrets) ctx.secrets = {};
+  const secretValues: Record<string, string> = {};
+  ctx.secret = secretValues;
 
   // Reload existing secrets
   for (const secret of manifest.secrets) {
     try {
-      const value = await readSecret(`app-${appId}`, secret.file);
-      if (value) ctx.secrets[secret.name] = value;
+      const value = await readAppSecret(appId, secret.name);
+      if (value) secretValues[secret.name] = value;
     } catch { /* secret may not exist */ }
   }
 
@@ -508,15 +349,6 @@ async function updateMarketAppLocked(
       if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.name === spec.name)?.role === 'database') continue;
       frozenOCI.set(spec.name, await freezeUpdateOCIImage(spec.image));
     }
-    const hookNames = [...(preUpdateHooks ?? []), ...(postUpdateHooks ?? [])].map(h => h.exec_in);
-    const migrationNames = migrations.flatMap(m => m.steps.filter(s => s.type === 'exec').map(s => s.container));
-    if ([...hookNames, ...migrationNames].some(name => !containerSpecs.some(c => c.name === name))) {
-      throw new Error('Update hook or migration targets a container outside the app recovery set');
-    }
-    if (migrations.flatMap(m => m.steps).some(s => s.type === 'sql'
-      && !preflight.inventory.databases.some(db => db.name === resolveVariables(s.database, ctx)))) {
-      throw new Error('Update migration targets a database outside the app recovery set');
-    }
     const result = await runAppUpdateTransaction(appUpdateJournalStore(), {
       appId, resources: preflight.inventory.resources,
       originalRunning: preflight.inventory.originalRunning,
@@ -527,37 +359,10 @@ async function updateMarketAppLocked(
         artifactSHA256: [...stagedNativeArtifacts.byContainerName.values()].map(a => a.artifactSHA256)
           .concat([...frozenOCI.values()].map(a => a.sha256)) },
     }, preflight.provider, async transaction => {
-    // All checkpoints are verified with every writer stopped before any hook,
-    // SQL or automatic first-start migration. Ordinary ingress remains fenced.
+    // All checkpoints are verified with every writer stopped before any
+    // automatic first-start migration. Ordinary ingress remains fenced.
     const runner = <T>(name: string, run: () => Promise<T>) =>
       preflight.provider.withMigrationRunner(transaction.record(), name, run);
-    const sqlRunner = (sql: string) => preflight.provider.executeSQL(transaction.record(), sql);
-    // ── Step 3: Pre-update hooks ─────────────────────────
-
-    step = await runUpdateHooks(preUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Pre-update', transaction, runner);
-
-    // ── Step 4: Run migrations (if strategy=migrate) ─────
-
-    if (strategy === 'migrate' && migrations.length > 0) {
-      for (const migration of migrations) {
-        emit(onEvent, step, totalSteps, 'running',
-          `Applying required migration gate ${migration.fromVersion} -> ${migration.toVersion}`);
-        for (const migrationStep of migration.steps) {
-          step++;
-          const stepDesc = migrationStep.type === 'exec'
-            ? `Running migration in ${migrationStep.container}`
-            : `Running SQL migration on ${migrationStep.database}`;
-          emit(onEvent, step, totalSteps, 'running', stepDesc);
-          await transaction.mutate(`migration-${step}`, () => migrationStep.type === 'exec'
-            ? runner(getContainerName(appId, migrationStep.container, containerSpecs.length),
-              () => executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx, preflight.inventory.databases, sqlRunner))
-            : executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx, preflight.inventory.databases, sqlRunner));
-          emit(onEvent, step, totalSteps, 'success', stepDesc);
-        }
-        stageAppliedMigration(installMeta, migration);
-      }
-    }
-
     // ── Step 5: Update containers by type ────────────────
 
     for (let i = 0; i < containerSpecs.length; i++) {
@@ -570,10 +375,8 @@ async function updateMarketAppLocked(
 
       if (spec.type === 'lxd' && spec.source) {
         // ── LXD path: fetch tarball from the configured release source, extract, restart service ──
-        const appDir = spec.source.appDir || '/opt/app';
-        const healthEndpoint = spec.healthCheck?.type === 'http'
-          ? (spec.healthCheck.path || '/api/health')
-          : '/api/health';
+        const appDir = '/opt/app';
+        const healthEndpoint = spec.healthCheck?.type === 'http' ? spec.healthCheck.path : '/api/health';
         const port = spec.port || 3000;
         const stagedArtifact = stagedNativeArtifacts.byContainerName.get(spec.name);
         if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${spec.name}`);
@@ -598,12 +401,8 @@ async function updateMarketAppLocked(
 
       }
     }
-    // All code replacements finish before any ordinary process can observe the
-    // new schema. Post hooks execute offline against the complete new code set.
-    step = await runUpdateHooks(postUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Post-update', transaction, runner);
     await transaction.mutate('apply-generated-configuration', () => preflight.provider.applyConfiguration(transaction.record(), manifest, ctx));
     for (let i = 0; i < containerSpecs.length; i++) {
-      const spec = containerSpecs[i];
       const name = containerNames[i];
       if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.containerName === name)?.role === 'database') continue;
       await transaction.mutate(`first-start-${i}`, async () => {
@@ -620,12 +419,9 @@ async function updateMarketAppLocked(
           step++;
           emit(onEvent, step, totalSteps, 'running', `Waiting for ${name} to be healthy...`);
 
-          let healthy = false;
-          if (spec.healthCheck.type === 'http') {
-            healthy = await waitForAppHealth(name, spec.port || 80, spec.healthCheck.path, spec.healthCheck.timeout);
-          } else if (spec.healthCheck.type === 'postgres') {
-            healthy = await waitForPostgresHealth(name, spec.healthCheck.user, spec.healthCheck.timeout);
-          }
+          const healthy = spec.healthCheck.type === 'postgres'
+            ? await waitForPostgresHealth(name, spec.healthCheck.user, spec.healthCheck.timeout)
+            : await waitForAppHealth(name, spec.port || 80, spec.healthCheck.path, spec.healthCheck.timeout);
 
           emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
             healthy ? `${name} is healthy` : `${name} health check timed out`);
@@ -697,7 +493,6 @@ async function updateMarketAppLocked(
         } : undefined,
       };
     });
-    installMeta.entrances = manifest.entrances?.map((entrance) => ({ ...entrance }));
     await transaction.mutate('publish-install-metadata', () => saveInstallMetadata(installMeta));
     // Provenance: what tag/branch/source is actually installed now.
     if (productRelease) {
@@ -720,7 +515,7 @@ async function updateMarketAppLocked(
     }
     return { value: {
       success: true, previousVersion: installedVersion, newVersion: targetVersion,
-      migrationsRun: migrations.length,
+      migrationsRun: 0,
     }, metadataDigest: updateDigest(JSON.stringify(saved)) };
     }, id => { attemptedOperation = id; });
     // Current ownership is reconciled only after durable commit and cleanup.
@@ -742,7 +537,7 @@ async function updateMarketAppLocked(
     return {
       success: committed, previousVersion: installedVersion,
       newVersion: committed ? targetVersion : installedVersion,
-      migrationsRun: committed ? migrations.length : 0, error: message,
+      migrationsRun: 0, error: message,
       errorCode: !committed && error && typeof error === 'object' && 'code' in error
         && typeof error.code === 'string' ? error.code : undefined,
     };

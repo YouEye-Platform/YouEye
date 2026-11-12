@@ -4,15 +4,18 @@
  * test appliance. Source URL and domain are caller-supplied; no credentials are
  * emitted. The regular install engine owns all created resources.
  */
-import { AppManifestSchema } from '../../src/lib/market/schema';
+import { stringify } from 'yaml';
+import { loadApp } from '../../src/lib/market/app-format/compile';
 import { installApp } from '../../src/lib/market/engine';
 import { saveDirectMarketApp } from '../../src/lib/market/direct-apps';
 import { readInstallMetadata } from '../../src/lib/market/metadata';
 import { incusUploadFile, execCommand } from '../../src/lib/incus/server';
 import { readFile } from 'node:fs/promises';
-import { readSecret } from '../../src/lib/infrastructure/secrets';
+import { readAppSecret } from '../../src/lib/infrastructure/secrets';
 
-export function fixtureManifest(mode: 'shared' | 'own', version = '1.0.0') {
+export function fixtureManifest(mode: 'shared' | 'own', version = '1.0.0', image = 'docker.io/library/busybox:1.36.1',
+  start = "mkdir -p /data/www; test -f /data/www/marker || echo old >/data/www/marker; exec httpd -f -p 8080 -h /data/www",
+  healthPath = '/marker', config = 'old-config\n') {
   // Existing appliance NIC names use an app-ID prefix. Keep fixture prefixes
   // distinct so this transaction fixture does not depend on that naming limit.
   const appId = mode === 'own' ? 'migration-own-fixture' : 'migration-fixture-shared';
@@ -21,70 +24,41 @@ export function fixtureManifest(mode: 'shared' | 'own', version = '1.0.0') {
   const clientEnvironment = mode === 'shared'
     ? { PGHOST: '${database.host}', PGPORT: '${database.port}', PGDATABASE: '${database.name}',
       PGUSER: '${database.user}', PGPASSWORD: '${database.password}' }
-    : { PGHOST: '${containers.db.internal_host}', PGPORT: '5432', PGDATABASE: database,
-      PGUSER: role, PGPASSWORD: '${secrets.db_password}' };
-  return AppManifestSchema.parse({
-    apiVersion: 'v1', kind: 'app', version,
-    metadata: { id: appId, name: `Migration fixture (${mode})`,
-      description: 'Disposable transaction acceptance fixture', icon: 'test-tube',
-      category: 'developer', defaultSubdomain: appId },
-    forwardAuth: 'enabled',
-    database: mode === 'shared' ? { mode, name: database, user: role } : { mode, container: 'db' },
-    backup: mode === 'own' ? { ownPostgres: { container: `app-${appId}-db`, database, user: role } } : undefined,
-    secrets: [{ name: 'db_password', file: 'db-password', generator: 'password', length: 32 }],
-    containers: [
-      { name: 'main', type: 'oci', primary: true, image: 'docker.io/library/busybox:1.36.1', port: 8080,
-        command: "sh -c 'mkdir -p /data/www; test -f /data/www/marker || echo old >/data/www/marker; exec httpd -f -p 8080 -h /data/www'",
-        environment: clientEnvironment,
-        volumes: [{ name: 'data', container: '/data', type: 'data' }],
-        healthCheck: { type: 'http', path: '/marker', timeout: 30_000 },
-      },
-      { name: 'worker', type: 'oci', image: 'docker.io/library/postgres:17.10-alpine',
-        command: "sh -c 'exec sleep 86400'", environment: clientEnvironment,
-      },
-      ...(mode === 'own' ? [{ name: 'db', type: 'oci', image: 'docker.io/library/postgres:17.10-alpine',
-        environment: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: '${secrets.db_password}', POSTGRES_DB: 'postgres' },
-        volumes: [{ name: 'pgdata', container: '/var/lib/postgresql/data', type: 'data' }],
-        healthCheck: { type: 'postgres', user: 'postgres', timeout: 60_000 },
+    : { PGHOST: '${sidecar.db.host}', PGPORT: '5432', PGDATABASE: database,
+      PGUSER: role, PGPASSWORD: '${secret.db_password}' };
+  // Disposable fixture images are tags on purpose; the Market requires digests.
+  return loadApp({ manifest: stringify({
+    schema: 'youeye.app.v1', id: appId, version, name: `Migration fixture (${mode})`,
+    listing: { description: 'Disposable transaction acceptance fixture', icon: 'test-tube', category: 'developer' },
+    forward_auth: true,
+    database: mode === 'shared' ? { postgres: { name: database, user: role } } : { sidecar: 'db', name: database, user: role },
+    image, port: 8080, command: ['sh', '-c', start],
+    health: { path: healthPath, timeout: 30 },
+    data: ['/data'],
+    env: clientEnvironment,
+    files: [{ path: '/data/www/config', template: config }],
+    sidecars: [
+      { name: 'worker', image: 'docker.io/library/postgres:17.10-alpine', command: ['sh', '-c', 'exec sleep 86400'], env: clientEnvironment },
+      ...(mode === 'own' ? [{ name: 'db', image: 'docker.io/library/postgres:17.10-alpine',
+        env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: '${secret.db_password}', POSTGRES_DB: 'postgres' },
+        data: ['/var/lib/postgresql/data'],
+        health: { postgres: 'postgres', timeout: 60 },
       }] : []),
     ],
-    configFiles: [{ container: 'main', path: '/data/www/config', template: 'old-config\n' }],
-  });
+  }, { aliasDuplicateObjects: false }) }, { allowUnpinned: true });
 }
 
-/** Real provider inputs for normal updates and failures after durable mutation. */
-export function fixtureTargetManifest(
-  mode: 'shared' | 'own', version = '1.0.1', fromVersion = '1.0.0',
-  failure?: 'pre-hook' | 'sql' | 'post-hook' | 'health',
-) {
-  const manifest = fixtureManifest(mode, version);
-  manifest.containers[0].image = 'docker.io/library/busybox:1.37.0';
-  manifest.containers[0].command =
-    "sh -c 'echo new >/data/www/startup; exec httpd -f -p 8080 -h /data/www'";
-  if (failure === 'health') manifest.containers[0].healthCheck = { type: 'http', path: '/missing', timeout: 5_000 };
-  manifest.configFiles[0].template = 'new-config\n';
-  manifest.update = {
-    strategy: 'migrate', preserveData: true, preserveSecrets: true, version_constraint: 'any',
-    pre_update: [{ exec_in: 'main', run: `echo hook-new >/data/www/marker${failure === 'pre-hook' ? '; exit 1' : ''}`, timeout: 30_000 }],
-    migrations: [{
-      fromVersion, toVersion: version, required: true,
-      steps: [
-        { type: 'sql', database: `migration_fixture_${mode}`,
-          command: "ALTER TABLE fixture_rows ADD COLUMN revision integer DEFAULT 2; UPDATE fixture_rows SET value='new';" },
-        ...(failure === 'sql' ? [{ type: 'exec' as const, container: 'main', command: 'exit 1', timeout: 30_000 }] : []),
-      ],
-    }],
-    post_update: [{ exec_in: 'main', run: `echo new >/data/www/marker${failure === 'post-hook' ? '; exit 1' : ''}`, timeout: 30_000 }],
-  };
-  return AppManifestSchema.parse(manifest);
+/** Real provider inputs for normal updates and a failure after durable mutation. */
+export function fixtureTargetManifest(mode: 'shared' | 'own', version = '1.0.1', failure?: 'health') {
+  return fixtureManifest(mode, version, 'docker.io/library/busybox:1.37.0',
+    'echo new >/data/www/startup; exec httpd -f -p 8080 -h /data/www',
+    failure === 'health' ? '/missing' : '/marker', 'new-config\n');
 }
 
 export async function installFixture(mode: 'shared' | 'own', domain: string, sourceURL: string) {
   const manifest = fixtureManifest(mode);
   if (await readInstallMetadata(manifest.metadata.id)) throw new Error('Fixture already exists; inspect before reuse');
-  const entry = await saveDirectMarketApp({
-    manifestUrl: sourceURL, manifestText: JSON.stringify(manifest), manifest,
-  });
+  const entry = await saveDirectMarketApp({ manifestUrl: sourceURL, manifest });
   await installApp(manifest, {
     appId: manifest.metadata.id, subdomain: manifest.metadata.defaultSubdomain, domain,
     sourceId: entry.sourceId, sourceName: 'Disposable fixture', sourceRepoUrl: sourceURL,
@@ -97,7 +71,7 @@ export async function installFixture(mode: 'shared' | 'own', domain: string, sou
   const database = `migration_fixture_${mode}`;
   const role = `${database}_owner`;
   if (mode === 'own') {
-    const password = await readSecret(`app-${manifest.metadata.id}`, 'db-password');
+    const password = await readAppSecret(manifest.metadata.id, 'db_password');
     if (!password || !/^[A-Za-z0-9_-]+$/.test(password)) throw new Error('Fixture credential unavailable');
     const remote = '/tmp/youeye-fixture-init.sql';
     await incusUploadFile(engine, remote, Buffer.from(

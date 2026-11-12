@@ -13,6 +13,11 @@ test('explicit integration lifecycle is locked, sensitivity-safe, and read-back 
 
   assert.match(manager, /withBridgeAdmission<Bridge \| null>\(bridgeId, 'bridge-activate'/);
   assert.match(manager, /withBridgeAppLocks\(bridge\.from, bridge\.to, \(\) => withBridgeLifecycleLock/);
+  // Every activation runs the connect file; deactivation and deletion run its remove: steps first.
+  assert.match(manager, /export async function activateBridge[\s\S]*?runConnectionWiring\(bridge\.from, bridge\.to\)/);
+  assert.match(manager, /export async function deactivateBridge\(bridgeId: string\)[^{]*\{\s*await unwireBridge\(bridgeId\);/);
+  assert.match(manager, /export async function deleteBridge\(bridgeId: string\)[^{]*\{\s*await unwireBridge\(bridgeId\);/);
+  assert.match(manager, /runConnectionWiring\(bridge\.from, bridge\.to, undefined, \{ remove: true \}\)/);
   assert.match(manager, /withAppLifecycle\(appIds\[index\]/);
   assert.match(manager, /incusDownloadFile\(fromContainer/);
   assert.match(manager, /writeContainerFileExact/);
@@ -34,4 +39,15 @@ test('explicit integration lifecycle is locked, sensitivity-safe, and read-back 
   assert.match(network, /Create app bridge .*?, 300\)/);
   assert.match(network, /Create app ACL .*?, 180\)/);
   assert.match(network, /Integration ACL .* still exists after revocation/);
+});
+
+test('waiting connections are activated only after the install commits its network lease, never inside rollback scope', async () => {
+  const engine = await readFile(path.join(process.cwd(), 'src/lib/market/engine.ts'), 'utf8');
+  const active = engine.indexOf('await markAppNetworkActive(appId);');
+  const rollback = engine.lastIndexOf('await rollbackInstall(rollbackCtx, onEvent, totalSteps);');
+  const activation = engine.indexOf('await activatePendingBridges(');
+  const call = engine.lastIndexOf('await activateWaitingConnections();');
+  assert.ok(active > 0 && activation > 0 && call > rollback && rollback > active);
+  // The activation itself is guarded: a failure is logged and does not fail the install.
+  assert.match(engine, /async function activateWaitingConnections\(\)[\s\S]*?try \{[\s\S]*?activatePendingBridges[\s\S]*?\} catch \(error\) \{\s*logOperationFailure/);
 });

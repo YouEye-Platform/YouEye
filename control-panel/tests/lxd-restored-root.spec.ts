@@ -5,13 +5,24 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-function fixture(roots: Record<string, Record<string, string>>) {
+const INSTALLATION = '20000000-0000-4000-8000-000000000001';
+const ownership = {
+  APP_TAG: 'user.youeye.app_id', INSTALLATION_TAG: 'user.youeye.installation_id',
+  assertInstanceName: () => {},
+  ownershipConfig: (owner: { appId: string; installationId: string }) => ({
+    'user.youeye.app_id': owner.appId, 'user.youeye.installation_id': owner.installationId }),
+};
+
+function fixture(roots: Record<string, Record<string, string>>, config: Record<string, string> = {
+  'user.youeye.app_id': 'fixture', 'user.youeye.installation_id': INSTALLATION,
+}) {
   const effects: Array<{ method: string; route: string; body?: any }> = [];
   const mocks: Record<string, any> = {
+    '@/lib/market/instance-ownership': ownership,
     '../incus/server': {
       incusRequest: async (method: string, route: string, body?: any) => {
         if (method === 'GET') return { type: 'sync', metadata: {
-          status: 'Stopped', architecture: 'x86_64', profiles: [], config: {},
+          status: 'Stopped', architecture: 'x86_64', profiles: [], config,
           expanded_devices: { ...roots, staleNic: { type: 'nic', network: 'source-network' } },
         } };
         effects.push({ method, route, body }); return { type: 'sync' };
@@ -26,11 +37,12 @@ function fixture(roots: Record<string, Record<string, string>>) {
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText, { exports, require: (name: string) => mocks[name] ?? {} });
-  const spec = { name: 'fixture', containerName: 'app-fixture', volumes: [
-    { kind: 'custom', pool: 'data-pool', source: 'retained-data', container: '/data' },
-  ] };
+  const spec = { name: 'fixture', displayName: 'Fixture', containerName: 'app-fixture', appDir: '/opt/app',
+    nodeVersion: '22.x', port: 3000, volumes: [
+      { kind: 'custom', pool: 'data-pool', source: 'retained-data', container: '/data' },
+    ] };
   return { effects, run: () => exports.adoptRestoredLXDContainer(spec,
-    { eth0: { type: 'nic', network: 'target-network' } }) };
+    { eth0: { type: 'nic', network: 'target-network' } }, { appId: 'fixture', installationId: INSTALLATION }) };
 }
 
 test('profile-free native adoption keeps its original root and replaces other devices before start', async () => {
@@ -45,6 +57,16 @@ test('profile-free native adoption keeps its original root and replaces other de
   assert.equal(update.body.devices.staleNic, undefined);
   assert.equal(JSON.stringify(update.body.profiles), '[]');
   assert.equal(f.effects[1].body.action, 'start');
+});
+
+test('native adoption refuses an instance not tagged with this installation', async () => {
+  const root = { originalRoot: { type: 'disk', path: '/', pool: 'retained-pool' } };
+  for (const config of [{}, { 'user.youeye.installation_id': '20000000-0000-4000-8000-000000000002' },
+    { 'user.youeye.installation_id': INSTALLATION, 'user.youeye.app_id': 'other' }]) {
+    const f = fixture(root, config);
+    await assert.rejects(f.run(), /not tagged with this installation/);
+    assert.equal(f.effects.length, 0);
+  }
 });
 
 test('native adoption rejects missing, ambiguous or unbound roots before any mutation', async () => {

@@ -28,7 +28,7 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 		raw, _ := json.Marshal(previous.Release)
 		var r releasecache.CoreRelease
 		_ = json.Unmarshal(raw, &r)
-		r.Version, r.Tag, r.SourceTree = version, "youeye-v"+version, commit
+		r.Version, r.Build, r.Tag, r.SourceTree = version, version, "youeye-v"+version, commit
 		r.Sequence = sequence
 		r.Compatibility.MinimumRelease = "0.6.0-dev.26"
 		for i := range r.Members {

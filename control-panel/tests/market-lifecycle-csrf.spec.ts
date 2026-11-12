@@ -20,6 +20,8 @@ function fixture(route: string, administrator = true) {
     '@/lib/market/uninstaller': { uninstallApp: async (...args: unknown[]) => {
       effects.push(args); return { success: true }; } },
     '@/lib/events/emitter': { emitEvent: () => {} },
+    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/install-tracker': { logOperationFailure: () => {} },
   };
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,

@@ -13,13 +13,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { propagateLanguageToAll, getLanguageSupportedAppCount } from '@/lib/language/service';
 
 import { locales as SUPPORTED_LOCALES } from "@/i18n/config";
 
 export async function PATCH(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

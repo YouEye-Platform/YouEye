@@ -24,9 +24,11 @@ type NativeCoreExecutor struct {
 	AuthorizeLiveFenceAction     func(context.Context, CoreJournal, CoreStep) error
 	ContinueRecoveryHealthAction func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
 	CancelPreparationAction      func(context.Context, CoreJournal) error
-	AdmitAction                  func(context.Context, CoreJournal, CoreStep) error
-	ExecuteAction                func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
-	ReconcileAction              func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+	// VerifyCheckpointRefusalAction checks the native side of a refused checkpoint preflight: no checkpoint record.
+	VerifyCheckpointRefusalAction func(context.Context, CoreJournal) error
+	AdmitAction                   func(context.Context, CoreJournal, CoreStep) error
+	ExecuteAction                 func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+	ReconcileAction               func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
 }
 
 // ActionStatus reads sanitized retained diagnostics without launching work or
@@ -52,6 +54,27 @@ func (e NativeCoreExecutor) CancelPreparation(ctx context.Context, j CoreJournal
 		return fmt.Errorf("native staged host cancellation is not configured")
 	}
 	return e.CancelPreparationAction(ctx, j)
+}
+
+// VerifyCheckpointRefusal proves that the checkpoint action ended in its read-only preflight: this executor's own
+// terminal receipt carries the refusal code (written only before Quiesce), and the runtime finds no checkpoint
+// record (Quiesce saves it before its first effect). Anything else, including a missing or unknown receipt, keeps
+// the request on paired recovery.
+func (e NativeCoreExecutor) VerifyCheckpointRefusal(ctx context.Context, j CoreJournal) error {
+	if e.VerifyCheckpointRefusalAction == nil {
+		return fmt.Errorf("checkpoint refusal verification is not configured")
+	}
+	for _, s := range j.Steps {
+		if s.Name != "checkpoint" {
+			continue
+		}
+		a, err := e.read(j, s)
+		if err != nil || a.Result.State != "failed" || a.Result.Code != coreCheckpointPreflightRefused || a.Result.EffectState != "not-started" {
+			return fmt.Errorf("checkpoint has no retained preflight refusal")
+		}
+		return e.VerifyCheckpointRefusalAction(ctx, j)
+	}
+	return fmt.Errorf("core graph has no checkpoint")
 }
 
 func (e NativeCoreExecutor) AuthorizeLiveFence(ctx context.Context, j CoreJournal, s CoreStep) error {
@@ -141,7 +164,7 @@ func validateNativeResult(result CoreActionObservation) error {
 		return fmt.Errorf("invalid native effect state")
 	}
 	switch result.Code {
-	case "", "admission_timeout", "admission_cancelled", "admission_rejected", "native_action_failed", "schema_response_unavailable", "schema_request_rejected", "schema_identity_mismatch", "recovery_services_unavailable", "recovery_power_unavailable", "recovery_health_unavailable":
+	case "", "admission_timeout", "admission_cancelled", "admission_rejected", "native_action_failed", "schema_response_unavailable", "schema_request_rejected", "schema_identity_mismatch", "recovery_services_unavailable", "recovery_power_unavailable", "recovery_health_unavailable", coreCheckpointPreflightRefused:
 	default:
 		return fmt.Errorf("invalid native action error code")
 	}

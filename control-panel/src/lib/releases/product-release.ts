@@ -156,11 +156,22 @@ export function acceptProductSequence(floors: ProductSequenceFloors | undefined,
   return {...floors,[r.product]:{build:build.build_version,buildSHA256:productBuildSHA256(selected),manifestSHA256}};
 }
 
+const megabytes = (bytes: number) => Math.ceil(bytes / (1024 * 1024));
+
+/** The named asset of a verified release, refused when it is missing or larger than `maximumBytes`. */
+export function productBlobWithinLimit(selected: VerifiedProductRelease, name: string, maximumBytes: number): CoreBlob {
+  const blob = selected.build.assets.find(a => a.name === name);
+  if (!blob) throw new Error(`Release ${selected.release.tag} has no ${name} asset`);
+  if (blob.size_bytes > maximumBytes) {
+    throw new Error(`Release ${selected.release.tag} package ${name} (${megabytes(blob.size_bytes)} MB) is larger than the limit (${megabytes(maximumBytes)} MB)`);
+  }
+  return blob;
+}
+
 /** Download one named asset of a verified release and check its digest and size. */
 export async function loadProductBlob(selected: VerifiedProductRelease, name: string,
   load: (url: string, maximumBytes: number) => Promise<Buffer>, maximumBytes: number): Promise<Buffer> {
-  const blob = selected.build.assets.find(a => a.name === name);
-  if (!blob || blob.size_bytes > maximumBytes) throw new Error(`Release ${selected.release.tag} has no ${name} asset within limits`);
+  const blob = productBlobWithinLimit(selected, name, maximumBytes);
   const bytes = await load(productAssetURL(selected,blob),blob.size_bytes);
   if (bytes.length !== blob.size_bytes || digest(bytes) !== blob.sha256) throw new Error('Product artifact differs from its original build digest');
   return bytes;

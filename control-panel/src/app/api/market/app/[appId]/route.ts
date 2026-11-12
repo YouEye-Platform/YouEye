@@ -63,17 +63,7 @@ export async function GET(
               })),
             }
           : undefined,
-        installParams: manifest.installParams?.map((p) => ({
-          name: p.name,
-          label: p.label,
-          required: p.required,
-          description: p.description,
-          type: p.type,
-          default: p.default,
-          choices: p.choices,
-          validation: p.validation,
-        })),
-        entrances: manifest.entrances,
+        setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
         forwardAuth: manifest.forwardAuth,
       },
     });

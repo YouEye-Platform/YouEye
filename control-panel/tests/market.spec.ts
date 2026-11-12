@@ -16,7 +16,6 @@ test('Browse page layout includes hero, pill bar, Built-for, Featured, and Sourc
   assert.match(m, /All apps/);
   assert.match(m, /Installed/);
   assert.match(m, /Updates/);
-  assert.match(m, /Integrations/);
   assert.match(m, /Built for your server/);
   assert.match(m, /Featured/);
   assert.match(m, /href="\/market\/sources"/);             // Sources pill + footer

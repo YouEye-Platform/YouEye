@@ -62,6 +62,9 @@ export function InstallFromUrlDialog({
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  // Setup files need an explicit approval before the app is added.
+  const [pendingSetups, setPendingSetups] = useState<Array<{ name: string; for: string }>>([]);
+  const [allowSetup, setAllowSetup] = useState(false);
 
   // Preview state
   const [preview, setPreview] = useState<MarketApp | null>(null);
@@ -90,12 +93,17 @@ export function InstallFromUrlDialog({
       const res = await authenticatedFetch('/api/market/validate-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifestUrl: url.trim(), addToMarket: true }),
+        body: JSON.stringify({ manifestUrl: url.trim(), addToMarket: true, ...(allowSetup ? { allowSetup: true } : {}) }),
       });
 
       const data = await res.json();
 
       if (!data.valid) {
+        if (data.setupApprovalRequired && Array.isArray(data.setups)) {
+          setPendingSetups(data.setups);
+          setValidationErrors([translateInterface("m1d8034f00ca4")]);
+          return;
+        }
         setValidationErrors(data.errors || [translateInterface("mec4ed30cb031")]);
         return;
       }
@@ -115,7 +123,7 @@ export function InstallFromUrlDialog({
     } finally {
       setFetching(false);
     }
-  }, [url, onClose, router, translateInterface]);
+  }, [url, allowSetup, onClose, router, translateInterface]);
 
   // Install from URL
   const handleInstall = useCallback(async () => {
@@ -133,6 +141,7 @@ export function InstallFromUrlDialog({
           manifestUrl: url.trim(),
           subdomain,
           domain,
+          ...(allowSetup ? { allowSetup: true } : {}),
         }),
       });
 
@@ -183,7 +192,7 @@ export function InstallFromUrlDialog({
     } finally {
       setInstallDone(true);
     }
-  }, [url, preview, subdomain, domain, translateInterface]);
+  }, [url, preview, subdomain, domain, allowSetup, translateInterface]);
 
   const longDescription = preview?.detail?.longDescription || preview?.description;
   const screenshots = preview?.detail?.screenshots ?? [];
@@ -249,6 +258,24 @@ export function InstallFromUrlDialog({
                       <li key={i}>{err}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {pendingSetups.length > 0 && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <p className="text-sm font-medium">{translateInterface("m8977bde3d0f7")}</p>
+                  <p className="text-xs text-muted-foreground">{translateInterface("m41a1b4787986")}</p>
+                  <ul className="space-y-1 text-xs">
+                    {pendingSetups.map((setup) => (
+                      <li key={setup.name} className="flex justify-between gap-3">
+                        <span className="font-mono">{setup.name}</span>
+                        <span className="text-muted-foreground">{setup.for}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input type="checkbox" checked={allowSetup} onChange={(event) => setAllowSetup(event.target.checked)} />
+                    {translateInterface("m2514aaccdb83")}</label>
                 </div>
               )}
             </>

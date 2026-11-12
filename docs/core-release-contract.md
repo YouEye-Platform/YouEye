@@ -167,6 +167,9 @@ container and inventory work. Active operations must settle, and unfinished app
 receipts require recovery before activation. A protected durable reservation
 continues exclusion after process loss or reboot; only the matching committed
 core journal and installed machine receipt permit normal release of that hold.
+A checkpoint whose read-only preflight refused (`checkpoint_preflight_refused`, no
+checkpoint record written) ends the request as `cancelled` on resume, recover or
+cancel and releases the hold; nothing was stopped or snapshotted.
 Native backup and all system-container entry points retain the same shared lock.
 Interrupted backup and container-maintenance records block activation as well.
 

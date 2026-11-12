@@ -19,7 +19,7 @@ import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { incusRequest } from '@/lib/incus/server';
 import { listInstalledApps, readInstallMetadata } from './metadata';
 import { getPlatformContext, clearPlatformContextCache } from './platform-env';
-import { fetchManifest } from './catalog';
+import { readInstalledAppManifest } from './frozen-manifest';
 
 export interface PropagationResult {
   appsUpdated: string[];
@@ -179,7 +179,7 @@ export async function propagateSmtpToApps(): Promise<PropagationResult> {
     // Check if this app declared SMTP capability
     let hasSmtp = false;
     try {
-      const manifest = await fetchManifest(app.appId);
+      const manifest = await readInstalledAppManifest(app.appId);
       hasSmtp = !!manifest?.capabilities?.smtp;
     } catch {
       // Can't fetch manifest — skip

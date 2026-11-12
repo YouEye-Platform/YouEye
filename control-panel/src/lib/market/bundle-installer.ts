@@ -12,10 +12,11 @@
  */
 
 import { installApp } from './engine';
-import { runConnectionWiring } from './wire-runner';
+import { logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError } from './install-tracker';
 import { fetchManifest, fetchManifestReferenceFromSource } from './catalog';
+import { readFrozenUpdateManifest } from './frozen-manifest';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { createBridge, resolveBridgeMappings, activateBridge, detectBridgeDependencies } from '../bridges/manager';
+import { createBridge, resolveBridgeMappings, activateBridge } from '../bridges/manager';
 import { updateBridge, loadBridges } from '../bridges/store';
 import type { EnvMapping } from '../bridges/store';
 import { settingsService } from '../settings';
@@ -37,16 +38,11 @@ async function approveConnection(fromAppId: string, toAppId: string): Promise<{ 
   const bridges = await loadBridges();
   const existing = bridges.find((b) => b.from === fromAppId && b.to === toAppId);
 
-  // Derive backend env mappings (keys/URLs) from the source app's manifest.
-  let envMappings: EnvMapping[] = [];
+  // Derive backend env mappings (keys/URLs) from the source app's installed (frozen) manifest.
+  const envMappings: EnvMapping[] = [];
   let defaultPort = 8080;
   try {
-    const manifest = await fetchManifest(fromAppId);
-    if (manifest.env_mapping) {
-      envMappings = detectBridgeDependencies(manifest.env_mapping, fromAppId)
-        .filter((d) => d.targetAppId === toAppId)
-        .flatMap((d) => d.envMappings);
-    }
+    const manifest = await readFrozenUpdateManifest(fromAppId);
     const want = manifest.wants?.find((w) => w.appId === toAppId);
     if (want?.defaultPort) defaultPort = want.defaultPort;
   } catch {
@@ -63,11 +59,8 @@ async function approveConnection(fromAppId: string, toAppId: string): Promise<{ 
   const domain = await platformDomain();
   const resolved = await resolveBridgeMappings(envMappings, targetContainer, defaultPort, targetSub, domain);
   await updateBridge(bridge.id, { envMappings: resolved });
+  // Activation also runs the consumer's connect setup file (non-fatal).
   const result = await activateBridge(bridge.id);
-
-  // Run the app-config wire recipe (if the consumer declares one for this target), so the
-  // connection is functionally configured, not just network-bridged. Non-fatal.
-  await runConnectionWiring(fromAppId, toAppId);
 
   return { bridgeId: bridge.id, activated: !!result?.active };
 }
@@ -120,12 +113,13 @@ export async function installBundle(
           : {}),
       };
       onEvent({ step, totalSteps, status: 'running', message: `Installing ${manifest.metadata.name}…`, phase: 'install' });
-      await installApp(manifest, config, (e) => onEvent({ ...e, step, totalSteps }), signal);
+      await installApp(manifest, config, (e) => onEvent(sanitiseInstallEvent({ ...e, step, totalSteps })), signal);
       installed.add(memberId);
       result.members.push({ appId: memberId, status: 'installed' });
       onEvent({ step, totalSteps, status: 'success', message: `Installed ${manifest.metadata.name}`, phase: 'install' });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      logOperationFailure(`Bundle ${bundle.id} member ${memberId}`, err);
+      const msg = sensitivitySafeInstallError(err);
       result.members.push({ appId: memberId, status: 'failed', error: msg });
       onEvent({ step, totalSteps, status: 'error', message: `Failed to install ${memberId}: ${msg}`, phase: 'install' });
     }
@@ -145,9 +139,9 @@ export async function installBundle(
       result.connections.push({ from: conn.from, to: conn.to, status: activated ? 'wired' : 'pending' });
       onEvent({ step, totalSteps, status: activated ? 'success' : 'warning', message: `${activated ? 'Connected' : 'Bridged (target pending)'} ${conn.from} → ${conn.to}`, phase: 'verify' });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.connections.push({ from: conn.from, to: conn.to, status: 'failed', error: msg });
-      onEvent({ step, totalSteps, status: 'error', message: `Failed to connect ${conn.from} → ${conn.to}: ${msg}`, phase: 'verify' });
+      logOperationFailure(`Bundle ${bundle.id} connection ${conn.from} → ${conn.to}`, err);
+      result.connections.push({ from: conn.from, to: conn.to, status: 'failed', error: 'The connection could not be set up' });
+      onEvent({ step, totalSteps, status: 'error', message: `Failed to connect ${conn.from} → ${conn.to}`, phase: 'verify' });
     }
   }
 

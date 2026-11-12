@@ -101,8 +101,8 @@ var namesExportCmd = &cobra.Command{
 		if namesExportOutput != "" && namesExportStdout {
 			return fmt.Errorf("--output and --stdout cannot be used together")
 		}
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/tls/youeye-names/export")
 		if err != nil {
@@ -149,8 +149,8 @@ var namesImportCmd = &cobra.Command{
 
 		state := readPlatformYaml()
 		if state.SetupCompleted {
-			if !requireCP() {
-				return nil
+			if err := requireCP(); err != nil {
+				return err
 			}
 			if state.Domain == bundle.FQDN && !namesImportYes {
 				return fmt.Errorf("the server already uses %s; rerun with --yes to re-apply its saved identity and certificate", bundle.FQDN)

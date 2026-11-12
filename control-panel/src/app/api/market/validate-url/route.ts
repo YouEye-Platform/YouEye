@@ -16,87 +16,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema } from '@/lib/market/schema';
-import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import type { AppManifest, MarketApp } from '@/lib/market/types';
+import { fetchUrlApp, isPrivateHostname, UrlAppError, validateAppUrl } from '@/lib/market/url-app';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
 export const dynamic = 'force-dynamic';
-
-const MAX_SIZE_BYTES = 1024 * 1024; // 1MB
-const FETCH_TIMEOUT_MS = 5000;
-
-/** RFC1918 + loopback IP ranges that should be blocked for SSRF prevention */
-const PRIVATE_IP_PATTERNS = [
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-  /^192\.168\./,
-  /^127\./,
-  /^0\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
-  /^fd/,
-  /^localhost$/i,
-];
-
-/**
- * Check if a hostname resolves to a private/internal IP.
- * Returns true if the URL targets an internal address (SSRF risk).
- */
-function isPrivateHostname(hostname: string): boolean {
-  // Direct IP check
-  for (const pattern of PRIVATE_IP_PATTERNS) {
-    if (pattern.test(hostname)) {
-      return true;
-    }
-  }
-
-  // Block common internal hostnames
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith(`.${CONTAINER_DOMAIN}`) ||
-    hostname.endsWith('.incus') ||
-    hostname.endsWith('.test')
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Validate a manifest URL for safety.
- * Returns an error string if invalid, or null if safe.
- */
-function validateUrl(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return 'Invalid URL format';
-  }
-
-  if (parsed.protocol !== 'https:') {
-    return 'Only HTTPS URLs are allowed';
-  }
-
-  if (isPrivateHostname(parsed.hostname)) {
-    return 'URL must point to a public server (private/internal IPs are blocked)';
-  }
-
-  // Block URLs with authentication credentials
-  if (parsed.username || parsed.password) {
-    return 'URLs with embedded credentials are not allowed';
-  }
-
-  return null;
-}
 
 /**
  * Convert a parsed manifest to a MarketApp preview for the UI.
@@ -129,7 +54,7 @@ export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
-  let body: { manifestUrl?: string; addToMarket?: boolean };
+  let body: { manifestUrl?: string; addToMarket?: boolean; allowSetup?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -170,7 +95,7 @@ export async function POST(request: NextRequest) {
     : forgejoManifestUrl ?? manifestUrl;
 
   // Step 1: Validate URL safety
-  const urlError = validateUrl(resolvedUrl);
+  const urlError = validateAppUrl(resolvedUrl);
   if (urlError) {
     return NextResponse.json(
       { valid: false, errors: [urlError] },
@@ -178,98 +103,32 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Step 2: Fetch the YAML
-  let yamlText: string;
+  // Step 2: Fetch and parse the app (manifest + setup files) with the one app-format parser
+  let manifest: AppManifest;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-    const res = await fetch(resolvedUrl, {
-      signal: controller.signal,
-      redirect: 'error',
-      headers: {
-        'Accept': 'text/yaml, application/yaml, text/plain, */*',
-        'User-Agent': 'YouEye-Market/1.0',
-      },
-    });
-
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { valid: false, errors: [`Failed to fetch manifest: HTTP ${res.status}`] },
-        { status: 400 }
-      );
-    }
-
-    if (res.headers.get('content-type')?.toLowerCase().includes('text/html')) {
-      return NextResponse.json(
-        { valid: false, errors: ['Manifest URL returned an HTML document'] },
-        { status: 400 }
-      );
-    }
-
-    // Check response size
-    const contentLength = res.headers.get('content-length');
-    if (contentLength && parseInt(contentLength, 10) > MAX_SIZE_BYTES) {
-      return NextResponse.json(
-        { valid: false, errors: ['Manifest file exceeds 1MB size limit'] },
-        { status: 400 }
-      );
-    }
-
-    yamlText = await res.text();
-
-    if (yamlText.length > MAX_SIZE_BYTES) {
-      return NextResponse.json(
-        { valid: false, errors: ['Manifest file exceeds 1MB size limit'] },
-        { status: 400 }
-      );
-    }
-  } catch (err) {
-    const message = err instanceof Error
-      ? err.name === 'AbortError'
-        ? 'Request timed out (5s limit)'
-        : err.message
-      : 'Failed to fetch manifest';
-
-    return NextResponse.json(
-      { valid: false, errors: [message] },
-      { status: 400 }
-    );
+    manifest = await fetchUrlApp(resolvedUrl);
+  } catch (error) {
+    const errors = error instanceof UrlAppError
+      ? (error.details.length ? error.details : [error.message])
+      : ['Failed to fetch manifest'];
+    return NextResponse.json({ valid: false, errors }, { status: 400 });
   }
 
-  // Step 3: Parse YAML safely
-  let raw: unknown;
-  try {
-    raw = parseYAML(yamlText, {
-      // Safe parsing — no custom tags, no merge keys
-      maxAliasCount: 0,
-    });
-  } catch (err) {
-    return NextResponse.json(
-      { valid: false, errors: [`Invalid YAML: ${err instanceof Error ? err.message : 'Parse error'}`] },
-      { status: 400 }
-    );
+  // Step 3: an app with setup files runs them inside its containers; it is only accepted
+  // with an explicit approval (the CLI's --allow-setup, the dialog's checkbox).
+  if (manifest.setups.length > 0 && body.allowSetup !== true) {
+    return NextResponse.json({
+      valid: false,
+      setupApprovalRequired: true,
+      errors: ['This app runs setup files inside its containers; confirm them before adding it (allowSetup)'],
+      setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
+    }, { status: 400 });
   }
 
-  // Step 4: Validate against schema
-  const result = AppManifestSchema.safeParse(raw);
-  if (!result.success) {
-    const errors = result.error.issues.map(
-      (issue) => `${issue.path.join('.')}: ${issue.message}`
-    );
-    return NextResponse.json(
-      { valid: false, errors },
-      { status: 400 }
-    );
-  }
-
-  // Step 5: Return validated manifest preview
-  const manifest = result.data;
+  // Step 4: Return validated manifest preview
   const preview = manifestToPreview(manifest);
   const directEntry = body.addToMarket
-    ? await saveDirectMarketApp({ manifestUrl: resolvedUrl, manifestText: yamlText, manifest })
+    ? await saveDirectMarketApp({ manifestUrl: resolvedUrl, manifest })
     : null;
 
   // Log the URL install attempt for audit
@@ -289,6 +148,7 @@ export async function POST(request: NextRequest) {
       containers: manifest.containers.length,
       notifications: manifest.capabilities?.notifications,
       smtp: manifest.capabilities?.smtp,
+      setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
     },
   });
 }

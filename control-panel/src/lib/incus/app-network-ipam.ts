@@ -155,6 +155,20 @@ export function cidrContains(container: string, candidate: string): boolean {
   return inner.network >= outer.network && inner.broadcast <= outer.broadcast;
 }
 
+/**
+ * An app container address the CP may connect to or open an ACL for: a host address inside the
+ * app network `cidr` and not its gateway. The address itself comes from host-side data
+ * (`appContainerAddress`), never from what the container reports.
+ */
+export function checkAppAddress(address: string, network: { cidr: string; gateway: string }): string {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) throw new AppNetworkStateError('the container has no IPv4 address');
+  const range = parseCIDR(network.cidr);
+  const ip = parseIPv4(address);
+  if (ip <= range.network || ip >= range.broadcast) throw new AppNetworkStateError(`${address} is outside the app network`);
+  if (address === network.gateway) throw new AppNetworkStateError(`${address} is the app network's gateway`);
+  return address;
+}
+
 export function cidrOverlaps(left: string, right: string): boolean {
   const a = parseCIDR(left);
   const b = parseCIDR(right);

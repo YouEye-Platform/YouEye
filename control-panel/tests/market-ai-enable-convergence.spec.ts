@@ -19,12 +19,12 @@ function fixture(credential: string | null = 'protected-existing-key', failEnvir
     env_mapping: { OPENAI_API_KEY: '${ai.apiKey}', TASK_MODEL_EXTERNAL: '${ai.utilityModel}' } };
   const mocks: Record<string, any> = {
     './metadata': { readInstallMetadata: async () => meta, saveInstallMetadata: async () => effects.push({ name: 'save' }) },
-    './catalog': { fetchManifestFromSource: async () => manifest },
+    './frozen-manifest': { readInstalledAppManifest: async () => manifest },
     './platform-env': { buildCanonicalContext: async (_m: any, config: any) => {
       assert.equal(config.aiSettings.runtimeCredential, credential); return {};
     }, resolveEnvMapping: () => ({ OPENAI_API_KEY: credential, TASK_MODEL_EXTERNAL: 'utility' }) },
     './update-admission': { withAppLifecycle: async (_id: string, run: () => any) => run() },
-    '@/lib/infrastructure/secrets': { readSecret: async () => credential },
+    '@/lib/infrastructure/secrets': { readAppSecret: async () => credential },
     '@/lib/pointer/managed-apps': { readPointerManagedApp: async () => installation,
       setPointerManagedAppEnabled: async (id: string, enabled: boolean) => {
         assert.equal(id, 'original-install'); assert.equal(enabled, true);

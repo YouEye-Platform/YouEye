@@ -1,0 +1,71 @@
+schema: youeye.setup.v1
+for: sso
+steps:
+  - sleep: 10
+  - http:
+      method: POST
+      path: /api/auth/admin-sign-up
+      body:
+        email: admin@youeye.local
+        password: ${secret.admin_password}
+        name: YouEye Admin
+      allow_failure: true
+  - http:
+      method: POST
+      path: /api/auth/login
+      body:
+        email: admin@youeye.local
+        password: ${secret.admin_password}
+      save: {bearerToken: accessToken}
+  - http:
+      method: GET
+      path: /api/system-config
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      save: {currentConfig: $}
+  - http:
+      method: PUT
+      path: /api/system-config
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      body_from: currentConfig
+      set:
+        oauth.enabled: true
+        oauth.issuerUrl: ${sso.issuer}
+        oauth.clientId: ${sso.client_id}
+        oauth.clientSecret: ${sso.client_secret}
+        oauth.scope: openid email profile immich_role
+        oauth.signingAlgorithm: RS256
+        oauth.tokenEndpointAuthMethod: client_secret_post
+        oauth.buttonText: Login with ${identity.name}
+        oauth.autoRegister: true
+        oauth.autoLaunch: false
+        # ${sso.issuer} is the Control Panel's app-network-only HTTP authority.
+        # Immich 3 uses openid-client 6, which rejects HTTP discovery unless this
+        # app-scoped switch is enabled. The browser-facing authorize/callback URLs
+        # remain HTTPS through Caddy; no process-wide TLS override is used.
+        oauth.allowInsecureRequests: true
+        oauth.roleClaim: immich_role
+remove:
+  - http:
+      method: POST
+      path: /api/auth/login
+      body:
+        email: admin@youeye.local
+        password: ${secret.admin_password}
+      save: {bearerToken: accessToken}
+  - http:
+      method: GET
+      path: /api/system-config
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      save: {currentConfig: $}
+  - http:
+      method: PUT
+      path: /api/system-config
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      body_from: currentConfig
+      set:
+        oauth.enabled: false
+      if: {equals: ['${vars.currentConfig.oauth.clientId}', '${sso.client_id}']}

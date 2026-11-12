@@ -15,6 +15,8 @@ import { uninstallApp } from '@/lib/market/uninstaller';
 import { emitEvent } from '@/lib/events/emitter';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
+import { logOperationFailure } from '@/lib/market/install-tracker';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
@@ -37,30 +39,23 @@ export async function POST(request: NextRequest) {
   try {
     const keepData = body.keepData ?? true;
 
-    // Determine if we should drop shared database
-    let dropSharedDatabase = false;
-    if (!keepData) {
-      try {
-        const { fetchManifest } = await import('@/lib/market/catalog');
-        const manifest = await fetchManifest(body.appId);
-        dropSharedDatabase = manifest.uninstall?.dropSharedDatabase ?? false;
-      } catch {
-        // Manifest fetch failed — proceed without dropping shared DB
-      }
+    // The uninstaller decides from the app's install.json (never the live catalog):
+    // delete-data removes the app's own database and role, volumes, secrets and CA directory.
+    const appId = body.appId;
+    const result = await withUserOperationLockWait(() => uninstallApp(appId, { keepData }));
+    if (!result.success) {
+      logOperationFailure(`Uninstall of ${appId}`, new Error(result.errors.join('; ')));
     }
-
-    const result = await uninstallApp(body.appId, {
-      dropSharedDatabase,
-      keepData,
-    });
     if (result.success) {
       emitEvent('app.uninstalled', { appId: body.appId, keepData });
     }
     return NextResponse.json(result, { status: result.success ? 200 : 409 });
   } catch (err) {
+    logOperationFailure(`Uninstall of ${body.appId}`, err);
+    const busy = err instanceof Error && err.name === 'AppLifecycleBusyError';
     return NextResponse.json(
-      { success: false, errors: [String(err)] },
-      { status: 500 }
+      { success: false, errors: [busy ? (err as Error).message : String(err)] },
+      { status: busy ? 409 : 500 }
     );
   }
 }

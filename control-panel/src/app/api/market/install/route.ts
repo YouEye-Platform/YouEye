@@ -4,7 +4,7 @@
  * through the single manifest-driven engine.
  *
  * POST /api/market/install
- * Body: { appId, subdomain?, domain?, sourceId?, installParams?, customName?, customIcon? }
+ * Body: { appId, subdomain?, domain?, sourceId?, customName?, customIcon? }
  *
  * Only appId is required. When the caller omits subdomain/sourceId (e.g. the
  * `youeye app install` CLI), they are resolved server-side from the catalog:
@@ -15,12 +15,13 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchAvailableApps, fetchManifestFromRepo, resolveCatalogApp } from '@/lib/market/catalog';
+import { resolveCatalogApp } from '@/lib/market/catalog';
 import { getMarketSource } from '@/lib/market/source';
 import { installApp } from '@/lib/market/engine';
-import { applyIntegration } from '@/lib/market/integration-runner';
-import { uninstallApp } from '@/lib/market/uninstaller';
-import { finishTracking, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent } from '@/lib/market/install-tracker';
+import {
+  finishTracking, logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent,
+} from '@/lib/market/install-tracker';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
 import { settingsService } from '@/lib/settings';
@@ -29,6 +30,7 @@ import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
 import { getUserByUsername } from '@/lib/identity/store';
+import { resolveInstallAISettings } from '@/lib/market/install-ai-settings';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 import { getDirectMarketApp } from '@/lib/market/direct-apps';
 import { updateInstalledAppSource } from '@/lib/market/installed-apps';
@@ -86,7 +88,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid adoption request' }, { status: 400 });
   }
 
-  if (!config.appId && !config.repoUrl) {
+  if (!config.appId) {
     return new Response(
       JSON.stringify({ error: 'Missing required field: appId' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
@@ -95,7 +97,7 @@ export async function POST(request: NextRequest) {
 
   // Resolve the Market source server-side when omitted so the install record
   // always carries a real sourceId (update detection depends on it).
-  if (!config.repoUrl && !config.sourceId) {
+  if (!config.sourceId) {
     try {
       config.sourceId = (await getMarketSource()).id;
     } catch {
@@ -119,7 +121,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Fetch manifest — from repo URL (custom install) or catalog
+  // Fetch the manifest: from an Added app (direct source) or the catalog
   let manifest;
   try {
     if (config.sourceId?.startsWith('direct:')) {
@@ -128,22 +130,15 @@ export async function POST(request: NextRequest) {
       }
       const direct = await getDirectMarketApp(config.sourceId, config.appId);
       if (!direct) throw new Error('Direct Market entry no longer exists');
+      if (direct.manifest.setups.length > 0 && config.allowSetup !== true) {
+        throw new Error('This app runs setup files inside its containers; allow them before installing (allowSetup)');
+      }
       manifest = direct.manifest;
       config.catalogKey = `${direct.sourceId}:app:${direct.manifest.metadata.id}`;
       config.sourceName = 'Added';
       config.sourceRepoUrl = direct.manifestUrl;
       config.manifestPath = direct.manifestUrl;
       config.manifestDigest = direct.manifestDigest;
-    } else if (config.repoUrl) {
-      if (config.adoptRetainedData) {
-        return Response.json({ error: 'Adopt retained data through its recorded Market or Added source' }, { status: 400 });
-      }
-      delete config.manifestDigest;
-      manifest = await fetchManifestFromRepo(config.repoUrl, 'youeye-app.yaml', config.repoBranch);
-      // Override appId from manifest if not explicitly set
-      if (!config.appId || config.appId === 'custom') {
-        config.appId = manifest.metadata.id;
-      }
     } else {
       const resolved = await resolveCatalogApp(config.appId, [config.sourceId]);
       manifest = resolved.manifest;
@@ -162,31 +157,23 @@ export async function POST(request: NextRequest) {
     );
   }
   delete config.acceptUnverifiedPublisher;
+  delete config.allowSetup;
 
   const appName = manifest.metadata?.name || config.appId;
 
   // Never trust client-supplied Pointer owner or credential fields. AI-capable
-  // apps default to the signed-in administrator's AI Settings; CLI/PAM-only
-  // sessions may still install in manual-provider mode explicitly.
+  // apps default to the signed-in administrator's AI Settings; a CLI session
+  // has no YouEye ID user, so its installs default to AI Settings off.
   if (manifest.capabilities?.ai_api) {
-    const enabled = config.aiSettings?.enabled !== false;
-    if (enabled) {
-      const identityUser = await getUserByUsername(auth.session.username);
-      if (!identityUser) {
-        return new Response(
-          JSON.stringify({ error: 'Using AI Settings requires a YouEye user account; turn it off to configure providers inside the app' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      config.aiSettings = {
-        enabled: true,
-        modelGroupId: config.aiSettings?.modelGroupId,
-        ownerUserId: identityUser.id,
-        ownerDisplayName: identityUser.name || identityUser.username,
-      };
-    } else {
-      config.aiSettings = { enabled: false };
+    const user = auth.session.authMethod === 'cli' ? null : await getUserByUsername(auth.session.username);
+    const decision = resolveInstallAISettings(config.aiSettings, user);
+    if ('error' in decision) {
+      return new Response(
+        JSON.stringify({ error: decision.error }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
     }
+    config.aiSettings = decision.aiSettings;
   } else {
     delete config.aiSettings;
   }
@@ -202,28 +189,6 @@ export async function POST(request: NextRequest) {
       JSON.stringify({ error: 'Subdomain must be a single DNS label using lowercase letters, numbers, and hyphens' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
-  }
-
-  // Validate required install params
-  if (manifest.installParams?.length) {
-    const errors: string[] = [];
-    for (const param of manifest.installParams) {
-      if (param.required && !config.installParams?.[param.name]) {
-        errors.push(`Missing required parameter: ${param.label || param.name}`);
-      }
-      if (param.validation?.pattern && config.installParams?.[param.name]) {
-        const re = new RegExp(param.validation.pattern);
-        if (!re.test(config.installParams[param.name])) {
-          errors.push(param.validation.message || `Invalid value for ${param.label || param.name}`);
-        }
-      }
-    }
-    if (errors.length > 0) {
-      return new Response(
-        JSON.stringify({ error: errors.join('; ') }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
   }
 
   // Start tracking this install for reconnection support (returns AbortController)
@@ -253,55 +218,13 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        const selectedStandaloneIntegrations = config.sourceId?.startsWith('direct:')
-          ? []
-          : await getSelectedStandaloneIntegrations(config.appId, config.sourceId, config.selectedIntegrations);
-        config.plannedNativeIdentityIntegration = selectedStandaloneIntegrations.some((integration) => integration.type === 'identity');
-        let baseInstallComplete = false;
-
         // Unified install path — engine handles both native (LXD) and Market-installed (OCI)
-        await installApp(manifest, config, onEvent, abortController.signal);
-        baseInstallComplete = true;
+        await withUserOperationLockWait(
+          () => installApp(manifest, config, onEvent, abortController.signal),
+          { signal: abortController.signal },
+        );
         if (config.sourceId?.startsWith('direct:') && config.sourceRepoUrl) {
           await updateInstalledAppSource(config.appId, 'url', config.sourceRepoUrl);
-        }
-
-        for (const integrationId of selectedStandaloneIntegrations) {
-          try {
-            await applyIntegration(
-              { integrationId: integrationId.id, sourceId: config.sourceId },
-              onEvent
-            );
-          } catch (integrationErr) {
-            if (baseInstallComplete) {
-              onEvent({
-                step: 0,
-                totalSteps: 0,
-                status: 'running',
-                message: 'Rolling back failed install after integration error...',
-                detail: 'Integration activation failed; generated diagnostic detail was withheld.',
-              });
-              const rollback = await uninstallApp(config.appId, { keepData: false, dropSharedDatabase: true }).catch(() => {
-                onEvent({
-                  step: 0,
-                  totalSteps: 0,
-                  status: 'warning',
-                  message: 'Rollback after integration error did not fully complete',
-                  detail: 'Use the supported Health and repair views for sensitivity-safe diagnostics.',
-                });
-                return null;
-              });
-              if (!rollback?.success) {
-                onEvent({
-                  step: 0,
-                  totalSteps: 0,
-                  status: 'warning',
-                  message: 'Rollback after integration error retained cleanup_pending resources',
-                });
-              }
-            }
-            throw integrationErr;
-          }
         }
 
         // Install succeeded
@@ -316,6 +239,7 @@ export async function POST(request: NextRequest) {
           appId: config.appId,
         }).catch(() => { /* best effort */ });
       } catch (err) {
+        logOperationFailure(`Install of ${config.appId}`, err);
         const errorMsg = sensitivitySafeInstallError(err);
         finishTracking(config.appId, errorMsg);
 
@@ -358,24 +282,4 @@ export async function POST(request: NextRequest) {
       Connection: 'keep-alive',
     },
   });
-}
-
-async function getSelectedStandaloneIntegrations(
-  appId: string,
-  sourceId?: string,
-  selectedIntegrations?: string[],
-): Promise<{ id: string; type?: string }[]> {
-  if (!selectedIntegrations?.length) return [];
-
-  const selected = new Set(selectedIntegrations);
-  const apps = await fetchAvailableApps();
-
-  return apps
-    .filter((item) => (
-      item.itemKind === 'integration' &&
-      item.target?.appId === appId &&
-      selected.has(item.id) &&
-      (!sourceId || item.sourceId === sourceId)
-    ))
-    .map((item) => ({ id: item.id, type: item.integrations?.[0]?.type }));
 }

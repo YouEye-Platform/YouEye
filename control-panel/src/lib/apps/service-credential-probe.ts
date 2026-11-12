@@ -19,10 +19,10 @@ export async function probeNativeAppCredential(appId: string, manifest: AppManif
   for (const spec of manifest.containers) {
     const mapping = { ...manifest.env_mapping, ...spec.environment };
     if (spec.type !== 'lxd'
-      || !Object.values(mapping).some(value => value.includes('${integration.app_token}'))) continue;
-    if (mapping.YOUEYE_APP_TOKEN !== '${integration.app_token}'
+      || !Object.values(mapping).some(value => value.includes('${youeye.app_token}'))) continue;
+    if (mapping.YOUEYE_APP_TOKEN !== '${youeye.app_token}'
       || mapping.YOUEYE_APP_ID !== '${app.id}'
-      || mapping.YOUEYE_GATEWAY !== '${integration.gateway_url}') {
+      || mapping.YOUEYE_GATEWAY !== '${youeye.gateway_url}') {
       throw new Error('Native service credential contract requires repair');
     }
     const name = getContainerName(appId, spec.name, manifest.containers.length);

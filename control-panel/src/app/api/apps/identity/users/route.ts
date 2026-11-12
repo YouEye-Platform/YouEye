@@ -12,6 +12,7 @@ import { createUser, listUsers } from '@/lib/identity/provider';
 import { getSession } from '@/lib/auth/session';
 import { verifyCSRFToken } from '@/lib/auth';
 import { validateIdentityPassword } from '@/lib/identity/password-policy';
+import { validateIdentityUsername } from '@/lib/identity/username-policy';
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -58,7 +59,8 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-	if (!/^[a-z][a-z0-9._-]{2,31}$/.test(String(username).trim())) return NextResponse.json({ error: 'Username must be 3-32 characters and start with a lowercase letter.' }, { status: 400 });
+	const usernameError = validateIdentityUsername(String(username).trim());
+	if (usernameError) return NextResponse.json({ error: usernameError }, { status: 400 });
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 400 });
 	if (password !== repeatPassword) return NextResponse.json({ error: 'Passwords do not match' }, { status: 400 });
 	if (password !== undefined) {

@@ -146,7 +146,7 @@ export async function retainAppRoots(metadata: InstallMetadata) {
 export function validateRetainedManifest(metadata: InstallMetadata, manifest: AppManifest, config: InstallConfig) {
   if (metadata.appId !== manifest.metadata.id
     || metadata.installedVersion !== (manifest.version ?? '')
-    || (metadata.manifestDigest && metadata.manifestDigest !== config.manifestDigest)
+    || (metadata.manifestDigest && metadata.manifestDigest !== (manifest.frozen?.digest ?? config.manifestDigest))
     || metadata.integration !== manifest.integration
     || metadata.containers.length !== manifest.containers.length
     || !manifest.containers.every(container => metadata.containers.some(existing =>
@@ -175,32 +175,6 @@ export async function prepareRetainedAdoption(
   if (!snapshot || snapshot.policy.ownerId !== actor?.id || !actor.active || actor.deleted) {
     throw new Error('Only the active app owner may adopt retained data');
   }
-  // Old channel updates retained the initial catalog binding. Recover only the
-  // exact applied native manifest from the protected, completed update receipt.
-  if (metadata.integration === 'native' && metadata.manifestDigest
-    && metadata.manifestDigest !== config.manifestDigest) {
-    await verifyRetainedAppData(metadata);
-    const { appUpdateJournalStore } = await import('@/lib/market/update-admission');
-    const records = appUpdateJournalStore().list().filter(r => r.appId === metadata.appId);
-    if (records.some(r => !r.cleanupComplete)) throw new Error('Retained native update recovery is unfinished');
-    const record = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
-    const artifact = metadata.nativeArtifacts?.[0];
-    if (!artifact) throw new Error('Retained native manifest provenance is unavailable');
-    if (!artifact.productRelease) throw new Error('Retained native release receipt is unavailable');
-    const { verifyInstalledProductReceipt } = await import('@/lib/releases/product-release');
-    const { downloadProductAsset } = await import('@/lib/releases/channel-index');
-    const { parseManifest } = await import('@/lib/market/parser');
-    const { verifyRetainedNativeManifestUpdate } = await import('./retained-native-manifest');
-    const selected = verifyInstalledProductReceipt(artifact.productRelease, { product: metadata.appId });
-    const yaml = (await downloadProductAsset(selected, 'youeye-app.yaml')).toString('utf8');
-    verifyRetainedNativeManifestUpdate(metadata, config, parseManifest(yaml), yaml, record);
-    const recovered = { ...metadata, manifestPath: 'youeye-app.yaml',
-      manifestRepo: selected.repository, manifestBranch: selected.release.tag,
-      manifestDigest: config.manifestDigest };
-    validateRetainedManifest(recovered, manifest, config);
-    await saveRetainedInstallMetadata(recovered);
-    Object.assign(metadata, recovered);
-  }
   validateRetainedManifest(metadata, manifest, config);
   await verifyRecord(metadata, 'retained');
   // Preserve exact pool placement and logical custom-volume identities.
@@ -223,6 +197,7 @@ export async function prepareRetainedAdoption(
     if (result.exitCode !== 0 || result.stdout.trim() !== 'true') throw new Error('Retained shared database is missing');
   }
   return { skipSecrets: true, skipDatabase: true, skipConfigFiles: true,
+    sharedDatabaseCreated: metadata.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true,
     retainedRuntimes: Object.fromEntries(metadata.retainedRoots!.roots.map(root =>
       [root.sourceName, { name: root.retainedName, ownerId: root.ownerId, pool: root.pool }])) };
 }

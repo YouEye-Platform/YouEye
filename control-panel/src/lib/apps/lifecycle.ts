@@ -402,6 +402,14 @@ async function controlInstalledAppLocked(
       await finishLifecycleOperation(meta, error);
     }
 
+    // Connections to this app follow its current address (unchanged unless it was recreated).
+    await import('@/lib/bridges/manager')
+      .then(({ refreshConnectionGrants }) => refreshConnectionGrants(meta.appId))
+      .catch(() => undefined);
+    if (meta.urlChangeSetupPending && meta.lifecycleOperation?.state === 'completed') {
+      const { runPendingUrlChangeSetup } = await import('@/lib/reconfigure');
+      await runPendingUrlChangeSetup(meta);
+    }
     const result = await buildResult(meta, action, containers);
     if (meta.installationId && meta.lifecycleOperation?.state === 'completed') {
       const { setAdmissionAppEnabled } = await import('@/lib/admission/store');

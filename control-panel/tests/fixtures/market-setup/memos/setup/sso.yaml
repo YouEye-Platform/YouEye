@@ -1,0 +1,91 @@
+# Memos v0.30 API notes (changed from the pre-0.24 API this integration first targeted):
+#   - the first/admin user is created via POST /api/v1/users (the old /auth/signup is gone)
+#   - signin is POST /api/v1/auth/signin with body {passwordCredentials:{username,password}};
+#     the access token is returned in the RESPONSE BODY (accessToken), not a cookie
+#   - identity providers live at /api/v1/identity-providers (hyphenated); the resource
+#     `name` is `identity-providers/<id>`, so DELETE /api/v1/${provider.name} resolves correctly
+#   - split-channel OIDC: authUrl (browser) stays external; token/userinfo are called
+#     server-side and now go through the internal identity DNAT (${identity.internal_url}
+#     = http://<app-gw>:3002), which is domain-free, CA-free, and survives full network
+#     isolation. Memos does no id_token `iss` validation, so the external/internal split is safe.
+schema: youeye.setup.v1
+for: sso
+steps:
+  - http:
+      method: POST
+      path: /api/v1/auth/signin
+      body:
+        passwordCredentials:
+          username: admin
+          password: ${secret.admin_password}
+        neverExpire: true
+      save: {bearerToken: accessToken}
+      allow_failure: true
+  - http:
+      method: POST
+      path: /api/v1/users
+      body:
+        username: admin
+        password: ${secret.admin_password}
+        role: HOST
+      if: {equals: ['${vars.bearerToken}', '']}
+      allow_failure: true
+  - http:
+      method: POST
+      path: /api/v1/auth/signin
+      body:
+        passwordCredentials:
+          username: admin
+          password: ${secret.admin_password}
+        neverExpire: true
+      if: {equals: ['${vars.bearerToken}', '']}
+      save: {bearerToken: accessToken}
+  - http:
+      method: DELETE
+      path: /api/v1/${item.name}
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      for_each:
+        path: /api/v1/identity-providers
+        items: identityProviders
+        where: {type: OAUTH2}
+  - http:
+      method: POST
+      path: /api/v1/identity-providers
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      body:
+        title: ${identity.name}
+        type: OAUTH2
+        identifierFilter: ''
+        config:
+          oauth2Config:
+            clientId: ${sso.client_id}
+            clientSecret: ${sso.client_secret}
+            authUrl: ${identity.external_url}/application/o/authorize/
+            tokenUrl: ${identity.internal_url}/application/o/token
+            userInfoUrl: ${identity.internal_url}/application/o/userinfo
+            scopes: [openid, profile, email]
+            fieldMapping:
+              identifier: preferred_username
+              displayName: name
+              email: email
+remove:
+  - http:
+      method: POST
+      path: /api/v1/auth/signin
+      body:
+        passwordCredentials:
+          username: admin
+          password: ${secret.admin_password}
+        neverExpire: true
+      save: {bearerToken: accessToken}
+  - http:
+      method: DELETE
+      path: /api/v1/${item.name}
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      for_each:
+        path: /api/v1/identity-providers
+        items: identityProviders
+        where: {title: '${identity.name}'}

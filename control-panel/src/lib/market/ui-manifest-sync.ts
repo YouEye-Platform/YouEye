@@ -1,8 +1,8 @@
 import { withAppLifecycle } from './update-admission';
 import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from './constants';
-import { fetchManifestFromSource, fetchManifestReferenceFromSource } from './catalog';
-import { readInstallMetadata, saveInstallMetadata } from './metadata';
+import { readInstalledAppManifest } from './frozen-manifest';
+import { readInstallMetadata } from './metadata';
 import { upsertInstalledApp } from './installed-apps';
 import { pushConnectionsToUI } from '../bridges/manager';
 
@@ -21,6 +21,10 @@ function uiBaseUrl(): string {
   return process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
 }
 
+/**
+ * Re-push an installed app's dashboard registration from its frozen copy. The live catalog is
+ * never used here: changing an installed app's manifest is an update, not a sync.
+ */
 export async function syncInstalledAppManifestToUI(appId: string): Promise<{
   appId: string;
   sourceId: string | null;
@@ -37,11 +41,7 @@ export async function syncInstalledAppManifestToUI(appId: string): Promise<{
       throw new Error(`App "${appId}" is not installed`);
     }
 
-    const sourceId = metadata.sourceId || undefined;
-    const [manifest, reference] = await Promise.all([
-      fetchManifestFromSource(appId, sourceId),
-      fetchManifestReferenceFromSource(appId, sourceId),
-    ]);
+    const manifest = await readInstalledAppManifest(appId);
 
     const bridgeToken = readBridgeToken();
     if (!bridgeToken) {
@@ -61,13 +61,6 @@ export async function syncInstalledAppManifestToUI(appId: string): Promise<{
     throw new Error(`UI manifest sync failed: ${res.status} ${text}`);
   }
 
-  metadata.manifestPath = reference.path;
-  metadata.manifestRepo = reference.repo;
-  metadata.manifestBranch = reference.branch;
-  metadata.manifestDigest = reference.digest;
-  metadata.installedVersion = metadata.installedVersion || manifest.version || '';
-  await saveInstallMetadata(metadata);
-
   await upsertInstalledApp({
     appId,
     type: metadata.integration,
@@ -86,10 +79,10 @@ export async function syncInstalledAppManifestToUI(appId: string): Promise<{
   return {
     appId,
     sourceId: metadata.sourceId ?? null,
-    manifestPath: reference.path,
-    manifestRepo: reference.repo,
-    manifestBranch: reference.branch,
-    manifestDigest: reference.digest,
+    manifestPath: metadata.manifestPath ?? '',
+    manifestRepo: metadata.manifestRepo ?? '',
+    manifestBranch: metadata.manifestBranch ?? '',
+    manifestDigest: manifest.frozen?.digest ?? metadata.manifestDigest ?? '',
     version: manifest.version ?? null,
     surfaces: manifest.surfaces?.length ?? 0,
   };

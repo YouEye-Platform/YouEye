@@ -1,19 +1,12 @@
 /**
- * Canonical Variable Context Builder (v2)
- *
- * Replaces the old buildPlatformEnv() with a declarative system:
- * 1. buildCanonicalContext() — assembles the full VariableContext
- * 2. resolveEnvMapping() — maps canonical vars to app-specific env var names
+ * Variable context for app manifests and setup files:
+ * 1. buildCanonicalContext() — values for the registry's `${…}` names (docs/app-environment.md)
+ * 2. resolveEnvMapping() — the app's env with those values substituted
  * 3. generateAppToken() — reads the protected installation credential for gateway access
- *
- * The platform no longer decides env var names — the manifest's env_mapping
- * section maps canonical variables like ${database.url} to whatever env var
- * name the app expects (e.g., MEMOS_DSN, DATABASE_URL, etc.).
  */
 
 import { settingsService } from '@/lib/settings';
 import { readSmtpPassword } from '@/lib/smtp/secrets';
-import { getContainerIP } from '@/lib/incus/container-ip';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getAppInternalIdentityBase } from '@/lib/identity/issuer';
 import { spineClient } from '@/lib/spine/client';
@@ -22,18 +15,8 @@ import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
 import type { AppManifest, InstallConfig, VariableContext } from './types';
 import { withAppLifecycle } from './update-admission';
-
-// ─── Language Mapping ────────────────────────────────────
-
-const FULL_LANG_NAMES: Record<string, string> = {
-  en: 'english', de: 'german', fr: 'french', es: 'spanish',
-  it: 'italian', pt: 'portuguese', nl: 'dutch', pl: 'polish',
-  ru: 'russian', ja: 'japanese', ko: 'korean', zh: 'chinese',
-  ar: 'arabic', hi: 'hindi', tr: 'turkish', sv: 'swedish',
-  da: 'danish', no: 'norwegian', fi: 'finnish', cs: 'czech',
-  uk: 'ukrainian', ro: 'romanian', hu: 'hungarian', el: 'greek',
-  he: 'hebrew', th: 'thai', vi: 'vietnamese', id: 'indonesian',
-};
+import { resolvePath } from './variables';
+import { youeyeRequirementProblem } from './app-format/requires';
 
 // ─── Platform Config Cache ────────────────────────────────
 
@@ -116,80 +99,42 @@ export async function validateAppToken(token: string, appId: string): Promise<{ 
   }
 }
 
-// ─── Install Param Type Coercion ─────────────────────────
+// ─── Platform requirement ─────────────────────────────────
 
-/**
- * Coerce install param values from strings (form input) to their declared types.
- * The manifest's installParams schema declares types; form values arrive as strings.
- * This converts them so env vars and variable resolution use correct types.
- */
-export function coerceInstallParams(
-  params: Record<string, string>,
-  paramDefs: Array<{ name: string; type?: string; default?: string | number | boolean }>,
-): Record<string, string> {
-  const result: Record<string, string> = { ...params };
-
-  for (const def of paramDefs) {
-    const raw = params[def.name];
-    if (raw === undefined && def.default !== undefined) {
-      // Apply default value
-      result[def.name] = String(def.default);
-      continue;
-    }
-    if (raw === undefined) continue;
-
-    switch (def.type) {
-      case 'number': {
-        const n = Number(raw);
-        result[def.name] = isNaN(n) ? raw : String(n);
-        break;
-      }
-      case 'boolean':
-        result[def.name] = (raw === 'true' || raw === '1' || raw === 'yes') ? 'true' : 'false';
-        break;
-      case 'password':
-      case 'select':
-      case 'string':
-      default:
-        // Strings stay as-is
-        break;
-    }
-  }
-
-  return result;
+/** Refuse an app whose `requires.youeye` is newer than this box's YouEye build. */
+export async function assertYouEyeRequirement(manifest: Pick<AppManifest, 'requires'>): Promise<void> {
+  if (!manifest.requires) return;
+  const problem = youeyeRequirementProblem(manifest.requires, (await getPlatformContext()).version);
+  if (problem) throw new Error(problem);
 }
 
 // ─── Canonical Context Builder ────────────────────────────
 
 export async function buildCanonicalContext(
   manifest: AppManifest,
-  config: InstallConfig,
+  config: Pick<InstallConfig, 'appId' | 'subdomain' | 'domain' | 'aiSettings'>,
   ssoResult?: { clientId: string; clientSecret: string; slug: string },
   dbPassword?: string,
   appToken?: string,
-  /** If true, system services are at localhost via proxy devices (per-app bridge model) */
+  /** If true, system services are at the app bridge gateway via proxy devices (per-app bridge model) */
   useProxyDevices?: boolean,
 ): Promise<Partial<VariableContext>> {
   const platform = await getPlatformContext();
   const domain = platform.domain || config.domain;
   const fqdn = `${config.subdomain}.${domain}`;
   const appUrl = `https://${fqdn}`;
+  const containerCount = manifest.containers.length;
 
-  // Find primary container for internal_url
   const primaryContainer = manifest.containers.find(c => c.primary) || manifest.containers[0];
-  const primaryContainerName = getContainerName(config.appId, primaryContainer?.name || 'main', manifest.containers.length);
+  const primaryContainerName = getContainerName(config.appId, primaryContainer?.name || 'main', containerCount);
   const primaryPort = primaryContainer?.port || 3000;
 
-  // Build containers map
-  const containers: Record<string, { internal_host: string; internal_url: string; url: string }> = {};
+  // Sidecars: every container except the app's own.
+  const sidecar: VariableContext['sidecar'] = {};
   for (const c of manifest.containers) {
-    const cn = getContainerName(config.appId, c.name, manifest.containers.length);
-    const isPrimary = c.primary || manifest.containers.length === 1;
-    containers[c.name] = {
-      internal_host: `${cn}.${CONTAINER_DOMAIN}`,
-      internal_url: c.port ? `http://${cn}.${CONTAINER_DOMAIN}:${c.port}` : `http://${cn}.${CONTAINER_DOMAIN}`,
-      url: isPrimary ? `https://${config.subdomain}.${domain}` : '',
-    };
+    if (c === primaryContainer) continue;
+    const host = `${getContainerName(config.appId, c.name, containerCount)}.${CONTAINER_DOMAIN}`;
+    sidecar[c.name] = { host, url: c.port ? `http://${host}:${c.port}` : undefined };
   }
 
   const identity = await getIdentityProviderConfig();
@@ -208,26 +153,17 @@ export async function buildCanonicalContext(
     ? `http://${systemProxyHost}:3003`
     : '';
 
-  // Caddy proxy IP
-  let proxyIp = '';
-  try {
-    proxyIp = await getContainerIP('youeye-caddy') || '';
-  } catch {}
-
   const identityDisplayName = identity.name || `${platform.siteName || 'YouEye'} ID`;
-
-  // SSO slug
   const ssoSlug = ssoResult?.slug || `youeye-app-${config.appId}`;
+  const sharedDbHost = useProxyDevices ? systemProxyHost : `youeye-postgres.${CONTAINER_DOMAIN}`;
 
   const ctx: Partial<VariableContext> = {
     platform: {
       domain,
       version: platform.version,
       locale: platform.locale,
-      locale_full: FULL_LANG_NAMES[platform.locale] || platform.locale,
       timezone: platform.timezone,
       site_name: platform.siteName,
-      proxy_ip: proxyIp,
     },
     app: {
       id: config.appId,
@@ -237,32 +173,21 @@ export async function buildCanonicalContext(
       url: appUrl,
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
-    integration: {
-      // Use the per-app bridge gateway for app→UI communication. Control Panel
-      // owns host-bound proxy devices on that gateway, avoiding direct app access
-      // to infrastructure networks while keeping OCI startup independent of
-      // bind=instance proxy races.
+    sidecar,
+    secret: {},
+    youeye: {
+      // The per-app bridge gateway carries app→UI traffic. Control Panel owns
+      // host-bound proxy devices on that gateway.
       gateway_url: useProxyDevices
         ? `http://${systemProxyHost}:3001/api/apps/v1`
         : 'http://localhost:3001/api/apps/v1',
       app_token: appToken || '',
     },
-    containers,
-    database: {
-      url: '',
-      dsn: '',
-      host: useProxyDevices ? systemProxyHost : `youeye-postgres.${CONTAINER_DOMAIN}`,
-      port: '5432',
-      name: '',
-      user: '',
-      password: '',
-    },
+    database: { url: '', host: sharedDbHost, port: '5432', name: '', user: '', password: '' },
     sso: {
       slug: ssoSlug,
       // Split-channel OIDC. Back-channel (issuer/discovery) rides the app's INTERNAL
-      // identity DNAT (${identityInternalUrl} = http://<app-gw>:3002): domain-free,
-      // CA-free, isolation-proof. The CP discovery route returns this same internal
-      // authority as `issuer` + internal token/userinfo/jwks + EXTERNAL authorize.
+      // identity DNAT (http://<app-gw>:3002): domain-free, CA-free, isolation-proof.
       // Front-channel (authorize_url/logout_url) stays external for the browser.
       issuer: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/` : '',
       discovery_url: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
@@ -270,62 +195,46 @@ export async function buildCanonicalContext(
       client_id: ssoResult?.clientId || '',
       client_secret: ssoResult?.clientSecret || '',
       callback_url: manifest.sso
-        ? `${appUrl}${manifest.sso.callback_path
-            .replace(/\$\{identity\.name\}/g, identityDisplayName)
-            .replace(/\$\{sso\.slug\}/g, ssoSlug)
-            .replace(/\$\{app\.id\}/g, config.appId)}`
+        ? `${appUrl}${manifest.sso.callback_path.replace(/\$\{sso\.slug\}/g, ssoSlug)}`
         : '',
       logout_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/end-session/` : '',
+      admin_group: manifest.sso?.admin_group ?? 'admin',
     },
     identity: {
-      externalUrl: identity.externalUrl,
-      internalUrl: identityInternalUrl,
       name: identityDisplayName,
-      // Match the per-client authority used by SSO tokens. There is no
-      // generic root discovery document for a client-specific issuer.
-      issuer: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/` : '',
-      discoveryUrl: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
+      external_url: identity.externalUrl,
+      internal_url: identityInternalUrl,
     },
     ai: {
-      enabled: aiEnabled,
-      openaiBaseUrl: pointerInferenceBase ? `${pointerInferenceBase}/v1` : '',
-      anthropicBaseUrl: pointerInferenceBase,
-      googleBaseUrl: pointerInferenceBase,
-      apiKey: aiEnabled ? config.aiSettings?.runtimeCredential || '' : '',
-      defaultModel: 'default',
-      utilityModel: 'utility',
-      groupId: aiEnabled ? config.aiSettings?.modelGroupId || '' : '',
+      openai_base_url: pointerInferenceBase ? `${pointerInferenceBase}/v1` : '',
+      anthropic_base_url: pointerInferenceBase,
+      google_base_url: pointerInferenceBase,
+      api_key: aiEnabled ? config.aiSettings?.runtimeCredential || '' : '',
+      // Every ${ai.*} is empty while AI Settings are off (docs/app-environment.md).
+      default_model: aiEnabled ? 'default' : '',
+      utility_model: aiEnabled ? 'utility' : '',
     },
-    secrets: {},
-    installParams: config.installParams || {},
-
-    // Manifest aliases retained by the current v1 schema.
-    install: {
-      url: appUrl,
-      subdomain: config.subdomain,
-      domain,
-    },
-    container: { ip: '', port: primaryPort },
   };
 
-  // Database context
-  if (manifest.database?.mode === 'shared' && manifest.database.name && manifest.database.user) {
-    // Per-app bridge model: Control Panel owns host-bound proxies on the
-    // app bridge gateway. Legacy model: postgres reachable via shared DNS.
-    const dbHost = useProxyDevices ? systemProxyHost : `youeye-postgres.${CONTAINER_DOMAIN}`;
+  // Database: the shared YouEye PostgreSQL, or the app's own database sidecar.
+  const database = manifest.database;
+  if (database?.mode === 'shared' && database.name && database.user) {
     const pw = dbPassword || '';
     ctx.database = {
-      url: `postgresql://${manifest.database.user}:${pw}@${dbHost}:5432/${manifest.database.name}`,
-      dsn: `postgres://${manifest.database.user}:${pw}@${dbHost}:5432/${manifest.database.name}?sslmode=disable`,
-      host: dbHost,
-      port: '5432',
-      name: manifest.database.name,
-      user: manifest.database.user,
-      password: pw,
+      url: `postgresql://${database.user}:${pw}@${sharedDbHost}:5432/${database.name}`,
+      host: sharedDbHost, port: '5432', name: database.name, user: database.user, password: pw,
+    };
+  } else if (database?.mode === 'own' && database.container && database.name) {
+    const host = sidecar[database.container]?.host ?? '';
+    const user = database.user || database.name;
+    const pw = dbPassword || '';
+    ctx.database = {
+      url: `postgresql://${user}:${pw}@${host}:5432/${database.name}`,
+      host, port: '5432', name: database.name, user, password: pw,
     };
   }
 
-  // SMTP context (if capability declared)
+  // SMTP: only for apps that declare `smtp:`.
   if (manifest.capabilities?.smtp) {
     try {
       const settings = await settingsService.getAll();
@@ -346,8 +255,6 @@ export async function buildCanonicalContext(
 
 // ─── Env Mapping Resolver ─────────────────────────────────
 
-const VAR_PATTERN = /\$\{([^}]+)\}/g;
-
 /**
  * Resolve env_mapping: substitute ${...} references with canonical values.
  * Returns flat Record<string, string> ready for container injection.
@@ -358,8 +265,8 @@ export function resolveEnvMapping(
 ): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const [envVar, template] of Object.entries(mapping)) {
-    resolved[envVar] = template.replace(VAR_PATTERN, (match, path: string) => {
-      const value = resolveContextPath(path.trim(), ctx);
+    resolved[envVar] = template.replace(/\$\{([^}]+)\}/g, (match, path: string) => {
+      const value = resolvePath(path.trim(), ctx);
       if (value === undefined) {
         console.warn(`[env_mapping] Unresolved variable: ${match} for env var ${envVar}`);
         return match; // Leave unresolved rather than crashing
@@ -368,21 +275,6 @@ export function resolveEnvMapping(
     });
   }
   return resolved;
-}
-
-function resolveContextPath(path: string, ctx: Partial<VariableContext>): string | undefined {
-  const parts = path.split('.');
-  if (parts.length < 2) return undefined;
-
-  // Walk the context object using dot notation
-  let current: unknown = ctx;
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-
-  if (current === undefined || current === null) return undefined;
-  return String(current);
 }
 
 // ─── Env File Formatting ──────────────────────────────────

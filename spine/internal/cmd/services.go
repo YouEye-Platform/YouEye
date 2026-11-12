@@ -9,8 +9,8 @@ var servicesCmd = &cobra.Command{
 	Use:   "services",
 	Short: "List services and their health",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		services, err := controlClient.GetArray("/api/health/services")
 		if err != nil {
@@ -38,8 +38,8 @@ var servicesRestartCmd = &cobra.Command{
 	Short: "Restart a service",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		_, err := controlClient.Post("/api/health/services/"+args[0]+"/restart", nil)
 		if err != nil {

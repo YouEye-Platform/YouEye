@@ -17,36 +17,6 @@ async function writeMetadata(baseDir: string, appId: string, mode = 0o600): Prom
   return directory;
 }
 
-test('root-owned legacy 0777 metadata directory is tightened before reading', async () => {
-  const baseDir = await mkdtemp(path.join(tmpdir(), 'youeye-market-metadata-'));
-  try {
-    const directory = await writeMetadata(baseDir, 'session-legacy');
-    await chmod(directory, 0o777);
-
-    const metadata = await readInstallMetadataAtBaseForTest('session-legacy', baseDir);
-    assert.equal(metadata?.appId, 'session-legacy');
-    assert.equal((await lstat(directory)).mode & 0o777, 0o700);
-  } finally {
-    await rm(baseDir, { recursive: true, force: true });
-  }
-});
-
-test('legacy repair still rejects an unsafe metadata file', async () => {
-  const baseDir = await mkdtemp(path.join(tmpdir(), 'youeye-market-metadata-'));
-  try {
-    const directory = await writeMetadata(baseDir, 'session-unsafe-file', 0o644);
-    await chmod(directory, 0o777);
-
-    await assert.rejects(
-      readInstallMetadataAtBaseForTest('session-unsafe-file', baseDir),
-      /corrupt or insecure/,
-    );
-    assert.equal((await lstat(directory)).mode & 0o777, 0o700);
-  } finally {
-    await rm(baseDir, { recursive: true, force: true });
-  }
-});
-
 test('metadata symlinks remain rejected', async () => {
   const baseDir = await mkdtemp(path.join(tmpdir(), 'youeye-market-metadata-'));
   try {

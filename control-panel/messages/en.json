@@ -2499,7 +2499,21 @@
     "m84d6732746f8": "The channel could not be changed.",
     "m66de5771dc12": "The release channel is unavailable.",
     "m4d6bfb83f08f": "The release host refused or rate-limited the request. YouEye retries automatically; check again in a few minutes.",
-    "ma28bdb69b7f1": "Branch {value0}"
+    "ma28bdb69b7f1": "Branch {value0}",
+    "m8977bde3d0f7": "Setup files",
+    "m41a1b4787986": "This app configures itself with these setup files. They run only inside the app's own containers.",
+    "m3214819b16f1": "Initial setup",
+    "mfb7ed10de1ed": "YouEye ID sign-in",
+    "m18bac77ed792": "Address changes",
+    "m7c07160bf0db": "Connection to {app}",
+    "m2514aaccdb83": "Allow these setup files from an added source to run",
+    "m1d8034f00ca4": "This app has setup files. Review them and allow them to continue.",
+    "mcb476eaab560": "The YouEye ID sign-in setting could not be changed.",
+    "m8f71b12330db": "Turning on YouEye ID sign-in for {app}… This can take a few minutes.",
+    "m709433447a43": "Turning off YouEye ID sign-in for {app}…",
+    "m3bf590b2bb82": "People sign in to {app} with their YouEye ID.",
+    "m2f5875924e6c": "{app} uses its own accounts. Turn this on to let people sign in with their YouEye ID.",
+    "m70843fac04a3": "YouEye ID sign-in for {app}"
   },
   "settingsNavigation": {
     "profile": "Profile",

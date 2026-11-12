@@ -159,6 +159,8 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 		}
 	}
 	imageRaw, _ := json.Marshal(image)
+	// The installed image manifest is read-only (0444); root overwrites it on a box, a test user replaces it.
+	_ = os.Remove(f.manager.config.CurrentManifestPath)
 	if err := os.WriteFile(f.manager.config.CurrentManifestPath, imageRaw, 0600); err != nil {
 		t.Fatal(err)
 	}

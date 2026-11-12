@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchManifest, fetchAvailableApps } from '@/lib/market/catalog';
+import { installedOrCatalogManifest } from '@/lib/market/frozen-manifest';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 
 export const dynamic = 'force-dynamic';
@@ -25,8 +26,9 @@ export interface ConnectionsResponse {
   outgoing: ConnectionInfo[];
   incoming: ConnectionInfo[];
   internet: {
-    hosts: string[];
+    /** UI-gateway proxy scopes: the only per-host internet mechanism. */
     proxy: Array<{ host: string; paths: string[]; methods: string[]; scope: string }>;
+    /** `internet: true`: the app network's NAT is on (no per-host allowlist). */
     needsInternet: boolean;
   };
 }
@@ -42,7 +44,7 @@ export async function GET(
   }
 
   try {
-    const manifest = await fetchManifest(appId);
+    const manifest = await installedOrCatalogManifest(appId, () => fetchManifest(appId));
     const installedApps = await getAllInstalledApps().catch(() => []);
     const installedIds = new Set(installedApps.map(a => a.appId));
 
@@ -66,7 +68,9 @@ export async function GET(
       for (const app of allApps) {
         if (app.id === appId) continue;
         try {
-          const otherManifest = await fetchManifest(app.id);
+          const otherManifest = installedIds.has(app.id)
+            ? await installedOrCatalogManifest(app.id, () => fetchManifest(app.id))
+            : await fetchManifest(app.id);
           const wantsThis = (otherManifest.wants ?? []).find(
             w => w.appId === appId || (w.type && thisProvideTypes.has(w.type))
           );
@@ -94,10 +98,8 @@ export async function GET(
       scope: scope.scope ?? 'user',
     }));
     const internet = {
-      hosts: manifest.internet?.hosts ?? [],
       proxy,
-      needsInternet: (manifest.internet?.hosts?.length ?? 0) > 0
-        || manifest.containers.some(c => c.network === 'internet'),
+      needsInternet: manifest.containers.some(c => c.network === 'internet'),
     };
 
     return NextResponse.json({ outgoing, incoming, internet } satisfies ConnectionsResponse);

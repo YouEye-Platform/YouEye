@@ -52,7 +52,7 @@ export function validateRetainedArchiveInventory(value: unknown, inventory: Inst
 
 function passwordFile(metadata: InstallMetadata) {
   const filename = metadata.databasePasswordFile;
-  if (!filename || !/^[A-Za-z0-9._-]+$/.test(filename) || ['.', '..'].includes(filename)) {
+  if (!filename || !/^secrets\/[a-z0-9_]{1,40}$/.test(filename)) {
     throw new Error('Retained database needs its explicit original credential-file declaration');
   }
   return path.join('/var/lib/youeye', `app-${metadata.appId}`, filename);

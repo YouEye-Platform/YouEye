@@ -22,14 +22,14 @@ func (m *Manager) CancelCoreHost(ctx context.Context, request string) error {
 	if err != nil || j.RequestID != request || j.Phase != "cancelling" || !j.RestartRequired || len(j.RecoverySteps) > 0 {
 		return fmt.Errorf("exact unactivated core request required")
 	}
+	// A failed checkpoint reaches "cancelling" only after its read-only preflight
+	// refusal was verified (CoreManager.cancelLocked); the host was never activated.
+	if !corePreparationOnly(j) {
+		return fmt.Errorf("activation requires paired recovery")
+	}
 	staged := false
 	for _, step := range j.Steps {
-		if step.Name == "verify-members" || step.Name == "stage-host" {
-
-			staged = staged || (step.Name == "stage-host" && step.State != "pending")
-		} else if step.State != "pending" {
-			return fmt.Errorf("activation requires paired recovery")
-		}
+		staged = staged || (step.Name == "stage-host" && step.State != "pending")
 	}
 	if !staged {
 		return fmt.Errorf("no complete core host stage exists")

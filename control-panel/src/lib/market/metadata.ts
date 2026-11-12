@@ -42,28 +42,15 @@ async function secureMetadataDirectory(appId: string, baseDir = BASE_DIR): Promi
     throw new Error(`Install metadata directory is unsafe for ${appId}`);
   }
 
-  const directoryMode = directoryStat.mode & 0o777;
-  if (directoryMode === 0o700) return directory;
-  if (directoryMode !== 0o777) {
+  if ((directoryStat.mode & 0o777) !== 0o700) {
     throw new Error(`Install metadata directory permissions are unsafe for ${appId}`);
-  }
-
-  // Images predating private Market metadata created these root-owned
-  // directories as 0777. Tighten only that exact legacy shape before opening
-  // the metadata file; unfamiliar permissions still fail closed.
-  await chmod(directory, 0o700);
-  const repairedStat = await lstat(directory);
-  if (!repairedStat.isDirectory()
-    || repairedStat.uid !== expectedUid
-    || repairedStat.dev !== directoryStat.dev
-    || repairedStat.ino !== directoryStat.ino
-    || (repairedStat.mode & 0o777) !== 0o700) {
-    throw new Error(`Install metadata directory repair failed for ${appId}`);
   }
   return directory;
 }
 
 async function saveMetadataDocument(meta: InstallMetadata, filename: 'install.json' | 'retained.json'): Promise<void> {
+  meta.schema = 'youeye.install.v1';
+  meta.updatedAt = new Date().toISOString();
   const dir = metadataDir(meta.appId);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await secureMetadataDirectory(meta.appId);

@@ -5,6 +5,7 @@
 
 import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback } from "react";
+import { authenticatedFetch } from "@/lib/api-client";
 
 interface Bridge {
   id: string;
@@ -71,10 +72,10 @@ export function AppNetworkClient({ appId }: { appId: string }) {
     setLoading(true);
     try {
       const [bridgesRes, grantsRes, suggestionsRes, providerRes] = await Promise.all([
-        fetch(`/api/bridges?appId=${appId}`),
-        fetch("/api/internet-grants"),
-        fetch("/api/suggestions"),
-        fetch(`/api/market/app/${appId}/provider-options`),
+        authenticatedFetch(`/api/bridges?appId=${appId}`),
+        authenticatedFetch("/api/internet-grants"),
+        authenticatedFetch("/api/suggestions"),
+        authenticatedFetch(`/api/market/app/${appId}/provider-options`),
       ]);
 
       if (bridgesRes.ok) {
@@ -113,7 +114,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
     const bridge = bridges.find((b) => b.id === bridgeId);
     if (!bridge) return;
     const newDir = bridge.direction === "one-way" ? "both-ways" : "one-way";
-    await fetch(`/api/bridges/${bridgeId}`, {
+    await authenticatedFetch(`/api/bridges/${bridgeId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ direction: newDir }),
@@ -122,14 +123,14 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   }
 
   async function handleRemoveBridge(bridgeId: string) {
-    await fetch(`/api/bridges/${bridgeId}`, { method: "DELETE" });
+    await authenticatedFetch(`/api/bridges/${bridgeId}`, { method: "DELETE" });
     setBridges(bridges.filter((b) => b.id !== bridgeId));
     notifyParent();
   }
 
   async function handleAddBridge() {
     if (!newTarget.trim()) return;
-    await fetch("/api/bridges", {
+    await authenticatedFetch("/api/bridges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -146,7 +147,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   }
 
   async function handleRevokeGrant(id: string) {
-    await fetch(`/api/internet-grants/${id}`, { method: "DELETE" });
+    await authenticatedFetch(`/api/internet-grants/${id}`, { method: "DELETE" });
     setGrants(grants.filter((g) => g.id !== id));
     notifyParent();
   }
@@ -154,7 +155,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   async function handleApproveSuggestion(suggestion: Suggestion) {
     setApproving(suggestion.id);
     try {
-      const res = await fetch("/api/suggestions/approve", {
+      const res = await authenticatedFetch("/api/suggestions/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ suggestionId: suggestion.id }),
@@ -170,7 +171,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   }
 
   async function handleDismissSuggestion(id: string) {
-    await fetch(`/api/suggestions/${id}/dismiss`, { method: "POST" });
+    await authenticatedFetch(`/api/suggestions/${id}/dismiss`, { method: "POST" });
     setSuggestions(suggestions.filter((s) => s.id !== id));
   }
 
@@ -183,12 +184,12 @@ export function AppNetworkClient({ appId }: { appId: string }) {
           (b) => b.from === appId && b.to === currentProvider && b.active
         );
         if (oldBridge) {
-          await fetch(`/api/bridges/${oldBridge.id}`, { method: "DELETE" });
+          await authenticatedFetch(`/api/bridges/${oldBridge.id}`, { method: "DELETE" });
         }
       }
 
       // Connect new provider
-      await fetch("/api/bridges", {
+      await authenticatedFetch("/api/bridges", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -214,7 +215,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
         (b) => b.from === appId && b.to === providerId && b.active
       );
       if (bridge) {
-        await fetch(`/api/bridges/${bridge.id}`, { method: "DELETE" });
+        await authenticatedFetch(`/api/bridges/${bridge.id}`, { method: "DELETE" });
       }
       await fetchAll();
       notifyParent();

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 )
 
 // Fence settles native children, closes ingress, preserves original power
@@ -93,7 +94,30 @@ func (p NativeCoreCheckpoint) Fence(ctx context.Context, request string, runner 
 
 var errCoreProviderUnsettled = errors.New("native provider operation remains unsettled")
 
+// coreProviderSettleWait bounds how long a check waits for running Incus operations (e.g. the image refresh Incus
+// starts after boot, which can take minutes with many cached OCI images) before it reports them unsettled.
+var coreProviderSettleWait = 10 * time.Minute
+
+// requireProviderSettled waits until no Incus operation is running (bounded by coreProviderSettleWait and ctx).
+// Only "still running" is waited for; any other problem fails at once.
 func (p NativeCoreCheckpoint) requireProviderSettled(ctx context.Context) error {
+	deadline := time.Now().Add(coreProviderSettleWait)
+	for {
+		err := p.providerSettledOnce(ctx)
+		if !errors.Is(err, errCoreProviderUnsettled) || !time.Now().Before(deadline) {
+			return err
+		}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return err
+		case <-timer.C:
+		}
+	}
+}
+
+func (p NativeCoreCheckpoint) providerSettledOnce(ctx context.Context) error {
 	// Incus query suppresses an empty metadata object unless --raw is used.
 	// Require the successful API envelope rather than accepting blank output.
 	raw, err := p.capture(ctx, "incus", "query", "/1.0/operations?recursion=1", "--raw")

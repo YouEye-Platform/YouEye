@@ -32,7 +32,7 @@ export function assertPrivateCredentialConfig(
   files: Array<{ path: string; template: string; permission: string; directoryPermission: string }>,
 ): void {
   for (const file of files) {
-    if (!file.template.includes('${integration.app_token}')) continue;
+    if (!file.template.includes('${youeye.app_token}')) continue;
     if (!/^\/etc\/[^\\\0]+$/.test(file.path) || file.path.split('/').some(part => part === '.' || part === '..')
       || !/^(?:0o)?0?[46]00$/.test(file.permission)
       || !/^(?:0o)?0?[57]00$/.test(file.directoryPermission)) {

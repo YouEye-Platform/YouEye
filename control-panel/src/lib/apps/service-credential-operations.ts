@@ -12,7 +12,7 @@ import { buildCanonicalContext, resolveEnvMapping } from '../market/platform-env
 import { getContainerName } from '../market/engine-helpers';
 import { resolveEnvironment } from '../market/variables';
 import { writeAllConfigFiles } from '../market/config-writer';
-import { readSecret } from '../infrastructure/secrets';
+import { readAppSecret } from '../infrastructure/secrets';
 import { withAppNetworkOperationLock } from '../incus/app-network';
 import { beginContainerMaintenance } from '../maintenance/container-maintenance';
 import { incusDownloadFile, incusUploadFile, incusRequest } from '../incus/server';
@@ -69,21 +69,21 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
         async writeRuntime(secret) {
           const secrets: Record<string, string> = {};
           for (const definition of manifest.secrets) {
-            const value = await readSecret(`app-${appId}`, definition.file);
+            const value = await readAppSecret(appId, definition.name);
             if (!value) throw new Error('Protected app configuration requires repair');
             secrets[definition.name] = value;
           }
           const ctx = await buildCanonicalContext(manifest, {
             appId, subdomain: metadata.subdomain, domain: metadata.domain,
           }, undefined, secrets.db_password, secret, metadata.usePerAppBridge === true);
-          ctx.secrets = secrets;
+          ctx.secret = secrets;
           const common = Object.fromEntries(Object.entries(manifest.env_mapping ?? {})
-            .filter(([, template]) => /\$\{(?:integration\.(?:app_token|gateway_url)|app\.id)\}/.test(template)));
+            .filter(([, template]) => /\$\{(?:youeye\.(?:app_token|gateway_url)|app\.id)\}/.test(template)));
           for (let i = 0; i < manifest.containers.length; i++) {
             const spec = manifest.containers[i];
             const name = names[i];
             const local = Object.fromEntries(Object.entries(spec.environment ?? {})
-              .filter(([, template]) => /\$\{(?:integration\.(?:app_token|gateway_url)|app\.id)\}/.test(template)));
+              .filter(([, template]) => /\$\{(?:youeye\.(?:app_token|gateway_url)|app\.id)\}/.test(template)));
             const replacements = { ...resolveEnvMapping(common, ctx), ...resolveEnvironment(local, ctx) };
             if (Object.values(replacements).some(value => value.includes('${'))) {
               throw new Error('Unresolved app credential runtime mapping');
@@ -108,7 +108,7 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
               }
             }
             const tokenFiles = manifest.configFiles.filter(file => file.container === spec.name
-              && file.template.includes('${integration.app_token}'));
+              && file.template.includes('${youeye.app_token}'));
             if (tokenFiles.length) await writeAllConfigFiles(tokenFiles, spec.name, name, ctx, metadata.storageVolumes);
           }
         },

@@ -36,12 +36,10 @@ import {
   Code2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { InstallDialog } from '@/components/market/install-dialog';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
 import { HealthDot } from '@/components/market/health-dot';
 import { AppAccessSettings } from '@/components/market/app-access-settings';
-import { EntrancesDisplay } from '@/components/market/entrances-display';
 import { authenticatedFetch } from '@/lib/api-client';
 import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent } from '@/lib/market/types';
 
@@ -89,7 +87,6 @@ const preparingInstallEvent: InstallEvent = {
 
   const [app, setApp] = useState<MarketApp | null>(null);
   const [status, setStatus] = useState<AppStatusInfo | null>(null);
-  const [targetStatus, setTargetStatus] = useState<AppStatusInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [domain, setDomain] = useState('');
@@ -107,9 +104,6 @@ const preparingInstallEvent: InstallEvent = {
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
   const [syncingManifest, setSyncingManifest] = useState(false);
   const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
-  const [applyingIntegration, setApplyingIntegration] = useState(false);
-  const [removingIntegration, setRemovingIntegration] = useState(false);
-  const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
 
   // Uninstall state
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
@@ -132,10 +126,6 @@ const preparingInstallEvent: InstallEvent = {
       if (!res.ok) throw new Error(translateInterface("m4a9b9269be54"));
       const data = await res.json();
       setApp(data.app);
-      if (data.app?.itemKind === 'integration' && data.app.target?.appId) {
-        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(data.app.target.appId)}`);
-        if (targetRes.ok) setTargetStatus(await targetRes.json());
-      }
     } catch (err) {
       setError(translateInterface("m49a2883cb71a"));
     }
@@ -345,7 +335,7 @@ const preparingInstallEvent: InstallEvent = {
   };
 
   const handleSyncManifest = async () => {
-    if (!app || app.itemKind === 'integration') return;
+    if (!app) return;
     setSyncingManifest(true);
     setManifestSyncMessage(null);
     try {
@@ -364,61 +354,6 @@ const preparingInstallEvent: InstallEvent = {
       setManifestSyncMessage(err instanceof Error ? err.message : translateInterface("m1264a555555b"));
     } finally {
       setSyncingManifest(false);
-    }
-  };
-
-  const handleApplyIntegration = async () => {
-    if (!app || app.itemKind !== 'integration') return;
-    setApplyingIntegration(true);
-    setIntegrationMessage(null);
-    try {
-      const res = await authenticatedFetch('/api/market/integrations/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integrationId: app.id, sourceId: app.sourceId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.error || translateInterface("m7a2b789693bd"));
-      setIntegrationMessage(translateInterface("m74c1bc1c6184", {app: app.name, target: String(app.target?.appName || app.target?.appId)}));
-      if (app.target?.appId) {
-        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
-        if (targetRes.ok) setTargetStatus(await targetRes.json());
-      }
-    } catch (err) {
-      setIntegrationMessage(err instanceof Error ? err.message : translateInterface("m7a2b789693bd"));
-    } finally {
-      setApplyingIntegration(false);
-    }
-  };
-
-  const handleRemoveIntegration = async () => {
-    if (!app || app.itemKind !== 'integration') return;
-    setRemovingIntegration(true);
-    setIntegrationMessage(null);
-    const hasUninstall = !!app.integrations?.[0]?.hasUninstall;
-    try {
-      const res = await authenticatedFetch('/api/market/integrations/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          integrationId: app.id,
-          sourceId: app.sourceId,
-          metadataOnly: !hasUninstall,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.error || translateInterface("m190198b10146"));
-      setIntegrationMessage(hasUninstall
-        ? translateInterface("mb0c5f6f30c68", {app: app.name, target: String(app.target?.appName || app.target?.appId)})
-        : translateInterface("me590d90b92a7", {app: app.name}));
-      if (app.target?.appId) {
-        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
-        if (targetRes.ok) setTargetStatus(await targetRes.json());
-      }
-    } catch (err) {
-      setIntegrationMessage(err instanceof Error ? err.message : translateInterface("m190198b10146"));
-    } finally {
-      setRemovingIntegration(false);
     }
   };
 
@@ -499,34 +434,19 @@ const preparingInstallEvent: InstallEvent = {
   // ── Derived state ──────────────────────────────────────────
 
   const appStatus = status?.status ?? 'not-installed';
-  const isIntegration = app.itemKind === 'integration';
-  const isInstalled = !isIntegration && appStatus !== 'not-installed';
+  const isInstalled = appStatus !== 'not-installed';
   const isDirectEntry = !!app.sourceId?.startsWith('direct:');
-  const targetIsInstalled = !!targetStatus?.status && targetStatus.status !== 'not-installed';
-  const integrationInstalled = isIntegration
-    && !!targetStatus?.installedIntegrations?.some((integration) => integration.id === app.id);
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
 
   // Plain-language access surface — who can reach this app.
-  const accessLevel: 'public' | 'server-users' | 'internal' | null = (() => {
-    if (isIntegration) return null;
-    const entrances = app.entrances ?? [];
-    if (entrances.length > 0 && entrances.every((e) => e.authLevel === 'internal' || e.authLevel === 'none')) {
-      return 'internal';
-    }
-    const gated = status?.forwardAuthEnabled || app.supportsSSO || app.integrations?.some((i) => i.type === 'identity');
-    return gated ? 'server-users' : 'public';
-  })();
-  const accessLabel = accessLevel === 'internal' ? 'Internal'
-    : accessLevel === 'server-users' ? translateInterface("mc664ff9c2740", {site: siteName})
-    : 'Public';
-  const accessOneLiner = accessLevel === 'internal'
-    ? translateInterface("m5dc238effbb5")
-    : accessLevel === 'server-users'
-      ? translateInterface("m2a2e0c73779e", {site: siteName})
-      : translateInterface("m35b0d6f9bfd7");
+  const gated = status?.forwardAuthEnabled || app.supportsSSO || app.integrations?.some((i) => i.type === 'identity');
+  const accessLevel: 'public' | 'server-users' = gated ? 'server-users' : 'public';
+  const accessLabel = accessLevel === 'server-users' ? translateInterface("mc664ff9c2740", {site: siteName}) : 'Public';
+  const accessOneLiner = accessLevel === 'server-users'
+    ? translateInterface("m2a2e0c73779e", {site: siteName})
+    : translateInterface("m35b0d6f9bfd7");
   const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
   const capabilityLabels = [
     app.capabilities?.widgets ? 'Widgets' : null,
@@ -534,7 +454,6 @@ const preparingInstallEvent: InstallEvent = {
     app.capabilities?.smtp ? translateInterface("m5208955c81b6") : null,
     app.capabilities?.link_handlers?.length ? translateInterface("m0abf73ccd714") : null,
     app.surfaces?.length ? translateInterface("m8861a842bbcd", {count: app.surfaces.length}) : null,
-    app.entrances?.length ? translateInterface("m3e8ee6da560e", {count: app.entrances.length}) : null,
   ].filter(Boolean) as string[];
 
   const latestInstallEvent = installEvents[installEvents.length - 1];
@@ -572,11 +491,6 @@ const preparingInstallEvent: InstallEvent = {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[28px] font-bold tracking-tight text-foreground">{app.name}</h1>
-            {/* Unified market: apps are not labelled native vs external. Only the
-                distinct Integration item-kind keeps a badge. */}
-            {isIntegration && (
-              <Badge variant="secondary" className="gap-1"><Plug className="h-3 w-3" /> {translateInterface("m9a42d40a3f31")}</Badge>
-            )}
           </div>
           <p className="mt-1 text-[15px] text-muted-foreground">{app.description}</p>
           {isInstalled && status?.url && (
@@ -587,10 +501,6 @@ const preparingInstallEvent: InstallEvent = {
         </div>
       </div>
 
-      {integrationMessage && (
-        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{integrationMessage}</div>
-      )}
-
       {/* Meta band */}
       <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-6">
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mdd167905de0d")}</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
@@ -598,7 +508,7 @@ const preparingInstallEvent: InstallEvent = {
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m0e570ca6fabe")}</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || translateInterface("m5238d9bd03d5")}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m3fb7b39416f1")}</span><span className="truncate text-[13.5px] font-semibold">{app.developer || app.sourceName || '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mc011d6097bfb")}</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m50dfc76409a6")}</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m50dfc76409a6")}</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{(app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}</span></div>
       </div>
 
       {isDirectEntry && (
@@ -613,11 +523,11 @@ const preparingInstallEvent: InstallEvent = {
       )}
 
       {/* Access surface — plain-language "who can reach this app" + a live full-URL chip */}
-      {accessLevel && (
+      {(
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
           <div className="flex items-center gap-3">
-            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-500' : accessLevel === 'internal' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>
-              {accessLevel === 'public' ? <Globe className="h-4 w-4" /> : accessLevel === 'internal' ? <EyeOff className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-500' : 'bg-primary/10 text-primary'}`}>
+              {accessLevel === 'public' ? <Globe className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
             </div>
             <div>
               <p className="text-sm font-semibold text-foreground">{accessLabel}</p>
@@ -626,7 +536,7 @@ const preparingInstallEvent: InstallEvent = {
           </div>
           {(() => {
             const url = isInstalled && status?.url ? status.url : (domain ? `https://${app.defaultSubdomain}.${domain}` : null);
-            if (!url || accessLevel === 'internal') return null;
+            if (!url) return null;
             return (
               <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground hover:bg-accent">
                 {url.replace(/^https?:\/\//, '')}<ExternalLink className="h-3 w-3" />
@@ -679,20 +589,7 @@ const preparingInstallEvent: InstallEvent = {
           {translateInterface("m89a9f577c96e")}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* SSO / Forward-Auth */}
-          {isIntegration ? (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-violet-50">
-                <Plug className="h-4 w-4 text-violet-600" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("m83f58d099dbf")}</p>
-                <p className="text-sm font-medium text-foreground">
-                  {app.target?.appName || app.target?.appId || translateInterface("mb764cdc0eab7")}
-                  {app.target?.version ? ` ${app.target.version}` : ''}
-                </p>
-              </div>
-            </div>
-          ) : isInstalled ? (
+          {isInstalled ? (
             <AppAccessSettings appId={app.id} />
           ) : (
             <div className="flex items-center gap-3">
@@ -714,21 +611,7 @@ const preparingInstallEvent: InstallEvent = {
             </div>
           )}
 
-          {isIntegration && app.integrations?.[0]?.permissions?.length ? (
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("mabccc78cc93c")}</p>
-                <p className="text-sm font-medium text-foreground">
-                  {app.integrations[0].permissions.join(', ')}
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          {capabilityLabels.length > 0 && !isIntegration && (
+          {capabilityLabels.length > 0 && (
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-lg bg-muted">
                 <Package className="h-4 w-4 text-muted-foreground" />
@@ -891,14 +774,6 @@ const preparingInstallEvent: InstallEvent = {
           </div>
         )}
 
-        {/* Entrances / Access Points */}
-        {app.entrances && app.entrances.length > 0 && (
-          <EntrancesDisplay
-            entrances={app.entrances}
-            subdomain={status?.subdomain}
-            domain={status?.domain}
-          />
-        )}
       </div>
 
       {/* Default Credentials (shown when app is installed and has credentials) */}
@@ -973,21 +848,17 @@ const preparingInstallEvent: InstallEvent = {
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("m920e413c7d41")}</p>
               <div className="mt-2 flex items-center gap-2">
-                {isIntegration ? (
-                  <Plug className="h-4 w-4 text-primary" />
-                ) : isInstalled ? (
+                {isInstalled ? (
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                 ) : (
                   <Package className="h-4 w-4 text-muted-foreground" />
                 )}
                 <span className="text-sm font-medium text-foreground">
-                  {isIntegration
-                    ? integrationInstalled ? translateInterface("m0c79a9c22284") : translateInterface("me674447337e8")
-                    : isInstalled
-                      ? appStatus
-                      : installing && installOperationAppId === appId && !installDone
-                        ? translateInterface("m8749b1693f74")
-                        : translateInterface("mbda18b9e55aa")}
+                  {isInstalled
+                    ? appStatus
+                    : installing && installOperationAppId === appId && !installDone
+                      ? translateInterface("m8749b1693f74")
+                      : translateInterface("mbda18b9e55aa")}
                 </span>
                 {isInstalled && (
                   <HealthDot
@@ -1066,32 +937,7 @@ const preparingInstallEvent: InstallEvent = {
               </div>
             ) : (
               <div className="grid gap-2">
-                {isIntegration ? (
-                  integrationInstalled ? (
-                    <>
-                      <Button disabled>
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
-                        {translateInterface("m0c79a9c22284")}</Button>
-                      <Button
-                        variant="outline"
-                        onClick={handleRemoveIntegration}
-                        disabled={removingIntegration}
-                        className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                      >
-                        {removingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-                        {app.integrations?.[0]?.hasUninstall ? translateInterface("m3028bf7d2dec", { value0: String(app.name) }) : translateInterface("m4234755d5171")}
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      onClick={handleApplyIntegration}
-                      disabled={!targetIsInstalled || applyingIntegration}
-                    >
-                      {applyingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                      {targetIsInstalled ? translateInterface("m7a0f69620a0d", { value0: String(app.name) }) : translateInterface("m8766f7298e81", { value0: String(app.target?.appName || app.target?.appId || translateInterface("ma60ed23b62ec")) })}
-                    </Button>
-                  )
-                ) : !isInstalled ? (
+                {!isInstalled ? (
                   <>
                     <Button onClick={() => setShowInstallDialog(true)}>
                       {translateInterface("m569ca49f4aaf")}{" "}{app.name}
@@ -1145,14 +991,12 @@ const preparingInstallEvent: InstallEvent = {
                   <span className="font-medium text-foreground">v{app.version}</span>
                 </div>
               )}
-              {!isIntegration && (
-                <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-muted-foreground">{translateInterface("m50dfc76409a6")}</span>
-                  <span className="text-right font-medium text-foreground">
-                    {app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}
-                  </span>
-                </div>
-              )}
+              <div className="mt-2 flex justify-between gap-3">
+                <span className="text-muted-foreground">{translateInterface("m50dfc76409a6")}</span>
+                <span className="text-right font-medium text-foreground">
+                  {app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}
+                </span>
+              </div>
             </div>
           </div>
         </div>

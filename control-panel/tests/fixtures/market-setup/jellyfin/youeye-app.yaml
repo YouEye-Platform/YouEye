@@ -1,0 +1,51 @@
+schema: youeye.app.v1
+id: jellyfin
+version: 10.11.11
+name: Jellyfin
+listing:
+  tagline: The free software media system
+  description: Free and open-source media streaming server
+  long_description: |
+    Jellyfin is the free software media system that puts you in control of managing and
+    streaming your media. Stream movies, TV shows, music, and photos to any device from
+    your own server with no strings attached. No premium licenses, no tracking, fully
+    open source. Supports hardware-accelerated transcoding, live TV & DVR, and a rich
+    ecosystem of clients for every platform.
+  release_notes: |
+    Jellyfin 10.11.11 is the current stable server release. It adds a locking
+    helper to UserManager as a focused reliability fix on the maintained 10.11
+    line. This fresh-install definition uses the exact upstream release and
+    immutable official container index published on 6 June 2026.
+  category: media
+  tags: [media, streaming, movies, music, tv, video]
+  icon: film
+  icon_file: icon.svg
+  screenshots:
+    - path: screenshots/platform-admin-player-10.11.11.png
+      caption: Platform administrator streaming the accepted public-domain movie
+    - path: screenshots/standard-user-player-10.11.11.png
+      caption: Standard user streaming the same shared public-domain movie
+  website: https://jellyfin.org
+  developer: Jellyfin Project
+  license: GPL-2.0
+  source_code: https://github.com/jellyfin/jellyfin
+  support: https://forum.jellyfin.org
+  docs: https://jellyfin.org/docs
+image: docker.io/jellyfin/jellyfin@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db
+port: 8096
+health: {path: /health, timeout: 240}
+internet: true
+data:
+  - /config
+  - {path: /cache, kind: cache}
+shared:
+  media: /data
+env:
+  JELLYFIN_PublishedServerUrl: ${app.url}
+secrets:
+  admin_password: {length: 24}
+credentials:
+  - {label: Admin Account, username: admin, password: admin_password}
+sso:
+  callback: /sso/OID/redirect/${sso.slug}
+  entry: /sso/OID/start/${sso.slug}

@@ -74,6 +74,8 @@ function fixture() {
         return state.update(config, emit);
       },
     },
+    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/install-tracker': { logOperationFailure: () => {} },
   };
   dependencies['@/lib/market/update-http'] = load('src/lib/market/update-http.ts', dependencies);
   Object.assign(dependencies, {
@@ -81,7 +83,7 @@ function fixture() {
     '@/lib/apps/definitions': { getAppDefinition: () => null },
     '@/lib/apps/updater': {}, '@/lib/apps/lxd-updater': {}, '@/lib/apps/lxd-updates': {},
     '@/lib/spine/client': {}, '@/lib/updates/state': {}, '@/lib/infrastructure/system-updater': {},
-    '@/lib/ui-bridge/auth': { validateBridgeToken: async () => null },
+    '@/lib/ui-bridge/auth': { requireEmbedAdmin: async () => null },
   });
   dependencies['@/lib/auth/session'].getSession = async () => state.session;
   return {

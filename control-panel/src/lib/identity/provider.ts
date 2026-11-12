@@ -8,6 +8,7 @@ import {
   listIdentityUsers,
   removeClient,
   updateIdentityUser,
+  type IdentityRoleClaim,
 } from './store';
 import { addForwardAuthToRoute, removeForwardAuthFromRoute, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
 import { settingsService } from '@/lib/settings';
@@ -131,6 +132,8 @@ export async function createOAuthClient(params: {
   publicClient?: boolean;
   scopes?: string[];
   clientSecret?: string;
+  /** Per-app role claim (manifest `sso.role_claim`); null or omitted for none. */
+  roleClaim?: IdentityRoleClaim | null;
 }): Promise<{ clientId: string; clientSecret: string }> {
   if (params.publicClient && params.clientSecret) throw new Error('Public clients cannot have a client secret');
   if (params.publicClient && params.backchannelLogoutUri) throw new Error('Public clients cannot register a back-channel endpoint');
@@ -171,6 +174,7 @@ export async function createOAuthClient(params: {
     postLogoutRedirectUris: params.postLogoutRedirectUris,
     backchannelLogoutUri: params.backchannelLogoutUri,
     scopes: params.scopes || ['openid', 'profile', 'email', 'groups'],
+    roleClaim: params.roleClaim ?? null,
   });
 
   return { clientId: client.client_id, clientSecret: client.client_secret };

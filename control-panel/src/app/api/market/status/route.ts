@@ -60,8 +60,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
   const metadata = await readInstallMetadata(appId);
 
   if (metadata) {
-    // Handle both v1 (string[]) and v2 (ContainerMeta[]) formats
-    const containerNames = metadata.containers.map((c: any) => typeof c === 'string' ? c : c.containerName);
+    const containerNames = metadata.containers.map((c) => c.containerName);
     const containers = await Promise.all(containerNames.map(getContainerStatus));
     const storage = await inspectAppStorage(metadata.storageVolumes);
     const status = storage.available ? deriveAppStatus(containers) : 'error';
@@ -114,7 +113,6 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       manifestRepo: metadata.manifestRepo,
       manifestBranch: metadata.manifestBranch,
       manifestDigest: metadata.manifestDigest,
-      installedIntegrations: metadata.installedIntegrations,
     };
   }
 

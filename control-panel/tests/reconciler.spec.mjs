@@ -8,17 +8,20 @@ const reconciler = fs.readFileSync(path.join(root, 'src/lib/market/reconciler.ts
 const caddy = fs.readFileSync(path.join(root, 'src/lib/caddy/client.ts'), 'utf8');
 const uninstaller = fs.readFileSync(path.join(root, 'src/lib/market/uninstaller.ts'), 'utf8');
 
-test('reconcile recreates and verifies missing single and multi-entrance Caddy routes', () => {
+test('reconcile recreates and verifies missing Caddy routes', () => {
   assert.match(reconciler, /repair: \(\) => recreateRoutes\(meta\)/);
   assert.match(reconciler, /Caddy route did not persist after reconcile/);
   assert.match(reconciler, /await addRoute\(/);
-  assert.match(reconciler, /await addAppRoutes\(/);
 });
 
-test('multi-entrance route writes fail loudly', () => {
-  const block = caddy.slice(caddy.indexOf('export async function addAppRoutes'), caddy.indexOf('export async function removeAppRoutes'));
-  assert.doesNotMatch(block, /catch \(err\)/);
-  assert.match(block, /throw new Error\('Caddy has no HTTP server/);
+test('app routes are removed by exact hostname or recorded upstream, never by an app-id prefix', () => {
+  assert.doesNotMatch(caddy, /removeAppRoutes|addAppRoutes/);
+  for (const source of [reconciler, uninstaller]) {
+    assert.doesNotMatch(source, /startsWith\(`app-/);
+    assert.doesNotMatch(source, /removeAppRoutes/);
+  }
+  assert.match(reconciler, /deleteOwnedInstance\(name, owner\)/);
+  assert.match(uninstaller, /deleteOwnedInstance\(c\.containerName, owner\)/);
 });
 
 test('scan cleanup covers runtime, routes, metadata, app state, UI, database, and storage with verification', () => {
@@ -40,6 +43,6 @@ test('reconcile database operations do not pass SQL through a shell parser', () 
   assert.match(reconciler, /execCommand/);
   assert.doesNotMatch(reconciler, /execShell/);
   assert.match(reconciler, /\/usr\/local\/bin\/psql/);
-  assert.match(uninstaller, /import \{ execCommand, incusRequest \} from '\.\.\/incus\/server'/);
+  assert.match(uninstaller, /import \{ execCommand \} from '\.\.\/incus\/server'/);
   assert.match(uninstaller, /\/usr\/local\/bin\/pg_isready/);
 });

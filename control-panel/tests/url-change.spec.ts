@@ -41,7 +41,8 @@ test('reconfigure engine refreshes manifest config files (replace existing, rend
   assert.match(engine, /readConfigFile\(target\.containerName, cf, ctx, volumes\)/);
   assert.match(engine, /target\.type === 'oci'/);
   assert.match(engine, /meta\.storageVolumes/);
-  assert.match(engine, /fetchManifestFromSource/);
+  assert.match(engine, /readFrozenUpdateManifest/);
+  assert.doesNotMatch(engine, /fetchManifestFromSource|fetchManifest\(/);
 });
 
 test('reconfigure engine applies an explicit TLS target for the new name', () => {
@@ -78,6 +79,15 @@ test('reconfigure engine honors intentionally-stopped apps', () => {
   const restartIdx = engine.indexOf('await restartContainerAndWait');
   const enforceIdx = engine.indexOf('await enforceConfigFilePermissions', restartIdx);
   assert.ok(restartIdx > 0 && enforceIdx > restartIdx, 'OCI permissions must be reasserted after restart');
+});
+
+test('a stopped app gets its url-change setup at its next start', () => {
+  assert.match(engine, /if \(intentionallyStopped && manifest[\s\S]*?meta\.urlChangeSetupPending = true;/);
+  // Recorded before the metadata save that follows.
+  assert.ok(engine.indexOf('meta.urlChangeSetupPending = true') < engine.indexOf('meta.domain = newDomain;'));
+  assert.match(engine, /export async function runPendingUrlChangeSetup[\s\S]*?runSetup\(manifest, purpose[\s\S]*?finally \{\s*delete meta\.urlChangeSetupPending;/);
+  const lifecycle = read('src/lib/apps/lifecycle.ts');
+  assert.match(lifecycle, /meta\.urlChangeSetupPending && meta\.lifecycleOperation\?\.state === 'completed'[\s\S]*?runPendingUrlChangeSetup\(meta\)/);
 });
 
 test('reconfigure route sanitizes wire input — bundle targets are programmatic only', () => {
@@ -138,9 +148,11 @@ test('Nextcloud manifest keeps trusted_domains on the platform domain through su
     return;
   }
   const manifest = readFileSync(join(marketRoot, 'apps', 'nextcloud', 'youeye-app.yaml'), 'utf8');
-  assert.match(manifest, /^\s*OVERWRITEHOST:\s*["']\$\{app\.fqdn\}["']\s*$/m);
-  assert.match(manifest, /config:system:set trusted_domains 1 --value=.*\$OVERWRITEHOST/);
-  assert.match(manifest, /config:system:set overwritehost --value=.*\$OVERWRITEHOST/);
-  assert.match(manifest, /config:system:set overwrite\.cli\.url --value=.*\$OVERWRITEHOST/);
-  assert.doesNotMatch(manifest, /zz-youeye\.config\.php/);
+  const urlChange = readFileSync(join(marketRoot, 'apps', 'nextcloud', 'setup', 'url-change.yaml'), 'utf8');
+  assert.match(manifest, /^\s*OVERWRITEHOST:\s*["']?\$\{app\.fqdn\}["']?\s*$/m);
+  assert.match(urlChange, /^for: url-change$/m);
+  assert.match(urlChange, /'config:system:set', trusted_domains, '1', '--value=\$\{app\.fqdn\}'/);
+  assert.match(urlChange, /'config:system:set', overwritehost, '--value=\$\{app\.fqdn\}'/);
+  assert.match(urlChange, /overwrite\.cli\.url\s*\n\s*- --value=https:\/\/\$\{app\.fqdn\}/);
+  assert.doesNotMatch(manifest + urlChange, /zz-youeye\.config\.php/);
 });

@@ -4,6 +4,21 @@ import {
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
+/** Another holder has the flock right now (flock --nonblock exit 75). */
+export class AppUpdateExecutorLockBusyError extends Error {
+  readonly code = 'lock_busy';
+  constructor() {
+    super('App update executor lock is busy');
+    this.name = 'AppUpdateExecutorLockBusyError';
+  }
+}
+
+/** Next may bundle this module more than once, so match by name, not identity. */
+export function isAppUpdateExecutorLockBusy(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AppUpdateExecutorLockBusyError'
+    || error.message === 'App update executor lock is busy');
+}
+
 function insecure(): never {
   throw new Error('App update executor lock is corrupt or insecure; recovery must remain blocked');
 }
@@ -35,7 +50,7 @@ export class AppUpdateExecutorLock {
       if (result.error || result.signal || (result.status !== 0 && result.status !== 75)) {
         throw new Error('App update executor OS lock unavailable; recovery must remain blocked');
       }
-      if (result.status === 75) throw new Error('App update executor lock is busy');
+      if (result.status === 75) throw new AppUpdateExecutorLockBusyError();
       lock.assertHeld();
       fsyncSync(fd);
       const parent = openSync(path.dirname(file),

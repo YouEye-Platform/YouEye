@@ -33,7 +33,7 @@ test('revocation outbox survives restart and atomically publishes only the final
 
 test('credential templates reject public paths and world-readable files before runtime injection', () => {
   const file = {
-    path: '/etc/app/service.conf', template: '${integration.app_token}',
+    path: '/etc/app/service.conf', template: '${youeye.app_token}',
     permission: '0o600', directoryPermission: '0o700',
   };
   assert.doesNotThrow(() => assertPrivateCredentialConfig([file]));

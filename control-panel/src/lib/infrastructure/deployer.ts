@@ -35,6 +35,8 @@ import {
   waitForYouEyeUI,
 } from './health-checks';
 import {
+  caddyAdminAddress,
+  ensureAdminListenerPinned,
   ensureHeaderStrippingRoute,
   ensurePingRoute,
   ensurePointerInferenceRoutes,
@@ -324,7 +326,7 @@ async function _deployInfrastructureInner(
   // ─── Step 2: Caddy reverse proxy ─────────────────────────
   emit(onEvent, 2, 'running', 'Deploying Caddy reverse proxy...');
   try {
-    const manifest = applySystemImage(caddyManifest(), systemImages.caddy);
+    const manifest = applySystemImage(caddyManifest(await caddyAdminAddress()), systemImages.caddy);
     await deployOCIContainer(manifest, hostIP);
     await recordSystemContainerManifest('caddy', systemImages.caddy);
     await applyResourcePolicy('youeye-caddy', 'critical');
@@ -337,10 +339,12 @@ async function _deployInfrastructureInner(
     // Use the CP static IP because the Caddy OCI container may resolve the
     // per-app bridge dnsmasq first and miss system-container names.
     const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
+    const adminAddress = await caddyAdminAddress();
     const caddyfile = [
       '{',
-      '    admin 0.0.0.0:2019 {',
-      '        origins *',
+      `    admin ${adminAddress} {`,
+      // Off loopback, Caddy accepts only Hosts listed here; `*` matches nothing (every request got 403).
+      `        origins ${adminAddress}`,
       '    }',
       '    on_demand_tls {',
       `        ask http://${controlIP}:3000/api/setup/config`,
@@ -562,7 +566,7 @@ export async function reconcileInfrastructure(
     remit(3, 'running', 'Deploying missing Caddy reverse proxy...');
     try {
       const images = await requireSystemImages(3);
-      const manifest = applySystemImage(caddyManifest(), images.caddy);
+      const manifest = applySystemImage(caddyManifest(await caddyAdminAddress()), images.caddy);
       await deployOCIContainer(manifest, hostIP);
       await recordSystemContainerManifest('caddy', images.caddy);
       await applyResourcePolicy('youeye-caddy', 'critical');
@@ -572,10 +576,12 @@ export async function reconcileInfrastructure(
       }
 
       const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
+      const adminAddress = await caddyAdminAddress();
       const caddyfile = [
         '{',
-        '    admin 0.0.0.0:2019 {',
-        '        origins *',
+        `    admin ${adminAddress} {`,
+        // Off loopback, Caddy accepts only Hosts listed here; `*` matches nothing (every request got 403).
+        `        origins ${adminAddress}`,
         '    }',
         '    on_demand_tls {',
         `        ask http://${controlIP}:3000/api/setup/config`,
@@ -609,6 +615,7 @@ export async function reconcileInfrastructure(
     }
   } else {
     try {
+      if (await ensureAdminListenerPinned()) console.log('[Caddy] Admin API moved to its static incusbr0 address');
       await ensurePingRoute('youeye-control', 3000);
       await ensureHeaderStrippingRoute();
       remit(3, 'skipped', 'Caddy already running and required routes are verified');

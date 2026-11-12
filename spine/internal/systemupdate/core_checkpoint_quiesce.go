@@ -119,6 +119,20 @@ func (p NativeCoreCheckpoint) Quiesce(ctx context.Context, j CoreJournal) (Nativ
 	return record, p.saveRecord(record)
 }
 
+// requireNoCheckpointRecord: Quiesce saves the record before its first effect (ingress gate, power holds, stops,
+// snapshots), and the recovery fence saves one before closing writers; the ingress rules, power lock and reboot
+// markers live beside it. An absent per-request checkpoint directory therefore means no writer was touched for this
+// request. Anything present or unreadable there keeps the request on paired recovery.
+func (p NativeCoreCheckpoint) requireNoCheckpointRecord(j CoreJournal) error {
+	if !filepath.IsAbs(p.Root) || !coreRequestPattern.MatchString(j.RequestID) {
+		return fmt.Errorf("protected checkpoint identity required")
+	}
+	if _, err := os.Lstat(filepath.Dir(p.recordPath(j.RequestID))); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("a checkpoint record exists; paired recovery is required")
+	}
+	return nil
+}
+
 func (p NativeCoreCheckpoint) verifyReservation(j CoreJournal) error {
 	r, err := (CoreLifecycleBarrier{Root: filepath.Join(p.DataRoot, "state", "app-updates")}).Read()
 	if err != nil || r.RequestID != j.RequestID || r.ManifestSHA256 != j.ManifestSHA256 {

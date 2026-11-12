@@ -159,6 +159,7 @@ export async function reconcileInstalledAdmission() {
     bindings.push(binding);
     const addresses = new Set<string>();
     for (const container of metadata.containers || []) {
+      addresses.add(container.containerName);
       addresses.add(`${container.containerName}.youeye`);
       const ip = await getContainerIP(container.containerName);
       if (ip) addresses.add(ip);
@@ -174,8 +175,9 @@ export async function reconcileInstalledAdmission() {
           continue;
         }
         const hosts = route.match?.flatMap(match => match.host || []) || [];
+        // Exact names from the install record only: its hostname, or an upstream that is one of
+        // its recorded containers (by name or current address).
         const belongs = hosts.includes(`${metadata.subdomain}.${metadata.domain}`)
-          || (String(route['@id'] || '').startsWith(`app-${metadata.appId}-`))
           || route.handle?.some((handler: any) => handler.handler === 'reverse_proxy'
             && handler.upstreams?.some((upstream: any) => addresses.has(upstream.dial?.split(':')[0])));
         if (!belongs || !hosts.length) continue;
@@ -247,10 +249,12 @@ export async function verifyAdmissionCleanup(metadata: InstallMetadata, keepData
       const { verifyPreviouslyRetainedRoot } = await import('./retained-data');
       await verifyPreviouslyRetainedRoot(metadata, container.containerName);
     } else {
-      // Validated restore replacement may resume after deletion. Only an exact
+      // Validated restore replacement, and the retry of a delete-data uninstall that already
+      // deleted some containers (cleanupPending), may resume after deletion. Only an exact
       // Incus 404 is accepted; policy, resource and volume ownership still apply.
       await verifyRuntimeOwnership({ appId: metadata.appId, installationId: policy.installationId,
-        ownerId: resource.owner_id, name: container.containerName }, restoreReplacement && !keepData);
+        ownerId: resource.owner_id, name: container.containerName },
+      !keepData && (restoreReplacement || metadata.cleanupPending === true));
     }
   }
   for (const volume of metadata.storageVolumes || []) {

@@ -17,6 +17,7 @@ export { readFrozenUpdateManifest } from './frozen-manifest';
 import type { AppManifest, InstallMetadata, VariableContext } from './types';
 import { writeAllConfigFiles } from './config-writer';
 import { envToString } from './platform-env';
+import { CONTAINER_DOMAIN } from './constants';
 import { isManagedTrustMount } from './caddy-ca';
 import { updateConfigurationContext, updateEnvironment, resolveUpdateTemplate } from './update-configuration';
 import {
@@ -85,7 +86,7 @@ function stateOf(app: NonNullable<Awaited<ReturnType<typeof getInstalledApp>>>):
 }
 const updateOwnedFields = new Set(['installedVersion', 'catalogKey', 'itemKind', 'sourceId', 'sourceName',
   'sourceRepoUrl', 'manifestSource', 'manifestPath', 'manifestRepo', 'manifestBranch', 'manifestDigest',
-  'nativeArtifacts', 'containers', 'entrances', 'appliedMigrations', 'productReleaseFloors']);
+  'nativeArtifacts', 'containers', 'productReleaseFloors']);
 function stable(value: unknown): string {
   if (!value || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -302,8 +303,9 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       const metadata = plan.metadata.containers.find(c => c.name === spec.name)!;
       if (metadata.containerName === plan.postgres?.engine) continue;
       const old = plan.manifest.containers.find(c => c.name === spec.name)!;
-      const env = updateEnvironment({ ...plan.manifest.env_mapping, ...old.environment },
-        { ...target.env_mapping, ...spec.environment }, environments[spec.name], context);
+      // The app's env belongs to its own container; sidecars carry only their own env.
+      const env = updateEnvironment({ ...(old.primary ? plan.manifest.env_mapping : {}), ...old.environment },
+        { ...(spec.primary ? target.env_mapping : {}), ...spec.environment }, environments[spec.name], context);
       const current = await read<Instance>(`/1.0/instances/${e(metadata.containerName)}`);
       if (await containerState(metadata.containerName) !== 'Stopped') throw new Error('Configuration requires a stopped runtime');
       if (spec.type === 'oci') {
@@ -450,9 +452,14 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       server.routes = (server.routes ?? []).filter(r => r['@id'] !== id);
       if (blocked) {
         // Preserve every existing route and current auth/grants; insert only this app's deny.
+        // The app's routes are the ones that proxy to a container its install record names.
         const hosts = new Set<string>([`${plan.metadata.subdomain}.${plan.metadata.domain}`]);
+        const upstreams = new Set(plan.metadata.containers.flatMap(c => [c.containerName, `${c.containerName}.${CONTAINER_DOMAIN}`]));
         for (const route of server.routes) {
-          if (route['@id']?.startsWith(`app-${record.appId}-`)) {
+          const ownRoute = (route.handle ?? []).some((handler: { handler?: string; upstreams?: Array<{ dial?: string }> }) =>
+            handler.handler === 'reverse_proxy'
+            && (handler.upstreams ?? []).some(upstream => upstreams.has(String(upstream.dial ?? '').replace(/:\d+$/, ''))));
+          if (ownRoute) {
             for (const match of route.match ?? []) for (const host of match.host ?? []) hosts.add(host);
           }
         }
@@ -688,7 +695,7 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       const restored = { ...current };
       const keys = ['installedVersion', 'catalogKey', 'itemKind', 'sourceId', 'sourceName', 'sourceRepoUrl',
         'manifestSource', 'manifestPath', 'manifestRepo', 'manifestBranch', 'manifestDigest',
-        'nativeArtifacts', 'containers', 'entrances', 'appliedMigrations'] as const;
+        'nativeArtifacts', 'containers'] as const;
       for (const key of keys) {
         if (Object.hasOwn(plan.metadata, key)) Object.assign(restored, { [key]: plan.metadata[key] });
         else delete restored[key];

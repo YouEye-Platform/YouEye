@@ -7,7 +7,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
-import { AppUpdateExecutorLock } from './update-executor-lock';
+import { AppUpdateExecutorLock, isAppUpdateExecutorLockBusy } from './update-executor-lock';
 import {
   AppUpdateJournalStore, updateNeedsRecovery, updateResourceKey, type UpdateResource,
 } from './update-journal';
@@ -43,6 +43,81 @@ export class AppLifecycleAdmissionError extends Error {
   constructor(message = 'App resources are reserved by an unfinished update; explicit recovery is required') {
     super(message);
     this.name = 'AppLifecycleAdmissionError';
+  }
+}
+
+/** User-initiated operations wait this long for a lifecycle lock held by someone else. */
+export const USER_OPERATION_LOCK_WAIT_MS = 30_000;
+
+export class AppLifecycleBusyError extends Error {
+  readonly code = 'operation_in_progress';
+  constructor(cause: unknown) {
+    super('Another operation on this app is in progress; try again in a moment', { cause });
+    this.name = 'AppLifecycleBusyError';
+  }
+}
+
+export class AppLifecycleWaitCancelledError extends Error {
+  constructor(cause: unknown) {
+    super('Operation cancelled while waiting for another operation on this app to finish', { cause });
+    this.name = 'AppLifecycleWaitCancelledError';
+  }
+}
+
+interface LockWaitPolicy { timeoutMs: number; pollMs: number; signal?: AbortSignal }
+const waitContextKey = Symbol.for('youeye.lifecycle-lock-wait');
+const waitGlobal = globalThis as typeof globalThis & {
+  [waitContextKey]?: AsyncLocalStorage<LockWaitPolicy>;
+};
+const waitContext = waitGlobal[waitContextKey] ??= new AsyncLocalStorage<LockWaitPolicy>();
+
+/**
+ * Mark `work` as a user-initiated operation (install, uninstall, start/stop/restart,
+ * update). Lifecycle locks it enters wait for a busy holder (a probe, reconciler
+ * pass or another short operation) instead of failing at once. Background jobs
+ * never enter this context and keep skipping on a busy lock.
+ */
+export function withUserOperationLockWait<T>(
+  work: () => T | Promise<T>,
+  options: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal } = {},
+): Promise<T> {
+  const policy: LockWaitPolicy = {
+    timeoutMs: options.timeoutMs ?? USER_OPERATION_LOCK_WAIT_MS,
+    pollMs: options.pollMs ?? 250,
+    signal: options.signal,
+  };
+  return waitContext.run(policy, async () => await work());
+}
+
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('aborted')); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); reject(new Error('aborted')); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Run a lock-acquiring admission step. Outside a user operation it runs once (a
+ * busy lock fails at once, as before). Inside one, a busy lock is retried until
+ * the bound. `acquire` must take its locks before any effect and release what it
+ * took when it throws, so repeating it is safe.
+ */
+async function admitWaiting<T>(acquire: () => T): Promise<T> {
+  const policy = waitContext.getStore();
+  if (!policy) return acquire();
+  const deadline = Date.now() + policy.timeoutMs;
+  for (;;) {
+    try {
+      return acquire();
+    } catch (error) {
+      if (!isAppUpdateExecutorLockBusy(error)) throw error;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new AppLifecycleBusyError(error);
+      try { await pause(Math.min(policy.pollMs, remaining), policy.signal); }
+      catch { throw new AppLifecycleWaitCancelledError(error); }
+    }
   }
 }
 
@@ -107,10 +182,11 @@ async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T
   }
   // A waiting System writer holds this gate while existing operations drain.
   // Nested operations retain their original admission and may finish normally.
-  const gate = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'), 'shared');
-  let lock: AppUpdateExecutorLock;
-  try { lock = AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared'); }
-  finally { gate.release(); }
+  const lock = await admitWaiting(() => {
+    const gate = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'), 'shared');
+    try { return AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared'); }
+    finally { gate.release(); }
+  });
   const entry: HeldApp = { lock, active: true };
   const scope = new Map(inherited);
   scope.set(key, entry);
@@ -220,7 +296,10 @@ async function withAppLifecycleUnderCore<T>(
   const resources = [app, ...(options.resources ?? [])];
   let lock: AppUpdateExecutorLock | undefined;
   try {
-    store.withAdmission(() => {
+    await admitWaiting(() => store.withAdmission(() => {
+      // A repeated admission never keeps a descriptor from an earlier attempt.
+      lock?.release();
+      lock = undefined;
       lock = AppUpdateExecutorLock.acquire(path.join(store.directory, 'executors', `app-${appId}.lock`));
       if (options.recoveryOperationId) {
         const record = store.read(options.recoveryOperationId);
@@ -234,7 +313,7 @@ async function withAppLifecycleUnderCore<T>(
         || store.list().some(record => record.appId === appId && updateNeedsRecovery(record))) {
         throw new AppLifecycleAdmissionError();
       }
-    });
+    }));
     const entry: HeldApp = { lock: lock!, active: true };
     const scope = new Map(inherited);
     scope.set(key, entry);
@@ -327,8 +406,8 @@ async function withAppInventoryUnderCore<T>(
   const inherited = context.getStore();
   const held = inherited?.get(key);
   if (held?.active) { held.lock.assertHeld(); return await work(); }
-  const lock = store.withAdmission(() => AppUpdateExecutorLock.acquire(
-    path.join(store.directory, 'executors', 'inventory.lock')));
+  const lock = await admitWaiting(() => store.withAdmission(() => AppUpdateExecutorLock.acquire(
+    path.join(store.directory, 'executors', 'inventory.lock'))));
   const entry: HeldApp = { lock, active: true };
   const scope = new Map(inherited); scope.set(key, entry);
   try {

@@ -154,7 +154,9 @@ Key security principles:
 | **Automatic TLS** | Caddy provisions and renews certificates automatically |
 | **SSO everywhere** | YouEye ID gates apps and services - no separate logins |
 | **One-way bridge** | CP pushes data to UI via bridge API; UI cannot call CP |
+| **CP embed routes** | The CP's own `/api/ui-bridge/*` routes serve its `/embed/*` pages only: an admin CP session is required, and a CSRF token (`X-CSRF-Token`) for every change |
 | **Network isolation** | UI container is firewalled from reaching CP directly |
+| **Caddy administration** | Caddy's admin API listens only on its static incusbr0 address (`.13:2019`), which app egress rejects; Caddy's NIC on each app bridge has an ACL that admits only TCP 80/443 |
 
 ## Data Flow
 

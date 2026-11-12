@@ -9,6 +9,7 @@
 import { getInstanceState, execShell, incusDownloadFile } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
 import { platformCommand } from '@/lib/postgres/platform';
+import { caddyAdminAddress } from '@/lib/caddy/client';
 
 export type ServiceStatus = 'running' | 'stopped' | 'error' | 'degraded' | 'unknown';
 
@@ -172,11 +173,18 @@ async function checkCaddyHealth(container: string): Promise<ServiceStatus> {
   // fetch() couldn't reach the Caddy admin API from inside youeye-control.
   // Using execShell to run curl inside the Caddy container is always reliable,
   // consistent with how Pi-Hole and PostgreSQL health checks work.
+  // The admin API listens only on Caddy's static incusbr0 address, not localhost.
+  let adminAddress: string;
+  try {
+    adminAddress = await caddyAdminAddress();
+  } catch {
+    return 'degraded';
+  }
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const result = await execShell(
         container,
-        'curl -s -o /dev/null -w "%{http_code}" http://localhost:2019/config/',
+        `curl -s -o /dev/null -w "%{http_code}" http://${adminAddress}/config/`,
         { timeout: 5000 }
       );
       const code = result.stdout?.trim().replace(/'/g, '');

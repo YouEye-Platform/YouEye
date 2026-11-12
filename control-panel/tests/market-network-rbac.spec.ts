@@ -12,8 +12,6 @@ const adminMutationRoutes = [
   'src/app/api/market/install-url/route.ts',
   'src/app/api/market/uninstall/route.ts',
   'src/app/api/market/bundles/[id]/install/route.ts',
-  'src/app/api/market/integrations/apply/route.ts',
-  'src/app/api/market/integrations/remove/route.ts',
   'src/app/api/bridges/route.ts',
   'src/app/api/bridges/[bridgeId]/route.ts',
   'src/app/api/internet-grants/route.ts',

@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { fetchManifest } from '@/lib/market/catalog';
+import { installedOrCatalogManifest, readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { getBridgesForApp } from '@/lib/bridges/manager';
 
@@ -42,7 +43,7 @@ export async function GET(
     // 1. Get the app's manifest to read its wants
     let wants: Array<{ appId?: string; type?: string; name: string; description?: string; defaultPort?: number }> = [];
     try {
-      const manifest = await fetchManifest(appId);
+      const manifest = await installedOrCatalogManifest(appId, () => fetchManifest(appId));
       wants = manifest.wants ?? [];
     } catch {
       // App may not have a manifest in catalog (e.g. custom install)
@@ -91,7 +92,7 @@ export async function GET(
         // Fallback: check manifest from catalog
         if (!matched) {
           try {
-            const m = await fetchManifest(meta.appId);
+            const m = await readInstalledAppManifest(meta.appId);
             const match = m.provides?.find((p: any) => p.type === want.type);
             if (match) {
               providers.push({
@@ -112,7 +113,7 @@ export async function GET(
       for (const p of providers) {
         if (p.name === p.appId) {
           try {
-            const m = await fetchManifest(p.appId);
+            const m = await readInstalledAppManifest(p.appId);
             p.name = m.metadata.name;
           } catch {
             // Keep appId as name

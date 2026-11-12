@@ -5,7 +5,8 @@
 
 import { OCIManifest, LXDContainerSpec } from './types';
 
-export function caddyManifest(): OCIManifest {
+/** `adminAddress` is Caddy's static incusbr0 address (`caddyAdminAddress`), never 0.0.0.0. */
+export function caddyManifest(adminAddress: string): OCIManifest {
   return {
     name: 'caddy',
     displayName: 'Caddy',
@@ -22,9 +23,9 @@ export function caddyManifest(): OCIManifest {
       // Admin API (2019) NOT exposed to host — CP accesses via container network
     ],
     environment: {
-      // Bind admin API to all interfaces inside container so CP
-      // can reach it via container network (youeye-caddy.youeye:2019)
-      CADDY_ADMIN: '0.0.0.0:2019',
+      // Bind the admin API to Caddy's static incusbr0 address only: the CP reaches
+      // it there, and Caddy's NICs on app bridges never serve it.
+      CADDY_ADMIN: adminAddress,
     },
     volumes: [
       // /data persists TLS certificates across container recreation

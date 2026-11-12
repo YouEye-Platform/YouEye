@@ -23,8 +23,9 @@ export function resolveSharedDatabasePasswordFile(
   manifest: Pick<AppManifest, 'secrets'>,
 ): string {
   const passwordFile = manifest.secrets.find(secret => secret.name === 'db_password')?.file
-    ?? 'db-password';
-  if (!/^[A-Za-z0-9._-]+$/.test(passwordFile) || passwordFile === '.' || passwordFile === '..') {
+    ?? 'secrets/db_password';
+  // App secrets live only in the app's `secrets/` directory (see infrastructure/secrets.ts).
+  if (!/^secrets\/[a-z0-9_]{1,40}$/.test(passwordFile)) {
     throw new Error('Shared database password file is outside the app-owned secret directory');
   }
   return passwordFile;

@@ -780,13 +780,19 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	}
 
 	existing, existingErr := loadJournal(m.config.JournalPath)
-	if existingErr == nil && existing.ManifestSHA256 == verified.SHA256 {
-		if existing.CoreManifestSHA256 != coreDigest {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host transaction is bound to a different core selection")
-		}
+	if existingErr != nil && !errors.Is(existingErr, os.ErrNotExist) {
+		return VerifiedManifest{}, Layout{}, state, Journal{}, existingErr
+	}
+	sameHost := existingErr == nil && existing.ManifestSHA256 == verified.SHA256
+	if sameHost && existing.CoreManifestSHA256 == coreDigest {
 		return verified, layout, state, existing, nil
 	}
-	if existingErr == nil {
+	// A finished attempt (rolled back, failed or healthy) of the same host image under an earlier core release is
+	// history: a later release that reuses the image starts a fresh transaction. Only an unfinished one stays bound.
+	if sameHost && existing.Phase != PhaseRollback && existing.Phase != PhaseFailed && existing.Phase != PhaseHealthy {
+		return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host transaction is bound to a different core selection")
+	}
+	if existingErr == nil && !sameHost {
 		switch existing.Phase {
 		case PhaseAvailable, PhaseDownload, PhaseWriting, PhaseStaged, PhasePending, PhaseTrial:
 			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("a different system update transaction is already active")
@@ -795,8 +801,6 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 				return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("a different failed system update exists; retry with --replace-failed after renewed confirmation")
 			}
 		}
-	} else if !errors.Is(existingErr, os.ErrNotExist) {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, existingErr
 	}
 
 	transactionID := "update-" + verified.SHA256[:24]

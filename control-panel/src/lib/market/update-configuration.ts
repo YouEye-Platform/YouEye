@@ -1,7 +1,7 @@
 import type { AppManifest, VariableContext } from './types';
 import { resolveVariables } from './variables';
 
-const protectedPath = /^(?:database|sso|identity|integration|ai|installParams)\./;
+const protectedPath = /^(?:database|sso|identity|youeye|ai)\./;
 
 /** Recover chosen credentials/settings from the old declared environment, never
  * minting an integration token or replacing a secret with a canonical default. */
@@ -12,7 +12,7 @@ export function updateConfigurationContext(
   const context = structuredClone(canonical);
   const seen = new Map<string, string>();
   for (const spec of old.containers) {
-    const declarations = { ...old.env_mapping, ...spec.environment };
+    const declarations = { ...(spec.primary ? old.env_mapping : {}), ...spec.environment };
     for (const [key, template] of Object.entries(declarations)) {
       const path = /^\$\{([A-Za-z_][A-Za-z0-9_.]*)\}$/.exec(template)?.[1];
       const value = environments[spec.name]?.[key];
@@ -54,7 +54,7 @@ export function updateEnvironment(
     if (!Object.hasOwn(targetDeclarations, key)) delete next[key];
   }
   for (const [key, template] of Object.entries(targetDeclarations)) {
-    if (template === oldDeclarations[key] && /\$\{(?:database|sso|identity|integration|ai|installParams)\./.test(template)) {
+    if (template === oldDeclarations[key] && /\$\{(?:database|sso|identity|youeye|ai)\./.test(template)) {
       if (!Object.hasOwn(current, key)) throw new Error('Installed credential mapping is missing');
       next[key] = current[key];
     } else {

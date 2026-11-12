@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { controlInstalledApp, type AppPowerAction } from '@/lib/apps/lifecycle';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 import type { AppControlRequest } from '@/types/apps';
 
 const ACTIONS = new Set<AppPowerAction>(['start', 'stop', 'restart', 'status']);
@@ -37,18 +39,19 @@ export async function POST(
       return NextResponse.json({ error: `Invalid action: ${body.action}` }, { status: 400 });
     }
 
-    const result = await controlInstalledApp(
+    const result = await withUserOperationLockWait(() => controlInstalledApp(
       name,
       action,
       session.username || session.authMethod || 'admin',
       { force: body.force === true },
-    );
+    ));
 
     return NextResponse.json(result, { status: result.success ? 200 : 207 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const status = message.startsWith('Unknown installed app') ? 404 : 500;
-    console.error('[app-control] Failed to control app:', error);
+    const status = message.startsWith('Unknown installed app') ? 404
+      : error instanceof Error && error.name === 'AppLifecycleBusyError' ? 409 : 500;
+    logOperationFailure('App control', error);
     return NextResponse.json({ error: message }, { status });
   }
 }
