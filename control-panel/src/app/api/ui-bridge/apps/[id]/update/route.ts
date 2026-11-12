@@ -52,8 +52,6 @@ export async function POST(
           emit({ stage: 'starting', message: 'Starting update via Spine', progress: 10 });
           let result;
           switch (id) {
-            case 'spine': result = await spineClient.updateSelf(); break;
-            case 'control-panel': result = await spineClient.updateControl(); break;
             case 'incus': result = await spineClient.updateIncus(); break;
             case 'host-system': result = await spineClient.updateSystem(); break;
             default: throw new Error(`No update handler for ${id}`);

@@ -111,6 +111,9 @@ install -d -m 0700 "$state_dir"
 	exit 1
 }
 reconcile_update
+# Grouped releases own service health and paired recovery. An ordinary host
+# health result must not clear boot counters before that durable gate passes.
+"$youeye_bin" update system check-commit
 
 if [ -z "$boot_count_path" ]; then
     if jq -e --arg boot_id "$boot_id" \

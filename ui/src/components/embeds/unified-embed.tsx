@@ -1,4 +1,6 @@
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
@@ -82,6 +84,8 @@ export function UnifiedEmbed({
   className,
   title,
 }: UnifiedEmbedProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const reactId = useId();
@@ -204,7 +208,7 @@ export function UnifiedEmbed({
         <iframe
           ref={frameRef}
           src={src}
-          title={title ?? `${kind} embed`}
+          title={title ?? translateInterface("m82a38802d19d", { value0: translateInterface("embedKind_" + kind) })}
           aria-busy={!ready}
           onError={() => {
             setFailed(true);

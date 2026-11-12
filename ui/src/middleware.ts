@@ -13,6 +13,7 @@ import { jwtVerify } from "jose";
 const PUBLIC_ROUTES = [
   "/login",
   "/offline",
+  "/offline.html",
   "/api/auth/sso",
   "/api/auth/callback",
   "/api/auth/logout",
@@ -30,6 +31,7 @@ const PUBLIC_ROUTES = [
   "/api/v1/my-connections",  // Auth at route level via X-YouEye-App header (app-to-UI)
   "/api/apps/v1/proxy",  // Auth at route level via app token and active connection grants
   "/api/apps/v1/internet",  // Auth at route level via app token and internet permission grants
+  "/api/apps/v1/credential-probe", // Current app credential only; no user/platform data
 ];
 
 const RETIRED_PUBLIC_404_ROUTES = [
@@ -38,7 +40,7 @@ const RETIRED_PUBLIC_404_ROUTES = [
 ];
 
 /** Static resource patterns to skip */
-const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
+const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/mytitle/fonts/", "/onboarding-fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
 
 function getJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;
@@ -55,7 +57,9 @@ function isSSOConfiguredForMiddleware(): boolean {
 }
 
 function loginRedirectFor(request: NextRequest): URL {
-  return new URL(isSSOConfiguredForMiddleware() ? "/api/auth/sso" : "/login", request.url);
+  const target = new URL(isSSOConfiguredForMiddleware() ? "/api/auth/sso" : "/login", request.url);
+  target.searchParams.set("redirect", request.nextUrl.pathname + request.nextUrl.search);
+  return target;
 }
 
 export async function middleware(request: NextRequest) {
@@ -110,7 +114,19 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(sessionCookie.value, secret);
+    const { payload } = await jwtVerify(sessionCookie.value, secret);
+    // The ID cookie is shared by the platform's parent domain. Check it on
+    // protected browser requests so revocation takes effect across devices.
+    const identityUrl = process.env.IDENTITY_INTERNAL_URL || process.env.IDENTITY_URL;
+    if (identityUrl) {
+      if (typeof payload.identityId !== 'string') throw new Error('Missing identity subject');
+      if (typeof payload.identitySessionId !== 'string') throw new Error('Missing identity session');
+      const cookie = request.headers.get('cookie') || '';
+      const check = await fetch(`${identityUrl}/identity/session/check`, {
+        headers: { cookie, 'x-youeye-expected-sub': payload.identityId, 'x-youeye-expected-sid': payload.identitySessionId }, cache: 'no-store', signal: AbortSignal.timeout(5000),
+      });
+      if (check.status !== 204) throw new Error('Identity session ended');
+    }
     return NextResponse.next();
   } catch {
     // Invalid or expired token — redirect to login

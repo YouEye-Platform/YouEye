@@ -9,6 +9,8 @@
  */
 
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { type ReactNode } from "react";
 import { UnifiedEmbed } from "@/components/embeds/unified-embed";
@@ -39,6 +41,8 @@ export function NotificationSurfaceEmbed({
   fallback,
   mode,
 }: NotificationSurfaceEmbedProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   // No app / no surface / no DOM (SSR) → the standard row carries the notification.
   if (!appId || !surface?.embed_path || typeof window === "undefined") {
     return <>{fallback}</>;
@@ -57,7 +61,7 @@ export function NotificationSurfaceEmbed({
       size={{ default: MIN_HEIGHT, min: MIN_HEIGHT, max: MAX_HEIGHT }}
       timeout={3000}
       mode={mode}
-      title={surface.name ?? "Notification"}
+      title={surface.name ?? translateInterface("m7d31b8331399")}
       fallback={fallback}
       className="overflow-hidden rounded-xl border"
     />

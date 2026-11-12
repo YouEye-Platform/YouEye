@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
 import { CONTAINER_DOMAIN } from "@/lib/market/constants";
 import { getSession } from "@/lib/auth/session";
+import { getUserByUsername } from '@/lib/identity/store';
+import { TIMELINE_SESSION_COOKIE, timelineSessionRequestCookie, timelineSessionResponseCookies } from '../../../../../../shared/timeline-session';
 
 const TOKEN_FILE_PATH = "/etc/youeye/ui-bridge-token";
 const UI_BASE = `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
@@ -38,6 +40,11 @@ async function proxy(request: NextRequest, path: string[]) {
     "X-YouEye-Username": session.username,
     "X-YouEye-Is-Admin": session.isAdmin ? "true" : "false",
   };
+  const viewingCookie = timelineSessionRequestCookie(suffix, request.cookies.get(TIMELINE_SESSION_COOKIE)?.value);
+  if (viewingCookie) headers.Cookie = viewingCookie;
+  const principal = session.identityId || (await getUserByUsername(session.username))?.id;
+  if (!principal) return NextResponse.json({ error: 'Identity mapping is unavailable' }, { status: 409 });
+  headers['X-YouEye-Identity'] = principal;
 
   const publicHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
   const publicProto = request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(":", "") || "https";
@@ -60,12 +67,19 @@ async function proxy(request: NextRequest, path: string[]) {
   });
 
   const responseBody = await res.arrayBuffer();
-  return new NextResponse(responseBody, {
+  const response = new NextResponse(responseBody, {
     status: res.status,
     headers: {
       "Content-Type": res.headers.get("content-type") || "application/json",
     },
   });
+  // Carry only the personal viewing cookie on its dedicated session endpoints.
+  // Creation, expiry and Lock now retain HttpOnly/Secure/SameSite attributes.
+  for (const cookie of timelineSessionResponseCookies(suffix, res.headers.getSetCookie())) {
+    response.headers.append("Set-Cookie", cookie);
+  }
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }
 
 type RouteContext = { params: Promise<{ path: string[] }> };

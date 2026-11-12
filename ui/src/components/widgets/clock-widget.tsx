@@ -13,6 +13,7 @@
 
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { getClockPreset, type ClockTheme } from "@/lib/clock-presets";
+import { useLocale } from "next-intl";
 
 interface ClockWidgetProps {
   settings?: {
@@ -115,6 +116,7 @@ function buildDateStyle(theme: ClockTheme, dateSize: number): CSSProperties {
 const DEFAULT_THEME_ID = "gradient";
 
 export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
+  const locale = useLocale();
   const [now, setNow] = useState<Date>(new Date());
   const containerRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
@@ -136,14 +138,14 @@ export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
   const themeId = settings?.clockTheme ?? DEFAULT_THEME_ID;
   const theme = getClockPreset(themeId) ?? getClockPreset(DEFAULT_THEME_ID)!;
 
-  const timeStr = now.toLocaleTimeString(undefined, {
+  const timeStr = now.toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
     second: showSeconds ? "2-digit" : undefined,
     hour12: !format24h,
   });
 
-  const dateStr = now.toLocaleDateString(undefined, {
+  const dateStr = now.toLocaleDateString(locale, {
     weekday: "long",
     month: "long",
     day: "numeric",

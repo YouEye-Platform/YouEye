@@ -1,4 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { controlPanelVersion } from '@/lib/build-version';
+import { withIndependentCopyExclusion } from '@/lib/market/update-admission';
 import { tlsStorage } from '@/lib/acme/storage';
 import * as caddy from '@/lib/caddy/client';
 import { spineClient } from '@/lib/spine/client';
@@ -114,7 +116,7 @@ async function resumeProvisioning(state: NamesLifecycleState): Promise<void> {
 /** Run one lease heartbeat and, when due, an atomic certificate replacement. */
 export async function runNamesMaintenance(): Promise<void> {
   if (checkInFlight) return checkInFlight;
-  checkInFlight = (async () => {
+  checkInFlight = withIndependentCopyExclusion(async () => {
     const state = await readNamesLifecycleState();
     if (!state || state.status === 'released') return;
 
@@ -148,7 +150,7 @@ export async function runNamesMaintenance(): Promise<void> {
         currentIp: metrics.primary_ip,
         certificateFingerprint: activeCertificate.brokerFingerprint,
         certificateExpiresAt: state.certificate.expiresAt,
-        youeyeVersion: process.env.YOUEYE_VERSION || undefined,
+        youeyeVersion: controlPanelVersion() === 'development' ? undefined : controlPanelVersion(),
         caddyStatus: caddyHealthy ? 'healthy' : 'unavailable',
         renewalNeeded,
       });
@@ -225,7 +227,7 @@ export async function runNamesMaintenance(): Promise<void> {
       await markFailure(error);
       throw error;
     }
-  })();
+  });
   try {
     await checkInFlight;
   } finally {

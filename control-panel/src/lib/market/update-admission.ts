@@ -1,0 +1,337 @@
+/**
+ * Shared admission for app update, recovery and ordinary lifecycle mutations.
+ * Callers hold the per-app OS lock for the entire transaction, including awaits.
+ * Update callers must create their journal receipt inside this callback; recovery
+ * callers must additionally acquire store.recover(recoveryOperationId).
+ */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import path from 'node:path';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
+import { AppUpdateExecutorLock } from './update-executor-lock';
+import {
+  AppUpdateJournalStore, updateNeedsRecovery, updateResourceKey, type UpdateResource,
+} from './update-journal';
+
+export interface AppLifecycleOptions {
+  store?: AppUpdateJournalStore;
+  /** Additional exact resources, e.g. volumes involved in a storage move. */
+  resources?: UpdateResource[];
+  /** Only explicit recovery may enter an unfinished operation. */
+  recoveryOperationId?: string;
+}
+
+interface HeldApp {
+  lock: AppUpdateExecutorLock;
+  active: boolean;
+}
+
+// Next may bundle this helper more than once in a single process.
+const contextKey = Symbol.for('youeye.app-lifecycle-admission');
+const globalContext = globalThis as typeof globalThis & {
+  [contextKey]?: AsyncLocalStorage<Map<string, HeldApp>>;
+};
+const context = globalContext[contextKey] ??= new AsyncLocalStorage<Map<string, HeldApp>>();
+
+const coreContextKey = Symbol.for('youeye.core-lifecycle-admission');
+const coreGlobal = globalThis as typeof globalThis & {
+  [coreContextKey]?: AsyncLocalStorage<Map<string, HeldApp>>;
+};
+const coreContext = coreGlobal[coreContextKey] ??= new AsyncLocalStorage<Map<string, HeldApp>>();
+
+export class AppLifecycleAdmissionError extends Error {
+  readonly code = 'recovery_required';
+  constructor(message = 'App resources are reserved by an unfinished update; explicit recovery is required') {
+    super(message);
+    this.name = 'AppLifecycleAdmissionError';
+  }
+}
+
+interface IndependentCopyRequest {request_id:string;source_hardware:string;destination_hardware:string;source_receipt_sha256:string;manifest_sha256:string}
+const copyContextKey=Symbol.for('youeye.independent-copy-admission');
+const copyGlobal=globalThis as typeof globalThis & {[copyContextKey]?:AsyncLocalStorage<string>};
+const copyContext=copyGlobal[copyContextKey]??=new AsyncLocalStorage<string>();
+function copyRequestBinding(request:IndependentCopyRequest){
+ const hardware=/^smbios:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+ if(!request||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(request.request_id)||!hardware.test(request.source_hardware)||!hardware.test(request.destination_hardware)||request.source_hardware===request.destination_hardware||!/^[a-f0-9]{64}$/.test(request.source_receipt_sha256)||!/^[a-f0-9]{64}$/.test(request.manifest_sha256))throw new AppLifecycleAdmissionError('Invalid independent copy reservation');
+ return [request.request_id,request.source_hardware,request.destination_hardware,request.source_receipt_sha256,request.manifest_sha256].join('|');
+}
+function readIndependentCopyReservation(directory:string):{role:'source'|'destination';binding:string}|null{
+ let fd:number;
+ try{fd=openSync(path.join(directory,'copy-reservation.json'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw new AppLifecycleAdmissionError('Copy lifecycle reservation is unreadable');}
+ try{
+  const stat=fstatSync(fd);
+  if(!stat.isFile()||stat.uid!==process.geteuid?.()||(stat.mode&0o777)!==0o600||stat.size>4096)throw new AppLifecycleAdmissionError('Copy lifecycle reservation is insecure');
+  let record:any;try{record=JSON.parse(readFileSync(fd,'utf8'));}catch{throw new AppLifecycleAdmissionError('Copy lifecycle reservation is invalid');}
+  if(record.schema!=='youeye.copy-lifecycle.v1'||!['source','destination'].includes(record.role))throw new AppLifecycleAdmissionError('Copy lifecycle reservation is invalid');
+  return {role:record.role,binding:copyRequestBinding(record.request)};
+ }finally{closeSync(fd);}
+}
+export function assertIndependentCopyLifecycle(request:IndependentCopyRequest){
+ const binding=copyRequestBinding(request),reservation=readIndependentCopyReservation(appUpdateJournalStore().directory);
+ if(copyContext.getStore()!==binding||reservation?.role!=='destination'||reservation.binding!==binding)throw new AppLifecycleAdmissionError('Exact native copy lifecycle context required');
+}
+
+/** Background/native integrations settle before the source is frozen. Only
+ * the exact destination coordinator may use them while a copy owns admission. */
+export async function withIndependentCopyExclusion<T>(work:()=>Promise<T>):Promise<T>{
+ const directory=appUpdateJournalStore().directory;
+ const lock=AppUpdateExecutorLock.acquire(path.join(directory,'core-lifecycle.flock'),'shared');
+ try{
+  const reservation=readIndependentCopyReservation(directory);
+  if(reservation&&(reservation.role!=='destination'||reservation.binding!==copyContext.getStore()))throw new AppLifecycleAdmissionError('An independent copy owns this integration');
+  return await work();
+ }finally{lock.release();}
+}
+
+/** Native destination coordinator only. HTTP callers must first prove native
+ * CLI authority and actual machine identity. Ordinary writers never enter this
+ * context; their existing per-app and container locks remain in effect. */
+export async function withIndependentCopyLifecycle<T>(request:IndependentCopyRequest,work:()=>Promise<T>):Promise<T>{
+ const directory=appUpdateJournalStore().directory;
+ const lock=AppUpdateExecutorLock.acquire(path.join(directory,'core-lifecycle.flock'),'shared');
+ try{
+  const reservation=readIndependentCopyReservation(directory),binding=copyRequestBinding(request);
+  if(reservation?.role!=='destination'||reservation.binding!==binding)throw new AppLifecycleAdmissionError('Native destination copy reservation required');
+  return await copyContext.run(binding,()=>withCoreLifecycle(directory,work));
+ }finally{lock.release();}
+}
+
+/** Shared with the host coordinator. Process death never removes a reservation. */
+async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T>): Promise<T> {
+  const key = path.resolve(directory);
+  const inherited = coreContext.getStore();
+  const held = inherited?.get(key);
+  if (held?.active) {
+    held.lock.assertHeld();
+    return await work();
+  }
+  // A waiting System writer holds this gate while existing operations drain.
+  // Nested operations retain their original admission and may finish normally.
+  const gate = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'), 'shared');
+  let lock: AppUpdateExecutorLock;
+  try { lock = AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared'); }
+  finally { gate.release(); }
+  const entry: HeldApp = { lock, active: true };
+  const scope = new Map(inherited);
+  scope.set(key, entry);
+  const admittedWork = () => coreContext.run(scope, work);
+  try {
+    const copy=readIndependentCopyReservation(directory);
+    if(copy&&(copy.role!=='destination'||copy.binding!==copyContext.getStore()))throw new AppLifecycleAdmissionError('An independent copy owns the platform lifecycle');
+    let fd: number;
+    try { fd = openSync(path.join(directory, 'core-reservation.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return await admittedWork();
+      throw new AppLifecycleAdmissionError('System lifecycle reservation is unreadable; recovery must remain blocked');
+    }
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.uid !== process.geteuid?.() || (stat.mode & 0o777) !== 0o600 || stat.size > 4096) {
+        throw new AppLifecycleAdmissionError('System lifecycle reservation is insecure; recovery must remain blocked');
+      }
+      let record: Record<string, unknown>;
+      try { record = JSON.parse(readFileSync(fd, 'utf8')) as Record<string, unknown>; }
+      catch { throw new AppLifecycleAdmissionError('System lifecycle reservation is invalid; recovery must remain blocked'); }
+      if (record.schema !== 'youeye.core-lifecycle.v1' || typeof record.request_id !== 'string'
+        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(record.request_id)
+        || typeof record.manifest_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.manifest_sha256)) {
+        throw new AppLifecycleAdmissionError('System lifecycle reservation is invalid; recovery must remain blocked');
+      }
+      throw new AppLifecycleAdmissionError('A System update owns the platform lifecycle; complete its update or recovery first');
+    } finally { closeSync(fd); }
+  } finally { entry.active = false; lock.release(); }
+}
+
+/** Shared with native System activation; retain through the complete operation. */
+export function withPlatformLifecycle<T>(work: () => T | Promise<T>, directory = appUpdateJournalStore().directory): Promise<T> {
+  return withCoreLifecycle(directory, work);
+}
+
+export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore {
+  return new AppUpdateJournalStore(directory ?? process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR);
+}
+
+export function isAppUpdateReserved(appId: string, store = appUpdateJournalStore()): boolean {
+  return store.isReserved({ kind: 'app', scope: 'market', name: appId, ownerAppId: appId, mutable: false });
+}
+
+/** Marked runtime copies remain evidence, even though inventory names canonical instances only. */
+export function assertRecoveryCopyAdmission(
+  name: string,
+  config: Record<string, string>,
+  store: AppUpdateJournalStore,
+): void {
+  const operationId = config['user.youeye.update_operation'];
+  const source = config['user.youeye.update_source'];
+  if (!operationId && !source && !name.startsWith('ye-rollback-')) return;
+  if (!operationId || !source) throw new AppLifecycleAdmissionError();
+  try {
+    const record = store.read(operationId);
+    if (updateNeedsRecovery(record)
+      || !record.resources.some(resource => resource.kind === 'container' && resource.name === source)) {
+      throw new AppLifecycleAdmissionError();
+    }
+  } catch {
+    throw new AppLifecycleAdmissionError();
+  }
+}
+
+/**
+ * Admission order: journal admission -> app OS lock -> receipt/resource checks.
+ * Release admission before invoking work, retain the app lock until work settles.
+ * All update/recovery entry points must use this wrapper as well as journal leases.
+ * Neither process death nor lock release removes durable receipts/reservations.
+ */
+export async function withAppLifecycle<T>(appId: string, work: () => T | Promise<T>, options: AppLifecycleOptions = {}): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withAppLifecycleUnderCore(appId, work, { ...options, store }));
+}
+
+async function withAppLifecycleUnderCore<T>(
+  appId: string,
+  work: () => T | Promise<T>,
+  options: AppLifecycleOptions = {},
+): Promise<T> {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId)) throw new Error('Invalid app lifecycle ID');
+  const store = options.store ?? appUpdateJournalStore();
+  const key = `${path.resolve(store.directory)}:${appId}`;
+  const inherited = context.getStore();
+  const held = inherited?.get(key);
+  if (held?.active) {
+    held.lock.assertHeld();
+    if (options.resources?.length) {
+      store.withAdmission(() => {
+        const unfinished = store.list().filter(updateNeedsRecovery);
+        for (const resource of options.resources!) {
+          const resourceKey = updateResourceKey(resource);
+          const owners = unfinished.filter(record => record.resources.some(candidate =>
+            updateResourceKey(candidate) === resourceKey));
+          if (owners.some(record => record.appId !== appId)
+            || (store.isReserved(resource) && !owners.some(record => record.appId === appId))) {
+            throw new AppLifecycleAdmissionError();
+          }
+        }
+      });
+    }
+    return await work();
+  }
+
+  const app: UpdateResource = { kind: 'app', scope: 'market', name: appId, ownerAppId: appId, mutable: false };
+  const resources = [app, ...(options.resources ?? [])];
+  let lock: AppUpdateExecutorLock | undefined;
+  try {
+    store.withAdmission(() => {
+      lock = AppUpdateExecutorLock.acquire(path.join(store.directory, 'executors', `app-${appId}.lock`));
+      if (options.recoveryOperationId) {
+        const record = store.read(options.recoveryOperationId);
+        if (record.appId !== appId || !updateNeedsRecovery(record)) throw new AppLifecycleAdmissionError();
+        const keys = new Set([...record.resources, ...resources].map(updateResourceKey));
+        if (store.list().some(other => other.id !== record.id && updateNeedsRecovery(other)
+          && (other.appId === appId || other.resources.some(resource => keys.has(updateResourceKey(resource)))))) {
+          throw new AppLifecycleAdmissionError();
+        }
+      } else if (resources.some(resource => store.isReserved(resource))
+        || store.list().some(record => record.appId === appId && updateNeedsRecovery(record))) {
+        throw new AppLifecycleAdmissionError();
+      }
+    });
+    const entry: HeldApp = { lock: lock!, active: true };
+    const scope = new Map(inherited);
+    scope.set(key, entry);
+    try {
+      return await context.run(scope, async () => {
+        entry.lock.assertHeld();
+        return await work();
+      });
+    } finally {
+      // Escaped asynchronous tasks cannot reuse a released admission.
+      entry.active = false;
+    }
+  } finally {
+    lock?.release();
+  }
+}
+
+/** Container actions resolve exact recorded ownership; never split a dashed ID. */
+export async function withContainerLifecycle<T>(
+  name: string,
+  work: () => T | Promise<T>,
+  options: AppLifecycleOptions = {},
+): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withContainerLifecycleUnderCore(name, work, { ...options, store }));
+}
+
+async function withContainerLifecycleUnderCore<T>(
+  name: string,
+  work: () => T | Promise<T>,
+  options: AppLifecycleOptions = {},
+): Promise<T> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid container lifecycle name');
+  const store = options.store ?? appUpdateJournalStore();
+  const resource: UpdateResource = {
+    kind: 'container', scope: 'incus', name, ownerAppId: 'container-action', mutable: true,
+  };
+  store.withAdmission(() => {
+    if (store.isReserved(resource)) throw new AppLifecycleAdmissionError();
+  });
+  const guardedWork = async () => {
+    const { incusRequest } = await import('../incus/server');
+    const observed = await incusRequest<{ config?: Record<string, string> }>(
+      'GET', `/1.0/instances/${encodeURIComponent(name)}`);
+    if (observed.type === 'error' && observed.error_code !== 404 && observed.status_code !== 404) {
+      throw new Error('Cannot verify container recovery ownership');
+    }
+    assertRecoveryCopyAdmission(name, observed.metadata?.config ?? {}, store);
+    return await work();
+  };
+  const { listInstalledApps } = await import('./metadata');
+  const owners = (await listInstalledApps()).filter(meta => meta.containers.some(container =>
+    (typeof container === 'string' ? container : container.containerName) === name));
+  if (owners.length > 1) throw new Error('Container lifecycle ownership is ambiguous');
+  if (owners.length === 1) {
+    return withAppLifecycle(owners[0].appId, guardedWork, { ...options, store, resources: [resource] });
+  }
+  if (name.startsWith('app-')) throw new Error('App container lifecycle ownership is unavailable');
+  // System/foreign container actions have no app lock. Retain admission through
+  // their whole operation so an update cannot reserve this container mid-action.
+  return await store.withAdmission(async () => {
+    if (store.isReserved(resource)) throw new AppLifecycleAdmissionError();
+    return await guardedWork();
+  });
+}
+
+
+/** Multi-app mutations retain every gate in a deterministic order. */
+export async function withAppLifecycles<T>(appIds: string[], work: () => T | Promise<T>): Promise<T> {
+  const ids = [...new Set(appIds)].sort();
+  const next = (index: number): Promise<T> => index === ids.length
+    ? Promise.resolve().then(work) : withAppLifecycle(ids[index], () => next(index + 1));
+  return next(0);
+}
+
+/** Hold the app inventory stable before enumerating or changing installations.
+ * The separate gate cannot collide with an app ID. Nested full/app restore reuses
+ * its descriptor; other processes fail before creating or deleting metadata. */
+export async function withAppInventory<T>(work: () => T | Promise<T>, options: Pick<AppLifecycleOptions, 'store'> = {}): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withAppInventoryUnderCore(work, { ...options, store }));
+}
+
+async function withAppInventoryUnderCore<T>(
+  work: () => T | Promise<T>,
+  options: Pick<AppLifecycleOptions, 'store'> = {},
+): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  const key = `${path.resolve(store.directory)}:#inventory`;
+  const inherited = context.getStore();
+  const held = inherited?.get(key);
+  if (held?.active) { held.lock.assertHeld(); return await work(); }
+  const lock = store.withAdmission(() => AppUpdateExecutorLock.acquire(
+    path.join(store.directory, 'executors', 'inventory.lock')));
+  const entry: HeldApp = { lock, active: true };
+  const scope = new Map(inherited); scope.set(key, entry);
+  try {
+    return await context.run(scope, async () => { lock.assertHeld(); return await work(); });
+  } finally { entry.active = false; lock.release(); }
+}

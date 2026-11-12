@@ -1,3 +1,11 @@
+"use client";
+
+
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Install from URL Dialog
  *
@@ -7,7 +15,7 @@
  * and schema validation.
  */
 
-'use client';
+
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -46,6 +54,8 @@ export function InstallFromUrlDialog({
   onClose,
   onInstallComplete,
 }: InstallFromUrlDialogProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('input');
   const [url, setUrl] = useState('');
@@ -68,7 +78,7 @@ export function InstallFromUrlDialog({
   // Fetch and validate manifest
   const handleFetch = useCallback(async () => {
     if (!url.trim()) {
-      setError('Please enter a URL');
+      setError(translateInterface("ma58a94b9a403"));
       return;
     }
 
@@ -86,7 +96,7 @@ export function InstallFromUrlDialog({
       const data = await res.json();
 
       if (!data.valid) {
-        setValidationErrors(data.errors || ['Unknown validation error']);
+        setValidationErrors(data.errors || [translateInterface("mec4ed30cb031")]);
         return;
       }
 
@@ -101,11 +111,11 @@ export function InstallFromUrlDialog({
       setSubdomain(data.manifest.defaultSubdomain || '');
       setPhase('preview');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to validate URL');
+      setError(translateInterface("mdfcd25c74dda"));
     } finally {
       setFetching(false);
     }
-  }, [url, onClose, router]);
+  }, [url, onClose, router, translateInterface]);
 
   // Install from URL
   const handleInstall = useCallback(async () => {
@@ -133,7 +143,7 @@ export function InstallFromUrlDialog({
 
       // Read SSE stream
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
+      if (!reader) throw new Error(translateInterface("mfc992827aa0d"));
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -168,12 +178,12 @@ export function InstallFromUrlDialog({
     } catch (err) {
       setInstallEvents(prev => [
         ...prev,
-        { step: 0, totalSteps: 0, status: 'error', message: 'Installation failed', detail: String(err) },
+        { step: 0, totalSteps: 0, status: 'error', message: translateInterface("md472ecf6a07e"), detail: String(err) },
       ]);
     } finally {
       setInstallDone(true);
     }
-  }, [url, preview, subdomain, domain]);
+  }, [url, preview, subdomain, domain, translateInterface]);
 
   const longDescription = preview?.detail?.longDescription || preview?.description;
   const screenshots = preview?.detail?.screenshots ?? [];
@@ -188,8 +198,7 @@ export function InstallFromUrlDialog({
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Globe className="h-5 w-5 text-blue-600" />
-            Install from URL
-          </h2>
+            {translateInterface("mc7d5009dc83d")}</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
             <X className="h-5 w-5" />
           </button>
@@ -200,32 +209,29 @@ export function InstallFromUrlDialog({
           {phase === 'input' && (
             <>
               <div className="space-y-2">
-                <Label htmlFor="manifestUrl">Manifest or Repository URL</Label>
+                <Label htmlFor="manifestUrl">{translateInterface("m4ddcf63f0783")}</Label>
                 <div className="flex gap-2">
                   <Input
                     id="manifestUrl"
                     value={url}
                     onChange={e => setUrl(e.target.value)}
-                    placeholder="https://github.com/org/app or manifest URL"
+                    placeholder={translateInterface("ma7881538cca9")}
                     disabled={fetching}
                     onKeyDown={e => { if (e.key === 'Enter' && url.trim()) handleFetch(); }}
                   />
                   <Button onClick={handleFetch} disabled={fetching || !url.trim()}>
-                    {fetching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Fetch'}
+                    {fetching ? <Loader2 className="h-4 w-4 animate-spin" /> : translateInterface("mcd7d61bf7e38")}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Paste a direct URL to a youeye-app.yaml manifest, or a Git repository URL
-                  (the manifest will be loaded from the repo root automatically).
-                </p>
+                  {translateInterface("m267b80abd05f")}</p>
               </div>
 
               {/* Security notice */}
               <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
                 <Shield className="h-4 w-4 mt-0.5 shrink-0" />
                 <span>
-                  Only install apps from sources you trust. Third-party apps run as containers on your server with the permissions declared in their manifest.
-                </span>
+                  {translateInterface("mcbc3a0167f8a")}</span>
               </div>
 
               {error && (
@@ -237,7 +243,7 @@ export function InstallFromUrlDialog({
 
               {validationErrors.length > 0 && (
                 <div className="p-3 rounded-lg bg-red-50 border border-red-200 space-y-1">
-                  <p className="text-sm font-medium text-red-700">Validation errors:</p>
+                  <p className="text-sm font-medium text-red-700">{translateInterface("m4a5f7bc35137")}</p>
                   <ul className="text-xs text-red-600 space-y-1 list-disc list-inside">
                     {validationErrors.map((err, i) => (
                       <li key={i}>{err}</li>
@@ -281,11 +287,10 @@ export function InstallFromUrlDialog({
                       )}
                       <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
                         <Globe className="h-3 w-3" />
-                        External
-                      </span>
+                        {translateInterface("m68c114ea9c8c")}</span>
                     </div>
                     <p className="text-sm text-gray-400 capitalize mt-1">
-                      Category: {preview.category}
+                      {translateInterface("mb330d6701b55")}{preview.category}
                     </p>
                   </div>
                 </div>
@@ -293,15 +298,14 @@ export function InstallFromUrlDialog({
                 {/* Third-party warning */}
                 <div className="flex items-start gap-2 p-2 rounded bg-amber-50 text-xs text-amber-800 mt-3">
                   <Shield className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>This app is from a third-party URL. Only install apps you trust.</span>
+                  <span>{translateInterface("m017cf51caeee")}</span>
                 </div>
               </div>
 
               {/* Description section */}
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Description
-                </h4>
+                  {translateInterface("m526e0087cc3f")}</h4>
                 <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
                   {longDescription}
                 </div>
@@ -311,8 +315,7 @@ export function InstallFromUrlDialog({
               {screenshots.length > 0 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5">
                   <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                    Screenshots
-                  </h4>
+                    {translateInterface("m067348ce6894")}</h4>
                   <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-thin">
                     {screenshots.map((shot, i) => (
                       <button
@@ -322,7 +325,7 @@ export function InstallFromUrlDialog({
                       >
                         <Image
                           src={shot.url}
-                          alt={shot.caption || `Screenshot ${i + 1}`}
+                          alt={shot.caption || translateInterface("m7e71e3bb6213", { value0: String(i + 1) })}
                           width={240}
                           height={150}
                           className="h-[150px] w-auto object-cover"
@@ -342,8 +345,7 @@ export function InstallFromUrlDialog({
               {/* Resource details */}
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  Details
-                </h4>
+                  {translateInterface("m45989de49fb7")}</h4>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {/* SSO */}
                   <div className="flex items-center gap-2">
@@ -354,9 +356,9 @@ export function InstallFromUrlDialog({
                       <p className="text-xs text-gray-400">SSO</p>
                       <p className="text-sm font-medium text-gray-700">
                         {capabilities?.sso ? (
-                          <span className="text-green-600">Supported</span>
+                          <span className="text-green-600">{translateInterface("mc165800065d1")}</span>
                         ) : (
-                          <span className="text-gray-400">No</span>
+                          <span className="text-gray-400">{translateInterface("m1ea442a134b2")}</span>
                         )}
                       </p>
                     </div>
@@ -368,9 +370,9 @@ export function InstallFromUrlDialog({
                       <HardDrive className="h-3.5 w-3.5 text-gray-500" />
                     </div>
                     <div>
-                      <p className="text-xs text-gray-400">Containers</p>
+                      <p className="text-xs text-gray-400">{translateInterface("ma22daa7f02a2")}</p>
                       <p className="text-sm font-medium text-gray-700">
-                        {capabilities?.containers} container{capabilities?.containers !== 1 ? 's' : ''}
+                        {translateInterface("containerCount", {count: capabilities?.containers ?? 0})}
                       </p>
                     </div>
                   </div>
@@ -382,8 +384,8 @@ export function InstallFromUrlDialog({
                         <HardDrive className="h-3.5 w-3.5 text-green-500" />
                       </div>
                       <div>
-                        <p className="text-xs text-gray-400">Database</p>
-                        <p className="text-sm font-medium text-green-600">Shared PostgreSQL</p>
+                        <p className="text-xs text-gray-400">{translateInterface("mfa7fe67124e9")}</p>
+                        <p className="text-sm font-medium text-green-600">{translateInterface("mec9b941c227c")}</p>
                       </div>
                     </div>
                   )}
@@ -395,7 +397,7 @@ export function InstallFromUrlDialog({
                         <ExternalLink className="h-3.5 w-3.5 text-gray-500" />
                       </div>
                       <div>
-                        <p className="text-xs text-gray-400">Website</p>
+                        <p className="text-xs text-gray-400">{translateInterface("mb5a229ac8bec")}</p>
                         <a
                           href={preview.website}
                           target="_blank"
@@ -417,7 +419,7 @@ export function InstallFromUrlDialog({
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <Tag className="h-3.5 w-3.5 text-gray-400" />
-                      <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">Tags</p>
+                      <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">{translateInterface("m1331275bc537")}</p>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {preview.tags.map((tag) => (
@@ -436,10 +438,9 @@ export function InstallFromUrlDialog({
               {/* Install config — subdomain input */}
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  Install Configuration
-                </h4>
+                  {translateInterface("m8da653cc3d8d")}</h4>
                 <div className="space-y-2">
-                  <Label htmlFor="subdomain">Subdomain</Label>
+                  <Label htmlFor="subdomain">{translateInterface("mba4520ab4f25")}</Label>
                   <div className="flex items-center gap-1">
                     <Input
                       id="subdomain"
@@ -455,14 +456,13 @@ export function InstallFromUrlDialog({
 
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setPhase('input')}>
-                  Back
-                </Button>
+                  {translateInterface("m76900f1bfd16")}</Button>
                 <Button
                   className="flex-1"
                   onClick={handleInstall}
                   disabled={!subdomain.trim()}
                 >
-                  Install {preview.name}
+                  {translateInterface("m569ca49f4aaf")}{" "}{preview.name}
                 </Button>
               </div>
             </>
@@ -501,8 +501,7 @@ export function InstallFromUrlDialog({
                     onClose();
                   }}
                 >
-                  Done
-                </Button>
+                  {translateInterface("m11a6767d5674")}</Button>
               )}
             </>
           )}
@@ -538,7 +537,7 @@ export function InstallFromUrlDialog({
 
             <Image
               src={screenshots[selectedScreenshot].url}
-              alt={screenshots[selectedScreenshot].caption || `Screenshot ${selectedScreenshot + 1}`}
+              alt={screenshots[selectedScreenshot].caption || translateInterface("m7e71e3bb6213", { value0: String(selectedScreenshot + 1) })}
               width={1200}
               height={800}
               className="rounded-lg max-h-[85vh] w-auto object-contain"

@@ -1,5 +1,7 @@
 'use client';
 
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState } from 'react';
 import { AlertTriangle, Trash2, Package, Database, Globe, Shield, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,16 +15,18 @@ interface UninstallDialogProps {
 }
 
 export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [mode, setMode] = useState<'keep' | 'delete'>('keep');
   const t = useTranslations('market');
 
   const items = [
-    { icon: Package, label: 'Container and services', removed: true },
-    { icon: Globe, label: 'Caddy reverse proxy route', removed: true },
-    { icon: Shield, label: 'identity provider SSO application', removed: app.supportsSSO },
-    { icon: Globe, label: 'Pi-Hole DNS entry', removed: true },
-    { icon: Database, label: 'Shared database', removed: mode === 'delete' },
-    { icon: HardDrive, label: 'App data and volumes', removed: mode === 'delete' },
+    { icon: Package, label: mode === 'keep' ? translateInterface("m22df42e0c8a3") : translateInterface("m983390c9d223"), removed: true },
+    { icon: Globe, label: translateInterface("m795d51237a74"), removed: true },
+    { icon: Shield, label: translateInterface("mdc45185ff011"), removed: app.supportsSSO },
+    { icon: Globe, label: translateInterface("ma81c046916ce"), removed: true },
+    { icon: Database, label: translateInterface("made94da6a308"), removed: mode === 'delete' },
+    { icon: HardDrive, label: translateInterface("m509b78d20e91"), removed: mode === 'delete' },
   ].filter((item) => item.removed !== false || mode === 'delete');
 
   return (
@@ -36,10 +40,10 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
             </div>
             <div>
               <h3 className="font-semibold text-gray-900">
-                {t('uninstallTitle') ?? 'Uninstall'} {app.name}
+                {t('uninstallTitle') ?? translateInterface("mfe199528850a")} {app.name}
               </h3>
               <p className="text-sm text-gray-500">
-                {t('uninstallDescription') ?? 'Choose what to remove'}
+                {t('uninstallDescription') ?? translateInterface("m046a6e1c4b48")}
               </p>
             </div>
           </div>
@@ -56,10 +60,10 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
               }`}
             >
               <div className="font-medium text-sm">
-                {t('uninstallKeepData') ?? 'Uninstall (keep data)'}
+                {t('uninstallKeepData') ?? translateInterface("m064e59ee696a")}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
-                {t('uninstallKeepDataDescription') ?? 'Remove the app but keep data for reinstall'}
+                {t('uninstallKeepDataDescription') ?? translateInterface("md284109c15f6")}
               </div>
             </button>
             <button
@@ -72,10 +76,10 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
               }`}
             >
               <div className="font-medium text-sm text-red-700">
-                {t('uninstallDeleteData') ?? 'Uninstall + delete all data'}
+                {t('uninstallDeleteData') ?? translateInterface("mf707d89dda66")}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
-                {t('uninstallDeleteDataDescription') ?? 'Remove everything. This cannot be undone.'}
+                {t('uninstallDeleteDataDescription') ?? translateInterface("me6320685618e")}
               </div>
             </button>
           </div>
@@ -83,7 +87,7 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
           {/* What will be removed */}
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-              {t('willBeRemoved') ?? 'Will be removed'}
+              {t('willBeRemoved') ?? translateInterface("mce1e53a20aca")}
             </p>
             <ul className="space-y-1.5">
               {items.map((item) => (
@@ -99,8 +103,7 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
         {/* Actions */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
           <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
+            {translateInterface("m19766ed6ccb2")}</Button>
           <Button
             size="sm"
             variant={mode === 'delete' ? 'destructive' : 'default'}
@@ -108,7 +111,7 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
           >
             <Trash2 className="h-4 w-4 mr-1" />
             {mode === 'delete'
-              ? (t('uninstallDeleteButton') ?? 'Delete everything')
+              ? (t('uninstallDeleteButton') ?? translateInterface("m71eb8a08ffd7"))
               : (t('uninstallKeepButton') ?? 'Uninstall')}
           </Button>
         </div>

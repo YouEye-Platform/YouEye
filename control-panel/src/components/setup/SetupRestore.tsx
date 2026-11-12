@@ -1,10 +1,16 @@
 'use client';
 
+import {useLocale} from "next-intl";
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect, useRef } from 'react';
 import { Loader2, CheckCircle2, XCircle, HardDrive, Lock, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { recoverableRestoreSelection, waitForSetupRestoreStatus, type SetupRestoreSelection } from './restore-status';
+import { randomBrowserUUID } from '@/lib/browser-random';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -28,24 +34,68 @@ interface RecoveryPoint {
 }
 
 export default function SetupRestore({ onComplete, onBack }: Props) {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+  const recoveryText = useInterfaceTranslations("setupRestoreRecovery");
+  const translationRef = useRef({ translateInterface, recoveryText });
+  translationRef.current = { translateInterface, recoveryText };
+
   const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPoint[]>([]);
-  const [selectedBackupId, setSelectedBackupId] = useState('');
+  const [selectedKey, setSelectedKey] = useState('');
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const [passphrase, setPassphrase] = useState('');
   const [restoring, setRestoring] = useState(false);
   const [steps, setSteps] = useState<RestoreStep[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
+  const [recovery, setRecovery] = useState<'resume' | 'finalize' | null>(null);
+  const retainedSelection = useRef<SetupRestoreSelection | null>(null);
+  const [checking, setChecking] = useState(false);
   const hasCompleted = useRef(false);
+  const operationId = useRef<string | null>(null);
+  const submitting = useRef(false);
+
+  const checkRestoreStatus = async (id: string, attempts?: number) => {
+    setError('');
+    setChecking(true);
+    try {
+      const status = await waitForSetupRestoreStatus(id, { attempts });
+      if (status.status === 'completed') {
+        sessionStorage.removeItem('youeye-setup-restore-operation');
+        setIsComplete(true);
+        setPassphrase('');
+      } else {
+        const selected = recoverableRestoreSelection(status, id);
+        retainedSelection.current = selected;
+        setRecovery(selected ? status.recovery as 'resume' | 'finalize' : null);
+        if (selected) {
+          setSelectedKey(JSON.stringify([selected.mediaId, selected.backupId]));
+          setSelectedApps(selected.appIds);
+          setRestoring(false);
+        }
+        setError(translationRef.current.recoveryText(selected ? 'canResume' : 'needsReconciliation'));
+      }
+    } catch (err) {
+      setError(translationRef.current.translateInterface("m367bc30f5104"));
+      setRecovery(null);
+    } finally { setChecking(false); }
+  };
 
   useEffect(() => {
+    const pending = sessionStorage.getItem('youeye-setup-restore-operation');
+    if (pending && /^[0-9a-f-]{36}$/.test(pending)) {
+      operationId.current = pending;
+      setRestoring(true);
+      void checkRestoreStatus(pending);
+    }
     fetch('/api/setup/restore', { cache: 'no-store' })
       .then(response => response.ok ? response.json() : { recoveryPoints: [] })
       .then(body => {
         const points = Array.isArray(body.recoveryPoints) ? body.recoveryPoints as RecoveryPoint[] : [];
         setRecoveryPoints(points);
-        if (points[0]) {
-          setSelectedBackupId(points[0].backupId);
+        if (points[0] && !operationId.current) {
+          setSelectedKey(JSON.stringify([points[0].mediaId, points[0].backupId]));
           setSelectedApps(points[0].apps);
         }
       })
@@ -55,43 +105,70 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
   // Auto-advance on completion
   useEffect(() => {
     if (isComplete && !hasCompleted.current) {
-      hasCompleted.current = true;
-      const timer = setTimeout(onComplete, 2000);
+      const timer = setTimeout(() => {
+        hasCompleted.current = true;
+        onComplete();
+      }, 2000);
       return () => clearTimeout(timer);
     }
   }, [isComplete, onComplete]);
 
-  const selectedPoint = recoveryPoints.find(point => point.backupId === selectedBackupId);
+  const choices = [...recoveryPoints];
+  if (retainedSelection.current && !choices.some(point => point.mediaId === retainedSelection.current!.mediaId && point.backupId === retainedSelection.current!.backupId)) {
+    choices.push({ ...retainedSelection.current, apps: retainedSelection.current.appIds, createdAt: '' });
+  }
+  const selectedPoint = choices.find(point => JSON.stringify([point.mediaId, point.backupId]) === selectedKey);
   const canStart = Boolean(selectedPoint && passphrase.trim().length >= 12);
 
   const handleStartRestore = async () => {
+    if (submitting.current || (operationId.current !== null && recovery === null)) return;
+    submitting.current = true;
     setRestoring(true);
     setError('');
     setSteps([]);
     setIsComplete(false);
+    const resuming = recovery !== null;
+    const selection = resuming ? retainedSelection.current : selectedPoint
+      ? { mediaId: selectedPoint.mediaId, backupId: selectedPoint.backupId, appIds: selectedApps } : null;
+    if (!selection || (resuming && !operationId.current)) {
+      setRestoring(false);
+      setError(recoveryText('needsReconciliation'));
+      submitting.current = false;
+      return;
+    }
+    let submitted = false;
 
     try {
       const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
       const csrfBody = await csrfResponse.json().catch(() => ({}));
-      if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error('Could not start a protected restore action.');
+      if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error(translateInterface("ma40ce2df5560"));
+      const id = resuming ? operationId.current! : operationId.current ?? randomBrowserUUID();
+      operationId.current = id;
+      sessionStorage.setItem('youeye-setup-restore-operation', id);
+      submitted = true;
       const res = await fetch('/api/setup/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfBody.csrfToken },
         body: JSON.stringify({
-          mediaId: selectedPoint?.mediaId,
-          backupId: selectedPoint?.backupId,
-          appIds: selectedApps,
+          operationId: id,
+          action: resuming ? 'resume' : 'start',
+          ...selection,
           passphrase: passphrase.trim(),
         }),
       });
 
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Restore request failed (${res.status}): ${text || 'Unknown error'}`);
+        // The operation identity remains retained even when admission rejects
+        // or a response is lost. Only its status can authorize the next step.
+        // A rejected admission may have no receipt. Observe once and retain
+        // the identity for explicit reconciliation instead of polling a
+        // nonexistent operation for the full restore window.
+        await checkRestoreStatus(id, 1);
+        return;
       }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
+      if (!reader) throw new Error(translateInterface("mfc992827aa0d"));
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -108,7 +185,6 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
           if (data === '[DONE]') {
-            setIsComplete(true);
             continue;
           }
           try {
@@ -131,7 +207,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
               });
             }
             if (event.complete) {
-              setIsComplete(true);
+              // Durable terminal status below is authoritative.
             }
             if (event.error) {
               setError(event.error);
@@ -141,8 +217,16 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           }
         }
       }
+      await checkRestoreStatus(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Restore failed');
+      if (submitted && operationId.current) await checkRestoreStatus(operationId.current);
+      else {
+        setError(translateInterface("mb8476ceedfdd"));
+        setRecovery(resuming ? recovery : null);
+        setRestoring(false);
+      }
+    } finally {
+      submitting.current = false;
     }
   };
 
@@ -158,41 +242,41 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-5">
             <HardDrive className="h-8 w-8 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold mb-2">Restore from Backup</h1>
+          <h1 className="text-2xl font-bold mb-2">{translateInterface("mbbeffac3e6f3")}</h1>
           <p className="text-muted-foreground text-sm">
-            Restore the required YouEye configuration, then choose which applications to bring back.
-          </p>
+            {recovery ? recoveryText('boundSelection') : translateInterface("mc3b19020e587")}</p>
         </div>
 
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-6 duration-500 delay-100">
           <div className="space-y-2">
-            <Label htmlFor="recoveryPoint">Recovery point</Label>
+            <Label htmlFor="recoveryPoint">{translateInterface("mf62ce57b485b")}</Label>
             <select
               id="recoveryPoint"
-              value={selectedBackupId}
+              value={selectedKey}
+              disabled={recovery !== null || checking}
               onChange={(event) => {
-                const point = recoveryPoints.find(item => item.backupId === event.target.value);
-                setSelectedBackupId(event.target.value);
+                const point = choices.find(item => JSON.stringify([item.mediaId, item.backupId]) === event.target.value);
+                setSelectedKey(event.target.value);
                 setSelectedApps(point?.apps ?? []);
               }}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
-              {recoveryPoints.length === 0 && <option value="">No backup drive found</option>}
-              {recoveryPoints.map(point => <option key={point.backupId} value={point.backupId}>{point.createdAt ? new Date(point.createdAt).toLocaleString() : point.backupId}{point.driveName ? ` — ${point.driveName}` : ''}</option>)}
+              {choices.length === 0 && <option value="">{translateInterface("m79c8a214bc8e")}</option>}
+              {choices.map(point => <option key={JSON.stringify([point.mediaId, point.backupId])} value={JSON.stringify([point.mediaId, point.backupId])}>{point.createdAt ? new Date(point.createdAt).toLocaleString(locale) : point.backupId}{point.driveName ? ` — ${point.driveName}` : ''}</option>)}
             </select>
-            <p className="text-xs text-muted-foreground">YouEye configuration, accounts, and server identity are always restored.</p>
+            <p className="text-xs text-muted-foreground">{translateInterface("m95e51ec4b042")}</p>
           </div>
 
           {selectedPoint && selectedPoint.apps.length > 0 && <fieldset className="space-y-2 rounded-lg border p-4">
-            <legend className="px-1 text-sm font-medium">Applications</legend>
+            <legend className="px-1 text-sm font-medium">{translateInterface("m98e33b0f3104")}</legend>
             {selectedPoint.apps.map(appId => <label key={appId} className="flex items-center gap-3 text-sm">
-              <input type="checkbox" checked={selectedApps.includes(appId)} onChange={event => setSelectedApps(current => event.target.checked ? [...current, appId] : current.filter(item => item !== appId))} className="size-4 rounded border-input accent-primary" />
+              <input type="checkbox" checked={selectedApps.includes(appId)} disabled={recovery !== null || checking} onChange={event => setSelectedApps(current => event.target.checked ? [...current, appId] : current.filter(item => item !== appId))} className="size-4 rounded border-input accent-primary" />
               <span>{appId}</span>
             </label>)}
           </fieldset>}
 
           <div className="space-y-2">
-            <Label htmlFor="passphrase">Encryption passphrase</Label>
+            <Label htmlFor="passphrase">{translateInterface("m8549ab8f37d7")}</Label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -200,20 +284,19 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
                 type="password"
                 value={passphrase}
                 onChange={(e) => setPassphrase(e.target.value)}
-                placeholder="Enter passphrase"
+                placeholder={translateInterface("m2c5da8e37482")}
                 className="pl-10"
               />
             </div>
           </div>
         </div>
 
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-between pt-4 animate-in fade-in slide-in-from-bottom-8 duration-500 delay-200">
-          <Button variant="ghost" onClick={onBack}>
-            Back
-          </Button>
-          <Button onClick={handleStartRestore} disabled={!canStart}>
-            Start Restore
-          </Button>
+          <Button variant="ghost" onClick={onBack} disabled={operationId.current !== null}>
+            {translateInterface("m76900f1bfd16")}</Button>
+          <Button onClick={handleStartRestore} disabled={!canStart || checking}>
+            {recovery ? recoveryText(recovery === 'finalize' ? 'finish' : 'resume') : translateInterface("me91ee8913c7c")}</Button>
         </div>
       </div>
     );
@@ -223,7 +306,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
   return (
     <div className="w-full max-w-md mx-auto text-center space-y-8">
       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <h1 className="text-2xl font-bold mb-2">Restoring Your Platform</h1>
+        <h1 className="text-2xl font-bold mb-2">{translateInterface("m1e5b2cdade84")}</h1>
       </div>
 
       <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-500 delay-100">
@@ -244,13 +327,13 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           </div>
         )}
 
-        <div className="h-8 flex items-center justify-center">
+        <div className="min-h-8 flex items-center justify-center" role="status" aria-live="polite">
           {isComplete ? (
-			<p className="text-green-600 font-medium animate-in fade-in duration-300">Restore complete. Sign in with a restored account…</p>
+			<p className="text-green-600 font-medium animate-in fade-in duration-300">{translateInterface("m615e618f33d1")}</p>
           ) : error ? (
             <p className="text-red-600 text-sm">{error}</p>
           ) : (
-            <p className="text-muted-foreground text-sm">{steps.at(-1)?.message || 'Validating encrypted recovery point…'}</p>
+            <p className="text-muted-foreground text-sm">{steps.at(-1)?.message || translateInterface("m01bee24a83ff")}</p>
           )}
         </div>
 
@@ -265,8 +348,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
             />
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            {completedSteps} / {steps.length} steps complete
-          </p>
+            {completedSteps} / {steps.length} {" "}{translateInterface("ma14cafb98459")}</p>
         </div>
 
         {/* Step list */}
@@ -295,17 +377,14 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
           <Button
             onClick={() => {
-              setRestoring(false);
-              setError('');
-              setSteps([]);
-              setIsComplete(false);
-              hasCompleted.current = false;
+              if (operationId.current && !checking) void checkRestoreStatus(operationId.current);
             }}
             variant="outline"
+            disabled={checking}
             className="gap-2"
           >
             <RotateCw className="h-4 w-4" />
-            Try Again
+            {translateInterface("m113bb90da3d4")}
           </Button>
         </div>
       )}

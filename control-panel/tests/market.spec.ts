@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 // Source-regression checks for Plan 1 Workstream D — Market Browse + Sources.
 // Run: CONTROL_PANEL_ROOT="$PWD" pnpm exec node --import tsx --test tests/market.spec.ts
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
-const read = (p: string) => readFileSync(join(repoRoot, p), 'utf8');
+const read = (p: string) => englishInterfaceSource(readFileSync(join(repoRoot, p), 'utf8'));
 const has = (p: string) => existsSync(join(repoRoot, p));
 
 test('Browse page layout includes hero, pill bar, Built-for, Featured, and Sources pill', () => {

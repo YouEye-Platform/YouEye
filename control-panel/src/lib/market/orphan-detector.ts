@@ -5,7 +5,7 @@
  * from previous unclean uninstalls.
  */
 
-import { listInstalledApps } from './metadata';
+import { listInstalledApps, listRetainedApps } from './metadata';
 import { getRoutes, removeRoute } from '../caddy/client';
 import type { OrphanResource } from './types';
 
@@ -25,8 +25,10 @@ const INFRA_CONTAINERS = new Set([
 export async function detectOrphans(): Promise<OrphanResource[]> {
   const orphans: OrphanResource[] = [];
   const installed = await listInstalledApps();
-  const installedAppIds = new Set(installed.map((m) => m.appId));
-  const installedContainers = new Set(installed.flatMap((m) =>
+  const retained = await listRetainedApps();
+  const owned = [...installed, ...retained];
+  const installedAppIds = new Set(owned.flatMap(m => [m.appId, ...(m.databaseName ? [m.databaseName] : [])]));
+  const installedContainers = new Set(owned.flatMap((m) =>
     m.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
   ));
   const installedSubdomains = new Set(
@@ -34,7 +36,10 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
       .filter((m) => m.subdomain && m.domain)
       .map((m) => `${m.subdomain}.${m.domain}`)
   );
-  const installedVolumes = new Set(installed.flatMap((metadata) =>
+  for (const metadata of retained) {
+    for (const root of metadata.retainedRoots?.roots ?? []) installedContainers.add(root.retainedName);
+  }
+  const installedVolumes = new Set(owned.flatMap((metadata) =>
     (metadata.storageVolumes ?? [])
       .filter((volume) => !volume.attachmentOnly)
       .map((volume) => `${volume.pool}/${volume.name}`)

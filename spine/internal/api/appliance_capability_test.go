@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,34 +21,16 @@ func applianceTestRuntime() (appliance.RuntimeStatus, *appliance.Manifest, error
 }
 
 type fakeSystemUpdateService struct {
-	status       systemupdate.Status
-	discovered   systemupdate.SourceOptions
-	staged       systemupdate.SourceOptions
-	activateBoot bool
+	status systemupdate.Status
 }
 
 func (f *fakeSystemUpdateService) Status() (systemupdate.Status, error) { return f.status, nil }
-func (f *fakeSystemUpdateService) Discover(_ context.Context, options systemupdate.SourceOptions) (systemupdate.Status, error) {
-	f.discovered = options
-	f.status.State = systemupdate.PhaseAvailable
-	return f.status, nil
-}
-func (f *fakeSystemUpdateService) Stage(_ context.Context, options systemupdate.SourceOptions) (systemupdate.Status, error) {
-	f.staged = options
-	f.status.State = systemupdate.PhaseStaged
-	return f.status, nil
-}
-func (f *fakeSystemUpdateService) Activate(_ context.Context, reboot bool) (systemupdate.Status, error) {
-	f.activateBoot = reboot
-	f.status.State = systemupdate.PhasePending
-	return f.status, nil
-}
 
 func TestApplianceHostUpdateHandlersReturnTypedConflictBeforeMutation(t *testing.T) {
 	s := NewServer("test", config.Default())
 	s.runtimeDetect = applianceTestRuntime
 	for name, handler := range map[string]http.HandlerFunc{
-		"spine": s.handleUpdateSelf, "incus": s.handleUpdateIncus, "system": s.handleUpdateSystem,
+		"incus": s.handleUpdateIncus, "system": s.handleUpdateSystem,
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/update/"+name, nil)
@@ -93,32 +74,26 @@ func TestApplianceSystemUpdateAPIExposesDurableStates(t *testing.T) {
 	}}
 	s.systemUpdate = fake
 
-	for _, tc := range []struct {
-		name, method, path, body, wantState string
-		handler                             http.HandlerFunc
-	}{
-		{name: "status", method: http.MethodGet, path: "/api/appliance/system-update/status", wantState: systemupdate.PhaseHealthy, handler: s.handleSystemUpdateStatus},
-		{name: "check", method: http.MethodPost, path: "/api/appliance/system-update/check", body: `{"manifest":"https://updates.test/system-update-manifest.json"}`, wantState: systemupdate.PhaseAvailable, handler: s.handleSystemUpdateCheck},
-		{name: "stage", method: http.MethodPost, path: "/api/appliance/system-update/stage", body: `{"manifest":"https://updates.test/system-update-manifest.json"}`, wantState: systemupdate.PhaseStaged, handler: s.handleSystemUpdateStage},
-		{name: "activate", method: http.MethodPost, path: "/api/appliance/system-update/activate", body: `{"reboot":true}`, wantState: systemupdate.PhasePending, handler: s.handleSystemUpdateActivate},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			recorder := httptest.NewRecorder()
-			tc.handler(recorder, req)
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-			}
-			var status systemupdate.Status
-			if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
-				t.Fatal(err)
-			}
-			if status.State != tc.wantState {
-				t.Fatalf("state=%q want=%q", status.State, tc.wantState)
-			}
-		})
+	req := httptest.NewRequest(http.MethodGet, "/api/appliance/system-update/status", nil)
+	recorder := httptest.NewRecorder()
+	s.handleSystemUpdateStatus(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if fake.staged.ManifestSource == "" || !fake.activateBoot {
-		t.Fatalf("stage=%+v activateBoot=%v", fake.staged, fake.activateBoot)
+	var status systemupdate.Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.State != systemupdate.PhaseHealthy {
+		t.Fatalf("state=%q", status.State)
+	}
+	// The Control Panel can no longer select, stage or activate a host System
+	// by URL or channel; only the core-update API (policy-owned source) remains.
+	for _, path := range []string{"/api/appliance/system-update/check", "/api/appliance/system-update/stage", "/api/appliance/system-update/activate"} {
+		recorder := httptest.NewRecorder()
+		s.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"manifest":"https://updates.test/system-update-manifest.json","manifest_sha256":"`+strings.Repeat("a", 64)+`"}`)))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d", path, recorder.Code)
+		}
 	}
 }

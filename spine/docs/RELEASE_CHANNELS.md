@@ -2,11 +2,10 @@
 
 Spine resolves updates from the release branch it was installed with (`--branch`/`--release-channel`). `youeye update self` and `youeye update control` fetch the latest tag for that branch, falling back to the `main` tag when no branch-specific tag exists.
 
-Signed feature-channel assets may use Forgejo tags whose branch portion contains
-safe `/` separators. Forgejo exposes those separators as `%2F` in asset download
-URLs. Signature verification preserves that escaped tag segment while replacing
-only the final asset name for `release-development.pub`, `SHA256SUMS` and
-`SHA256SUMS.sig`; it never reconstructs those sibling URLs from a decoded path.
+Releases are unsigned for now. Every downloaded artifact is checked by sha256
+and size against the accepted `core-release.json` (fetched over HTTPS; its exact
+digest is recorded in protected State by the installer), or against the
+channel's pinned digest. A missing digest or a mismatch fails closed.
 
 | Channel | Meaning |
 |---------|---------|

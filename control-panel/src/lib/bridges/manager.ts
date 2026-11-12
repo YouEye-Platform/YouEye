@@ -16,6 +16,7 @@ import {
   SYSTEM_APP_IDS,
   withAppNetworkOperationLock,
 } from '../incus/app-network';
+import { withAppLifecycle } from '../market/update-admission';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { incusDownloadFile, incusRequest, incusUploadFile } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
@@ -26,6 +27,8 @@ import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
 import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
 import type { ContainerMeta, InstallMetadata } from '../market/types';
+import { managedProxyTransport } from '../../../../shared/managed-proxy';
+import { sameConnectionProjection } from './connection-projection';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -38,6 +41,32 @@ let _uiIP: string | null = null;
 
 function withBridgeLifecycleLock<T>(operation: string, work: () => Promise<T>): Promise<T> {
   return withAppNetworkOperationLock('bridge-lifecycle', operation, work, { waitMs: 30_000 });
+}
+
+function withBridgeAppLocks<T>(from: string, to: string, work: () => Promise<T>): Promise<T> {
+  const appIds = [...new Set([from, to])].sort();
+  const admit = (index: number): Promise<T> => index === appIds.length
+    ? work()
+    : withAppLifecycle(appIds[index], () => admit(index + 1));
+  return admit(0);
+}
+
+async function withBridgeAdmission<T>(
+  bridgeId: string,
+  operation: string,
+  absent: T,
+  work: () => Promise<T>,
+): Promise<T> {
+  const bridge = await getBridge(bridgeId);
+  if (!bridge) return absent;
+  return withBridgeAppLocks(bridge.from, bridge.to, () => withBridgeLifecycleLock(operation, async () => {
+    const current = await getBridge(bridgeId);
+    if (!current) return absent;
+    if (current.from !== bridge.from || current.to !== bridge.to) {
+      throw new Error('Bridge ownership changed during lifecycle admission');
+    }
+    return work();
+  }));
 }
 
 async function restartInstanceExact(containerName: string): Promise<void> {
@@ -200,7 +229,7 @@ async function computeInternetProxyScopes(appId: string): Promise<Array<Record<s
   }
 }
 
-export async function pushConnectionsToUI(appId: string): Promise<void> {
+export async function pushConnectionsToUI(appId: string, options: { required?: boolean; observed?: unknown; auditOnly?: boolean } = {}): Promise<void> {
   try {
     if (!_bridgeToken) {
       _bridgeToken = (await readFile(TOKEN_FILE, 'utf-8')).trim();
@@ -208,7 +237,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
     if (!_uiIP) {
       _uiIP = await getIncusContainerIP(UI_CONTAINER);
     }
-    if (!_uiIP || !_bridgeToken) return;
+    if (!_uiIP || !_bridgeToken) throw new Error('UI connection projection authority unavailable');
 
     const bridges = await getBridgesForApp(appId);
     const activeBridges = bridges.filter(b => b.active);
@@ -224,12 +253,24 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
         const containerName = primary?.containerName || `app-${targetId}`;
         const ip = await getIncusContainerIP(containerName);
         const port = primary?.port || 8080;
+        let transport;
+        if (b.url && (b.accessMode === 'proxy' || b.accessMode === 'caddy')) {
+          const hostname = meta?.subdomain && meta.domain ? `${meta.subdomain}.${meta.domain}` : '';
+          if (!hostname || b.url !== `https://${hostname}`) throw new Error('Scoped proxy hostname differs from installed target');
+          const [address, ca] = await Promise.all([
+            getIncusContainerIP('youeye-caddy'),
+            incusDownloadFile('youeye-caddy', '/data/caddy/pki/authorities/local/root.crt'),
+          ]);
+          transport = managedProxyTransport({ schema: 'youeye.managed-proxy.v1',
+            address, hostname, ca: ca.toString('utf8') }, b.url);
+        }
         return {
           appId: targetId,
           name: targetId,
           host: ip || containerName,
           port,
           url: b.url,
+          transport,
           accessMode: b.accessMode || 'network',
           allowedPaths: b.allowedPaths,
           allowedMethods: b.allowedMethods,
@@ -258,7 +299,14 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       available,
     };
 
-    await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
+    // Only reconciliation supplies a freshly read pass-local database snapshot.
+    // Missing/changed projections still use the authenticated write below; no
+    // cross-pass remembered success can hide a UI restart or external change.
+    if (sameConnectionProjection(options.observed, { bridges: resolved, internet: payload.internet, available })) return;
+
+    if (options.auditOnly) throw new Error('UI projection requires an admitted repair');
+
+    const response = await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -266,7 +314,9 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       },
       body: JSON.stringify(payload),
     });
+    if (!response.ok) throw new Error('UI connection projection was not accepted');
   } catch {
+    if (options.required || options.auditOnly) throw new Error('Current UI connection projection could not be verified');
     // Non-fatal — UI might not have the endpoint yet during upgrades
     console.warn(`[bridges] Failed to push connections to UI for ${appId}`);
   }
@@ -350,10 +400,10 @@ export async function createBridge(params: {
     approvedAt: new Date().toISOString(),
   };
 
-  return withBridgeLifecycleLock('bridge-create', async () => {
+  return withBridgeAppLocks(params.from, params.to, () => withBridgeLifecycleLock('bridge-create', async () => {
     await addBridge(bridge);
     return bridge;
-  });
+  }));
 }
 
 /**
@@ -479,7 +529,7 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
  * Legacy apps (incusbr0): ACL rules
  */
 export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
-  return withBridgeLifecycleLock('bridge-activate', () => activateBridgeLocked(bridgeId));
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-activate', null, () => activateBridgeLocked(bridgeId));
 }
 
 async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
@@ -578,7 +628,7 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
-  return withBridgeLifecycleLock('bridge-deactivate', () => deactivateBridgeLocked(bridgeId));
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-deactivate', null, () => deactivateBridgeLocked(bridgeId));
 }
 
 async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
@@ -624,7 +674,7 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
  * Delete a bridge entirely.
  */
 export async function deleteBridge(bridgeId: string): Promise<boolean> {
-  return withBridgeLifecycleLock('bridge-delete', () => deleteBridgeLocked(bridgeId));
+  return withBridgeAdmission(bridgeId, 'bridge-delete', false, () => deleteBridgeLocked(bridgeId));
 }
 
 async function deleteBridgeLocked(bridgeId: string): Promise<boolean> {

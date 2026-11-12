@@ -4,6 +4,10 @@ import { generatePassword, getOrCreateSecret, readSecret } from '@/lib/infrastru
 import { getIdentityConfig } from '@/lib/identity/config';
 import { POINTER_PLATFORM_AUDIENCE, POINTER_PLATFORM_SUBJECT } from '@/lib/identity/tokens';
 import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
+import { withAppLifecycle } from '@/lib/market/update-admission';
+import { ensurePointerStorage } from './storage';
+import { getSystemStaticIP } from '@/lib/incus/static-ips';
+import { pointerIdentityHosts } from './identity-host';
 
 const POINTER_DATABASE = 'pointer';
 const POINTER_CONTAINER = 'youeye-pointer';
@@ -22,7 +26,11 @@ async function ensurePointerDatabase(postgresPassword: string) {
   }
 }
 
-export async function configurePointerService() {
+export async function configurePointerService(oldIssuer?: string) {
+  return withAppLifecycle('pointer', () => configurePointerServiceUnderLifecycle(oldIssuer));
+}
+
+async function configurePointerServiceUnderLifecycle(oldIssuer?: string) {
   const postgresPassword = await readSecret('postgres', '.pg_password');
   if (!postgresPassword) throw new Error('PostgreSQL credential is unavailable');
   const [jwtSecret, encryptionSecret, identity] = await Promise.all([
@@ -31,10 +39,59 @@ export async function configurePointerService() {
     getIdentityConfig(),
   ]);
   await ensurePointerDatabase(postgresPassword);
+  await ensurePointerStorage();
   await injectCaddyRootCA(POINTER_CONTAINER);
 
+  // System bridge DNS resolves container names, not the configured public
+  // domain. Route this single authority to local Caddy before JWKS is fetched.
+  // Replace only our owned record during domain changes and restored subnets.
+  const caddyIP = await getSystemStaticIP('youeye-caddy');
+  if (!caddyIP) throw new Error('Local identity proxy address is unavailable');
+  const hosts = await execCommand(POINTER_CONTAINER, ['/bin/cat', '/etc/hosts'], { timeout: 5_000 });
+  if (hosts.exitCode !== 0) throw new Error('Pointer identity address discovery failed');
+  const nextHosts = pointerIdentityHosts(hosts.stdout, new URL(identity.externalUrl).hostname, caddyIP);
+  if (nextHosts !== hosts.stdout) {
+    const encoded = Buffer.from(nextHosts).toString('base64');
+    const written = await execCommand(POINTER_CONTAINER, ['/bin/sh', '-c',
+      `umask 022; printf '%s' '${encoded}' | base64 -d > /etc/hosts`,
+    ], { timeout: 5_000 });
+    if (written.exitCode !== 0) throw new Error('Pointer identity address reconciliation failed');
+  }
+
   const databaseUrl = `postgresql://youeye:${encodeURIComponent(postgresPassword)}@youeye-postgres.${CONTAINER_DOMAIN}:5432/${POINTER_DATABASE}`;
+  if (oldIssuer && oldIssuer !== identity.issuer) {
+    // Exact local database-owner migration provided by the signed Pointer payload.
+    // Its guards retain audience/subject, reject stale old issuers, and write an
+    // audit receipt for idempotent retries; no runtime verifier bypass is used.
+    const transition = await execCommand(POINTER_CONTAINER, [
+      '/opt/pointer/bun', '/opt/pointer/transition-managed-identity.js',
+      '--expect-database', POINTER_DATABASE,
+    ], { environment: {
+      DATABASE_URL: databaseUrl,
+      POINTER_IDENTITY_TRANSITION: JSON.stringify({
+        integrationId: 'youeye-native', oldIssuer, newIssuer: identity.issuer,
+        audience: POINTER_PLATFORM_AUDIENCE, subject: POINTER_PLATFORM_SUBJECT,
+      }),
+    }, timeout: 30_000 });
+    if (transition.exitCode !== 0) throw new Error('Pointer identity transition rejected; retry with the exact original identity');
+  }
+  // This file is inside the digest-verified release artifact. Forward its public
+  // identity so readiness reports the deployed build instead of a dev default.
+  const release = await execCommand(POINTER_CONTAINER, [
+    '/bin/cat', '/opt/pointer/release-manifest.json',
+  ], { timeout: 10_000 });
+  const build = release.exitCode === 0 ? JSON.parse(release.stdout) as Record<string, unknown> : {};
+  const buildFields: Record<string, unknown> = {
+    POINTER_COMPONENT_VERSION: build.version,
+    POINTER_BUILD_REPOSITORY: build.repository,
+    POINTER_BUILD_BRANCH: build.branch,
+    POINTER_BUILD_COMMIT: build.commit,
+  };
+  const buildEnvironment = Object.fromEntries(Object.entries(buildFields).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && /^[A-Za-z0-9:/._-]+$/.test(entry[1]),
+  ));
   const environment = {
+    ...buildEnvironment,
     POINTER_DATABASE_URL: databaseUrl,
     POINTER_JWT_SECRET: jwtSecret,
     POINTER_ENCRYPTION_SECRET: encryptionSecret,
@@ -47,6 +104,9 @@ export async function configurePointerService() {
   };
   const writeEnvironment = await execCommand(POINTER_CONTAINER, ['/bin/sh', '-c', [
     'umask 077',
+    'install -d -m 0700 /var/lib/pointer /var/lib/pointer/engine',
+    'install -d -m 0755 /var/lib/pointer/ui',
+    'cp -a /opt/pointer/ui/. /var/lib/pointer/ui/',
     // The no-op keeps the grouped command valid after the array is joined
     // with semicolons (`{ :; ...; }`). A bare `{;` is invalid POSIX shell.
     '{ :',
@@ -68,6 +128,10 @@ export async function configurePointerService() {
     'printf "%s\\n" \'MANAGED_SERVICE_PRINCIPAL_NAME="YouEye managed applications"\'',
     'printf "%s\\n" "POINTER_PROVIDERS_DIR=$POINTER_PROVIDERS_DIR"',
     'printf "%s\\n" "POINTER_MIGRATIONS_DIR=$POINTER_MIGRATIONS_DIR"',
+    'printf "%s\\n" "POINTER_ENGINE_STATE_DIR=/var/lib/pointer/engine"',
+    'printf "%s\\n" "POINTER_UI_DIR=/opt/pointer/ui"',
+    'printf "%s\\n" "POINTER_UI_ARCHIVE_DIRS=/var/lib/pointer/ui"',
+    ...Object.keys(buildEnvironment).map((key) => `printf "%s\\n" "${key}=$${key}"`),
     '} > /etc/youeye-pointer.env',
   ].join('; ')], { environment, timeout: 15_000 });
   if (writeEnvironment.exitCode !== 0) throw new Error('Pointer service configuration failed');

@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -6,7 +7,7 @@ import assert from "node:assert/strict";
 // Plan 1 E4 (D14-revised) — the CP account dropdown mirrors the toned-down UI panel.
 // Run: CONTROL_PANEL_ROOT="$PWD" pnpm exec node --import tsx --test tests/user-menu-e4.spec.ts
 const root = process.env.CONTROL_PANEL_ROOT || process.cwd();
-const read = (p: string) => readFileSync(join(root, p), "utf8");
+const read = (p: string) => englishInterfaceSource(readFileSync(join(root, p), "utf8"));
 const header = read("src/components/control-surface/control-header.tsx");
 
 test("CP account dropdown is the 340px toned-down panel (not the old w-56 list)", () => {
@@ -17,7 +18,7 @@ test("CP account dropdown is the 340px toned-down panel (not the old w-56 list)"
 
 test("mirrors the UI structure: avatar, greeting, Timeline, Settings, Sign out", () => {
   assert.match(header, /size-\[76px\]/);            // big avatar
-  assert.match(header, /Hi, \{firstName\}!/);
+  assert.match(header, /Hello, \{firstName\}!/);
   assert.match(header, />\s*Timeline/);
   assert.match(header, />\s*Settings/);
   assert.match(header, />\s*Sign out/);

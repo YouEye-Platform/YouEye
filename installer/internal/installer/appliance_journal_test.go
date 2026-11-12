@@ -94,7 +94,7 @@ func TestInstallJournalMatchRequiresSameTransactionIdentity(t *testing.T) {
 	}
 	bundle.Manifest.ImageVersion = "0.6.0-dev.2"
 	if journal.matches(bundle, target, journal.TransactionID) {
-		t.Fatal("different signed image version matched the completed journal")
+		t.Fatal("different image version matched the completed journal")
 	}
 }
 
@@ -165,6 +165,26 @@ func TestResumeCommandPlanVerifiesRecoveryBootBackupsBeforeSkippingBootStage(t *
 	}
 	if strings.Contains(joined, "install -m 0644 "+assets.SystemAUKIPath+" "+stateBootBackup) {
 		t.Fatalf("resume plan repeated completed boot installation:\n%s", joined)
+	}
+}
+
+func TestPreserveResumeAtVerifyInstallReconcilesOldUpdaterJournal(t *testing.T) {
+	plan := applianceInstallPlan{TargetDiskPath: "/dev/vda", TargetSerial: "TARGET", RootSlotBytes: applianceRootSlotBytes}
+	assets := validCommandAssets()
+	assets.Operation = "preserve-reinstall"
+	commands, err := appliancePreserveCommandPlan(plan, assets, applianceBundleManifest{
+		StateSchemaMin: applianceStateSchema, DataSchemaMin: applianceDataSchema,
+		DiskLayout: applianceManifestLayout{Version: 3}, RecoveryVersion: applianceRecoveryVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := applianceResumeCommandPlan(commands, stageVerifyInstall, plan, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(commandStrings(resume), "youeye-preserve-update-history") {
+		t.Fatal("completed preserve reinstall can skip updater-journal reconciliation")
 	}
 }
 

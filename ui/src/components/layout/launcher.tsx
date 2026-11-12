@@ -1,3 +1,10 @@
+"use client";
+
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Launcher — Plan 5 (Workstream E1; Slice 2.5 unified grid + live reorder).
  *
@@ -13,7 +20,7 @@
  * no hide/remove path — moving an app out of a folder returns it to this grid.
  */
 
-"use client";
+
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
@@ -120,6 +127,8 @@ function useFinePointer(): boolean {
 }
 
 export function Launcher({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [apps, setApps] = useState<LauncherApp[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -134,7 +143,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   const fetchApps = useCallback(() => {
     fetch("/api/v1/apps/drawer")
       .then((r) => {
-        if (!r.ok) throw new Error("Failed to load apps");
+        if (!r.ok) throw new Error(translateInterface("me46b87db96b0"));
         return r.json();
       })
       .then((data) => {
@@ -148,7 +157,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
       .finally(() => {
         setLoaded(true);
       });
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => {
     fetchApps();
@@ -212,11 +221,11 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
           headers: { "Content-Type": "application/json" },
           body,
         });
-        if (!response.ok) throw new Error("Launcher layout was not saved");
+        if (!response.ok) throw new Error(translateInterface("medefa0e46d9f"));
       })
       .catch(() => { fetchApps(); });
     return layoutSaveQueue.current;
-  }, [fetchApps]);
+  }, [fetchApps, translateInterface]);
   const pruneFolders = (nextApps: LauncherApp[], base: Folder[], keepId?: string) => base.filter((f) => f.id === keepId || nextApps.some((a) => a.url && a.folder_id === f.id));
 
   // ── Reorder (live, then persist on drop) ──
@@ -329,9 +338,9 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         onMouseDown={(e) => drag.startDrag(e, app.id)}
         onClick={() => { if (!drag.consumeClick() && app.url && !off) go(app.url); }}
         className={`relative grid select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${dragEnabled ? "touch-none cursor-grab active:cursor-grabbing" : "touch-pan-y"} ${unavailable ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
-        title={off ? `${app.name} is off` : app.name}
+        title={off ? translateInterface("m113d9f1f10ad", { value0: String(app.name) }) : app.name}
       >
-        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
+        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></span>}
         <div className={merge ? "rounded-2xl ring-2 ring-primary ring-offset-2 ring-offset-transparent" : ""}>
           <LauncherTile icon={app.icon} customIconUrl={app.custom_icon_url} />
         </div>
@@ -365,7 +374,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   return (
     <div className="relative flex h-full w-full flex-col items-center gap-8 overflow-y-auto px-6 pb-6 pt-9">
       {onClose && (
-        <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full border bg-card/60 text-muted-foreground transition-colors hover:text-foreground">
+        <button type="button" onClick={onClose} aria-label={translateInterface("m7d9eb7acb13e")} className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full border bg-card/60 text-muted-foreground transition-colors hover:text-foreground">
           <X className="h-4 w-4" />
         </button>
       )}
@@ -376,7 +385,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
           {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
           <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchApps")} className="h-11 w-full rounded-full border bg-card/70 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring" />
         </div>
-        {!finePointer && <button type="button" onClick={() => { setEditMode((value) => !value); setQuery(""); }} className={`grid h-11 w-11 place-items-center rounded-full border ${editMode ? "bg-primary text-primary-foreground" : "bg-card/70 text-muted-foreground"}`} aria-label={editMode ? "Done rearranging launcher" : "Rearrange launcher"}>{editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</button>}
+        {!finePointer && <button type="button" onClick={() => { setEditMode((value) => !value); setQuery(""); }} className={`grid h-11 w-11 place-items-center rounded-full border ${editMode ? "bg-primary text-primary-foreground" : "bg-card/70 text-muted-foreground"}`} aria-label={editMode ? translateInterface("m3a42c252b45b") : translateInterface("m836e7ea4b20a")}>{editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</button>}
       </div>
 
       {!loaded ? (
@@ -390,8 +399,8 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         </div>
       ) : loadError ? (
         <div className="mt-6 grid justify-items-center gap-3 text-sm text-muted-foreground">
-          <p>Apps could not be loaded.</p>
-          <button type="button" onClick={() => window.location.reload()} className="text-primary hover:underline">Retry</button>
+          <p>{translateInterface("m09bb16e48881")}</p>
+          <button type="button" onClick={() => window.location.reload()} className="text-primary hover:underline">{translateInterface("m942087cc2d41")}</button>
         </div>
       ) : (searching ? searchHits.length === 0 : gridItems.length === 0) ? (
         <p className="mt-6 text-sm text-muted-foreground">{t("noAppsFound")}</p>

@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
-const read = (path) => readFileSync(join(root, path), 'utf8');
+const read = (path) => englishInterfaceSource(readFileSync(join(root, path), 'utf8'));
 
 test('onboarding is CP-owned and uses the authenticated UI bridge', () => {
   const onboarding = read('src/components/onboarding/onboarding-client.tsx');
@@ -57,13 +58,13 @@ test('profile presets, self-password change, and explicit People form are wired 
   assert.doesNotMatch(people, /showSystem|isSystemUser|Emergency local access/);
 });
 
-test('SSH, IP address, per-app channels, and background update polling are represented', () => {
+test('SSH, IP address, and background update polling are represented; per-app channels are gone', () => {
   const system = read('src/components/settings-shell/system-client.tsx');
   const about = read('src/components/settings-shell/about-client.tsx');
   const apps = read('src/components/settings-shell/apps-client.tsx');
   assert.match(system, /settings\/system\/ssh/);
   assert.match(about, /primary_ip/);
-  assert.match(apps, /updateChannelKey/);
+  assert.doesNotMatch(apps, /updateChannelKey/);
   assert.match(apps, /hasActiveUpdate/);
   assert.doesNotMatch(system, /UpdateChannels/);
 });

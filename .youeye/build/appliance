@@ -12,7 +12,11 @@ export GOMODCACHE="${YOUEYE_GOMODCACHE:-$YOUEYE_WORK_DIR/go-mod-cache}"
 export GOCACHE="${YOUEYE_GOCACHE:-$YOUEYE_WORK_DIR/go-build-cache}"
 install -d -m 0755 "$HOME" "$XDG_CACHE_HOME" "$GOPATH" "$GOMODCACHE" "$GOCACHE"
 
-export APPLIANCE_BUILD_MODE=unsigned
+# youeye.build-inputs.v1 names the image version, Debian snapshot, Market
+# commit and the exact Spine, Control Panel and UI artifacts (sha256).
+[[ -n ${YOUEYE_BUILD_INPUTS:-} && -f $YOUEYE_BUILD_INPUTS ]] || \
+    youeye_build_fail 'YOUEYE_BUILD_INPUTS must name the youeye.build-inputs.v1 file'
+export BUILD_INPUTS_PATH="$YOUEYE_BUILD_INPUTS"
 export LIVE_BUILD_APT_PROXY="${LIVE_BUILD_APT_PROXY:-http://127.0.0.1:3142}"
 if ! curl -fsS --max-time 5 "$LIVE_BUILD_APT_PROXY/acng-report.html" >/dev/null; then
     printf 'The builder-local APT cache is unavailable at %s.\n' "$LIVE_BUILD_APT_PROXY" >&2

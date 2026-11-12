@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
-const read = (p) => readFileSync(join(repoRoot, p), 'utf8');
+const read = (p) => englishInterfaceSource(readFileSync(join(repoRoot, p), 'utf8'));
 
 test('domain helper keeps platform domain exact and manages only its wildcard', () => {
   const source = read('src/lib/dns-providers/domain.ts');
@@ -113,8 +114,8 @@ test('setup screen recognizes staged BYO domain bundles without exposing token m
 test('setup BYO provider validation and manual certificate path handle first-run routing', () => {
   const source = read('src/components/setup/SetupServerName.tsx');
 
-  assert.match(source, /readSetupJson\(csrfRes, 'Could not read setup session'\)/);
-  assert.match(source, /readSetupJson\(res, 'Cloudflare connection failed'\)/);
+  assert.match(source, /readSetupJson\(csrfRes, ['"]Could not read setup session['"]\)/);
+  assert.match(source, /readSetupJson\(res, ['"]Cloudflare connection failed['"]\)/);
   assert.match(source, /Setup session expired\. Refresh setup and sign in again\./);
   assert.match(source, /response\.redirected/);
   assert.match(source, /response\.url\.includes\('\/login'\)/);

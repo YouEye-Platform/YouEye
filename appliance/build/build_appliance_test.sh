@@ -5,6 +5,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 "$root/scripts/check-public-release-hygiene.sh" "$root" >/dev/null
 node "$root/scripts/generate-third-party-notices.mjs" "$root/THIRD_PARTY_NOTICES.txt"
 node "$root/legal/third-party-assets.test.mjs" >/dev/null
+python3 "$root/appliance/scripts/youeye-system-update-bootstrap_test.py"
 build="$root/appliance/build/build-appliance.sh"
 entrypoint="$root/.youeye/build/appliance"
 
@@ -25,15 +26,13 @@ require_text() {
 
 bash -n \
     "$build" \
-    "$root/appliance/build/release-lock.sh" \
-    "$root/appliance/build/generate-release-train-input.sh" \
-    "$root/appliance/build/release_lock_test.sh" \
+    "$root/appliance/build/build-inputs.sh" \
+    "$root/appliance/build/build_inputs_test.sh" \
     "$entrypoint" \
     "$root/appliance/scripts/youeye-first-deploy" \
     "$root/appliance/scripts/youeye-bootstrap-network" \
     "$root/appliance/scripts/youeye-console-status" \
     "$root/appliance/scripts/youeye-apply-development-access" \
-	"$root/appliance/scripts/youeye-seed-market" \
     "$root/appliance/scripts/youeye-appliance-bless" \
     "$root/appliance/scripts/youeye-setup-gate" \
 	"$root/appliance/scripts/youeye-recovery" \
@@ -60,29 +59,18 @@ done
 require_text "$build" 'e2fsprogs,restic,zstd'
 
 for default in \
-	'build_mode="${APPLIANCE_BUILD_MODE:-signed}"' \
-	'release_lock="${RELEASE_LOCK_PATH:-$source_dir/appliance/release-lock.json}"' \
-	'release_lock_source_mode="${RELEASE_LOCK_SOURCE_MODE:-public}"' \
-	'release_lock_validate "$release_lock" "$release_lock_source_mode"' \
-	'lock_value()'; do
+	'build_inputs="${BUILD_INPUTS_PATH:-$source_dir/appliance/build-inputs.json}"' \
+	'build_inputs_validate "$build_inputs"' \
+	'input_value()'; do
     require_default "$default"
 done
-for field in image.version image.minimum_current_version image.release_source image.release_branch image.debian_snapshot \
-    market.source market.commit components.spine.version components.spine.tag components.spine.source_commit \
-    components.spine.source_date_epoch components.spine.artifact_sha256 components.control_panel.version \
-    components.control_panel.tag components.control_panel.source_commit components.control_panel.artifact_sha256 \
-    components.ui.version components.ui.tag components.ui.source_commit components.ui.artifact_sha256; do
-    jq -e ".$field != null" "$root/appliance/release-lock.json" >/dev/null || fail "release lock field is missing: $field"
+bash "$root/appliance/build/build_inputs_test.sh"
+require_text "$entrypoint" 'export BUILD_INPUTS_PATH="$YOUEYE_BUILD_INPUTS"'
+for retired in APPLIANCE_BUILD_MODE APPLIANCE_SIGNING_KEY_FILE APPLIANCE_SIGNING_PUBLIC_KEY_FILE APPLIANCE_TRUST_CLASS RELEASE_LOCK_PATH embed-public-trust 'appliance-development' 'openssl pkey' sbom.spdx.json provenance.json SHA256SUMS 'trust:{'; do
+    if grep -Fq -- "$retired" "$build" "$entrypoint"; then
+        fail "retired signing or release-lock input remains: $retired"
+    fi
 done
-require_text "$root/appliance/release-lock.json" 'https://github.com/YouEye-Platform/YouEye'
-require_text "$root/appliance/release-lock.json" 'https://github.com/YouEye-Platform/Market'
-bash "$root/appliance/build/release_lock_test.sh"
-require_text "$root/appliance/build/release-lock.sh" 'public release locks must use the official GitHub YouEye and Market sources'
-require_text "$root/appliance/build/release-lock.sh" 'custom image.release_source must be a credential-free HTTPS repository URL'
-
-train_input="$($root/appliance/build/generate-release-train-input.sh release-candidate)"
-jq -e '.provider == "github" and .channel == "development" and .destination == "release-candidate" and (.market.commit | test("^[0-9a-f]{40}$"))' <<<"$train_input" >/dev/null || \
-    fail 'release-train adapter did not preserve public GitHub identity'
 
 for removed in SPINE_VERSION SPINE_TAG SPINE_COMMIT SPINE_SOURCE_DATE_EPOCH SPINE_SHA256 CP_VERSION CP_TAG CP_COMMIT CP_SHA256 UI_VERSION UI_TAG UI_COMMIT UI_SHA256 MARKET_SOURCE MARKET_SOURCE_COMMIT; do
     if grep -Fq "\${$removed:-" "$build"; then
@@ -91,28 +79,25 @@ for removed in SPINE_VERSION SPINE_TAG SPINE_COMMIT SPINE_SOURCE_DATE_EPOCH SPIN
 done
 
 for text in \
-    'APPLIANCE_BUILD_MODE must be signed or unsigned.' \
-    'APPLIANCE_SIGNING_KEY_FILE must name a protected Ed25519 private key for signed builds.' \
-    'APPLIANCE_SIGNING_PUBLIC_KEY_FILE must name the public Ed25519 trust anchor.' \
-    'YOUEYE_SOURCE_COMMIT must provide the exact source commit when Git metadata is absent.' \
+    'YOUEYE_SOURCE_TREE must provide the exact source tree when Git metadata is absent.' \
     'SOURCE_DATE_EPOCH must be a positive integer when Git metadata is absent.' \
-    'Unsigned build: manifests, SBOM, provenance, checksums, and signatures are delegated to Infra validation.' \
-    'Unsigned appliance build must emit exactly nine regular files' \
-    'SPINE_COMMIT must be the exact signed Spine release commit.' \
-    'SPINE_SOURCE_DATE_EPOCH must be the exact signed Spine source epoch.' \
-    'SPINE_SHA256 must be the exact signed Spine binary SHA-256.' \
-    'Source Spine version must match the exact signed Spine release identity.' \
+    'Appliance build must emit exactly twelve regular files' \
+    'components.spine.source_tree must be the exact Spine source tree.' \
+    'components.spine.source_date_epoch must be the exact Spine source epoch.' \
+    'components.spine.artifact_sha256 must be the exact Spine binary SHA-256.' \
     'Embedded Spine binary does not match the exact released Spine asset.' \
-    'CP_COMMIT must be the exact signed Control Panel release commit.' \
-    'CP_SHA256 must be the exact signed Control Panel standalone.tar SHA-256.' \
-    'UI_COMMIT must be the exact signed UI release commit.' \
-    'UI_SHA256 must be the exact signed UI standalone.tar SHA-256.'; do
+    'components.control_panel.source_tree must be the exact Control Panel source tree.' \
+    'components.control_panel.artifact_sha256 must be the exact Control Panel cp-standalone.tar SHA-256.' \
+    'components.ui.source_tree must be the exact UI source tree.' \
+    'components.ui.artifact_sha256 must be the exact UI ui-standalone.tar SHA-256.'; do
     require_text "$build" "$text"
 done
 
-if grep -Fq 'source_commit != "$spine_commit"' "$build"; then
-    fail 'an appliance-only follow-up commit must not invalidate an exact signed Spine release pin'
-fi
+for retired in release_source release_branch market_source release_channels youeye-seed-market; do
+    if grep -Fq "$retired" "$build"; then
+        fail "the image must stay host- and channel-neutral; found $retired"
+    fi
+done
 require_text "$build" 'spine_sha256 != "$spine_expected_sha256"'
 require_text "$build" '@$spine_source_date_epoch'
 
@@ -133,7 +118,6 @@ if grep -qx 'systemd-boot' <<<"$live_packages"; then
     fail 'live installer must not install the stateful systemd-boot integration metapackage'
 fi
 
-require_text "$root/appliance/release-lock.json" '20260805T142647Z'
 for text in \
     'mmdebstrap' \
     '--extract-hook=' \
@@ -153,17 +137,15 @@ for text in \
 	'youeye.appliance.manifest.v1' \
 	'youeye.system-update.v1' \
 	'system-update-manifest.json' \
+	'install -m 0644 "$build_inputs" "$artifacts/build-inputs.json"' \
+	'cp -a "$artifacts/." config/includes.binary/appliance/' \
 	'preserve_state:true,preserve_data:true,preserve_recovery:true' \
 	'artifact_kind:$artifact_kind,supported_actions:["recovery","image-update"]' \
-    'spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256}' \
+    'spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256}' \
 	'disk_layout:{version:3,target_min_gib:32' \
     'state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1' \
     'kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2"' \
     'incus_compatibility:">=7.0",recovery_version:"1"' \
-    'openssl pkeyutl -sign -rawin' \
-    'does not match the installer development trust anchor' \
-    'sbom.spdx.json' \
-    'provenance.json' \
     'live-build' \
     'iso-hybrid' \
     '--gpt_disk_guid "$iso_disk_guid"' \
@@ -197,7 +179,7 @@ for text in \
     'e2fsck -fyD' \
     'set_current_time @' \
     'work_key="$(printf '\''%s'\'' "$work_dir" | sha256sum | cut -c1-16)"' \
-    'live_dir="/var/tmp/youeye-appliance-live-${source_commit:0:12}-${work_key}"' \
+    'live_dir="/var/tmp/youeye-appliance-live-${source_tree:0:12}-${work_key}"' \
     'LIVE_BUILD_ATTEMPTS must be a positive integer.' \
     'live-build attempt %d/%d failed; cleaning and retrying.' \
     'lb clean || true' \
@@ -255,16 +237,12 @@ require_text "$root/appliance/scripts/youeye-first-deploy" 'incus list youeye-co
 require_text "$root/appliance/scripts/youeye-first-deploy" 'Continuing an interrupted Server interface transaction'
 require_text "$root/appliance/scripts/youeye-first-deploy" 'needs_attention'
 require_text "$root/appliance/scripts/youeye-first-deploy" 'appliance health --profile=operational --json'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'youeye.appliance.progress.v2'
+require_text "$root/appliance/scripts/youeye-first-deploy" 'youeye.installer.progress.v1'
 require_text "$root/appliance/scripts/youeye-first-deploy" 'update system converge'
 require_text "$root/appliance/scripts/youeye-first-deploy" 'YOUEYE_FIRST_DEPLOY_PROGRESS_PATH'
 require_text "$root/appliance/scripts/youeye-bootstrap-network" 'youeye.bootstrap-network.v1'
 require_text "$root/appliance/scripts/youeye-bootstrap-network" 'previous network configuration was restored'
 require_text "$root/appliance/scripts/youeye-first-deploy" '"$setup_gate" open'
-require_text "$root/appliance/scripts/youeye-first-deploy" '"$seed_market"'
-require_text "$root/appliance/scripts/youeye-seed-market" 'test("^[0-9a-f]{40}$")'
-require_text "$build" 'MARKET_SOURCE_COMMIT'
-require_text "$build" 'usr/lib/youeye/market/market-sources.json'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'Before=incus.service incus-startup.service youeye.service youeye-first-deploy.service'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr/local/libexec/youeye-setup-gate close'
 require_text "$root/appliance/scripts/youeye-setup-gate" 'tcp dport { 80, 443 } drop'
@@ -300,6 +278,8 @@ require_text "$root/appliance/systemd/youeye-appliance-incus-sockets.service" 'B
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'ExecStartPost=/usr/libexec/incus/incusd waitready --timeout=60'
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'TimeoutStartSec=90s'
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'RestartSec=2s'
+require_text "$root/appliance/systemd/youeye-core-update.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service'
+require_text "$root/appliance/systemd/youeye-core-update.service" 'After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service youeye.service youeye-first-deploy.service'
 require_text "$root/appliance/systemd/youeye.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service'
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service'
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Wants=network-online.target youeye.service'
@@ -346,9 +326,13 @@ require_text "$root/appliance/scripts/youeye-appliance-bless" '/usr/lib/systemd/
 require_text "$root/appliance/scripts/youeye-appliance-bless" '"$bless_boot_bin" good'
 require_text "$root/appliance/scripts/youeye-appliance-bless" 'youeye.appliance.boot-bless.v1'
 require_text "$root/appliance/systemd/journald.conf.d/20-youeye-appliance.conf" 'SystemMaxUse=256M'
-require_text "$root/appliance/scripts/youeye-system-update-bootstrap" 'openssl pkeyutl -verify -pubin'
-require_text "$root/appliance/scripts/youeye-system-update-bootstrap" '.schema == "youeye.system-update.v1"'
-require_text "$root/appliance/scripts/youeye-system-update-bootstrap" 'update system stage --bootstrap-plan1'
+require_text "$root/appliance/scripts/youeye-system-update-bootstrap" '.authority == "digest"'
+require_text "$root/appliance/scripts/youeye-system-update-bootstrap" 'update core bootstrap --request'
+for file in "$root/appliance/scripts/youeye-system-update-bootstrap" "$root/appliance/scripts/youeye-recovery" "$root/appliance/scripts/youeye-bootstrap-network"; do
+    if grep -Fq 'openssl pkey' "$file"; then
+        fail "release signature verification remains in $file"
+    fi
+done
 require_text "$build" '"$rootfs/efi"'
 require_text "$build" 'disable incus.socket incus-user.socket'
 require_text "$build" 'systemd-bless-boot.service'
@@ -363,7 +347,6 @@ require_text "$build" 'appliance/scripts/youeye-recovery-console'
 require_text "$build" 'usr/lib/youeye/config-seeds'
 require_text "$root/appliance/scripts/youeye-recovery-console" '/usr/local/libexec/youeye-recovery 2>&1 | tee /dev/ttyS0'
 require_text "$root/appliance/scripts/youeye-recovery" "printf 'YOUEYE_RECOVERY_CONSOLE_READY\\n' > /dev/ttyS0"
-require_text "$root/appliance/scripts/youeye-recovery" 'openssl pkeyutl -verify -pubin'
 require_text "$root/appliance/scripts/youeye-recovery" 'verify_boot_asset system-a-uki'
 require_text "$root/appliance/scripts/youeye-recovery" 'verify_boot_asset system-b-uki'
 require_text "$root/appliance/scripts/youeye-recovery" 'verify_boot_asset recovery-uki'
@@ -391,7 +374,6 @@ bash "$root/appliance/scripts/youeye-appliance-bless_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-access_test.sh"
 bash "$root/appliance/scripts/youeye-console-status_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-overlay_test.sh"
-bash "$root/appliance/scripts/youeye-seed-market_test.sh"
 bash "$root/appliance/scripts/youeye-setup-gate_test.sh"
 bash "$root/appliance/scripts/youeye-recovery_test.sh"
 bash "$root/appliance/scripts/youeye-recovery-apply_test.sh"

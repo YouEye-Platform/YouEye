@@ -587,6 +587,16 @@ export async function setDomainDNS(
   await setDnsmasqLines(filtered);
 }
 
+/** Keep the portable OIDC authority pointed at this appliance after a site rename or restore. */
+export async function setIdentityHostDNS(hostname: string, serverIP: string): Promise<void> {
+  if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(hostname)) throw new Error('Invalid identity hostname');
+  const lines = await getDnsmasqLines();
+  const entry = `address=/${hostname}/${serverIP}`;
+  const filtered = lines.filter(line => !line.startsWith(`address=/${hostname}/`));
+  filtered.push(entry);
+  if (filtered.join('\n') !== lines.join('\n')) await setDnsmasqLines(filtered);
+}
+
 /**
  * Remove all DNS address= entries for a domain
  */

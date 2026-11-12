@@ -7,6 +7,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
+
 // readYouEyeConfigRaw reads the raw bytes of youeye.yaml.
 // Returns os.ErrNotExist-style error if the file doesn't exist.
 func readYouEyeConfigRaw() ([]byte, error) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
 import { CONTAINER_DOMAIN } from "@/lib/market/constants";
+import { getSession } from "@/lib/auth/session";
 
 const TOKEN_FILE_PATH = "/etc/youeye/ui-bridge-token";
 const UI_BASE = `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
@@ -24,16 +25,19 @@ export async function GET() {
   try {
     const res = await fetch(`${UI_BASE}/api/ui-bridge/branding`, {
       headers: { "X-UI-Bridge-Token": token },
+      cache: "no-store",
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return NextResponse.json({ error: "UI bridge error" }, { status: res.status });
-    return NextResponse.json(await res.json());
+    return NextResponse.json(await res.json(), { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "UI unreachable" }, { status: 502 });
   }
 }
 
 export async function PUT(request: NextRequest) {
+  const session = await getSession();
+  if (!session?.isAdmin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   const token = getBridgeToken();
   if (!token) return NextResponse.json({ error: "Bridge token unavailable" }, { status: 500 });
 

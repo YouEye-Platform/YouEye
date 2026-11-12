@@ -24,7 +24,7 @@ export const PROFILE_ICON_PRESETS: readonly ProfileIconPreset[] = presets.map((p
   id: preset.id,
   label: preset.label,
   emoji: preset.emoji,
-  artwork: `/api/branding/profile-avatar-art/${preset.id}`,
+  artwork: `/settings/api/branding/profile-avatar-art/${preset.id}`,
   category: preset.category as ProfileIconCategory,
   background: [preset.background[0], preset.background[1]],
 }));

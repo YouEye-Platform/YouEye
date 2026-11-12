@@ -33,5 +33,5 @@ test('visible StandardCard fallback with redesigned uninstalled copy (never sile
   const t = read('src/components/timeline/timeline-embed.tsx');
   assert.match(t, /fallback=\{<StandardCard/);
   assert.match(t, /uninstalled \/>/);            // the fallback passes uninstalled
-  assert.match(t, /This app was uninstalled/);   // redesigned copy
+  assert.match(t, /translateInterface\("mdcb13702448e"\)/);   // redesigned copy
 });

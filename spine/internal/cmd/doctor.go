@@ -209,14 +209,7 @@ func doctorAppChecks() []doctorCheck {
 			checks := make([]doctorCheck, 0, len(apps))
 			for _, raw := range apps {
 				app, _ := raw.(map[string]interface{})
-				id := firstOf(app, "id", "appId", "name")
-				status := firstOf(app, "healthStatus", "status")
-				c := doctorCheck{Section: "apps", Name: id, Status: doctorOK, Summary: "L1/L2/L3 app status is healthy"}
-				if status != "" && status != "healthy" && status != "running" {
-					c.Status = doctorWarn
-					c.Summary = "app health is " + status
-					c.Detail = "Control Panel app prober owns detailed L1/L2/L3 state."
-				}
+				c := doctorReportedAppCheck(app)
 				checks = append(checks, c)
 			}
 			return checks
@@ -227,6 +220,43 @@ func doctorAppChecks() []doctorCheck {
 		return []doctorCheck{{Section: "apps", Name: "app facts", Status: doctorUnknown, Summary: "Control Panel app facts unavailable and Incus app scan failed", Detail: err.Error()}}
 	}
 	return []doctorCheck{{Section: "apps", Name: "app facts", Status: doctorWarn, Summary: "Control Panel app facts unavailable; degraded to Incus app scan", Detail: out}}
+}
+
+func doctorReportedAppCheck(app map[string]interface{}) doctorCheck {
+	id := firstOf(app, "id", "appId", "name")
+	health := firstOf(app, "healthStatus")
+	runtime := firstOf(app, "status")
+	check := doctorCheck{Section: "apps", Name: id, Status: doctorUnknown, Summary: "application readiness is not reported"}
+	if id == "pointer" && runtime == "running" {
+		out, err := doctorRunCommand("incus", "exec", "youeye-pointer", "--", "curl", "--silent", "--show-error", "--fail", "--max-time", "5", "http://127.0.0.1:4001/readyz")
+		var readiness struct {
+			Status string `json:"status"`
+		}
+		if err != nil || json.Unmarshal([]byte(out), &readiness) != nil || readiness.Status == "" {
+			check.Status = doctorFail
+			check.Summary = "Pointer application readiness probe failed"
+		} else if readiness.Status == "ok" {
+			check.Status = doctorOK
+			check.Summary = "Pointer application readiness passed"
+		} else {
+			check.Status = doctorWarn
+			check.Summary = "Pointer application readiness is " + readiness.Status
+		}
+		return check
+	}
+	if health == "healthy" {
+		check.Status = doctorOK
+		check.Summary = "Control Panel reports application healthy"
+	} else if health != "" {
+		check.Status = doctorWarn
+		check.Summary = "app health is " + health
+	} else if runtime == "running" {
+		check.Summary = "runtime is running; application readiness is not reported"
+	} else if runtime != "" {
+		check.Status = doctorWarn
+		check.Summary = "app runtime is " + runtime
+	}
+	return check
 }
 
 func doctorDeferred(section, name, detail string) doctorCheck {

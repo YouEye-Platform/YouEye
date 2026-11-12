@@ -1,5 +1,11 @@
 "use client";
 
+import {useLocale} from "next-intl";
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback, useRef } from "react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -62,18 +68,19 @@ interface DnsConfig {
 
 type Tab = "overview" | "queries" | "domains" | "local-dns" | "blocklists" | "settings";
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "queries", label: "Query Log" },
-  { id: "domains", label: "Allow / Block" },
-  { id: "local-dns", label: "Local DNS" },
-  { id: "blocklists", label: "Blocklists" },
-  { id: "settings", label: "Settings" },
+const TABS: Array<{ id: Tab; labelKey: string }> = [
+  { id: "overview", labelKey: "md4b1ea5708dd" },
+  { id: "queries", labelKey: "m5a0aa8ba12f0" },
+  { id: "domains", labelKey: "md3385870303a" },
+  { id: "local-dns", labelKey: "m10e2ffbf07f7" },
+  { id: "blocklists", labelKey: "mdec55eff52c6" },
+  { id: "settings", labelKey: "m74a883a037bc" },
 ];
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function DnsEmbedClient() {
+  const translateInterface = useInterfaceTranslations("interface");
   const [tab, setTab] = useState<Tab>("overview");
 
   return (
@@ -96,7 +103,7 @@ export function DnsEmbedClient() {
               background: "transparent",
             }}
           >
-            {t.label}
+            {translateInterface(t.labelKey)}
           </button>
         ))}
       </div>
@@ -114,6 +121,10 @@ export function DnsEmbedClient() {
 // ─── Overview Tab ────────────────────────────────────────────────────────────
 
 function OverviewTab() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [data, setData] = useState<DnsStats | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,11 +145,11 @@ function OverviewTab() {
         setHistory(h.history || []);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(translateInterface("m3d2301d732a7"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -279,12 +290,12 @@ function OverviewTab() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="embed-dot" style={{ background: isEnabled ? "var(--embed-success)" : "var(--embed-danger)", width: 10, height: 10 }} />
           <span style={{ fontWeight: 500 }}>
-            DNS Filtering is{" "}
+            {translateInterface("m19e2ab0484ef", {state: ""})}{" "}
             <span className="embed-badge" style={isEnabled
               ? { color: "var(--embed-success)", borderColor: "color-mix(in srgb, var(--embed-success) 30%, transparent)" }
               : { color: "var(--embed-danger)", borderColor: "color-mix(in srgb, var(--embed-danger) 30%, transparent)" }
             }>
-              {isEnabled ? "Active" : "Paused"}
+              {isEnabled ? translateInterface("m92340695899b") : translateInterface("me159b06187d3")}
             </span>
           </span>
         </div>
@@ -297,30 +308,30 @@ function OverviewTab() {
           onClick={handleToggle}
           disabled={toggling}
         >
-          {toggling ? "..." : isEnabled ? "Pause" : "Resume"}
+          {toggling ? "..." : isEnabled ? translateInterface("m858e4ba7a29f") : translateInterface("md640c7421da0")}
         </button>
       </div>
 
       {/* Stats Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 12 }}>
-        <StatCard label="Total Queries" value={data.queries_today.toLocaleString()} />
-        <StatCard label="Blocked" value={data.blocked_today.toLocaleString()} color="var(--embed-danger)" />
-        <StatCard label="Block Rate" value={`${data.percent_blocked.toFixed(1)}%`} />
-        <StatCard label="Domains on Blocklists" value={data.gravity_size.toLocaleString()} />
+        <StatCard label={translateInterface("m1f8fb35338d1")} value={data.queries_today.toLocaleString(locale)} />
+        <StatCard label={translateInterface("m18f2a0947f9d")} value={data.blocked_today.toLocaleString(locale)} color="var(--embed-danger)" />
+        <StatCard label={translateInterface("m8b2c2ec2720d")} value={`${data.percent_blocked.toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}%`} />
+        <StatCard label={translateInterface("mc0840e5dafd8")} value={data.gravity_size.toLocaleString(locale)} />
       </div>
 
       {/* Queries Over Time Chart */}
       {history.length > 1 && (
         <div className="embed-card" style={{ marginTop: 12 }}>
-          <div className="embed-card-title">Queries Over Time</div>
+          <div className="embed-card-title">{translateInterface("m11e9e99906cd")}</div>
           <canvas ref={canvasRef} style={{ width: "100%", height: 180 }} />
         </div>
       )}
 
       {/* Top Queries & Top Blocked */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-        <DomainTable title="Top Queries" entries={data.top_queries} />
-        <DomainTable title="Top Blocked" entries={data.top_blocked} />
+        <DomainTable title={translateInterface("m1857d11942a7")} entries={data.top_queries} />
+        <DomainTable title={translateInterface("m10d2d4a56195")} entries={data.top_blocked} />
       </div>
     </>
   );
@@ -329,6 +340,10 @@ function OverviewTab() {
 // ─── Query Log Tab ───────────────────────────────────────────────────────────
 
 function QueryLogTab() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [queries, setQueries] = useState<Query[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
@@ -364,34 +379,34 @@ function QueryLogTab() {
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <input
           className="embed-input"
-          placeholder="Search domains..."
+          placeholder={translateInterface("me8f6be0644fb")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && fetchQueries()}
           style={{ flex: 1, minWidth: 200, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 6, background: "transparent", color: "inherit" }}
         />
         <button className="embed-btn" onClick={() => setShowFilters(!showFilters)} style={{ fontSize: 12 }}>
-          {showFilters ? "\u25B2 Filters" : "\u25BC Filters"}
+          {showFilters ? translateInterface("m9681120e8921") : translateInterface("m367971557fbd")}
         </button>
         <button className="embed-btn" onClick={fetchQueries} disabled={loading}>
-          {loading ? "..." : "Search"}
+          {loading ? "..." : translateInterface("m49c266baaaa7")}
         </button>
       </div>
 
       {showFilters && (
         <div className="embed-card" style={{ marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <label style={{ fontSize: 12, color: "var(--embed-text-muted)" }}>Status:</label>
+          <label style={{ fontSize: 12, color: "var(--embed-text-muted)" }}>{translateInterface("m755c8b2a9fb1")}</label>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "4px 8px", fontSize: 12, border: "1px solid var(--embed-border)", borderRadius: 4, background: "var(--embed-card-bg)", color: "inherit" }}
           >
-            <option value="">All</option>
-            <option value="FORWARDED">Forwarded</option>
-            <option value="CACHE">Cached</option>
-            <option value="GRAVITY">Blocked (Gravity)</option>
-            <option value="REGEX">Blocked (Regex)</option>
-            <option value="DENYLIST">Blocked (Denylist)</option>
+            <option value="">{translateInterface("ma52ace420f21")}</option>
+            <option value="FORWARDED">{translateInterface("m99498a5f4bea")}</option>
+            <option value="CACHE">{translateInterface("ma251c18205f1")}</option>
+            <option value="GRAVITY">{translateInterface("m2ec05b2f8ce4")}</option>
+            <option value="REGEX">{translateInterface("md099ed424889")}</option>
+            <option value="DENYLIST">{translateInterface("m9e38662f5e92")}</option>
           </select>
         </div>
       )}
@@ -401,21 +416,21 @@ function QueryLogTab() {
           <table className="embed-table" style={{ width: "100%", fontSize: 12 }}>
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Domain</th>
-                <th>Client</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th style={{ textAlign: "right" }}>Reply</th>
+                <th>{translateInterface("m33b93476cf59")}</th>
+                <th>{translateInterface("m79fa33618d8e")}</th>
+                <th>{translateInterface("m0c77fe09ab33")}</th>
+                <th>{translateInterface("mbaaddf70fb5d")}</th>
+                <th>{translateInterface("m920e413c7d41")}</th>
+                <th style={{ textAlign: "right" }}>{translateInterface("mc253f451bdd5")}</th>
               </tr>
             </thead>
             <tbody>
               {queries.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: "center", padding: 20 }} className="embed-muted">No queries found</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: "center", padding: 20 }} className="embed-muted">{translateInterface("m7230beded3d3")}</td></tr>
               ) : queries.map((q) => (
                 <tr key={q.id}>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    {new Date(q.time * 1000).toLocaleTimeString()}
+                    {new Date(q.time * 1000).toLocaleTimeString(locale)}
                   </td>
                   <td className="embed-mono" style={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {q.domain}
@@ -428,7 +443,7 @@ function QueryLogTab() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {q.reply?.time != null ? `${(q.reply.time * 1000).toFixed(1)}ms` : "-"}
+                    {q.reply?.time != null ? `${(q.reply.time * 1000).toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}ms` : "-"}
                   </td>
                 </tr>
               ))}
@@ -443,6 +458,8 @@ function QueryLogTab() {
 // ─── Domains Tab (Allow / Block) ─────────────────────────────────────────────
 
 function DomainsTab() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [lists, setLists] = useState<DomainLists | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeList, setActiveList] = useState<"allow" | "deny">("deny");
@@ -472,12 +489,12 @@ function DomainsTab() {
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || "Failed");
+        throw new Error(d.error || translateInterface("m031a8f0f659d"));
       }
       setNewDomain("");
       fetchDomains();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
+      setError(translateInterface("m031a8f0f659d"));
     } finally { setAdding(false); }
   };
 
@@ -506,14 +523,14 @@ function DomainsTab() {
           onClick={() => setActiveList("deny")}
           style={activeList === "deny" ? { background: "var(--embed-danger)", color: "#fff", borderColor: "var(--embed-danger)" } : {}}
         >
-          Blocked ({lists ? lists.deny.exact.length + lists.deny.regex.length : 0})
+          {translateInterface("m13635b8d433f", {count: lists ? lists.deny.exact.length + lists.deny.regex.length : 0})}
         </button>
         <button
           className="embed-btn"
           onClick={() => setActiveList("allow")}
           style={activeList === "allow" ? { background: "var(--embed-success)", color: "#fff", borderColor: "var(--embed-success)" } : {}}
         >
-          Allowed ({lists ? lists.allow.exact.length + lists.allow.regex.length : 0})
+          {translateInterface("mde89e2af06d1", {count: lists ? lists.allow.exact.length + lists.allow.regex.length : 0})}
         </button>
       </div>
 
@@ -521,7 +538,7 @@ function DomainsTab() {
       <div className="embed-card" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <input
           className="embed-input"
-          placeholder={newKind === "regex" ? "Regex pattern, e.g. (^|\\.)ads\\." : "Domain, e.g. example.com"}
+          placeholder={newKind === "regex" ? translateInterface("m9f896c35a09d") : translateInterface("m27afbb74abf0")}
           value={newDomain}
           onChange={(e) => setNewDomain(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleAdd()}
@@ -532,13 +549,13 @@ function DomainsTab() {
           onChange={(e) => setNewKind(e.target.value as "exact" | "regex")}
           style={{ padding: "6px 8px", fontSize: 12, border: "1px solid var(--embed-border)", borderRadius: 4, background: "var(--embed-card-bg)", color: "inherit" }}
         >
-          <option value="exact">Exact</option>
-          <option value="regex">Regex</option>
+          <option value="exact">{translateInterface("mb5aee780c3bf")}</option>
+          <option value="regex">{translateInterface("m0f2712521d50")}</option>
         </select>
         <button className="embed-btn" onClick={handleAdd} disabled={adding}
           style={{ borderColor: activeList === "deny" ? "var(--embed-danger)" : "var(--embed-success)", color: activeList === "deny" ? "var(--embed-danger)" : "var(--embed-success)" }}
         >
-          {adding ? "..." : activeList === "deny" ? "+ Block" : "+ Allow"}
+          {adding ? "..." : activeList === "deny" ? translateInterface("mfa5e79dcf433") : translateInterface("m60482c521be8")}
         </button>
       </div>
       {error && <div style={{ color: "var(--embed-danger)", fontSize: 12, marginTop: 4 }}>{error}</div>}
@@ -546,8 +563,7 @@ function DomainsTab() {
       {/* Domain list */}
       {currentExact.length + currentRegex.length === 0 ? (
         <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>
-          No {activeList === "deny" ? "blocked" : "allowed"} domains
-        </div>
+          {translateInterface("m1ea442a134b2")}{" "}{activeList === "deny" ? translateInterface("m6973dddd3ef9") : translateInterface("meabc01f12ec3")} {translateInterface("m1b0ec1954eec")}</div>
       ) : (
         <div style={{ marginTop: 12 }}>
           {currentExact.map((d) => (
@@ -563,11 +579,13 @@ function DomainsTab() {
 }
 
 function DomainRow({ domain, kind, onRemove }: { domain: string; kind: string; onRemove: () => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--embed-border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="embed-mono" style={{ fontSize: 13 }}>{domain}</span>
-        {kind === "regex" && <span className="embed-badge" style={{ fontSize: 9, color: "var(--embed-warning)" }}>regex</span>}
+        {kind === "regex" && <span className="embed-badge" style={{ fontSize: 9, color: "var(--embed-warning)" }}>{translateInterface("m42d58222b328")}</span>}
       </div>
       <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }} onClick={onRemove}>{"\u2715"}</button>
     </div>
@@ -577,6 +595,8 @@ function DomainRow({ domain, kind, onRemove }: { domain: string; kind: string; o
 // ─── Local DNS Tab ───────────────────────────────────────────────────────────
 
 function LocalDnsTab() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [records, setRecords] = useState<DnsRecord[]>([]);
   const [cnames, setCnames] = useState<CnameRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -609,10 +629,10 @@ function LocalDnsTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip: newIp.trim(), domain: newDomain.trim() }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error(translateInterface("m031a8f0f659d"));
       setNewIp(""); setNewDomain("");
       fetchAll();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e) { setError(translateInterface("m031a8f0f659d")); }
     finally { setAdding(false); }
   };
 
@@ -636,10 +656,10 @@ function LocalDnsTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: newDomain.trim(), target: newTarget.trim() }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error(translateInterface("m031a8f0f659d"));
       setNewDomain(""); setNewTarget("");
       fetchAll();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e) { setError(translateInterface("m031a8f0f659d")); }
     finally { setAdding(false); }
   };
 
@@ -662,12 +682,12 @@ function LocalDnsTab() {
         <button className="embed-btn" onClick={() => setView("a")}
           style={view === "a" ? { background: "var(--embed-primary)", color: "#fff", borderColor: "var(--embed-primary)" } : {}}
         >
-          A / AAAA Records ({records.length})
+          {translateInterface("m1a94245c6207", {count: records.length})}
         </button>
         <button className="embed-btn" onClick={() => setView("cname")}
           style={view === "cname" ? { background: "var(--embed-primary)", color: "#fff", borderColor: "var(--embed-primary)" } : {}}
         >
-          CNAME Records ({cnames.length})
+          {translateInterface("m1faf1b309134", {count: cnames.length})}
         </button>
       </div>
 
@@ -676,22 +696,22 @@ function LocalDnsTab() {
       {view === "a" ? (
         <>
           <div className="embed-card" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input placeholder="Domain" value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+            <input placeholder={translateInterface("m79fa33618d8e")} value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
               style={{ flex: 1, minWidth: 160, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
             <span style={{ color: "var(--embed-text-muted)", fontSize: 13 }}>\u2192</span>
-            <input placeholder="IP Address" value={newIp} onChange={(e) => setNewIp(e.target.value)}
+            <input placeholder={translateInterface("m3c3de0c91c5f")} value={newIp} onChange={(e) => setNewIp(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAddRecord()}
               style={{ flex: 1, minWidth: 140, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
             <button className="embed-btn" onClick={handleAddRecord} disabled={adding}
               style={{ borderColor: "var(--embed-success)", color: "var(--embed-success)" }}>
-              {adding ? "..." : "+ Add"}
+              {adding ? "..." : translateInterface("mc007258c23b0")}
             </button>
           </div>
           {records.length === 0 ? (
-            <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>No local DNS records</div>
+            <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>{translateInterface("m11fce020d729")}</div>
           ) : (
             <table className="embed-table" style={{ width: "100%", marginTop: 12, fontSize: 13 }}>
-              <thead><tr><th>Domain</th><th>IP Address</th><th style={{ width: 40 }}></th></tr></thead>
+              <thead><tr><th>{translateInterface("m79fa33618d8e")}</th><th>{translateInterface("m3c3de0c91c5f")}</th><th style={{ width: 40 }}></th></tr></thead>
               <tbody>
                 {records.map((r) => (
                   <tr key={`${r.domain}-${r.ip}`}>
@@ -710,22 +730,22 @@ function LocalDnsTab() {
       ) : (
         <>
           <div className="embed-card" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input placeholder="Domain" value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+            <input placeholder={translateInterface("m79fa33618d8e")} value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
               style={{ flex: 1, minWidth: 160, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
             <span style={{ color: "var(--embed-text-muted)", fontSize: 13 }}>\u2192</span>
-            <input placeholder="Target" value={newTarget} onChange={(e) => setNewTarget(e.target.value)}
+            <input placeholder={translateInterface("m978354db0c00")} value={newTarget} onChange={(e) => setNewTarget(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAddCname()}
               style={{ flex: 1, minWidth: 160, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
             <button className="embed-btn" onClick={handleAddCname} disabled={adding}
               style={{ borderColor: "var(--embed-success)", color: "var(--embed-success)" }}>
-              {adding ? "..." : "+ Add"}
+              {adding ? "..." : translateInterface("mc007258c23b0")}
             </button>
           </div>
           {cnames.length === 0 ? (
-            <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>No CNAME records</div>
+            <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>{translateInterface("m8cbdb05f47d5")}</div>
           ) : (
             <table className="embed-table" style={{ width: "100%", marginTop: 12, fontSize: 13 }}>
-              <thead><tr><th>Domain</th><th>Target</th><th style={{ width: 40 }}></th></tr></thead>
+              <thead><tr><th>{translateInterface("m79fa33618d8e")}</th><th>{translateInterface("m978354db0c00")}</th><th style={{ width: 40 }}></th></tr></thead>
               <tbody>
                 {cnames.map((c) => (
                   <tr key={`${c.domain}-${c.target}`}>
@@ -749,6 +769,10 @@ function LocalDnsTab() {
 // ─── Blocklists Tab ──────────────────────────────────────────────────────────
 
 function BlocklistsTab() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [lists, setLists] = useState<Adlist[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUrl, setNewUrl] = useState("");
@@ -781,11 +805,11 @@ function BlocklistsTab() {
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || "Failed");
+        throw new Error(d.error || translateInterface("m031a8f0f659d"));
       }
       setNewUrl(""); setNewComment("");
       fetchLists();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e) { setError(translateInterface("m031a8f0f659d")); }
     finally { setAdding(false); }
   };
 
@@ -805,10 +829,10 @@ function BlocklistsTab() {
     try {
       const res = await fetch("/api/ui-bridge/dns/gravity", { method: "POST" });
       if (res.ok) {
-        setSuccess("Blocklists updated successfully. Changes may take a moment to apply.");
+        setSuccess(translateInterface("mfbe100ccfbee"));
         fetchLists();
-      } else throw new Error("Failed");
-    } catch (e) { setError(e instanceof Error ? e.message : "Update failed"); }
+      } else throw new Error(translateInterface("m031a8f0f659d"));
+    } catch (e) { setError(translateInterface("me58282fd73fb")); }
     finally { setUpdating(false); }
   };
 
@@ -818,16 +842,16 @@ function BlocklistsTab() {
     <>
       {/* Add list */}
       <div className="embed-card">
-        <div className="embed-card-title" style={{ marginBottom: 8 }}>Add Blocklist</div>
+        <div className="embed-card-title" style={{ marginBottom: 8 }}>{translateInterface("m6a498939ec8f")}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input placeholder="List URL (https://...)" value={newUrl} onChange={(e) => setNewUrl(e.target.value)}
+          <input placeholder={translateInterface("m5fabec892499")} value={newUrl} onChange={(e) => setNewUrl(e.target.value)}
             style={{ flex: 2, minWidth: 250, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
-          <input placeholder="Comment (optional)" value={newComment} onChange={(e) => setNewComment(e.target.value)}
+          <input placeholder={translateInterface("mc271966972e6")} value={newComment} onChange={(e) => setNewComment(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAdd()}
             style={{ flex: 1, minWidth: 140, padding: "6px 10px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
           <button className="embed-btn" onClick={handleAdd} disabled={adding}
             style={{ borderColor: "var(--embed-success)", color: "var(--embed-success)" }}>
-            {adding ? "..." : "+ Add"}
+            {adding ? "..." : translateInterface("mc007258c23b0")}
           </button>
         </div>
       </div>
@@ -838,25 +862,24 @@ function BlocklistsTab() {
       {/* Update gravity */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 8 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>
-          {lists.length} blocklist{lists.length !== 1 ? "s" : ""} subscribed
-        </div>
+          {translateInterface("subscribedLists", {count: lists.length})}</div>
         <button className="embed-btn" onClick={handleGravity} disabled={updating}
           style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-          {updating ? "Updating..." : "\u21BB Update Blocklists"}
+          {updating ? translateInterface("m0a4e0b71b7f3") : translateInterface("m5544a1bef107")}
         </button>
       </div>
 
       {/* List table */}
       {lists.length === 0 ? (
-        <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>No blocklists configured</div>
+        <div className="embed-muted" style={{ textAlign: "center", padding: 24, fontSize: 13 }}>{translateInterface("m120eb1c8f28f")}</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table className="embed-table" style={{ width: "100%", fontSize: 12 }}>
             <thead>
               <tr>
-                <th>URL</th>
-                <th>Comment</th>
-                <th style={{ textAlign: "right" }}>Domains</th>
+                <th>{translateInterface("me7a241debad5")}</th>
+                <th>{translateInterface("m44f5e3fbec57")}</th>
+                <th style={{ textAlign: "right" }}>{translateInterface("mced67718ea0f")}</th>
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>
@@ -870,7 +893,7 @@ function BlocklistsTab() {
                     {l.comment || <span className="embed-muted">-</span>}
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {l.number != null ? l.number.toLocaleString() : "-"}
+                    {l.number != null ? l.number.toLocaleString(locale) : "-"}
                   </td>
                   <td>
                     <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }}
@@ -889,6 +912,10 @@ function BlocklistsTab() {
 // ─── Settings Tab ────────────────────────────────────────────────────────────
 
 function SettingsTab() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [config, setConfig] = useState<DnsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -920,7 +947,7 @@ function SettingsTab() {
 
   const handleUpstreamSave = async () => {
     const filtered = upstreamDraft.map((s) => s.trim()).filter(Boolean);
-    if (filtered.length === 0) { setError("At least one DNS server required"); return; }
+    if (filtered.length === 0) { setError(translateInterface("m9c1f18e8e581")); return; }
     setSaving(true); setError(""); setSuccess("");
     try {
       const res = await fetch("/api/ui-bridge/dns/upstream", {
@@ -933,9 +960,9 @@ function SettingsTab() {
         setUpstreams(d.upstreams || filtered);
         setUpstreamDraft(d.upstreams || filtered);
         setUpstreamEditing(false);
-        setSuccess("DNS servers updated");
-      } else throw new Error("Failed");
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+        setSuccess(translateInterface("m7a17f6374942"));
+      } else throw new Error(translateInterface("m031a8f0f659d"));
+    } catch (e) { setError(translateInterface("m031a8f0f659d")); }
     finally { setSaving(false); }
   };
 
@@ -948,10 +975,10 @@ function SettingsTab() {
         body: JSON.stringify({ config: patch }),
       });
       if (res.ok) {
-        setSuccess("Settings saved");
+        setSuccess(translateInterface("m74a7f53bad39"));
         fetchConfig();
-      } else throw new Error("Failed");
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+      } else throw new Error(translateInterface("m031a8f0f659d"));
+    } catch (e) { setError(translateInterface("m031a8f0f659d")); }
     finally { setSaving(false); }
   };
 
@@ -966,16 +993,16 @@ function SettingsTab() {
       <div className="embed-card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div>
-            <div className="embed-card-title" style={{ margin: 0 }}>DNS Servers</div>
-            <div className="embed-muted" style={{ fontSize: 12 }}>Where blocked-free queries get forwarded</div>
+            <div className="embed-card-title" style={{ margin: 0 }}>{translateInterface("mf00366461f56")}</div>
+            <div className="embed-muted" style={{ fontSize: 12 }}>{translateInterface("mcef2b348a4e9")}</div>
           </div>
           {!upstreamEditing ? (
-            <button className="embed-btn" onClick={() => { setUpstreamEditing(true); setUpstreamDraft([...upstreams]); }}>Edit</button>
+            <button className="embed-btn" onClick={() => { setUpstreamEditing(true); setUpstreamDraft([...upstreams]); }}>{translateInterface("m464c4ffd019e")}</button>
           ) : (
             <div style={{ display: "flex", gap: 6 }}>
-              <button className="embed-btn" onClick={() => { setUpstreamEditing(false); setError(""); }}>Cancel</button>
+              <button className="embed-btn" onClick={() => { setUpstreamEditing(false); setError(""); }}>{translateInterface("m19766ed6ccb2")}</button>
               <button className="embed-btn" style={{ borderColor: "var(--embed-success)", color: "var(--embed-success)" }}
-                onClick={handleUpstreamSave} disabled={saving}>{saving ? "..." : "Save"}</button>
+                onClick={handleUpstreamSave} disabled={saving}>{saving ? "..." : translateInterface("m1509f561f241")}</button>
             </div>
           )}
         </div>
@@ -984,7 +1011,7 @@ function SettingsTab() {
             {upstreamDraft.map((s, i) => (
               <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input value={s} onChange={(e) => { const d = [...upstreamDraft]; d[i] = e.target.value; setUpstreamDraft(d); }}
-                  placeholder="e.g. 8.8.8.8 or 1.1.1.1#53"
+                  placeholder={translateInterface("m83bff7d20509")}
                   style={{ flex: 1, padding: "4px 8px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
                 {upstreamDraft.length > 1 && (
                   <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)" }}
@@ -993,13 +1020,13 @@ function SettingsTab() {
               </div>
             ))}
             <button className="embed-btn" style={{ alignSelf: "flex-start", fontSize: 12 }}
-              onClick={() => setUpstreamDraft([...upstreamDraft, ""])}>+ Add server</button>
+              onClick={() => setUpstreamDraft([...upstreamDraft, ""])}>{translateInterface("m9cdfc7a999c9")}</button>
           </div>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {upstreams.length > 0 ? upstreams.map((s) => (
               <span key={s} className="embed-badge embed-mono" style={{ fontSize: 12 }}>{s}</span>
-            )) : <span className="embed-muted" style={{ fontSize: 13 }}>No DNS servers configured</span>}
+            )) : <span className="embed-muted" style={{ fontSize: 13 }}>{translateInterface("mba66ba839fc1")}</span>}
           </div>
         )}
       </div>
@@ -1008,7 +1035,7 @@ function SettingsTab() {
       <div className="embed-card" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontWeight: 500, fontSize: 13 }}>DNSSEC</div>
-          <div className="embed-muted" style={{ fontSize: 12 }}>Validate DNS responses for authenticity</div>
+          <div className="embed-muted" style={{ fontSize: 12 }}>{translateInterface("m70fb94dc5558")}</div>
         </div>
         <ToggleSwitch checked={config?.dnssec || false} onChange={(v) => handleConfigSave({ dnssec: v })} disabled={saving} />
       </div>
@@ -1016,8 +1043,8 @@ function SettingsTab() {
       {/* Query Logging */}
       <div className="embed-card" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontWeight: 500, fontSize: 13 }}>Query Logging</div>
-          <div className="embed-muted" style={{ fontSize: 12 }}>Log all DNS queries for analysis</div>
+          <div style={{ fontWeight: 500, fontSize: 13 }}>{translateInterface("md170e5d65e48")}</div>
+          <div className="embed-muted" style={{ fontSize: 12 }}>{translateInterface("m57e915fa2d79")}</div>
         </div>
         <ToggleSwitch checked={config?.queryLogging !== false} onChange={(v) => handleConfigSave({ queryLogging: v })} disabled={saving} />
       </div>
@@ -1026,10 +1053,10 @@ function SettingsTab() {
       <div className="embed-card" style={{ marginTop: 12 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontWeight: 500, fontSize: 13 }}>Cache Size</div>
-            <div className="embed-muted" style={{ fontSize: 12 }}>Number of DNS responses to cache</div>
+            <div style={{ fontWeight: 500, fontSize: 13 }}>{translateInterface("m4f3fc8891c88")}</div>
+            <div className="embed-muted" style={{ fontSize: 12 }}>{translateInterface("m5337ffe98ca4")}</div>
           </div>
-          <span className="embed-badge embed-mono">{config?.cache?.size?.toLocaleString() || "10,000"}</span>
+          <span className="embed-badge embed-mono">{config?.cache?.size?.toLocaleString(locale) || "10,000"}</span>
         </div>
       </div>
 
@@ -1037,8 +1064,8 @@ function SettingsTab() {
       <div className="embed-card" style={{ marginTop: 12 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontWeight: 500, fontSize: 13 }}>Rate Limiting</div>
-            <div className="embed-muted" style={{ fontSize: 12 }}>Max queries per client per interval</div>
+            <div style={{ fontWeight: 500, fontSize: 13 }}>{translateInterface("m74dea5e67162")}</div>
+            <div className="embed-muted" style={{ fontSize: 12 }}>{translateInterface("mca210b33e8a5")}</div>
           </div>
           <span className="embed-badge embed-mono">
             {config?.rateLimit?.count || 1000} / {config?.rateLimit?.interval || 60}s
@@ -1082,19 +1109,23 @@ function StatCard({ label, value, color }: { label: string; value: string; color
 }
 
 function DomainTable({ title, entries }: { title: string; entries: Array<{ domain: string; count: number }> }) {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div className="embed-card">
       <div className="embed-card-title">{title}</div>
       {entries.length === 0 ? (
-        <div className="embed-muted" style={{ fontSize: 13 }}>No data</div>
+        <div className="embed-muted" style={{ fontSize: 13 }}>{translateInterface("m3b41ba9c7cb8")}</div>
       ) : (
         <table className="embed-table">
-          <thead><tr><th>Domain</th><th style={{ textAlign: "right" }}>Count</th></tr></thead>
+          <thead><tr><th>{translateInterface("m79fa33618d8e")}</th><th style={{ textAlign: "right" }}>{translateInterface("m37bac4952bec")}</th></tr></thead>
           <tbody>
             {entries.map((e) => (
               <tr key={e.domain}>
                 <td className="embed-mono">{e.domain}</td>
-                <td style={{ textAlign: "right" }}>{e.count.toLocaleString()}</td>
+                <td style={{ textAlign: "right" }}>{e.count.toLocaleString(locale)}</td>
               </tr>
             ))}
           </tbody>

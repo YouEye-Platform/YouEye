@@ -1,3 +1,9 @@
+"use client";
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * App Drawer — Plan 5 (two cooperating surfaces; Slice 2.5 live reorder).
  *
@@ -12,7 +18,7 @@
  * iframe route so sizing, scroll, transparency, and animation live in one place.
  */
 
-"use client";
+
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
@@ -105,6 +111,8 @@ export function AppDrawer({
   embedded?: boolean;
   onOpenLauncher?: () => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [open, setOpen] = useState(false);
   const [allApps, setAllApps] = useState<DrawerApp[]>([]);
   const [folders, setFolders] = useState<DrawerFolder[]>([]);
@@ -309,7 +317,7 @@ export function AppDrawer({
         ref={mode === "edit" ? drag.register(app.id) : undefined}
         role={mode === "edit" ? undefined : "button"}
         tabIndex={mode === "edit" ? undefined : 0}
-        aria-label={mode === "add" ? `Add ${app.name}` : mode === "open" ? `Open ${app.name}` : undefined}
+        aria-label={mode === "add" ? translateInterface("m641cf33675f8", { value0: String(app.name) }) : mode === "open" ? translateInterface("m3dfbdb809ebf", { value0: String(app.name) }) : undefined}
         className={`relative flex flex-col items-center rounded-xl p-2 transition-[transform,opacity] duration-150 ${
           mode === "edit" ? "cursor-grab touch-none select-none active:cursor-grabbing hover:bg-accent/40" : "cursor-pointer hover:scale-105 hover:bg-accent/40"
         }${up ? "" : " opacity-40 grayscale"}${dragging ? " scale-95 opacity-30" : ""}${merge ? " scale-110 ring-2 ring-primary" : ""}`}
@@ -328,9 +336,9 @@ export function AppDrawer({
           if (mode === "add") setPinned(app.id, true);
           else handleAppClick(app);
         }}
-        title={off ? `${app.name} is off` : app.name}
+        title={off ? translateInterface("m113d9f1f10ad", { value0: String(app.name) }) : app.name}
       >
-        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
+        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></span>}
         {mode === "edit" && (
           <button
             type="button"
@@ -396,8 +404,8 @@ export function AppDrawer({
             </div>
           ) : appsError ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-              <p className="mb-3 text-sm text-muted-foreground">Apps could not be loaded.</p>
-              <button type="button" onClick={fetchApps} className="text-sm text-primary hover:underline">Retry</button>
+              <p className="mb-3 text-sm text-muted-foreground">{translateInterface("m09bb16e48881")}</p>
+              <button type="button" onClick={fetchApps} className="text-sm text-primary hover:underline">{translateInterface("m942087cc2d41")}</button>
             </div>
           ) : (q ? searchApps.length === 0 : gridItems.length === 0) ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
@@ -438,7 +446,7 @@ export function AppDrawer({
       {editMode && !embedded && (
         <div className="space-y-2 border-t px-3 py-2.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Columns</span>
+            <span className="text-xs text-muted-foreground">{translateInterface("m53aade77cd69")}</span>
             <div className="flex items-center gap-1">
               {[3, 4, 5].map((n) => (
                 <button key={n} className={`h-6 w-6 rounded text-xs font-medium transition-colors ${prefs.columns === n ? "bg-primary text-primary-foreground" : "bg-accent/60 text-foreground/60 hover:bg-accent"}`} onClick={() => persistPrefs({ ...prefs, columns: n })}>{n}</button>
@@ -446,7 +454,7 @@ export function AppDrawer({
             </div>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-muted-foreground">Icon size</span>
+            <span className="text-xs text-muted-foreground">{translateInterface("ma86cafc75686")}</span>
             <input type="range" min="0.7" max="1.5" step="0.1" value={prefs.iconScale} onChange={(e) => persistPrefs({ ...prefs, iconScale: parseFloat(e.target.value) })} className="h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-accent [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary" />
           </div>
         </div>
@@ -461,8 +469,8 @@ export function AppDrawer({
       {openFolder && (
         <div className="absolute inset-0 z-30 grid place-items-center bg-background/70 p-4 backdrop-blur-sm" onClick={() => setOpenFolderId(null)}>
           <div className="w-[min(320px,92%)] rounded-2xl border bg-popover p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <input value={openFolder.name} onChange={(event) => renameFolder(openFolder.id, event.target.value)} className="mb-3 w-full rounded-md bg-transparent text-center text-sm font-semibold outline-none focus:bg-accent/40" aria-label="Folder name" />
-            <div className="grid grid-cols-3 gap-2">{openMembers.map((app) => <div key={app.id} className="relative">{renderTile(app, "open")}{editMode && <button type="button" onClick={() => removeFromFolder(app.id)} className="absolute right-0 top-0 grid h-5 w-5 place-items-center rounded-full border bg-background" aria-label={`Remove ${app.name} from folder`}><X className="h-3 w-3" /></button>}</div>)}</div>
+            <input value={openFolder.name} onChange={(event) => renameFolder(openFolder.id, event.target.value)} className="mb-3 w-full rounded-md bg-transparent text-center text-sm font-semibold outline-none focus:bg-accent/40" aria-label={translateInterface("m14d34edf50ef")} />
+            <div className="grid grid-cols-3 gap-2">{openMembers.map((app) => <div key={app.id} className="relative">{renderTile(app, "open")}{editMode && <button type="button" onClick={() => removeFromFolder(app.id)} className="absolute right-0 top-0 grid h-5 w-5 place-items-center rounded-full border bg-background" aria-label={translateInterface("m0a035fc09bac", { value0: String(app.name) })}><X className="h-3 w-3" /></button>}</div>)}</div>
           </div>
         </div>
       )}

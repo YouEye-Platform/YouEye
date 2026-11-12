@@ -6,7 +6,36 @@ import { runNamesMaintenance } from '@/lib/youeye-names/maintenance';
 import {
   readNamesLifecycleState,
   updateNamesLifecycleState,
+  type NamesLifecycleState,
 } from '@/lib/youeye-names/state';
+
+function lifecycleStatus(state: NamesLifecycleState | null) {
+  if (!state) return null;
+  // Persisted provisioning contains the private key and CSR needed to resume
+  // issuance. Only this explicit status summary belongs in a browser response.
+  return {
+    name: state.name,
+    fqdn: state.fqdn,
+    status: state.status,
+    termsVersion: state.termsVersion,
+    certificateTransparencyAcceptedAt: state.certificateTransparencyAcceptedAt,
+    certificate: state.certificate ? {
+      fingerprint: state.certificate.fingerprint,
+      provider: state.certificate.provider,
+      issuedAt: state.certificate.issuedAt,
+      expiresAt: state.certificate.expiresAt,
+    } : null,
+    lastBrokerContactAt: state.lastBrokerContactAt,
+    lastHeartbeatAt: state.lastHeartbeatAt,
+    nextCheckAt: state.nextCheckAt,
+    lastError: state.lastError ? {
+      code: state.lastError.code,
+      requestId: state.lastError.requestId,
+      at: state.lastError.at,
+      retryAfterSeconds: state.lastError.retryAfterSeconds,
+    } : null,
+  };
+}
 
 export async function GET() {
   const session = await getSession();
@@ -26,7 +55,7 @@ export async function GET() {
     return NextResponse.json(
       {
         active: !!state && state.status !== 'released',
-        state,
+        state: lifecycleStatus(state),
         certificateMatches:
           !!state && !!certificate && certificate.domains.includes(state.fqdn),
         currentTerms,

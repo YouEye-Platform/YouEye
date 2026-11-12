@@ -1,5 +1,8 @@
 'use client';
 
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * SetupIcon — Icon picker step in the setup wizard.
  *
@@ -178,6 +181,8 @@ export default function SetupIcon({
   onNext,
   onBack,
 }: Props) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const t = useTranslations('setup');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const maskCircleRef = useRef<HTMLCanvasElement>(null);
@@ -216,11 +221,9 @@ export default function SetupIcon({
       {/* Header */}
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold tracking-tight">
-          Server Icon
-        </h1>
+          {translateInterface("mba8d666611ff")}</h1>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">
-          Choose an icon for your server. This will be used as the favicon across all YouEye apps.
-        </p>
+          {translateInterface("mae2ce611ec5b")}</p>
       </div>
 
       {/* Preview */}
@@ -239,7 +242,7 @@ export default function SetupIcon({
               className="w-4 h-4"
               ref={el => { if (el) renderIcon(el, iconConfig, siteName, siteNameStyle, 32); }}
             />
-            <span className="text-[9px] text-muted-foreground">tab icon</span>
+            <span className="text-[9px] text-muted-foreground">{translateInterface("m4832bebd610d")}</span>
           </div>
         </div>
       </div>
@@ -252,8 +255,7 @@ export default function SetupIcon({
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           <Smartphone className="h-3.5 w-3.5" />
-          {showMaskable ? 'Hide' : 'Show'} mobile app preview
-        </button>
+          {showMaskable ? translateInterface("mac20a57bfde0") : translateInterface("m0df6f1cad36c")} {translateInterface("m6f77bc6fd39b")}</button>
         {showMaskable && (
           <div className="mt-3 flex justify-center gap-6">
             <div className="flex flex-col items-center gap-1.5">
@@ -289,8 +291,7 @@ export default function SetupIcon({
               : 'bg-muted hover:bg-muted-foreground/10'
           }`}
         >
-          Letter
-        </button>
+          {translateInterface("m1bf163f269ae")}</button>
         <button
           type="button"
           onClick={() => handleTabChange('emoji')}
@@ -300,15 +301,14 @@ export default function SetupIcon({
               : 'bg-muted hover:bg-muted-foreground/10'
           }`}
         >
-          Emoji
-        </button>
+          {translateInterface("m61ad8976e650")}</button>
       </div>
 
       {/* Tab content */}
       {activeTab === 'letter' && (
         <div className="space-y-3">
           <div className="flex items-center gap-3 justify-center">
-            <label className="text-xs text-muted-foreground">Custom letter:</label>
+            <label className="text-xs text-muted-foreground">{translateInterface("m55a0d0454de7")}</label>
             <Input
               value={iconConfig.letter || ''}
               onChange={e => setIconConfig({ ...iconConfig, letter: e.target.value.slice(0, 2) })}
@@ -318,8 +318,7 @@ export default function SetupIcon({
             />
           </div>
           <p className="text-[11px] text-muted-foreground text-center">
-            Uses your WordArt font and color. Updates automatically when you change WordArt.
-          </p>
+            {translateInterface("m46479229cb0e")}</p>
         </div>
       )}
 
@@ -344,12 +343,12 @@ export default function SetupIcon({
 
       {/* Shape */}
       <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground text-center block">Shape</label>
+        <label className="text-xs font-medium text-muted-foreground text-center block">{translateInterface("me0e492707f85")}</label>
         <div className="flex justify-center gap-2">
           {([
-            { id: 'rounded-square' as const, icon: RectangleHorizontal, label: 'Rounded' },
-            { id: 'circle' as const, icon: Circle, label: 'Circle' },
-            { id: 'square' as const, icon: Square, label: 'Square' },
+            { id: 'rounded-square' as const, icon: RectangleHorizontal, label: translateInterface("m0a62cd800f27") },
+            { id: 'circle' as const, icon: Circle, label: translateInterface("mb93d3bcecff5") },
+            { id: 'square' as const, icon: Square, label: translateInterface("mc11092bc0861") },
           ]).map(({ id, icon: ShapeIcon, label }) => (
             <button
               key={id}
@@ -370,7 +369,7 @@ export default function SetupIcon({
 
       {/* Background color */}
       <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground text-center block">Background</label>
+        <label className="text-xs font-medium text-muted-foreground text-center block">{translateInterface("mea2b8a878841")}</label>
         <div className="flex justify-center gap-1.5 flex-wrap">
           {bgPresets.map(color => (
             <button
@@ -396,7 +395,7 @@ export default function SetupIcon({
               background: { type: 'solid', color: e.target.value },
             })}
             className="w-8 h-8 rounded-lg border cursor-pointer"
-            title="Custom color"
+            title={translateInterface("ma5f69a181be0")}
           />
         </div>
       </div>
@@ -405,11 +404,9 @@ export default function SetupIcon({
       <div className="flex items-center justify-between pt-4">
         <Button variant="ghost" onClick={onBack} className="gap-2">
           <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
+          {translateInterface("m76900f1bfd16")}</Button>
         <Button onClick={onNext} className="gap-2">
-          Continue
-          <ArrowRight className="h-4 w-4" />
+          {translateInterface("m31fbef162594")}<ArrowRight className="h-4 w-4" />
         </Button>
       </div>
     </div>

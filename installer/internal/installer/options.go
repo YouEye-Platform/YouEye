@@ -6,16 +6,17 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 const (
-	InstallerVersion              = "0.5.6.0.2.17"
-	defaultApplianceArtifactRoot  = "/run/youeye-appliance/artifacts"
-	defaultApplianceManifestPath  = defaultApplianceArtifactRoot + "/appliance-manifest.json"
-	defaultApplianceSignaturePath = defaultApplianceArtifactRoot + "/appliance-manifest.json.sig"
-	defaultApplianceTrustKeyPath  = "/usr/share/youeye/appliance-development.pub"
-	defaultApplianceProvider      = "github"
-	defaultApplianceReleasesAPI   = "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
+	InstallerVersion             = "0.5.7.0.0.0.1"
+	defaultApplianceArtifactRoot = "/run/youeye-appliance/artifacts"
+	defaultApplianceManifestPath = defaultApplianceArtifactRoot + "/appliance-manifest.json"
+	// defaultApplianceProvider selects the official public repository in the
+	// interactive installers; "custom" means a repository URL was entered.
+	defaultApplianceProvider = "github"
 )
 
 type InstallerMode string
@@ -28,7 +29,7 @@ const (
 	InstallerModeConsole InstallerMode = "console"
 )
 
-// CLIOptions covers the two supported installer surfaces: booted signed media
+// CLIOptions covers the two supported installer surfaces: booted media
 // and Proxmox provisioning of that exact media. The retired mutable-host and
 // Debian-cloud-VM installers are intentionally absent.
 type CLIOptions struct {
@@ -43,35 +44,31 @@ type CLIOptions struct {
 	CPUCores      int
 	RAMMB         int
 
-	ApplianceSeedPath      string
-	ApplianceAnswerPath    string
-	ApplianceManifestPath  string
-	ApplianceSignaturePath string
-	ApplianceTrustKeyPath  string
-	ApplianceTargetDisk    string
-	ApplianceTargetDiskGB  int
-	AppliancePlanOnly      bool
+	ApplianceSeedPath     string
+	ApplianceAnswerPath   string
+	ApplianceManifestPath string
+	ApplianceTargetDisk   string
+	ApplianceTargetDiskGB int
+	AppliancePlanOnly     bool
 
-	ProxmoxOperation         string
-	ProxmoxTargetStorage     string
-	ProxmoxISOStorage        string
-	ProxmoxTargetDiskGB      int
-	ProxmoxNetworkMode       string
-	ProxmoxAddress           string
-	ProxmoxGateway           string
-	ProxmoxDNS               string
-	ProxmoxImportHostSSHKeys bool
-	ProxmoxSSHKeysPath       string
-	ProxmoxEraseConfirmed    bool
-	ApplianceChannel         string
-	ApplianceReleaseBranch   string
-	ApplianceFreshness       string
-	ApplianceReleaseTag      string
-	ApplianceISOSHA256       string
-	InstallerBootstrapSHA256 string
-	ApplianceReleaseProvider string
-	ApplianceReleasesAPI     string
-	ConsoleKind              string
+	ProxmoxOperation          string
+	ProxmoxTargetStorage      string
+	ProxmoxISOStorage         string
+	ProxmoxTargetDiskGB       int
+	ProxmoxNetworkMode        string
+	ProxmoxAddress            string
+	ProxmoxGateway            string
+	ProxmoxDNS                string
+	ProxmoxImportHostSSHKeys  bool
+	ProxmoxSSHKeysPath        string
+	ProxmoxEraseConfirmed     bool
+	ApplianceChannel          string
+	ApplianceServiceSelection string
+	ApplianceReleaseTag       string
+	CoreManifestSHA256        string
+	ApplianceISOSHA256        string
+	ApplianceRepository       string
+	ConsoleKind               string
 }
 
 func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, error) {
@@ -79,11 +76,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		commandArg, args = args[0], args[1:]
 	}
-	provider := envOrDefault("YOUEYE_INSTALLER_PROVIDER", defaultApplianceProvider)
-	releasesAPI := strings.TrimSpace(os.Getenv("YOUEYE_INSTALLER_RELEASES_API"))
-	if releasesAPI == "" && strings.EqualFold(provider, defaultApplianceProvider) {
-		releasesAPI = defaultApplianceReleasesAPI
-	}
+	repository := envOrDefault("YOUEYE_INSTALLER_REPOSITORY", releasecache.OfficialRepository)
 	opts := CLIOptions{
 		Mode:                     "auto",
 		ProxmoxOperation:         "create",
@@ -91,9 +84,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 		ProxmoxNetworkMode:       "dhcp",
 		ProxmoxImportHostSSHKeys: true,
 		ApplianceChannel:         "stable",
-		ApplianceFreshness:       "require-current",
-		ApplianceReleaseProvider: provider,
-		ApplianceReleasesAPI:     releasesAPI,
+		ApplianceRepository:      repository,
 	}
 
 	fs := flag.NewFlagSet("youeye-installer", flag.ContinueOnError)
@@ -110,9 +101,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 
 	fs.StringVar(&opts.ApplianceSeedPath, "seed", "", "Infra automation seed JSON")
 	fs.StringVar(&opts.ApplianceAnswerPath, "answer", "", "non-secret installer answer JSON")
-	fs.StringVar(&opts.ApplianceManifestPath, "manifest", "", "signed installer manifest JSON")
-	fs.StringVar(&opts.ApplianceSignaturePath, "signature", "", "detached installer manifest signature")
-	fs.StringVar(&opts.ApplianceTrustKeyPath, "trust-key", "", "trusted Ed25519 installer public key")
+	fs.StringVar(&opts.ApplianceManifestPath, "manifest", "", "appliance image manifest JSON")
 	fs.StringVar(&opts.ApplianceTargetDisk, "target-disk", "", "installation drive path for plan-only validation")
 	fs.IntVar(&opts.ApplianceTargetDiskGB, "target-disk-size-gb", 0, "installation drive size in GiB for plan-only validation")
 	fs.BoolVar(&opts.AppliancePlanOnly, "plan-only", false, "verify and print the disk plan without writing")
@@ -128,14 +117,12 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.BoolVar(&opts.ProxmoxImportHostSSHKeys, "import-host-ssh-keys", opts.ProxmoxImportHostSSHKeys, "import Proxmox root public keys")
 	fs.StringVar(&opts.ProxmoxSSHKeysPath, "ssh-keys-file", "", "additional public SSH keys file")
 	fs.BoolVar(&opts.ProxmoxEraseConfirmed, "erase-confirmed", false, "confirm destructive reinstall disk erasure")
-	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "signed image track: stable, development, branch, or exact")
-	fs.StringVar(&opts.ApplianceReleaseBranch, "release-branch", "", "signed branch-associated release track (never a raw branch checkout)")
-	fs.StringVar(&opts.ApplianceFreshness, "freshness", opts.ApplianceFreshness, "first-boot policy: require-current or prefer-current")
-	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact image release tag")
-	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "required ISO SHA-256 for exact selection")
-	fs.StringVar(&opts.InstallerBootstrapSHA256, "installer-sha256", "", "signed Installer binary SHA-256 used by the bootstrap")
-	fs.StringVar(&opts.ApplianceReleaseProvider, "provider", opts.ApplianceReleaseProvider, "release provider: github, forgejo, or custom")
-	fs.StringVar(&opts.ApplianceReleasesAPI, "releases-api", opts.ApplianceReleasesAPI, "HTTPS image releases API (required for Forgejo or custom)")
+	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "release channel the box follows: dev, alpha, beta or stable")
+	fs.StringVar(&opts.ApplianceServiceSelection, "service-selection", opts.ApplianceServiceSelection, "first-boot services: current selection or sealed image pins")
+	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "install this exact youeye-v release of the channel (needs --core-manifest-sha256)")
+	fs.StringVar(&opts.CoreManifestSHA256, "core-manifest-sha256", "", "core-release.json SHA-256 of --release-tag")
+	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "optional ISO SHA-256 for exact selection")
+	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL (default: the official public repository)")
 	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
 
 	if err := fs.Parse(args); err != nil {
@@ -167,19 +154,19 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	opts.ProxmoxOperation = strings.ToLower(strings.TrimSpace(opts.ProxmoxOperation))
 	opts.ProxmoxNetworkMode = strings.ToLower(strings.TrimSpace(opts.ProxmoxNetworkMode))
 	opts.ApplianceChannel = strings.ToLower(strings.TrimSpace(opts.ApplianceChannel))
-	opts.ApplianceReleaseBranch = strings.TrimSpace(opts.ApplianceReleaseBranch)
-	opts.ApplianceFreshness = strings.ToLower(strings.TrimSpace(opts.ApplianceFreshness))
 	opts.ApplianceReleaseTag = strings.TrimSpace(opts.ApplianceReleaseTag)
 	opts.ApplianceISOSHA256 = strings.ToLower(strings.TrimSpace(opts.ApplianceISOSHA256))
-	opts.InstallerBootstrapSHA256 = strings.ToLower(strings.TrimSpace(opts.InstallerBootstrapSHA256))
-	opts.ApplianceReleaseProvider = strings.ToLower(strings.TrimSpace(opts.ApplianceReleaseProvider))
-	opts.ApplianceReleasesAPI = strings.TrimSpace(opts.ApplianceReleasesAPI)
 	opts.ConsoleKind = strings.ToLower(strings.TrimSpace(opts.ConsoleKind))
-	if opts.ApplianceReleaseProvider == "" {
-		opts.ApplianceReleaseProvider = defaultApplianceProvider
+	repository, err := releasecache.CanonicalRepository(opts.ApplianceRepository)
+	if err != nil {
+		return opts, err
 	}
-	if opts.ApplianceReleasesAPI == "" && opts.ApplianceReleaseProvider == defaultApplianceProvider {
-		opts.ApplianceReleasesAPI = defaultApplianceReleasesAPI
+	opts.ApplianceRepository = repository
+	if !releasecache.ValidChannel(opts.ApplianceChannel) {
+		return opts, fmt.Errorf("--channel must be dev, alpha, beta or stable")
+	}
+	if (opts.ApplianceReleaseTag == "") != (opts.CoreManifestSHA256 == "") {
+		return opts, fmt.Errorf("--release-tag and --core-manifest-sha256 go together")
 	}
 	return opts, nil
 }
@@ -202,7 +189,7 @@ func SelectedInstallerMode(opts CLIOptions) (InstallerMode, error) {
 	case "", "auto":
 		return "", fmt.Errorf("choose an installer target: youeye-installer install or youeye-installer proxmox")
 	case "host", "baremetal", "linux", "vm", "proxmox-vm":
-		return "", fmt.Errorf("the mutable-host installer was retired; use the signed ISO directly or the proxmox command")
+		return "", fmt.Errorf("the mutable-host installer was retired; use the ISO directly or the proxmox command")
 	default:
 		return "", fmt.Errorf("unsupported --mode %q", opts.Mode)
 	}
@@ -223,12 +210,6 @@ func configFromOptions(opts CLIOptions) installConfig {
 	}
 	if opts.ApplianceManifestPath != "" {
 		cfg.ApplianceManifestPath = opts.ApplianceManifestPath
-	}
-	if opts.ApplianceSignaturePath != "" {
-		cfg.ApplianceSignaturePath = opts.ApplianceSignaturePath
-	}
-	if opts.ApplianceTrustKeyPath != "" {
-		cfg.ApplianceTrustKeyPath = opts.ApplianceTrustKeyPath
 	}
 	if opts.ApplianceTargetDisk != "" {
 		cfg.ApplianceTargetDisk = opts.ApplianceTargetDisk

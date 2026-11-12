@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * Permission Request API
  *
@@ -57,7 +58,8 @@ export async function POST(request: NextRequest) {
     grant_type === "once" || grant_type === "session" || grant_type === "persistent"
       ? grant_type
       : "persistent";
-  const approval = buildPermissionApproval(targetAppId, requested, safeGrantType, request, safeReturnTo);
+  const { t } = await getUserTranslator((session?.userId ?? serviceUser?.id)!);
+  const approval = buildPermissionApproval(targetAppId, requested, safeGrantType, request, safeReturnTo, t);
 
   if (approved !== true || !session) {
     return NextResponse.json(approval, { status: 202 });

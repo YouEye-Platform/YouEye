@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
-const read = (filename: string) => readFileSync(path.join(root, filename), 'utf8');
+const read = (filename: string) => englishInterfaceSource(readFileSync(path.join(root, filename), 'utf8'));
 
 test('platform backup uses shared protected staging and exact structured archives', () => {
   const packageJson = JSON.parse(read('package.json')) as { scripts?: { build?: string } };
@@ -82,7 +83,9 @@ test('Backups Settings is a real role-gated create, history, and restore surface
   const client = read('src/components/settings-shell/backup-client.tsx');
   assert.match(page, /session\?\.isAdmin/);
   assert.match(page, /<BackupClient/);
-  assert.match(shell, /label: "Backups"/);
+  assert.match(shell, /\{ id: "backup", icon: ArchiveRestore, href: "\/settings\/backup" \}/);
+  assert.match(shell, /navigation\(section\.id\)/);
+  assert.equal(JSON.parse(read('messages/en.json')).settingsNavigation.backup, 'Backups');
   assert.match(client, /\/settings\/api\/backup\/core/);
   assert.match(client, /\/settings\/api\/backup\/restore/);
   assert.match(client, /type="password"/);

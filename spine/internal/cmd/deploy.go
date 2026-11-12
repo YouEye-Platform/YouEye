@@ -11,10 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/youeye-platform/YouEye/spine/internal/config"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
-	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 // deployStorage* cache the storage decision resolved once at the top of
@@ -26,53 +24,6 @@ var (
 	deployStoragePlan     *hoststorage.Plan
 	deployStoragePolicy   *hoststorage.Policy
 )
-
-// ensureSpineUpToDate is invoked at the very top of `spine deploy`. It checks
-// the configured release source for a newer Spine binary and, if found, runs
-// the existing self-update path and re-execs the new binary in place. Any
-// failure (network, download, exec) is logged as a warning and the deploy
-// continues with the current binary.
-//
-// To prevent infinite re-exec loops, the post-update child process is given
-// the SPINE_DEPLOY_UPDATED=1 env var, and runDeploy() skips this function
-// when that var is set.
-func ensureSpineUpToDate(cfg *config.Config) {
-	fmt.Println("Checking for Spine updates...")
-	hasUpdate, latest := checkSpineUpdate(cfg)
-	if !hasUpdate || latest == "" {
-		fmt.Printf("Spine is up to date (%s).\n\n", Version)
-		return
-	}
-	if !version.IsNewer(latest, Version) {
-		fmt.Printf("Spine is up to date (%s).\n\n", Version)
-		return
-	}
-
-	fmt.Printf("Spine %s available (current: %s). Updating before deploy...\n", latest, Version)
-	if err := updateSelf(); err != nil {
-		fmt.Printf("Warning: self-update failed: %v\n", err)
-		fmt.Println("Proceeding with current version...")
-		fmt.Println()
-		return
-	}
-
-	binary, err := os.Executable()
-	if err != nil {
-		fmt.Printf("Warning: could not resolve binary path for re-exec: %v\n", err)
-		fmt.Println("Proceeding with current version...")
-		fmt.Println()
-		return
-	}
-
-	fmt.Println("Spine updated. Restarting deploy with new version...")
-	env := append(os.Environ(), "SPINE_DEPLOY_UPDATED=1")
-	if err := syscall.Exec(binary, os.Args, env); err != nil {
-		// syscall.Exec only returns on failure.
-		fmt.Printf("Warning: re-exec failed: %v\n", err)
-		fmt.Println("Proceeding with current version...")
-		fmt.Println()
-	}
-}
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
@@ -120,7 +71,11 @@ func runDeploy() error {
 		if err := verifyApplianceImagePrerequisites(*manifest); err != nil {
 			return err
 		}
-		if err := verifyApplianceReleaseSet(*manifest, cfg); err != nil {
+		deployment, err := selectApplianceServices(*manifest)
+		if err != nil {
+			return fmt.Errorf("appliance service selection: %w", err)
+		}
+		if err := verifyApplianceReleaseSet(deployment, cfg); err != nil {
 			return fmt.Errorf("appliance release set: %w", err)
 		}
 	}
@@ -156,9 +111,6 @@ func runDeploy() error {
 	// update itself fails we log a warning and continue with the current
 	// binary. The SPINE_DEPLOY_UPDATED env var is used as a re-exec guard
 	// so a fresh post-update binary doesn't loop forever.
-	if !isAppliance && os.Getenv("SPINE_DEPLOY_UPDATED") != "1" {
-		ensureSpineUpToDate(cfg)
-	}
 
 	// Stop the spine systemd service (if running from a previous deploy)
 	// before starting a new detached API process. Without this, systemd's

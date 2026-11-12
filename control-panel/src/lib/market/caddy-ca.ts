@@ -4,6 +4,15 @@ import { X509Certificate } from 'crypto';
 
 const CONTAINER_TRUST_BUNDLE = '/etc/youeye/trust/ca-bundle.crt';
 
+/** Platform trust is a current read-only input, never app data to rewind. */
+export function isManagedTrustMount(appId: string, device: Record<string, string>): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(appId)
+    && device.type === 'disk' && device.path === '/etc/youeye/trust'
+    && device.source === `/var/lib/youeye/apps/${appId}/trust`
+    && device.readonly === 'true' && device.shift === 'true'
+    && Object.keys(device).every(key => ['type', 'path', 'source', 'readonly', 'shift'].includes(key));
+}
+
 export function buildTrustBundle(systemBundle: string, caddyRoot: string): string {
   if (!systemBundle.includes('BEGIN CERTIFICATE')) {
     throw new Error('System trust bundle is missing or invalid');

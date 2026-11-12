@@ -1,5 +1,7 @@
 'use client';
 
+import { randomBrowserUUID } from '../browser-random';
+
 export type NamesEnrollmentPurpose = 'install_register' | 'lease_claim';
 
 type Challenge = {
@@ -59,7 +61,8 @@ function parseResult(value: unknown, challenge: Challenge, sessionId: string): P
     result.protocol !== 'youeye-names.enroll-popup' || result.v !== 1 || result.type !== 'result' ||
     result.sessionId !== sessionId || result.purpose !== challenge.purpose ||
     typeof result.proof !== 'string' || result.proof.length < 20 || result.proof.length > 512 ||
-    typeof result.expiresAt !== 'string' || Date.parse(result.expiresAt) <= Date.now()
+    typeof result.expiresAt !== 'string' || !Number.isFinite(Date.parse(result.expiresAt)) ||
+    Date.parse(result.expiresAt) <= Date.now() || Date.parse(challenge.expiresAt) <= Date.now()
   ) return null;
   if (!result.binding || typeof result.binding !== 'object' || Array.isArray(result.binding)) return null;
   const binding = result.binding as Record<string, unknown>;
@@ -75,9 +78,10 @@ function parseResult(value: unknown, challenge: Challenge, sessionId: string): P
  */
 export async function runNamesEnrollment(
   purpose: NamesEnrollmentPurpose,
-  input: { name?: string; accept: (proof: string) => Promise<void> | void },
+  input: { name?: string; signal?: AbortSignal; accept: (proof: string) => Promise<void> | void },
 ): Promise<void> {
-  const sessionId = crypto.randomUUID();
+  if (input.signal?.aborted) throw new Error('Verification was cancelled.');
+  const sessionId = randomBrowserUUID();
   const popup = window.open('about:blank', `youeye-names-${sessionId}`, 'popup,width=520,height=720,resizable=yes,scrollbars=yes');
   if (!popup) throw new Error('Verification was blocked. Allow popups for this YouEye address and try again.');
 
@@ -88,19 +92,35 @@ export async function runNamesEnrollment(
     popup.close();
     throw error;
   }
-  const serviceOrigin = new URL(challenge.serviceOrigin).origin;
-  if (serviceOrigin !== challenge.serviceOrigin || new URL(challenge.enrollmentUrl).origin !== serviceOrigin) {
+  let serviceOrigin: string;
+  try {
+    const service = new URL(challenge.serviceOrigin);
+    const enrollment = new URL(challenge.enrollmentUrl);
+    serviceOrigin = service.origin;
+    if (service.protocol !== 'https:' || serviceOrigin !== challenge.serviceOrigin ||
+      enrollment.origin !== serviceOrigin || enrollment.username || enrollment.password ||
+      challenge.purpose !== purpose || (purpose === 'lease_claim' && challenge.name !== input.name) ||
+      !Number.isFinite(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= Date.now() ||
+      !challenge.context || !challenge.cdata || !challenge.publicKey || !challenge.installFingerprint) {
+      throw new Error('YouEye Names returned an invalid verification address or context.');
+    }
+    if (input.signal?.aborted || popup.closed) throw new Error('Verification was closed or cancelled. Try again to continue.');
+  } catch (error) {
     popup.close();
-    throw new Error('YouEye Names returned an invalid verification address.');
+    throw error;
   }
 
   return new Promise<void>((resolve, reject) => {
     let settled = false;
+    let initialized = false;
+    let accepting = false;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       window.removeEventListener('message', onMessage);
       clearTimeout(timeout);
+      clearInterval(closedCheck);
+      input.signal?.removeEventListener('abort', cancelled);
       if (error) {
         popup.close();
         reject(error);
@@ -108,6 +128,7 @@ export async function runNamesEnrollment(
         resolve();
       }
     };
+    const cancelled = () => finish(new Error('Verification was cancelled.'));
     const onMessage = (event: MessageEvent) => {
       if (event.source !== popup || event.origin !== serviceOrigin || !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
       const message = event.data as Record<string, unknown>;
@@ -116,6 +137,7 @@ export async function runNamesEnrollment(
         message.protocol === 'youeye-names.enroll-popup' && message.v === 1 &&
         message.type === 'ready' && message.sessionId === sessionId
       ) {
+        if (accepting) return;
         popup.postMessage({
           protocol: 'youeye-names.enroll-popup',
           v: 1,
@@ -125,11 +147,18 @@ export async function runNamesEnrollment(
           cdata: challenge.cdata,
           publicKey: challenge.publicKey,
         }, serviceOrigin);
+        initialized = true;
         return;
       }
+      if (!initialized || accepting || settled) return;
       const result = parseResult(message, challenge, sessionId);
       if (!result) return;
-      void Promise.resolve(input.accept(result.proof)).then(() => {
+      accepting = true;
+      void Promise.resolve().then(() => {
+        if (settled || input.signal?.aborted) throw new Error('Verification was cancelled.');
+        return input.accept(result.proof);
+      }).then(() => {
+        if (settled) return;
         popup.postMessage({
           protocol: 'youeye-names.enroll-popup', v: 1, type: 'ack', sessionId,
         }, serviceOrigin);
@@ -137,14 +166,20 @@ export async function runNamesEnrollment(
       }).catch((error) => finish(error instanceof Error ? error : new Error('YouEye could not accept verification.')));
     };
     window.addEventListener('message', onMessage);
-    const timeout = window.setTimeout(() => finish(new Error('Verification timed out. Close the popup and try again.')), 150_000);
+    const timeout = window.setTimeout(() => finish(new Error('Verification expired. Try again to continue.')), Math.min(150_000, Date.parse(challenge.expiresAt) - Date.now()));
+    const closedCheck = window.setInterval(() => {
+      if (!accepting && popup.closed) finish(new Error('Verification was closed before it finished. Your choices are kept; try again.'));
+    }, 300);
+    input.signal?.addEventListener('abort', cancelled, { once: true });
+    if (input.signal?.aborted) { cancelled(); return; }
     const url = new URL(challenge.enrollmentUrl);
     url.hash = new URLSearchParams({
       handoff: 'v1',
       session: sessionId,
       opener_origin: window.location.origin,
     }).toString();
-    popup.location.replace(url.toString());
+    try { popup.location.replace(url.toString()); }
+    catch { finish(new Error('The verification window could not open. Allow popups and try again.')); }
   });
 }
 

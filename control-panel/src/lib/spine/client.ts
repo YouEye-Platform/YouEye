@@ -60,9 +60,7 @@ export interface SpineRuntimeStatus {
   firmware_mode?: string;
   disk_layout_version?: number;
   recovery_version?: string;
-  artifact_kind?: 'production' | 'development' | 'test';
-  release_source?: string;
-  release_branch?: string;
+  artifact_kind?: 'production' | 'stable' | 'beta' | 'development' | 'test';
   capabilities: SpineRuntimeCapabilities;
 }
 
@@ -205,89 +203,48 @@ interface SpineUpdateStatus {
   updated_at: string;
 }
 
-export interface ApplianceSystemUpdateStatus {
-  schema: 'youeye.system-update.v1';
-  state: 'healthy' | 'available' | 'downloading' | 'writing' | 'staged' | 'pending-reboot' | 'trial' | 'failed' | 'rolled-back';
-  current_image: string;
-  running_image: string;
-  target_image?: string;
-  active_slot: string;
-  candidate_slot?: string;
-  previous_slot?: string;
-  transaction_id?: string;
-  manifest_sha256?: string;
-  downloaded_bytes?: Record<string, number>;
-  trial_failures?: number;
-  boot_attempts?: number;
-  reboot_required: boolean;
-  rolled_back: boolean;
-  error_code?: string;
-  error?: string;
-  channel?: string;
-  release_tag?: string;
-  release_notes?: string;
-  required_cache_bytes?: number;
-  available_cache_bytes?: number;
-  updated_at?: string;
-}
-
-export interface ApplianceSystemUpdateSelection {
-  provider: 'github' | 'forgejo' | 'custom';
-  releases_api?: string;
-  channel: 'stable' | 'development' | 'branch' | 'exact';
-  branch?: string;
-  exact_tag?: string;
-  manifest_sha256?: string;
-  replace_failed?: boolean;
-}
-
-/** Channel-aware per-component fields Spine adds to /api/updates/check. */
-export interface SpineComponentChannel {
-  source?: string;
-  branch?: string;
-  fallback?: string[];
-}
-export interface SpineComponentVersionRef {
-  version?: string;
-  branch?: string;
-  tag?: string;
-}
-export interface SpineComponentUpdate {
-  current: string;
-  latest: string;
-  available: boolean;
-  // Channel-aware additions (present on updated Spine; optional for back-compat):
-  channel?: SpineComponentChannel;
-  installed?: SpineComponentVersionRef;
-  candidate?: SpineComponentVersionRef;
-  update_available?: boolean;
-  switch_pending?: boolean;
-  current_display?: string;
-  latest_display?: string;
-  supported?: boolean;
-  managed_by?: 'package-manager' | 'system-image';
-}
-
-interface SpineUpdatesCheckResponse {
-  checked_at: string;
-  runtime: SpineRuntimeStatus;
-  spine: SpineComponentUpdate;
-  control: SpineComponentUpdate;
-  incus?: {
-    current: string;
-    upgradeable: boolean;
+export interface CoreUpdateStatus {
+  schema: 'youeye.core-status.v1';
+  managed: boolean;
+  /** The box's repository and channel from the host-owned release policy. */
+  selection?: { repository: string; channel: string };
+  installed?: {
+    manifest_sha256: string;
+    release: { version: string; tag: string; sequence: number; source_tree: string };
+    members?: { role: string; version: string; source_tree: string; sha256: string }[];
+    accepted_at: string;
+    machine_bound: boolean;
+    payload_observation: 'not-observed';
   };
-  system?: {
-    upgradeable_count: number;
-  };
-  apps?: Array<{
-    name: string;
-    display_name: string;
-    container_name: string;
-    status: string;
-    image_tag: string;
-    available: boolean;
-  }>;
+  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string; action_state?: string; stage?: string; code?: string; effect_state?: string }[]; error?: string };
+}
+
+export interface CoreUpdateCandidate {
+  release: { version: string; tag: string; sequence: number; source_tree?: string };
+  manifest_sha256: string;
+  restart_required: boolean;
+  /** The channel head is older than the installed version; the box waits for it to catch up. */
+  behind?: boolean;
+  message?: string;
+}
+export interface CoreUpdateRequest { request_id: string; command_id: string; manifest_sha256: string }
+export type CoreUpdateAction = 'stage' | 'activate' | 'resume' | 'recover' | 'cancel';
+export interface CoreUpdateActionResult {
+  request_id: string; manifest_sha256: string; phase: string;
+  control: { request_id: string; command_id: string; state: string };
+}
+
+export interface SpineReleaseChannel {
+  repository: string;
+  channel: string;
+  installed_version?: string;
+}
+
+export interface SpineReleaseIndex {
+  repository: string;
+  channel: string;
+  index: unknown;
+  index_sha256: string;
 }
 
 export class SpineAPIError extends Error {
@@ -449,13 +406,6 @@ export class SpineClient {
   }
 
   /**
-   * Update Spine
-   */
-  async updateSelf(opts?: { confirmSwitch?: boolean }): Promise<SpineUpdateResponse> {
-    return this.request('/api/update/self', 'POST', opts?.confirmSwitch ? { confirm_switch: true } : undefined);
-  }
-
-  /**
    * Update Incus
    */
   async updateIncus(): Promise<SpineUpdateResponse> {
@@ -470,24 +420,25 @@ export class SpineClient {
   }
 
   /**
-   * Update Control Panel
-   */
-  async updateControl(opts?: { confirmSwitch?: boolean }): Promise<SpineUpdateResponse> {
-    return this.request('/api/update/control', 'POST', opts?.confirmSwitch ? { confirm_switch: true } : undefined);
-  }
-
-  /**
-   * Check for available updates
-   */
-  async checkUpdates(): Promise<SpineUpdatesCheckResponse> {
-    return this.request('/api/updates/check');
-  }
-
-  /**
    * Get current update status from Spine's status file
    */
   async getUpdateStatus(): Promise<SpineUpdateStatus> {
     return this.request('/api/update/status');
+  }
+
+  /** The box's release channel (host-owned policy; the repository never changes). */
+  async getReleaseChannel(): Promise<SpineReleaseChannel> {
+    return this.request('/api/releases/channel');
+  }
+
+  /** Ask Spine to follow another channel of the same repository. */
+  async setReleaseChannel(channel: string): Promise<SpineReleaseChannel> {
+    return this.request('/api/releases/channel', 'PUT', { channel });
+  }
+
+  /** The channel index of the box's channel, fetched and cached by Spine. */
+  async getReleaseIndex(): Promise<SpineReleaseIndex> {
+    return this.request('/api/releases/index');
   }
 
   async getRemoteAccessKeys(): Promise<SpineRemoteAccessKeysResponse> {
@@ -506,56 +457,16 @@ export class SpineClient {
     return this.request('/api/appliance/network');
   }
 
-  async getApplianceSystemUpdateStatus(): Promise<ApplianceSystemUpdateStatus> {
-    return this.request('/api/appliance/system-update/status');
+  async getCoreUpdateStatus(): Promise<CoreUpdateStatus> {
+    return this.request('/api/appliance/core-update/status');
   }
 
-  async checkApplianceSystemUpdate(selection: ApplianceSystemUpdateSelection): Promise<ApplianceSystemUpdateStatus> {
-    return this.requestApplianceSystemUpdateSource('/api/appliance/system-update/check', selection);
+  async checkCoreUpdate(): Promise<CoreUpdateCandidate> {
+    return this.request('/api/appliance/core-update/check');
   }
 
-  async stageApplianceSystemUpdate(selection: ApplianceSystemUpdateSelection): Promise<ApplianceSystemUpdateStatus> {
-    return this.requestApplianceSystemUpdateSource('/api/appliance/system-update/stage', selection, 6 * 60 * 60 * 1000);
-  }
-
-  private async requestApplianceSystemUpdateSource(
-    path: string,
-    selection: ApplianceSystemUpdateSelection,
-    timeoutMs: number = 60000,
-  ): Promise<ApplianceSystemUpdateStatus> {
-    try {
-      return await this.request(
-        path,
-        'POST',
-        selection as unknown as Record<string, unknown>,
-        timeoutMs,
-      );
-    } catch (error) {
-      // The immediately preceding Spine API accepts exact tag + digest requests,
-      // but rejects the newer provider fields as unknown JSON. Only exact mode is
-      // safe to bridge: the required manifest digest keeps the artifact identity
-      // immutable even when that Spine uses its sealed-in release endpoint.
-      if (
-        error instanceof SpineAPIError
-        && error.statusCode === 400
-        && error.message === 'a valid manifest request is required'
-        && selection.channel === 'exact'
-        && typeof selection.exact_tag === 'string'
-        && typeof selection.manifest_sha256 === 'string'
-      ) {
-        return this.request(path, 'POST', {
-          channel: 'exact',
-          exact_tag: selection.exact_tag,
-          manifest_sha256: selection.manifest_sha256,
-          ...(selection.replace_failed === true ? { replace_failed: true } : {}),
-        }, timeoutMs);
-      }
-      throw error;
-    }
-  }
-
-  async activateApplianceSystemUpdate(reboot: boolean): Promise<ApplianceSystemUpdateStatus> {
-    return this.request('/api/appliance/system-update/activate', 'POST', { reboot });
+  async submitCoreUpdate(action: CoreUpdateAction, request: CoreUpdateRequest): Promise<CoreUpdateActionResult> {
+    return this.request(`/api/appliance/core-update/${action}`, 'POST', { ...request });
   }
 
   async addRemoteAccessKey(publicKey: string): Promise<SpineRemoteAccessKey> {
@@ -692,14 +603,14 @@ export class SpineClient {
   /**
    * Replace site-level YouEye configuration
    */
-  async setConfig(config: { site_name?: string; domain?: string; subdomains?: Record<string, string>; setup_completed?: boolean; release_branch?: string }): Promise<{ status: string; config: { site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string } }> {
+  async setConfig(config: { site_name?: string; domain?: string; subdomains?: Record<string, string>; setup_completed?: boolean }): Promise<{ status: string; config: { site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean } }> {
     return this.request('/api/config', 'PUT', config as Record<string, unknown>);
   }
 
   /**
    * Partially update site-level YouEye configuration
    */
-  async patchConfig(patch: Record<string, unknown>): Promise<{ status: string; config: { site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string } }> {
+  async patchConfig(patch: Record<string, unknown>): Promise<{ status: string; config: { site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean } }> {
     return this.request('/api/config', 'PATCH', patch);
   }
 
@@ -796,13 +707,15 @@ export class SpineClient {
     archivePath: string;
     name: string;
     pool: string;
-    network: string;
+    network?: string;
+    offline?: boolean;
   }): Promise<{ status: string; name: string }> {
     return this.request('/api/backup/incus/import-instance', 'POST', {
       archive_path: params.archivePath,
       name: params.name,
       pool: params.pool,
       network: params.network,
+      ...(params.offline ? { offline: true } : {}),
     });
   }
 

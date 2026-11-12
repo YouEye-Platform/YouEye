@@ -1,0 +1,70 @@
+/* Settings-specific implementation of YouEye UX. Shared UI primitives remain
+   available to other Control Panel surfaces without a global palette change. */
+.settings-workspace {
+  --primary: #2c617f;
+  --primary-foreground: #fff;
+  --ring: #2c617f;
+  --radius: 0.5rem;
+  --muted: #f1f4f5;
+  --muted-foreground: #5e6b75;
+  --border: #dce2e6;
+  --input: #dce2e6;
+  --card: #fff;
+  --background: #fff;
+  color: #242a30;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.dark .settings-workspace {
+  --primary: #a8d3eb;
+  --primary-foreground: #163043;
+  --ring: #a8d3eb;
+  --muted: #252d33;
+  --muted-foreground: #afbbc4;
+  --border: #3a454e;
+  --input: #3a454e;
+  --card: #191f24;
+  --background: #11171b;
+  --foreground: #e9eff2;
+  --card-foreground: #e9eff2;
+  color: var(--foreground);
+}
+.settings-main { min-width: 0; }
+.settings-page-header {
+  margin-bottom: 1.75rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.settings-page-header h1 { font-size: 1.5rem; line-height: 1.25; letter-spacing: -.025em; }
+.settings-page-header p { max-width: 65rem; margin-top: .5rem; line-height: 1.6; }
+.settings-workspace [data-slot="card"] {
+  min-width: 0;
+  border-color: var(--border);
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: none;
+  overflow-wrap: anywhere;
+}
+.settings-workspace [data-slot="card-title"] { font-size: 15px; line-height: 1.4; }
+.settings-workspace [data-slot="card-description"] { line-height: 1.6; }
+.settings-workspace [data-slot="card-header"] + [data-slot="card-content"] { border-top: 1px solid var(--border); padding-top: 1.25rem; }
+.settings-workspace :is(input, select, textarea) { color: inherit; border-color: var(--input); }
+.settings-workspace :is(input, select, textarea):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.settings-workspace :is(code, pre, .font-mono) { overflow-wrap: anywhere; }
+.settings-workspace [data-slot="table-container"] { border-radius: var(--radius); }
+.settings-workspace [data-slot="table-head"] { height: 2.75rem; background: var(--muted); font-weight: 500; }
+.settings-workspace [data-slot="table-cell"] { padding-block: .85rem; }
+.settings-workspace [data-slot="badge"] { border-radius: .35rem; }
+.settings-workspace [role="tablist"] { max-width: 100%; overflow-x: auto; }
+:root:has(.settings-workspace) :is([data-slot="dialog-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"]) {
+  font-family: "Settings Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+@media (max-width: 640px) {
+  .settings-page-header { margin-bottom: 1.25rem; padding-bottom: 1rem; }
+  .settings-workspace [data-slot="card-header"],
+  .settings-workspace [data-slot="card-content"],
+  .settings-workspace [data-slot="card-footer"] { padding-inline: 1rem; }
+  .settings-workspace [data-slot="button"]:not([data-size^="icon"]),
+  .settings-workspace [data-slot="input"],
+  .settings-workspace select { min-height: 44px; }
+}

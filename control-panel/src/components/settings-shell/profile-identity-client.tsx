@@ -1,5 +1,9 @@
 "use client";
 
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Profile Identity Client
  *
@@ -105,6 +109,8 @@ function broadcastAvatarUpdate(url: string | null) {
 }
 
 export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClientProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,18 +129,18 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
   const fetchProfile = useCallback(async () => {
     try {
       const res = await fetch("/api/user/profile");
-      if (!res.ok) throw new Error("Failed to load profile");
+      if (!res.ok) throw new Error(translateInterface("m92907d8c7089"));
       const data = await res.json();
       setProfile(data);
       setFirstName(data.firstName || "");
       setLastName(data.lastName || "");
       setAvatarPreview(data.avatarUrl || null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(translateInterface("m3d2301d732a7"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => {
     fetchProfile();
@@ -165,7 +171,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to save");
+        throw new Error(data.error || translateInterface("m2c07997249ab"));
       }
 
       const updated = await res.json();
@@ -174,7 +180,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
 
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(translateInterface("m2c07997249ab"));
     } finally {
       setSaving(false);
     }
@@ -196,7 +202,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Upload failed");
+        throw new Error(data.error || translateInterface("m6efc5d27f30b"));
       }
 
       setAvatarPreview(dataUrl);
@@ -204,7 +210,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
       setShowPicker(false);
 
     } catch (err) {
-      setAvatarError(err instanceof Error ? err.message : "Upload failed");
+      setAvatarError(err instanceof Error ? err.message : translateInterface("m6efc5d27f30b"));
     } finally {
       setAvatarUploading(false);
     }
@@ -230,13 +236,13 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
       const res = await fetch("/api/user/avatar", { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Remove failed");
+        throw new Error(data.error || translateInterface("m7a91db72b733"));
       }
 
       setAvatarPreview(null);
       broadcastAvatarUpdate(null);
     } catch (err) {
-      setAvatarError(err instanceof Error ? err.message : "Remove failed");
+      setAvatarError(err instanceof Error ? err.message : translateInterface("m7a91db72b733"));
     } finally {
       setAvatarUploading(false);
     }
@@ -279,15 +285,14 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
             <circle cx="12" cy="10" r="3" />
             <path d="M7 21v-1a5 5 0 0 1 10 0v1" />
           </svg>
-          Profile Picture
-        </div>
+          {translateInterface("m53f0a0b894ad")}</div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
           <div style={{ position: "relative", width: 56, height: 56, flexShrink: 0 }}>
             {avatarPreview ? (
               <img
                 src={avatarPreview}
-                alt="Avatar"
+                alt={translateInterface("mca8e826d9c2e")}
                 style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover" }}
               />
             ) : (
@@ -323,8 +328,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
-              Upload
-              <input
+              {translateInterface("m865e89de78d9")}<input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
@@ -339,7 +343,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
               disabled={avatarUploading}
               style={showPicker ? { borderColor: "var(--embed-primary)", color: "var(--embed-primary)" } : {}}
             >
-              {showPicker ? "\u2715" : "\u{1F600}"} {showPicker ? "Close" : "Presets"}
+              {showPicker ? "\u2715" : "\u{1F600}"} {showPicker ? translateInterface("m7d9eb7acb13e") : translateInterface("m954f93fe1c66")}
             </button>
             {avatarPreview && (
               <button
@@ -348,8 +352,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
                 disabled={avatarUploading}
                 style={{ color: "var(--embed-danger)" }}
               >
-                Remove
-              </button>
+                {translateInterface("mc3812fc4acb8")}</button>
             )}
           </div>
         </div>
@@ -364,7 +367,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
             border: "1px solid var(--embed-border)",
             background: "var(--embed-bg, transparent)",
           }}>
-            <p className="embed-muted" style={{ fontSize: 11, marginBottom: 8 }}>Choose an avatar preset:</p>
+            <p className="embed-muted" style={{ fontSize: 11, marginBottom: 8 }}>{translateInterface("mb0365a4d10e9")}</p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6 }}>
               {AVATAR_PRESETS.map((preset, i) => (
                 <button
@@ -391,8 +394,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
         )}
 
         <p className="embed-muted" style={{ fontSize: 11, marginTop: 8 }}>
-          Your picture is synced to your account and visible to connected apps.
-        </p>
+          {translateInterface("mebb0cf6e0585")}</p>
       </div>
 
       {/* Account Name Card */}
@@ -402,17 +404,16 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
             <circle cx="12" cy="8" r="4" />
             <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
           </svg>
-          Account Name
-        </div>
+          {translateInterface("m038440b0a1ea")}</div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
           <div>
-            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>First Name</label>
+            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>{translateInterface("m96ce6e6193a0")}</label>
             <input
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
-              placeholder="First name"
+              placeholder={translateInterface("m702ef921ed1d")}
               style={{
                 width: "100%", padding: "8px 12px",
                 background: "var(--embed-bg, transparent)",
@@ -423,12 +424,12 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
             />
           </div>
           <div>
-            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>Last Name</label>
+            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>{translateInterface("mf55563b386a3")}</label>
             <input
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
-              placeholder="Last name"
+              placeholder={translateInterface("m7b4888049459")}
               style={{
                 width: "100%", padding: "8px 12px",
                 background: "var(--embed-bg, transparent)",
@@ -442,13 +443,13 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
           <div>
-            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>Username</label>
+            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>{translateInterface("me3b89e9d33f8")}</label>
             <div className="embed-muted" style={{ padding: "8px 12px", fontSize: 14, border: "1px solid var(--embed-border)", borderRadius: 6, opacity: 0.7 }}>
               {username}
             </div>
           </div>
           <div>
-            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>Email</label>
+            <label className="embed-label" style={{ display: "block", marginBottom: 4 }}>{translateInterface("m969ccbd3cf63")}</label>
             <div className="embed-muted" style={{ padding: "8px 12px", fontSize: 14, border: "1px solid var(--embed-border)", borderRadius: 6, opacity: 0.7 }}>
               {profile?.email || "\u2014"}
             </div>
@@ -469,18 +470,16 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
             {saving ? (
               <>
                 <span style={{ width: 14, height: 14, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.6s linear infinite", display: "inline-block" }} />
-                Saving...
-              </>
-            ) : "Save Name"}
+                {translateInterface("mdc85af8f2b1d")}</>
+            ) : translateInterface("mf93c949579a7")}
           </button>
-          {saved && <span style={{ fontSize: 13, color: "var(--embed-success)" }}>Saved to account</span>}
+          {saved && <span style={{ fontSize: 13, color: "var(--embed-success)" }}>{translateInterface("m0a3af2569fbc")}</span>}
           {error && <span style={{ fontSize: 13, color: "var(--embed-danger)" }}>{error}</span>}
         </div>
 
         {isAdmin && (
           <div style={{ marginTop: 12, padding: "6px 10px", borderRadius: 6, fontSize: 12, color: "var(--embed-primary)", border: "1px solid color-mix(in srgb, var(--embed-primary) 30%, transparent)" }}>
-            &#10022; Administrator
-          </div>
+            {translateInterface("mf1e83612b366")}</div>
         )}
       </div>
 

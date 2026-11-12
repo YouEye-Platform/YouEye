@@ -7,6 +7,8 @@
  */
 
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { UnifiedEmbed } from "@/components/embeds/unified-embed";
@@ -140,6 +142,8 @@ export function TimelineInfoCard({
   className,
   fallback = null,
 }: TimelineInfoCardProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [isVisible, setIsVisible] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "none" | "error">("idle");
   const [match, setMatch] = useState<InfoCardMatch | null>(null);
@@ -203,7 +207,7 @@ export function TimelineInfoCard({
           kind="info-card"
           size={embedSize(size)}
           timeout={5000}
-          title={`${match?.surface.app_name ?? "App"} info card`}
+          title={translateInterface("mf0ce1716ee8a", { value0: String(match?.surface.app_name ?? "App") })}
           fallback={fallback}
         />
       )}

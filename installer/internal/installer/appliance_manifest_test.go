@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestVerifyApplianceBundleRequiresSignatureAndEveryArtifactIdentity(t *testing.T) {
+func TestVerifyApplianceBundleRequiresEveryArtifactIdentity(t *testing.T) {
 	bundle := writeTestApplianceBundle(t)
-	verified, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath)
+	verified, err := verifyApplianceBundle(bundle.manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,11 +21,15 @@ func TestVerifyApplianceBundleRequiresSignatureAndEveryArtifactIdentity(t *testi
 		t.Fatalf("roles=%v want %v", got, wantRoles)
 	}
 
-	if err := os.WriteFile(bundle.signaturePath, make([]byte, 64), 0600); err != nil {
+	raw, err := os.ReadFile(bundle.manifestPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath); err == nil || !strings.Contains(err.Error(), "signature") {
-		t.Fatalf("expected signature rejection, got %v", err)
+	if err := os.WriteFile(bundle.manifestPath, []byte(strings.Replace(string(raw), `"schema"`, `"trust": {}, "schema"`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyApplianceBundle(bundle.manifestPath); err == nil {
+		t.Fatal("manifest with a removed trust key was accepted")
 	}
 }
 
@@ -35,49 +39,34 @@ func TestVerifyApplianceBundleRejectsCorruptPayload(t *testing.T) {
 	if err := os.WriteFile(rootPath, []byte("corrupt payload!\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath); err == nil || !strings.Contains(err.Error(), "artifact system-root") {
+	if _, err := verifyApplianceBundle(bundle.manifestPath); err == nil || !strings.Contains(err.Error(), "artifact system-root") {
 		t.Fatalf("expected corrupt payload rejection, got %v", err)
 	}
 }
 
-func TestParseApplianceManifestRejectsFallbackAndPathEscape(t *testing.T) {
+func TestParseApplianceManifestRejectsRemovedReleaseKeysAndPathEscape(t *testing.T) {
 	bundle := writeTestApplianceBundle(t)
 	raw, err := os.ReadFile(bundle.manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := parseApplianceBundleManifest(raw)
-	if err != nil {
+	if _, err := parseApplianceBundleManifest(raw); err != nil {
 		t.Fatal(err)
 	}
-	manifest.ReleaseSet.Fallback = []string{"stable"}
-	if err := validateApplianceBundleManifest(manifest); err == nil || !strings.Contains(err.Error(), "fallback") {
-		t.Fatalf("expected fallback rejection, got %v", err)
+	for _, removed := range []string{`"fallback": ["stable"], `, `"branch": "dev", `, `"source": "custom", `} {
+		mutated := strings.Replace(string(raw), `"release_set": {`, `"release_set": {`+removed, 1)
+		if mutated == string(raw) {
+			t.Fatal("test manifest has no release_set")
+		}
+		if _, err := parseApplianceBundleManifest([]byte(mutated)); err == nil {
+			t.Fatalf("manifest with removed release_set key %s accepted", removed)
+		}
+	}
+	if _, err := parseApplianceBundleManifest([]byte(strings.Replace(string(raw), `"source_tree"`, `"source_commit": "x", "source_tree"`, 1))); err == nil {
+		t.Fatal("manifest with removed source_commit accepted")
 	}
 	if _, err := applianceAssetPath(filepath.Dir(bundle.manifestPath), "../escape"); err == nil {
 		t.Fatal("expected escaped artifact path rejection")
-	}
-}
-
-func TestApplianceManifestAcceptsOnlySafeMultiSegmentReleaseBranches(t *testing.T) {
-	bundle := writeTestApplianceBundle(t)
-	raw, err := os.ReadFile(bundle.manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := parseApplianceBundleManifest(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.ReleaseSet.Branch = "codex/phase1-repository-builds"
-	if err := validateApplianceBundleManifest(manifest); err != nil {
-		t.Fatalf("safe multi-segment branch was rejected: %v", err)
-	}
-	for _, branch := range []string{"codex//escape", "../escape", "codex/bad.lock", "codex/bad~ref"} {
-		manifest.ReleaseSet.Branch = branch
-		if err := validateApplianceBundleManifest(manifest); err == nil {
-			t.Fatalf("unsafe release branch %q was accepted", branch)
-		}
 	}
 }
 
@@ -118,7 +107,7 @@ func TestValidateApplianceManifestRejectsIncompatibleRuntimeContract(t *testing.
 		t.Fatalf("incompatible runtime result = %v", err)
 	}
 	manifest.KernelCompatibility = applianceKernelCompatibility
-	manifest.ReleaseSet.Spine.SourceCommit = strings.Repeat("c", 40)
+	manifest.ReleaseSet.Spine.SourceTree = strings.Repeat("c", 40)
 	if err := validateApplianceBundleManifest(manifest); err != nil {
 		t.Fatalf("independent exact appliance and Spine source identities were rejected: %v", err)
 	}
@@ -135,10 +124,10 @@ func TestValidateApplianceManifestRequiresThirtyTwoGiBTargetContract(t *testing.
 		t.Fatal(err)
 	}
 	if manifest.DiskLayout.TargetMinGiB != 32 {
-		t.Fatalf("signed target minimum = %d GiB, want 32 GiB", manifest.DiskLayout.TargetMinGiB)
+		t.Fatalf("target minimum = %d GiB, want 32 GiB", manifest.DiskLayout.TargetMinGiB)
 	}
 	manifest.DiskLayout.TargetMinGiB = 96
 	if err := validateApplianceBundleManifest(manifest); err == nil || !strings.Contains(err.Error(), "disk layout") {
-		t.Fatalf("obsolete 96 GiB signed contract was accepted: %v", err)
+		t.Fatalf("obsolete 96 GiB contract was accepted: %v", err)
 	}
 }

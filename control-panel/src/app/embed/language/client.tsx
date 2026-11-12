@@ -1,4 +1,6 @@
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useEffect, useState, useCallback } from "react";
 
@@ -11,6 +13,8 @@ const LANGUAGES = [
 ];
 
 export function LanguageEmbedClient() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [currentLang, setCurrentLang] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -73,10 +77,9 @@ export function LanguageEmbedClient() {
   return (
     <div style={{ padding: 16 }}>
       <div style={{ marginBottom: 12 }}>
-        <div className="embed-title" style={{ fontSize: 14 }}>System Default Language</div>
+        <div className="embed-title" style={{ fontSize: 14 }}>{translateInterface("m24482092c2dc")}</div>
         <div className="embed-subtitle">
-          Sets the default language for all users who haven&apos;t chosen their own. Also propagates to identity provider and app containers.
-        </div>
+          {translateInterface("m3bc1bd7c14c2")}</div>
       </div>
 
       <div style={{ maxWidth: 400 }}>
@@ -111,13 +114,11 @@ export function LanguageEmbedClient() {
 
       {status === "saved" && (
         <div style={{ marginTop: 8, fontSize: 13, color: "var(--embed-success)" }}>
-          System language updated. Propagating to apps...
-        </div>
+          {translateInterface("m49c1a6ca2c2c")}</div>
       )}
       {status === "error" && (
         <div style={{ marginTop: 8, fontSize: 13, color: "var(--embed-danger)" }}>
-          Failed to update system language.
-        </div>
+          {translateInterface("m2bfc8e5981da")}</div>
       )}
     </div>
   );

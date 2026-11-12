@@ -20,7 +20,7 @@ test('the three borrowed account-panel details are removed: pill, pencil-edit, P
 
 test('what stays: email, greeting, Timeline, Settings, Sign out', () => {
   assert.match(menu, /\{email\}/);
-  assert.match(menu, /Hi, \{firstName\}!/);
+  assert.match(menu, /translateInterface\("m48e1645a3bf4", \{ name: firstName \}\)/);
   assert.match(menu, /t\("timeline"\)/);
   assert.match(menu, /t\("settings"\)/);
   assert.match(menu, /t\("signOut"\)/);

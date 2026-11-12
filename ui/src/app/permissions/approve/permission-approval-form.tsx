@@ -1,5 +1,7 @@
 "use client";
 
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState } from "react";
 
 interface PermissionApprovalFormProps {
@@ -10,6 +12,8 @@ interface PermissionApprovalFormProps {
 }
 
 export function PermissionApprovalForm({ appId, permissions, grantType, returnTo }: PermissionApprovalFormProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [status, setStatus] = useState<"idle" | "approving" | "approved" | "denied" | "error">("idle");
 
   function finish() {
@@ -40,13 +44,13 @@ export function PermissionApprovalForm({ appId, permissions, grantType, returnTo
   return (
     <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
       {status === "approved" && (
-        <p className="mr-auto text-sm text-emerald-600">Permission granted.</p>
+        <p className="mr-auto text-sm text-emerald-600">{translateInterface("m63895f3e9bc1")}</p>
       )}
       {status === "denied" && (
-        <p className="mr-auto text-sm text-muted-foreground">Permission denied.</p>
+        <p className="mr-auto text-sm text-muted-foreground">{translateInterface("m8fbfbbfd0d6d")}</p>
       )}
       {status === "error" && (
-        <p className="mr-auto text-sm text-destructive">Could not update this permission.</p>
+        <p className="mr-auto text-sm text-destructive">{translateInterface("mcb4058efc4ce")}</p>
       )}
       <button
         type="button"
@@ -57,15 +61,14 @@ export function PermissionApprovalForm({ appId, permissions, grantType, returnTo
         }}
         disabled={status === "approving" || status === "approved"}
       >
-        Deny
-      </button>
+        {translateInterface("m05a2d7332eb9")}</button>
       <button
         type="button"
         className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
         onClick={approve}
         disabled={status === "approving" || status === "approved"}
       >
-        {status === "approving" ? "Allowing..." : "Allow"}
+        {status === "approving" ? translateInterface("mb1a1d349cc54") : translateInterface("me213c161d5ce")}
       </button>
     </div>
   );

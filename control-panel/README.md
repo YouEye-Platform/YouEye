@@ -26,6 +26,23 @@ Control Panel runs as a standalone Next.js app inside the `youeye-control` Incus
 
 The UI bridge is one-way: Control Panel pushes data to the UI. The UI never calls back to Control Panel.
 
+### Managed proxy reconciliation
+
+Startup waits for the configured authenticated Incus API before reconciling app
+ownership and managed proxy routes. Managed containers require a usable IPv4
+address; discovery failures retain existing routes instead of saving a DNS
+fallback. Explicit external hostname upstreams remain supported.
+
+Settings, Market, their support route, and Pointer inference use one reconciliation
+operation. It resolves required addresses before an atomic Caddy configuration
+replacement, protects writes with the observed configuration revision, and checks
+read-back and proxy responses using the installed TLS trust. Failed verification
+attempts an exact conditional rollback and reports any unverified recovery.
+Required setup route failures keep setup incomplete and retryable. Exhausted
+startup attempts appear in System Health with a repair action. Administrators can
+also use the authenticated, CSRF-protected `POST /api/setup/control-routes` repair
+endpoint. The separate identity process does not start platform reconciliation.
+
 ## Development
 
 ```bash

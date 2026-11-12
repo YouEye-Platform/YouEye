@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { userinfo } from '@/lib/identity/http';
 import { verifyBearerToken } from '@/lib/identity/tokens';
+import { decodeJwt } from 'jose';
 
 async function tokenFromRequest(request: NextRequest): Promise<string> {
   const auth = request.headers.get('authorization') || '';
@@ -26,7 +27,8 @@ async function handleUserinfo(request: NextRequest) {
   if (!token) return NextResponse.json({ error: 'missing_token' }, { status: 401 });
   const user = await verifyBearerToken(token);
   if (!user) return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
-  return NextResponse.json(userinfo(user));
+  const claims = decodeJwt(token);
+  return NextResponse.json({ ...userinfo(user), ...(typeof claims.sid === 'string' ? { sid: claims.sid } : {}) });
 }
 
 export async function GET(request: NextRequest) {

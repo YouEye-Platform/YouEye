@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/appliance/ordering"
 )
 
 // MaxSegments is the maximum number of dot-separated numeric segments a
@@ -11,8 +13,8 @@ import (
 // version is rejected by ParseVersionStrict and skipped by resolvers.
 const MaxSegments = 10
 
-// FormatVersion returns the canonical display form of a version: leading "v"
-// stripped and trailing zero segments trimmed, keeping a minimum of 1 segment.
+// FormatVersion preserves every position and suffix of a canonical release.
+// Legacy numeric-depth identities retain their historical display formatting.
 //
 //	"0.5.0.0"   → "0.5"
 //	"2.0.0"     → "2"
@@ -22,6 +24,9 @@ const MaxSegments = 10
 // Non-numeric input is returned unchanged (minus a leading "v") — callers that
 // need strict handling should use ParseVersionStrict first.
 func FormatVersion(v string) string {
+	if parsed, err := ordering.ParseReleaseVersion(strings.TrimPrefix(v, "v")); err == nil {
+		return parsed.String()
+	}
 	return trimSegments(v, 1)
 }
 
@@ -72,12 +77,17 @@ func trimSegments(v string, minSegments int) string {
 	return strings.Join(parts, ".")
 }
 
-// ParseVersionStrict parses a version into its numeric segments, enforcing the
+// ParseVersionStrict validates a release or historical numeric version and
+// returns its numeric core. Keep the original string for suffix-aware ordering.
+// Historical numeric inputs enforce the
 // grammar: an optional leading "v", then 1–MaxSegments dot-separated
 // non-negative integers. Empty input, empty segments, non-numeric segments, and
 // versions deeper than MaxSegments are rejected.
 func ParseVersionStrict(v string) ([]int, error) {
 	raw := strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if parsed, err := ordering.ParseReleaseVersion(raw); err == nil {
+		return []int{int(parsed.Core[0]), int(parsed.Core[1]), int(parsed.Core[2])}, nil
+	}
 	if raw == "" {
 		return nil, fmt.Errorf("version is empty")
 	}

@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { spineClient } from '@/lib/spine/client';
+import { withSetupRequestWork } from '@/lib/setup/readiness';
 import {
   createHumanVerificationChallenge,
+  createVerifiedSetupChallenge,
   getNamesReadiness,
   namesErrorMessage,
   registerInstall,
 } from '@/lib/youeye-names/client';
+import { privateNamesAddress, verifiedSetupParentOrigin } from '@/lib/youeye-names/setup-request';
 
 function privateIPv4(ip: string): boolean {
   const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
@@ -27,6 +30,7 @@ export async function POST(request: NextRequest) {
   }
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
+    return await withSetupRequestWork(session.authMethod, async () => {
     if (body.action === 'register') {
       if (typeof body.humanVerificationProof !== 'string') {
         return NextResponse.json({ error: 'Verification proof missing' }, { status: 400 });
@@ -34,7 +38,7 @@ export async function POST(request: NextRequest) {
       await registerInstall(body.humanVerificationProof);
       return NextResponse.json({ ok: true }, { headers: { 'cache-control': 'no-store' } });
     }
-    if (body.action !== 'challenge' || !['install_register', 'lease_claim'].includes(String(body.purpose))) {
+    if (body.action !== 'challenge' || !['install_register', 'lease_claim', 'verified_setup'].includes(String(body.purpose))) {
       return NextResponse.json({ error: 'Unsupported enrollment action' }, { status: 400 });
     }
     const readiness = await getNamesReadiness();
@@ -43,6 +47,14 @@ export async function POST(request: NextRequest) {
         error: 'YouEye Names cannot start a new address right now. Try again later or choose another address option.',
         readiness,
       }, { status: 409, headers: { 'cache-control': 'no-store' } });
+    }
+    if (body.purpose === 'verified_setup') {
+      if (typeof body.name !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(body.name) || typeof body.sessionId !== 'string' || !/^[A-Za-z0-9_-]{22,128}$/.test(body.sessionId)) return NextResponse.json({ error: 'verified_setup_binding_invalid' }, { status:400 });
+      const parentOrigin=verifiedSetupParentOrigin(request);
+      const currentIp=(await spineClient.getMetrics()).primary_ip.trim();
+      if (!privateNamesAddress(currentIp)) return NextResponse.json({ error:'verified_setup_private_address_unavailable' }, { status:409 });
+      const challenge=await createVerifiedSetupChallenge({name:body.name,currentIp,parentOrigin,sessionId:body.sessionId});
+      return NextResponse.json({ok:true,challenge},{headers:{'cache-control':'no-store'}});
     }
     if (body.purpose === 'install_register') {
       const challenge = await createHumanVerificationChallenge('install_register');
@@ -62,6 +74,7 @@ export async function POST(request: NextRequest) {
       currentIp,
     });
     return NextResponse.json({ ok: true, challenge }, { headers: { 'cache-control': 'no-store' } });
+    });
   } catch (error) {
     return NextResponse.json(
       { error: namesErrorMessage(error) },

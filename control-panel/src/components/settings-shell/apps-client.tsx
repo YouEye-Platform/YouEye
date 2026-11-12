@@ -1,11 +1,14 @@
 "use client";
 
+import { PageHeader } from "./page-header";
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
 import Link from "next/link";
 import * as LucideIcons from "lucide-react";
-import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, GitBranch, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -16,7 +19,6 @@ import { Switch } from "@/components/ui/switch";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
-import { UpdateChannels } from "./update-channels";
 
 interface DrawerApp {
   id: string;
@@ -45,17 +47,17 @@ interface UnifiedApp {
   status: string;
   enabled?: boolean;
   desiredState?: "running" | "stopped";
+  serviceCredentialState?: "pending" | "ready" | "revoked";
   databaseMode?: "shared" | "own" | "none";
   updateAvailable: boolean;
   updateInfo?: string;
   systemManaged?: boolean;
   healthStatus?: "healthy" | "unhealthy" | "unknown";
-  appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown";
+  appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown" | "maintenance";
   failingLevel?: "L1" | "L2" | "L3";
   healthDetail?: string | null;
   healthCheckedAt?: string | null;
   autoRestart?: boolean;
-  updateChannelKey?: string;
 }
 
 interface UpdateStatus {
@@ -65,6 +67,17 @@ interface UpdateStatus {
   progress: number;
   version_after?: string | null;
   error?: string | null;
+}
+
+interface AppUpdateOperation {
+  id: string;
+  phase: string;
+  committed: boolean;
+  rolledBack: boolean;
+  cleanupComplete: boolean;
+  recoveryRequired: boolean;
+  pending: boolean;
+  errorCode: string | null;
 }
 
 interface Permission {
@@ -84,7 +97,7 @@ interface Permission {
   scopes?: string[];
 }
 
-type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling" | "update-channel";
+type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling";
 type BrandingScope = "user" | "server";
 
 const DEFAULT_APP_WORDART: SiteNameStyle = {
@@ -130,9 +143,9 @@ function appHealthVariant(app?: UnifiedApp | null): "default" | "secondary" | "d
   }
 }
 
-async function fetchCSRFToken(): Promise<string> {
+async function fetchCSRFToken(translateInterface: ReturnType<typeof useInterfaceTranslations>): Promise<string> {
   const res = await fetch("/settings/api/auth/csrf");
-  if (!res.ok) throw new Error("Could not prepare the request");
+  if (!res.ok) throw new Error(translateInterface("mb25a53c34695"));
   const body = await res.json();
   return body.csrfToken as string;
 }
@@ -206,12 +219,11 @@ function permissionTitle(permission: Permission) {
   return permission.descriptor?.title || permission.permission;
 }
 
-function permissionDescription(permission: Permission) {
-  if (permission.descriptor?.description) return permission.descriptor.description;
-  return "This app has this YouEye permission.";
-}
+
 
 function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [apps, setApps] = useState<DrawerApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -221,15 +233,15 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
     setError("");
     try {
       const res = await fetch(uiSettingsApi("apps/drawer"));
-      if (!res.ok) throw new Error("Failed to load apps");
+      if (!res.ok) throw new Error(translateInterface("me46b87db96b0"));
       const data = await res.json();
       setApps((data.apps || []).filter((app: DrawerApp) => !app.platform));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load apps");
+      setError(translateInterface("me46b87db96b0"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -238,15 +250,15 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <section className="overflow-hidden rounded-xl border bg-card">
       <div className="flex items-center justify-between px-[18px] py-3">
-        <h2 className="text-[15px] font-semibold">Installed apps</h2>
-        <Link href="/market" className="text-[13px] font-medium text-primary hover:underline">Open Market</Link>
+        <h2 className="text-[15px] font-semibold">{translateInterface("mdf76d7f1e93c")}</h2>
+        <Link href="/market" className="text-[13px] font-medium text-primary hover:underline">{translateInterface("mfbf25423f41e")}</Link>
       </div>
       {loading ? (
-        <div className="flex items-center justify-center gap-2 border-t py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading apps…</div>
+        <div className="flex items-center justify-center gap-2 border-t py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{translateInterface("mf8bcca389b95")}</div>
       ) : error ? (
         <div className="border-t py-12 text-center text-sm text-muted-foreground"><AlertCircle className="mx-auto mb-2 h-6 w-6 opacity-50" />{error}</div>
       ) : apps.length === 0 ? (
-        <div className="border-t py-10 text-center text-sm text-muted-foreground">No apps installed yet.</div>
+        <div className="border-t py-10 text-center text-sm text-muted-foreground">{translateInterface("mf0b2cf399f5f")}</div>
       ) : (
         apps.map((app) => {
           const off = app.status === "stopped";
@@ -260,13 +272,13 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <div className="truncate text-sm font-medium">{app.name}</div>
-                  {off && <><OffDot /><span className="sr-only">Off</span></>}
+                  {off && <><OffDot /><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></>}
                 </div>
                 {app.subdomain && (
                   <div className="truncate text-[13px] text-muted-foreground">{host ? `${app.subdomain}.${host}` : app.subdomain}</div>
                 )}
               </div>
-              <span className="hidden text-[13px] font-medium text-muted-foreground sm:inline">Manage</span>
+              <span className="hidden text-[13px] font-medium text-muted-foreground sm:inline">{translateInterface("m5a23444828db")}</span>
               <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/40" />
             </button>
           );
@@ -277,14 +289,20 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [apps, setApps] = useState<UnifiedApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, UpdateStatus>>(new Map());
+  const [operations, setOperations] = useState<Map<string, AppUpdateOperation | null>>(new Map());
+  const [operationErrors, setOperationErrors] = useState<Set<string>>(new Set());
+  const [recovering, setRecovering] = useState<Set<string>>(new Set());
+  const activeRequests = useRef(new Set<string>());
   const [confirmApp, setConfirmApp] = useState<UnifiedApp | null>(null);
   const [maintAck, setMaintAck] = useState(false);
   const [dbAck, setDbAck] = useState(false);
-  const updates = apps.filter((app) => app.updateAvailable);
+  const updates = apps.filter((app) => app.updateAvailable || operations.get(app.id)?.pending);
   const systemApps = apps.filter((app) => app.category !== "user");
 
   const load = useCallback(async (initial = false) => {
@@ -303,10 +321,42 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     for (const status of data.statuses || []) {
       next.set(status.component, status);
     }
-    setStatuses(next);
+    setStatuses((prev) => {
+      // Market SSE owns its progress while the request is active. The legacy
+      // status endpoint must not erase it or replay an older completed update.
+      for (const [component, status] of prev) {
+        if (activeRequests.current.has(component)) next.set(component, status);
+      }
+      return next;
+    });
   }, []);
 
+  const loadOperations = useCallback(async () => {
+    await Promise.all(apps.filter((app) => app.category === "user").map(async (app) => {
+      try {
+        const res = await fetch(`/api/market/update/status?appId=${encodeURIComponent(app.id)}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(translateInterface("m5f7801451da0"));
+        const data = await res.json();
+        setOperations((prev) => new Map(prev).set(app.id, data.operation));
+        setOperationErrors((prev) => {
+          const next = new Set(prev);
+          next.delete(app.id);
+          return next;
+        });
+      } catch {
+        setOperationErrors((prev) => new Set(prev).add(app.id));
+      }
+    }));
+  }, [apps, translateInterface]);
+
   useEffect(() => { load(true); loadStatuses(); }, [load, loadStatuses]);
+
+  // Always check durable status, including after a reload or a lost SSE connection.
+  useEffect(() => {
+    void loadOperations();
+    const timer = window.setInterval(() => { void loadOperations(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [loadOperations]);
 
   const hasActiveUpdate = Array.from(statuses.values()).some(
     (status) => !["idle", "completed", "failed"].includes(status.status),
@@ -341,6 +391,10 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     appId: string,
     confirm?: { confirmMaintenanceWindow: boolean; confirmContainerName: string; allowDatabaseUpdate?: boolean },
   ) {
+    if (activeRequests.current.has(appId) || operations.get(appId)?.pending) return;
+    const marketApp = apps.find((app) => app.id === appId)?.category === "user";
+    if (marketApp && (!operations.has(appId) || operationErrors.has(appId))) return;
+    activeRequests.current.add(appId);
     const component = updateStatusComponent(appId);
     setStatuses((prev) => {
       const next = new Map(prev);
@@ -348,7 +402,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         component,
         status: "checking",
         progress: 0,
-        message: "Starting update...",
+        message: translateInterface("m6b4191935143"),
       });
       return next;
     });
@@ -356,12 +410,13 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     let csrfToken: string;
     try {
       csrfToken = await fetch("/settings/api/auth/csrf")
-        .then((res) => res.ok ? res.json() : Promise.reject(new Error("Could not start update")))
+        .then((res) => res.ok ? res.json() : Promise.reject(new Error(translateInterface("m0b5bf45ed449"))))
         .then((body) => body.csrfToken as string);
     } catch (err) {
+      activeRequests.current.delete(appId);
       setStatuses((prev) => {
         const next = new Map(prev);
-        const message = err instanceof Error ? err.message : "Could not start update";
+        const message = err instanceof Error ? err.message : translateInterface("m0b5bf45ed449");
         next.set(component, {
           component,
           status: "failed",
@@ -374,6 +429,62 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
       return;
     }
 
+    if (marketApp) {
+      let finalStatus: UpdateStatus = {
+        component, status: "failed", progress: 0,
+        message: translateInterface("m7e20281b6045"),
+      };
+      try {
+        const res = await fetch("/api/market/update", {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" },
+          body: JSON.stringify({ appId }),
+        });
+        if (!res.ok || !res.body) throw new Error(translateInterface("m149776b4fc95"));
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let terminal = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() || "";
+          for (const frame of frames) {
+            const line = frame.split("\n").find((line) => line.startsWith("data: "));
+            if (!line) continue;
+            const event = JSON.parse(line.slice(6));
+            const nextStatus = {
+              component,
+              status: event.stage === "pending" ? "idle" : event.stage,
+              message: event.message,
+              progress: event.progress || 0,
+            };
+            if (["pending", "completed", "failed"].includes(event.stage)) {
+              terminal = true;
+              finalStatus = nextStatus;
+            }
+            setStatuses((prev) => new Map(prev).set(component, nextStatus));
+          }
+        }
+        if (!terminal) {
+          finalStatus.message = translateInterface("m7e20281b6045");
+        }
+      } catch {
+        finalStatus = {
+          component, status: "failed", progress: 0,
+          message: translateInterface("m8676ed970e94"),
+        };
+      } finally {
+        activeRequests.current.delete(appId);
+        setStatuses((prev) => new Map(prev).set(component, finalStatus));
+        await loadOperations();
+        await load();
+      }
+      return;
+    }
+
     fetch(`/settings/api/apps/${encodeURIComponent(appId)}/update`, {
       method: "POST",
       headers: confirm
@@ -383,14 +494,14 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     })
       .then(async (res) => {
         if (!res.ok) {
-          const body = await res.json().catch(() => ({ error: "Update failed" }));
+          const body = await res.json().catch(() => ({ error: translateInterface("me58282fd73fb") }));
           setStatuses((prev) => {
             const next = new Map(prev);
             next.set(component, {
               component,
               status: "failed",
               progress: 100,
-              message: body.error || "Update failed",
+              message: body.error || translateInterface("me58282fd73fb"),
               error: body.error || "Update failed",
             });
             return next;
@@ -406,12 +517,47 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             component,
             status: "failed",
             progress: 100,
-            message: err instanceof Error ? err.message : "Update failed",
+            message: err instanceof Error ? err.message : translateInterface("me58282fd73fb"),
             error: err instanceof Error ? err.message : "Update failed",
           });
           return next;
         });
+      })
+      .finally(() => { activeRequests.current.delete(appId); });
+  }
+
+  async function retryRecovery(appId: string) {
+    const operation = operations.get(appId);
+    if (!operation?.pending || activeRequests.current.has(appId)) return;
+    activeRequests.current.add(appId);
+    setRecovering((prev) => new Set(prev).add(appId));
+    try {
+      const csrfToken = await fetchCSRFToken(translateInterface);
+      const res = await fetch("/api/market/update/recovery", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ appId, id: operation.id }),
       });
+      if (!res.ok) throw new Error(translateInterface("m7f8ac9a64450"));
+      setStatuses((prev) => new Map(prev).set(updateStatusComponent(appId), {
+        component: updateStatusComponent(appId), status: "idle", progress: 0,
+        message: translateInterface("m7d39fa54cad1"),
+      }));
+    } catch {
+      setStatuses((prev) => new Map(prev).set(updateStatusComponent(appId), {
+        component: updateStatusComponent(appId), status: "failed", progress: 0,
+        message: translateInterface("mced08e0789ed"),
+      }));
+    } finally {
+      activeRequests.current.delete(appId);
+      setRecovering((prev) => {
+        const next = new Set(prev);
+        next.delete(appId);
+        return next;
+      });
+      await loadOperations();
+      await load();
+    }
   }
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -421,9 +567,9 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
       {confirmApp && (
         <ConfirmDialog
           open
-          title={`Update ${confirmApp.displayName}?`}
-          description={`This briefly stops and rebuilds ${confirmApp.displayName} (${confirmApp.containers[0]?.name ?? "its container"}) to the version pinned in the Market manifest. The service will be unavailable for a few seconds.`}
-          confirmLabel="Update now"
+          title={translateInterface("me0624c9267e4", { value0: String(confirmApp.displayName) })}
+          description={translateInterface("m7f548d42d37f", { value0: String(confirmApp.displayName), value1: String(confirmApp.containers[0]?.name ?? translateInterface("m7dddf9085fdd")) })}
+          confirmLabel={translateInterface("m63bf045213ce")}
           confirmDisabled={!maintAck || (confirmApp.id === "postgres" && !dbAck)}
           onCancel={() => setConfirmApp(null)}
           onConfirm={() => {
@@ -438,12 +584,12 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         >
           <label className="flex items-start gap-2 text-[13px]">
             <input type="checkbox" checked={maintAck} onChange={(e) => setMaintAck(e.target.checked)} className="mt-0.5" />
-            <span>I understand this restarts the service.</span>
+            <span>{translateInterface("m28fe0e0aab6a")}</span>
           </label>
           {confirmApp.id === "postgres" && (
             <label className="flex items-start gap-2 text-[13px]">
               <input type="checkbox" checked={dbAck} onChange={(e) => setDbAck(e.target.checked)} className="mt-0.5" />
-              <span>I understand the database will restart; this is a patch update within PostgreSQL 17.</span>
+              <span>{translateInterface("mb549a14cb95b")}</span>
             </label>
           )}
         </ConfirmDialog>
@@ -451,22 +597,28 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between gap-4 px-[18px] py-3">
           <div>
-            <h3 className="text-base font-semibold">{updates.length > 0 ? "Updates Available" : "Updates"}</h3>
-            <p className="text-[13px] text-muted-foreground">{updates.length} {updates.length === 1 ? "update" : "updates"} found.</p>
+            <h3 className="text-base font-semibold">{updates.length > 0 ? translateInterface("ma0909182f8d7") : translateInterface("m22e2bada8f1c")}</h3>
+            <p className="text-[13px] text-muted-foreground">{translateInterface("m50bdf4b5f230", {count: updates.length})}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {translateInterface("mcad7ceef401a")}</p>
           </div>
           <Button variant="outline" size="sm" onClick={checkUpdates} disabled={checking}>
             {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {checking ? "Checking" : "Check for Updates"}
+            {checking ? translateInterface("m0dfe1d63c9d8") : translateInterface("m9ed79ee9b212")}
           </Button>
         </div>
         {updates.length === 0 ? (
-          <div className="border-t px-[18px] py-8 text-center text-sm text-muted-foreground">Everything is up to date.</div>
+          <div className="border-t px-[18px] py-8 text-center text-sm text-muted-foreground">{translateInterface("mb9e08498866d")}</div>
         ) : (
           <div>
             {updates.map((app) => {
               const component = updateStatusComponent(app.id);
               const status = statuses.get(component);
-              const isUpdating = !!status && !["idle", "completed", "failed"].includes(status.status);
+              const operation = operations.get(app.id);
+              const isUpdating = !operation?.recoveryRequired
+                && !!status && !["idle", "completed", "failed"].includes(status.status);
+              const statusUnavailable = app.category === "user"
+                && (!operations.has(app.id) || operationErrors.has(app.id));
               return (
                 <div key={app.id} className="border-t px-[18px] py-3">
                   <div className="flex w-full items-center gap-3">
@@ -474,14 +626,38 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                       <AppIcon app={app} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-medium">{app.displayName}</p>
-                        <p className="text-xs text-muted-foreground">{app.updateInfo || "Update available"}</p>
+                        <p className="text-xs text-muted-foreground">{app.updateInfo || translateInterface("mff8b555d818f")}</p>
                       </div>
                     </button>
-                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating}>
+                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating || !!operation?.pending || statusUnavailable}>
                       {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      {isUpdating ? "Updating" : "Update"}
+                      {operation?.pending ? translateInterface("m331551b0de41") : isUpdating ? translateInterface("m0b5260e1b405") : translateInterface("mc1c1009d3f37")}
                     </Button>
                   </div>
+                  {operation?.pending && (
+                    <div className="mt-2 space-y-2" role="status" aria-live="polite">
+                      <p className="text-xs text-muted-foreground">
+                        {operation.committed
+                          ? translateInterface("m2e2ca18f1b0f")
+                          : operation.recoveryRequired
+                            ? translateInterface("md6644acf6789")
+                            : translateInterface("m8810322335b4")}
+                      </p>
+                      <Button variant="outline" size="sm" onClick={() => retryRecovery(app.id)} disabled={recovering.has(app.id) || activeRequests.current.has(app.id) || statusUnavailable}>
+                        {recovering.has(app.id) && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {recovering.has(app.id) ? translateInterface("md90064dbdb11") : translateInterface("mf37b055f32a8")}
+                      </Button>
+                    </div>
+                  )}
+                  {statusUnavailable && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
+                      <span>{translateInterface("m079b9eeddf57")}</span>
+                      <Button variant="outline" size="sm" onClick={() => { void loadOperations(); }}>{translateInterface("m442c4b893915")}</Button>
+                    </div>
+                  )}
+                  {operation?.rolledBack && operation.cleanupComplete && (
+                    <p className="mt-2 text-xs text-muted-foreground">{translateInterface("m950e51efd783")}</p>
+                  )}
                   {status && status.status !== "idle" && (
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -494,7 +670,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                         </div>
                       )}
                       {status.status === "failed" && status.error && <p className="text-xs text-destructive">{status.error}</p>}
-                      {status.status === "completed" && <p className="text-xs text-green-600">Update complete{status.version_after ? `: v${status.version_after}` : ""}</p>}
+                      {status.status === "completed" && !operation?.pending && <p className="text-xs text-green-600">{translateInterface("m2ca13025d60c")}{status.version_after ? `: v${status.version_after}` : ""}</p>}
                     </div>
                   )}
                 </div>
@@ -506,8 +682,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="px-[18px] py-3">
-          <h3 className="text-base font-semibold">System Components</h3>
-          <p className="text-[13px] text-muted-foreground">Core services and infrastructure managed by YouEye.</p>
+          <h3 className="text-base font-semibold">{translateInterface("m3fea190da427")}</h3>
+          <p className="text-[13px] text-muted-foreground">{translateInterface("meccb6abcf328")}</p>
         </div>
         <div>
           {systemApps.map((app) => (
@@ -535,6 +711,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function AppSettingsEmbed({ app }: { app: DrawerApp }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [iframeHeight, setIframeHeight] = useState(420);
   const [ready, setReady] = useState(false);
   const settingsUrl = useMemo(() => {
@@ -574,7 +752,7 @@ function AppSettingsEmbed({ app }: { app: DrawerApp }) {
   }, [settingsUrl]);
 
   if (!settingsUrl) {
-    return <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No app settings URL is available.</div>;
+    return <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m2786efec8c30")}</div>;
   }
 
   return (
@@ -582,14 +760,13 @@ function AppSettingsEmbed({ app }: { app: DrawerApp }) {
       {!ready && (
         <div className="flex h-56 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading app settings
-        </div>
+          {translateInterface("mf8a9594de662")}</div>
       )}
       <iframe
         src={settingsUrl}
         className="w-full border-0"
         style={{ height: ready ? iframeHeight : 0, minHeight: ready ? 220 : 0 }}
-        title={`${app.name} Settings`}
+        title={translateInterface("mb6eb9714407d", { value0: String(app.name) })}
         allow="clipboard-write"
       />
     </div>
@@ -622,6 +799,8 @@ type AppAIStatus = {
 };
 
 function AppAISettings({ appId, title }: { appId: string; title: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [status, setStatus] = useState<AppAIStatus | null>(null);
   const [groupId, setGroupId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -634,7 +813,7 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
     try {
       const response = await fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, { cache: "no-store" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "AI Settings are unavailable");
+      if (!response.ok) throw new Error(body.error || translateInterface("mbd74699a92af"));
       const next = body as AppAIStatus;
       setStatus(next);
       setGroupId((current) => current
@@ -644,11 +823,11 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
         || "");
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "AI Settings are unavailable");
+      setError(translateInterface("mbd74699a92af"));
     } finally {
       setLoading(false);
     }
-  }, [appId]);
+  }, [appId, translateInterface]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -657,33 +836,33 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
     setError("");
     setNotice("");
     try {
-      const csrfToken = await fetchCSRFToken();
+      const csrfToken = await fetchCSRFToken(translateInterface);
       const response = await fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ action, ...(selectedGroupId ? { groupId: selectedGroupId } : {}) }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "AI Settings update failed");
+      if (!response.ok) throw new Error(body.error || translateInterface("mbc24ad19d9d2"));
       setNotice(
         action === "takeover"
-          ? "AI connection taken over"
+          ? translateInterface("m30fcc9a29086")
           : action === "change_group"
-            ? "Model group changed"
+            ? translateInterface("m43887f371623")
             : action === "enable"
-              ? "AI Settings enabled"
-              : "AI Settings disabled"
+              ? translateInterface("m4bc65fd40500")
+              : translateInterface("md76852bf6bfb")
       );
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "AI Settings update failed");
+      setError(translateInterface("mbc24ad19d9d2"));
     } finally {
       setBusy(false);
     }
   }
 
   if (loading) return <div className="flex justify-center py-10"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
-  if (!status) return <Alert variant="destructive">{error || "AI Settings are unavailable"}</Alert>;
+  if (!status) return <Alert variant="destructive">{error || translateInterface("mbd74699a92af")}</Alert>;
   const ownerIsCurrent = !status.connection
     || status.installation?.routingOwner?.externalSubject === status.currentActorId;
   const needsAttention = status.connection?.state === "needs_attention"
@@ -697,32 +876,31 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
       {notice && <Alert>{notice}</Alert>}
       {needsAttention && (
         <Alert variant="destructive">
-          This connection needs attention because its owner is unavailable. Another administrator can take it over explicitly.
-        </Alert>
+          {translateInterface("m283317ddeb03")}</Alert>
       )}
       <div className="rounded-lg border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-primary" />
-              <h3 className="font-semibold">Use AI Settings</h3>
-              <Badge variant={status.enabled ? "default" : "secondary"}>{status.enabled ? "On" : "Off"}</Badge>
+              <h3 className="font-semibold">{translateInterface("m18ff0c26ee4a")}</h3>
+              <Badge variant={status.enabled ? "default" : "secondary"}>{status.enabled ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</Badge>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              Give {title} its own AI instance and models from the selected group. Native provider controls inside the app remain available.
+              {translateInterface("mad79cfea2624", {app: title})}
             </p>
           </div>
           <Switch
             checked={status.enabled}
             disabled={busy || (!ownerIsCurrent && !status.enabled) || (!status.connection && !groupId)}
             onCheckedChange={(enabled) => void mutate(enabled ? "enable" : "disable", enabled ? groupId : undefined)}
-            aria-label={`Use AI Settings for ${title}`}
+            aria-label={translateInterface("mfb666f84a9c2", {app: title})}
           />
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
-            <Label htmlFor={`ai-group-${appId}`}>Model group</Label>
+            <Label htmlFor={`ai-group-${appId}`}>{translateInterface("madb24ff365bd")}</Label>
             <Select
               value={groupId}
               disabled={busy || !ownerIsCurrent}
@@ -731,37 +909,36 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
                 if (status.connection && ownerIsCurrent) void mutate("change_group", value);
               }}
             >
-              <SelectTrigger id={`ai-group-${appId}`}><SelectValue placeholder="Choose a model group" /></SelectTrigger>
+              <SelectTrigger id={`ai-group-${appId}`}><SelectValue placeholder={translateInterface("m0c7e5871a4e6")} /></SelectTrigger>
               <SelectContent>
                 {status.groups.map((group) => (
                   <SelectItem key={group.id} value={group.id} disabled={group.status === "empty"}>
-                    {group.name}{group.isDefault ? " · Default" : ""} · {group.enabledModelCount} model{group.enabledModelCount === 1 ? "" : "s"}
+                    {translateInterface("m0b7c0ace70d0", {group: group.name, count: group.enabledModelCount})}{group.isDefault ? translateInterface("m2a7e0b7b2062") : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {selectedGroup?.unavailableRouteCount ? <p className="text-xs text-destructive">Some routes need a provider connection.</p> : null}
+            {selectedGroup?.unavailableRouteCount ? <p className="text-xs text-destructive">{translateInterface("m26f9ccc0629f")}</p> : null}
           </div>
           <div className="rounded-md bg-muted/40 p-3 text-sm">
-            <p className="font-medium">Connection</p>
+            <p className="font-medium">{translateInterface("m639a40e82b9a")}</p>
             <p className="mt-1 text-muted-foreground">
               {status.connection
                 ? `${status.connection.groupName} · ${status.connection.keyPreview}`
-                : `Manual setup inside ${title}`}
+                : translateInterface("m4a1c5d30939d", { value0: String(title) })}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Default model alias: <code>default</code></p>
+            <p className="mt-1 text-xs text-muted-foreground">{translateInterface("m8d2a4592acd4")}<code>default</code></p>
           </div>
         </div>
 
         {!ownerIsCurrent && status.connection && (
           <div className="mt-5 flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-medium">Owned by {status.installation?.routingOwner?.displayName || "another administrator"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Future AI provider usage will belong to your account after takeover.</p>
+              <p className="text-sm font-medium">{translateInterface("m0eba3d4ee43f")}{status.installation?.routingOwner?.displayName || translateInterface("mc13dc9685345")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{translateInterface("m615937f6702b")}</p>
             </div>
             <Button disabled={busy || !groupId} onClick={() => void mutate("takeover", groupId)}>
-              Take over AI connection
-            </Button>
+              {translateInterface("m3213cd836138")}</Button>
           </div>
         )}
       </div>
@@ -770,6 +947,13 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
 }
 
 function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; isAdmin: boolean; hasUserContext: boolean; onBack: () => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+function permissionDescription(permission: Permission) {
+  if (permission.descriptor?.description) return permission.descriptor.description;
+  return translateInterface("m40ff0a06c8a1");
+}
+
+
   const [tab, setTab] = useState<AppTab>("overview");
   const [drawerApps, setDrawerApps] = useState<DrawerApp[]>([]);
   const [unifiedApps, setUnifiedApps] = useState<UnifiedApp[]>([]);
@@ -777,6 +961,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const [loading, setLoading] = useState(true);
   const [powerPending, setPowerPending] = useState<"start" | "stop" | "restart" | null>(null);
   const [powerError, setPowerError] = useState<string | null>(null);
+  const [credentialPending, setCredentialPending] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [healthPolicyPending, setHealthPolicyPending] = useState(false);
   const [healthPolicyError, setHealthPolicyError] = useState<string | null>(null);
@@ -833,19 +1018,19 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     setPowerPending(action);
     setPowerError(null);
     try {
-      const csrfToken = await fetchCSRFToken();
+      const csrfToken = await fetchCSRFToken(translateInterface);
       const res = await fetch(`/api/apps/${encodeURIComponent(appId)}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ action }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: "Power action failed" }));
-        throw new Error(body.error || "Power action failed");
+        const body = await res.json().catch(() => ({ error: translateInterface("m8624ee8df453") }));
+        throw new Error(body.error || translateInterface("m8624ee8df453"));
       }
       await load();
     } catch (error) {
-      setPowerError(error instanceof Error ? error.message : "Power action failed");
+      setPowerError(error instanceof Error ? error.message : translateInterface("m8624ee8df453"));
     } finally {
       setPowerPending(null);
       setConfirmStop(false);
@@ -856,39 +1041,56 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     setHealthPolicyPending(true);
     setHealthPolicyError(null);
     try {
-      const csrfToken = await fetchCSRFToken();
+      const csrfToken = await fetchCSRFToken(translateInterface);
       const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/health-policy`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ autoRestart: enabled }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "Could not update automatic recovery");
+      if (!response.ok) throw new Error(body.error || translateInterface("m53862be8135a"));
       await load();
     } catch (error) {
-      setHealthPolicyError(error instanceof Error ? error.message : "Could not update automatic recovery");
+      setHealthPolicyError(error instanceof Error ? error.message : translateInterface("m53862be8135a"));
     } finally {
       setHealthPolicyPending(false);
     }
+  }
+
+  async function reconcileCredentials() {
+    setCredentialPending(true);
+    setPowerError(null);
+    try {
+      const csrf = await fetchCSRFToken(translateInterface);
+      const response = await fetch(`/api/market/credentials/${encodeURIComponent(appId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ action: "reconcile" }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || translateInterface("m27e2a14350b2"));
+      await load();
+    } catch (error) {
+      setPowerError(error instanceof Error ? error.message : translateInterface("m27e2a14350b2"));
+    } finally { setCredentialPending(false); }
   }
 
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
   const off = isAppOff(unifiedApp);
   const controllable = isAdmin && unifiedApp?.category === "user" && (unifiedApp.containers?.length ?? 0) > 0;
   const databaseNote = unifiedApp?.databaseMode === "shared"
-    ? "The shared database stays running. Only this app is turned off."
+    ? translateInterface("m2b43e68d0127")
     : unifiedApp?.databaseMode === "own"
-      ? "This also stops the app's private database container. Data stays saved on disk."
-      : "Your data is kept.";
+      ? translateInterface("m0a30a7ab7ad1")
+      : translateInterface("m54dd7b4ad1cb");
   const tabs = [
-    { id: "app-settings", label: "App Settings", icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
-    { id: "overview", label: "Overview", icon: <Info className="h-4 w-4" /> },
-    { id: "ai", label: "AI", icon: <Sparkles className="h-4 w-4" />, adminOnly: true, hide: !aiSupported },
-    { id: "branding", label: "Branding", icon: <Palette className="h-4 w-4" />, userOnly: true },
-    { id: "permissions", label: "Permissions", icon: <Shield className="h-4 w-4" />, userOnly: true },
-    { id: "network", label: "Network", icon: <Network className="h-4 w-4" />, adminOnly: true },
-    { id: "update-channel", label: "Update channel", icon: <GitBranch className="h-4 w-4" />, adminOnly: true, hide: !unifiedApp?.updateChannelKey },
-    { id: "link-handling", label: "Link Handling", icon: <Unplug className="h-4 w-4" />, userOnly: true },
+    { id: "app-settings", label: translateInterface("mda645334193e"), icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
+    { id: "overview", label: translateInterface("md4b1ea5708dd"), icon: <Info className="h-4 w-4" /> },
+    { id: "ai", label: translateInterface("m11fb682be0a0"), icon: <Sparkles className="h-4 w-4" />, adminOnly: true, hide: !aiSupported },
+    { id: "branding", label: translateInterface("md417aa16da36"), icon: <Palette className="h-4 w-4" />, userOnly: true },
+    { id: "permissions", label: translateInterface("mabccc78cc93c"), icon: <Shield className="h-4 w-4" />, userOnly: true },
+    { id: "network", label: translateInterface("m1744b96470b5"), icon: <Network className="h-4 w-4" />, adminOnly: true },
+    { id: "link-handling", label: translateInterface("mca153aaec316"), icon: <Unplug className="h-4 w-4" />, userOnly: true },
   ] satisfies Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean; userOnly?: boolean; hide?: boolean }>;
   const visibleTabs = tabs.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || hasUserContext) && !item.hide);
 
@@ -898,9 +1100,9 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     <div className="space-y-6">
       <ConfirmDialog
         open={confirmStop}
-        title={`Turn off ${title}?`}
-        description={`${title} will stop running. Its app pages, widgets, and notifications will be unavailable until you start it again. Your data will be kept.`}
-        confirmLabel={powerPending === "stop" ? "Turning off..." : "Turn off app"}
+        title={translateInterface("m49c04461d6d0", { value0: String(title) })}
+        description={translateInterface("mcb981c5cd2d3", { value0: String(title) })}
+        confirmLabel={powerPending === "stop" ? translateInterface("ma3334f511a54") : translateInterface("ma71f685036e7")}
         confirmDisabled={powerPending !== null}
         onCancel={() => setConfirmStop(false)}
         onConfirm={() => controlPower("stop")}
@@ -910,19 +1112,18 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
 
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
-        Back to Apps
-      </button>
+        {translateInterface("mbac125489c7e")}</button>
 
       <div className="flex items-center gap-3">
         <AppIcon app={drawerApp || unifiedApp || { id: appId, displayName: title, description: "", icon: "", category: "user", type: "", containers: [], status: "unknown", updateAvailable: false }} />
         <div>
           <h2 className="text-xl font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground">{unifiedApp?.description || "App settings and permissions."}</p>
+          <p className="text-sm text-muted-foreground">{unifiedApp?.description || translateInterface("m26d693ad28cb")}</p>
         </div>
       </div>
 
       <div className="border-b">
-        <nav className="flex flex-wrap gap-6" aria-label="App settings tabs">
+        <nav className="flex flex-wrap gap-6" aria-label={translateInterface("m5b2173e206c6")}>
           {visibleTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={tabClass(tab === item.id)}>{item.icon}{item.label}</button>)}
         </nav>
       </div>
@@ -930,7 +1131,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
       {tab === "app-settings" && (
         drawerApp && hasAppSettings
           ? <AppSettingsEmbed app={drawerApp} />
-          : <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No app settings panel is available.</div>
+          : <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m9a805719b511")}</div>
       )}
 
       {tab === "overview" && (
@@ -938,16 +1139,20 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
           <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">App status</span>
-                {off && <><OffDot /><span className="sr-only">Off</span></>}
+                <span className="text-sm font-medium">{translateInterface("mc6ed837d495b")}</span>
+                {off && <><OffDot /><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></>}
                 {appHealthLabel(unifiedApp) && <Badge variant={appHealthVariant(unifiedApp)}>{appHealthLabel(unifiedApp)}</Badge>}
               </div>
               <p className="mt-1 text-[13px] text-muted-foreground">
-                {off
-                  ? `${title} is off. Start it to make app pages, widgets, and notifications available again.`
+                {unifiedApp?.serviceCredentialState === "revoked"
+                  ? translateInterface("m2a6af261ee1c")
+                  : unifiedApp?.serviceCredentialState === "pending"
+                    ? translateInterface("m3727b0acb45f")
+                  : off
+                  ? translateInterface("mf649fdfe21ba", { value0: String(title) })
                   : powerPending
-                    ? `${title} is ${powerPending === "stop" ? "turning off" : powerPending === "start" ? "starting" : "restarting"}...`
-                    : `${title} is ${unifiedApp?.status || "unknown"}.`}
+                    ? powerPending === "stop" ? translateInterface("md54dbde107ff", {app: title}) : powerPending === "start" ? translateInterface("mc5e3c57a0200", {app: title}) : translateInterface("m50b3619959e5", {app: title})
+                    : translateInterface("m49cdfe959956", {app: title, state: unifiedApp?.status || translateInterface("ma191bf55dd89")})}
               </p>
               {unifiedApp?.healthDetail && unifiedApp.appHealthState && unifiedApp.appHealthState !== "running" && (
                 <p className="mt-1 text-[13px] text-muted-foreground">{unifiedApp.healthDetail}</p>
@@ -955,61 +1160,62 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
               {powerError && <p className="mt-1 text-[13px] text-destructive">{powerError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
+              {isAdmin && unifiedApp?.serviceCredentialState === "pending" && (
+                <Button variant="outline" size="sm" onClick={() => void reconcileCredentials()} disabled={credentialPending}>
+                  {credentialPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {credentialPending ? translateInterface("m393dc4a3ec89") : translateInterface("m3b6c613892eb")}
+                </Button>
+              )}
               {drawerApp?.url && !off && (
                 <Button variant="outline" size="sm" asChild>
                   <a href={drawerApp.url}>
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Open app
-                  </a>
+                    {translateInterface("me51c6b48fb9e")}</a>
                 </Button>
               )}
-              {controllable && off && (
+              {controllable && off && unifiedApp?.serviceCredentialState !== "pending" && unifiedApp?.serviceCredentialState !== "revoked" && (
                 <Button size="sm" onClick={() => controlPower("start")} disabled={powerPending !== null}>
                   {powerPending === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
-                  Start app
-                </Button>
+                  {translateInterface("m2e4f3ea97036")}</Button>
               )}
               {controllable && !off && (
                 <>
                   <Button variant="outline" size="sm" onClick={() => controlPower("restart")} disabled={powerPending !== null}>
                     {powerPending === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                    Restart
-                  </Button>
+                    {translateInterface("m6b983a81e5e8")}</Button>
                   <Button variant="outline" size="sm" onClick={() => setConfirmStop(true)} disabled={powerPending !== null}>
                     {powerPending === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />}
-                    Turn off app
-                  </Button>
+                    {translateInterface("ma71f685036e7")}</Button>
                 </>
               )}
             </div>
           </div>
           <div className="grid gap-4 p-4 text-sm sm:grid-cols-2">
-            <div><span className="text-muted-foreground">Status</span><p className="font-medium">{unifiedApp?.status || drawerApp?.status || "unknown"}</p></div>
-            <div><span className="text-muted-foreground">Health</span><p className="font-medium">{appHealthLabel(unifiedApp) || unifiedApp?.healthStatus || "unknown"}</p></div>
-            <div><span className="text-muted-foreground">Version</span><p className="font-medium">{unifiedApp?.version || "—"}</p></div>
-            <div><span className="text-muted-foreground">Type</span><p className="font-medium">{unifiedApp?.type || "app"}</p></div>
-            <div><span className="text-muted-foreground">URL</span><p className="font-medium">{drawerApp?.url ? <a className="inline-flex items-center gap-1 text-primary hover:underline" href={drawerApp.url}><ExternalLink className="h-3 w-3" /> Open</a> : "—"}</p></div>
+            <div><span className="text-muted-foreground">{translateInterface("m920e413c7d41")}</span><p className="font-medium">{unifiedApp?.status || drawerApp?.status || translateInterface("mb23a6a8439c0")}</p></div>
+            <div><span className="text-muted-foreground">{translateInterface("m55898449eb74")}</span><p className="font-medium">{appHealthLabel(unifiedApp) || unifiedApp?.healthStatus || translateInterface("mb23a6a8439c0")}</p></div>
+            <div><span className="text-muted-foreground">{translateInterface("mdd167905de0d")}</span><p className="font-medium">{unifiedApp?.version || "—"}</p></div>
+            <div><span className="text-muted-foreground">{translateInterface("mbaaddf70fb5d")}</span><p className="font-medium">{unifiedApp?.type || "app"}</p></div>
+            <div><span className="text-muted-foreground">{translateInterface("me7a241debad5")}</span><p className="font-medium">{drawerApp?.url ? <a className="inline-flex items-center gap-1 text-primary hover:underline" href={drawerApp.url}><ExternalLink className="h-3 w-3" /> {" "}{translateInterface("med077f3d8125")}</a> : "—"}</p></div>
           </div>
           {controllable && (
             <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-sm font-medium">Automatic recovery</p>
+                <p className="text-sm font-medium">{translateInterface("md7b62393f565")}</p>
                 <p className="mt-1 text-[13px] text-muted-foreground">
-                  Restart this app after repeated health-check failures. Turn this off while deliberately debugging it.
-                </p>
+                  {translateInterface("mc2fbdcac2b30")}</p>
                 {healthPolicyError ? <p className="mt-1 text-[13px] text-destructive">{healthPolicyError}</p> : null}
               </div>
               <Switch
                 checked={unifiedApp?.autoRestart !== false}
                 disabled={healthPolicyPending}
                 onCheckedChange={setAutomaticRecovery}
-                aria-label={`Automatic recovery for ${title}`}
+                aria-label={translateInterface("m73999e808689", { value0: String(title) })}
               />
             </div>
           )}
           {unifiedApp?.containers?.map((container) => (
             <div key={container.name} className="flex items-center justify-between p-4 text-sm">
-              <div><p className="font-medium">{container.name}</p><p className="text-xs text-muted-foreground">{container.ip || "No IP"}</p></div>
+              <div><p className="font-medium">{container.name}</p><p className="text-xs text-muted-foreground">{container.ip || translateInterface("m737d8fa3e6b2")}</p></div>
               <Badge variant="outline">{container.status}</Badge>
             </div>
           ))}
@@ -1024,11 +1230,11 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
         <div className="space-y-3">
           {permissions.length > 0 && (
             <div className="flex justify-end">
-              <Button variant="outline" size="sm" onClick={revokeAllPermissions}>Revoke All</Button>
+              <Button variant="outline" size="sm" onClick={revokeAllPermissions}>{translateInterface("meceb04bfa892")}</Button>
             </div>
           )}
           {permissions.length === 0 ? (
-            <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No permissions granted.</div>
+            <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m8e6805519977")}</div>
           ) : permissions.map((permission) => (
             <div key={permission.id || permission.permission} className="flex items-start justify-between gap-3 rounded-md bg-accent/30 px-3 py-2.5 text-sm">
               <div className="min-w-0">
@@ -1036,12 +1242,12 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
                 <p className="mt-0.5 text-xs text-muted-foreground">{permissionDescription(permission)}</p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {permission.descriptor?.category && <Badge variant="outline">{permission.descriptor.category}</Badge>}
-                  {permission.descriptor?.risk && <Badge variant="outline">{permission.descriptor.risk} risk</Badge>}
-                  <Badge variant="outline">{permission.grantType || "granted"}</Badge>
+                  {permission.descriptor?.risk && <Badge variant="outline">{permission.descriptor.risk} {translateInterface("m2c6ef0f0d0e4")}</Badge>}
+                  <Badge variant="outline">{permission.grantType || translateInterface("mdd515d1975b8")}</Badge>
                 </div>
                 <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{permission.permission}</p>
               </div>
-              <Button variant="outline" size="sm" onClick={() => revokeAppPermission(permission.permission)}>Revoke</Button>
+              <Button variant="outline" size="sm" onClick={() => revokeAppPermission(permission.permission)}>{translateInterface("m87e6d00bbf53")}</Button>
             </div>
           ))}
         </div>
@@ -1049,28 +1255,25 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
 
       {tab === "network" && isAdmin && (
         <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-          Direct access and subdomain networking are managed by Control Panel. Container details are shown in Overview.
-        </div>
-      )}
-
-      {tab === "update-channel" && isAdmin && unifiedApp?.updateChannelKey && (
-        <UpdateChannels componentId={unifiedApp.updateChannelKey} />
+          {translateInterface("m0daef8af935c")}</div>
       )}
 
       {tab === "link-handling" && (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No link handlers registered.</div>
+        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m27e281ba50ac")}</div>
       )}
     </div>
   );
 }
 
 function AppBranding({ appId, appName, isAdmin }: { appId: string; appName: string; isAdmin: boolean }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [tab, setTab] = useState<"my-branding" | "server-default">("my-branding");
   return (
     <div className="space-y-6">
       <div className="flex gap-1 border-b">
-        <button className={tabClass(tab === "my-branding")} onClick={() => setTab("my-branding")}>My Branding</button>
-        {isAdmin && <button className={tabClass(tab === "server-default")} onClick={() => setTab("server-default")}>Server Default</button>}
+        <button className={tabClass(tab === "my-branding")} onClick={() => setTab("my-branding")}>{translateInterface("ma9f351a4b44d")}</button>
+        {isAdmin && <button className={tabClass(tab === "server-default")} onClick={() => setTab("server-default")}>{translateInterface("m173243930c8e")}</button>}
       </div>
       {tab === "my-branding" && <AppBrandingEditor appId={appId} appName={appName} scope="user" />}
       {tab === "server-default" && isAdmin && <AppBrandingEditor appId={appId} appName={appName} scope="server" />}
@@ -1079,6 +1282,8 @@ function AppBranding({ appId, appName, isAdmin }: { appId: string; appName: stri
 }
 
 function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: string; scope: BrandingScope }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [style, setStyle] = useState<SiteNameStyle>(DEFAULT_APP_WORDART);
   const [headerDisplayMode, setHeaderDisplayMode] = useState("logo-text");
   const [customName, setCustomName] = useState("");
@@ -1119,14 +1324,14 @@ function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    setStatus(res.ok ? "Saved" : "Save failed");
+    setStatus(res.ok ? translateInterface("mb5c120b316c2") : translateInterface("m53ad6f999b1f"));
     setSaving(false);
   }
 
   async function reset() {
     setSaving(true);
     const res = await fetch(endpoint, { method: "DELETE" });
-    setStatus(res.ok ? "Reset" : "Reset failed");
+    setStatus(res.ok ? translateInterface("mdaee7606b339") : translateInterface("m089cb45b70a0"));
     await load();
     setSaving(false);
   }
@@ -1136,43 +1341,42 @@ function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: 
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-base font-semibold">{isUser ? "My Branding" : "Server Default"}</h3>
+        <h3 className="text-base font-semibold">{isUser ? translateInterface("ma9f351a4b44d") : translateInterface("m173243930c8e")}</h3>
         <p className="text-[13px] text-muted-foreground">
-          {isUser ? "Customize how this app appears for your account." : "Set the default app branding seen before a user adds their own override."}
+          {isUser ? translateInterface("m0f65725af27c") : translateInterface("mf7dd68186a22")}
         </p>
       </div>
 
       {isUser && (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1.5 text-sm">
-            <span className="font-medium">Display name</span>
+            <span className="font-medium">{translateInterface("m2b7f6a84de91")}</span>
             <input value={customName} onChange={(event) => setCustomName(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
           </label>
           <label className="space-y-1.5 text-sm">
-            <span className="font-medium">Custom icon URL</span>
+            <span className="font-medium">{translateInterface("ma215d4d2a43d")}</span>
             <input value={customIconUrl} onChange={(event) => setCustomIconUrl(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="https://..." />
           </label>
         </div>
       )}
 
       <label className="space-y-1.5 text-sm">
-        <span className="font-medium">Header display</span>
+        <span className="font-medium">{translateInterface("mdaf03ec57700")}</span>
         <select value={headerDisplayMode} onChange={(event) => setHeaderDisplayMode(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm sm:max-w-xs">
-          <option value="logo-text">Icon and name</option>
-          <option value="logo-only">Icon only</option>
-          <option value="text-only">Name only</option>
+          <option value="logo-text">{translateInterface("m473c351183d5")}</option>
+          <option value="logo-only">{translateInterface("m7a0470083bd6")}</option>
+          <option value="text-only">{translateInterface("ma10f973bb176")}</option>
         </select>
       </label>
 
-      <WordArtPickerInline siteName={customName || appName} style={style} setStyle={setStyle} />
+      <WordArtPickerInline siteName={customName || appName} style={style} setStyle={(next) => { setStyle(next); if (isUser && next.mytitle) setCustomName(next.mytitle.name); }} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Save</Button>
+      <div className="studio-save-bar flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{translateInterface("m1509f561f241")}</Button>
         {isUser && (
           <Button size="sm" variant="outline" onClick={reset} disabled={saving}>
             <RotateCcw className="h-4 w-4" />
-            Reset
-          </Button>
+            {translateInterface("mdaee7606b339")}</Button>
         )}
         {status && <span className="text-sm text-muted-foreground">{status}</span>}
       </div>
@@ -1181,6 +1385,8 @@ function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: 
 }
 
 export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { isAdmin: boolean; hasUserContext?: boolean; initialAppId?: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [selectedApp, setSelectedApp] = useState<string | null>(initialAppId || null);
 
   const urlApp = useMemo(() => {
@@ -1198,10 +1404,7 @@ export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { i
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-foreground">Apps</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Apps installed on this server and how they behave for you</p>
-      </div>
+      <PageHeader title={translateInterface("m89dd748442c1")} description={translateInterface("mbc5dbd212da8")} />
       {hasUserContext && <InstalledAppsList onOpen={setSelectedApp} />}
       {isAdmin && <AdminAppSections onOpen={setSelectedApp} />}
     </div>

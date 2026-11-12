@@ -1,5 +1,10 @@
 'use client';
 
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
@@ -35,7 +40,7 @@ import { Badge } from '@/components/ui/badge';
 import { InstallDialog } from '@/components/market/install-dialog';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
 import { HealthDot } from '@/components/market/health-dot';
-import { ForwardAuthToggle } from '@/components/market/forward-auth-toggle';
+import { AppAccessSettings } from '@/components/market/app-access-settings';
 import { EntrancesDisplay } from '@/components/market/entrances-display';
 import { authenticatedFetch } from '@/lib/api-client';
 import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent } from '@/lib/market/types';
@@ -51,12 +56,7 @@ const ICON_MAP: Record<string, typeof Search> = {
   plug: Plug,
 };
 
-const preparingInstallEvent: InstallEvent = {
-  step: 0,
-  totalSteps: 0,
-  status: 'running',
-  message: 'Preparing installation...',
-};
+
 
 // Colorful app-icon tile by category (mockup palette — intentionally light in both
 // themes, like an OS home-screen icon).
@@ -72,6 +72,15 @@ function heroTile(category?: string) {
 }
 
 export default function AppDetailPage() {
+  const translateInterface = useInterfaceTranslations("interface");
+const preparingInstallEvent: InstallEvent = {
+  step: 0,
+  totalSteps: 0,
+  status: 'running',
+  message: translateInterface("mb7b55c7307a4"),
+};
+
+
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -117,10 +126,10 @@ export default function AppDetailPage() {
       const suffix = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
       const res = await fetch(`/api/market/app/${encodeURIComponent(appId)}${suffix}`);
       if (res.status === 404) {
-        setError('App not found');
+        setError(translateInterface("mab1663c1b5b2"));
         return;
       }
-      if (!res.ok) throw new Error('Failed to fetch app details');
+      if (!res.ok) throw new Error(translateInterface("m4a9b9269be54"));
       const data = await res.json();
       setApp(data.app);
       if (data.app?.itemKind === 'integration' && data.app.target?.appId) {
@@ -128,9 +137,9 @@ export default function AppDetailPage() {
         if (targetRes.ok) setTargetStatus(await targetRes.json());
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load app details');
+      setError(translateInterface("m49a2883cb71a"));
     }
-  }, [appId, sourceId]);
+  }, [appId, sourceId, translateInterface]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -302,7 +311,7 @@ export default function AppDetailPage() {
         step: 0,
         totalSteps: 0,
         status: 'error',
-        message: 'Failed to start install',
+        message: translateInterface("m545028cf06c9"),
         detail: String(err),
       }]);
       setInstallError(err instanceof Error ? err.message : String(err));
@@ -325,11 +334,11 @@ export default function AppDetailPage() {
         body: JSON.stringify({ sourceId: app.sourceId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to switch source');
-      setSourceSwitchMessage(`Future updates will use ${data.sourceName || app.sourceName || app.sourceId}.`);
+      if (!res.ok) throw new Error(data.error || translateInterface("m5aa40c1a8a54"));
+      setSourceSwitchMessage(translateInterface("me1c329162f46", {source: String(data.sourceName || app.sourceName || app.sourceId)}));
       await fetchStatus();
     } catch (err) {
-      setSourceSwitchMessage(err instanceof Error ? err.message : 'Failed to switch source');
+      setSourceSwitchMessage(err instanceof Error ? err.message : translateInterface("m5aa40c1a8a54"));
     } finally {
       setSwitchingSource(false);
     }
@@ -344,15 +353,15 @@ export default function AppDetailPage() {
         method: 'POST',
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Failed to sync manifest');
-      const source = data.sourceId || status?.sourceName || status?.sourceId || app.sourceName || app.sourceId || 'selected Market source';
+      if (!res.ok || data.status !== 'ok') throw new Error(data.error || translateInterface("m1264a555555b"));
+      const source = data.sourceId || status?.sourceName || status?.sourceId || app.sourceName || app.sourceId || translateInterface("m97fc597a6e34");
       const surfaceCopy = Number.isFinite(data.surfaces)
-        ? `${data.surfaces} surface${data.surfaces === 1 ? '' : 's'}`
-        : 'manifest surfaces';
-      setManifestSyncMessage(`Synced ${app.name} from ${source}; ${surfaceCopy} are now available to UI.`);
+        ? translateInterface("mcef48023dc9a", {count: Number(data.surfaces)})
+        : translateInterface("m2e1444edc0e2");
+      setManifestSyncMessage(translateInterface("m915c8bdb5720", {app: app.name, source, surfaces: surfaceCopy}));
       await Promise.all([fetchApp(), fetchStatus()]);
     } catch (err) {
-      setManifestSyncMessage(err instanceof Error ? err.message : 'Failed to sync manifest');
+      setManifestSyncMessage(err instanceof Error ? err.message : translateInterface("m1264a555555b"));
     } finally {
       setSyncingManifest(false);
     }
@@ -369,14 +378,14 @@ export default function AppDetailPage() {
         body: JSON.stringify({ integrationId: app.id, sourceId: app.sourceId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to apply integration');
-      setIntegrationMessage(`${app.name} applied to ${app.target?.appName || app.target?.appId}.`);
+      if (!res.ok || !data.success) throw new Error(data.error || translateInterface("m7a2b789693bd"));
+      setIntegrationMessage(translateInterface("m74c1bc1c6184", {app: app.name, target: String(app.target?.appName || app.target?.appId)}));
       if (app.target?.appId) {
         const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
         if (targetRes.ok) setTargetStatus(await targetRes.json());
       }
     } catch (err) {
-      setIntegrationMessage(err instanceof Error ? err.message : 'Failed to apply integration');
+      setIntegrationMessage(err instanceof Error ? err.message : translateInterface("m7a2b789693bd"));
     } finally {
       setApplyingIntegration(false);
     }
@@ -398,16 +407,16 @@ export default function AppDetailPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to remove integration');
+      if (!res.ok || !data.success) throw new Error(data.error || translateInterface("m190198b10146"));
       setIntegrationMessage(hasUninstall
-        ? `${app.name} removed from ${app.target?.appName || app.target?.appId}.`
-        : `${app.name} record removed. This Integration does not yet declare app teardown steps.`);
+        ? translateInterface("mb0c5f6f30c68", {app: app.name, target: String(app.target?.appName || app.target?.appId)})
+        : translateInterface("me590d90b92a7", {app: app.name}));
       if (app.target?.appId) {
         const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
         if (targetRes.ok) setTargetStatus(await targetRes.json());
       }
     } catch (err) {
-      setIntegrationMessage(err instanceof Error ? err.message : 'Failed to remove integration');
+      setIntegrationMessage(err instanceof Error ? err.message : translateInterface("m190198b10146"));
     } finally {
       setRemovingIntegration(false);
     }
@@ -440,10 +449,10 @@ export default function AppDetailPage() {
         method: 'DELETE',
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Could not remove this app from Market');
+      if (!res.ok) throw new Error(data.error || translateInterface("m1a8ce79186c6"));
       router.push('/market');
     } catch (err) {
-      setSourceSwitchMessage(err instanceof Error ? err.message : 'Could not remove this app from Market');
+      setSourceSwitchMessage(err instanceof Error ? err.message : translateInterface("m1a8ce79186c6"));
     } finally {
       setRemovingDirectEntry(false);
     }
@@ -469,21 +478,19 @@ export default function AppDetailPage() {
           className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to Market
-        </button>
+          {translateInterface("m7e0461b96831")}</button>
         <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
           <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-          <h2 className="text-lg font-semibold text-foreground mb-1">App Not Found</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-1">{translateInterface("mfc142cacf2d2")}</h2>
           <p className="text-sm text-muted-foreground">
-            {error || `The app "${appId}" could not be found in the catalog.`}
+            {error || translateInterface("mf5c4b7d985ec", { value0: String(appId) })}
           </p>
           <Button
             variant="outline"
             className="mt-4"
             onClick={() => router.push('/market')}
           >
-            Return to Market
-          </Button>
+            {translateInterface("mf3198e9d9e96")}</Button>
         </div>
       </div>
     );
@@ -513,21 +520,21 @@ export default function AppDetailPage() {
     return gated ? 'server-users' : 'public';
   })();
   const accessLabel = accessLevel === 'internal' ? 'Internal'
-    : accessLevel === 'server-users' ? `Only ${siteName} users`
+    : accessLevel === 'server-users' ? translateInterface("mc664ff9c2740", {site: siteName})
     : 'Public';
   const accessOneLiner = accessLevel === 'internal'
-    ? 'Only reachable inside your server — not exposed to the internet.'
+    ? translateInterface("m5dc238effbb5")
     : accessLevel === 'server-users'
-      ? `Only people with a ${siteName} account can open this app.`
-      : 'Anyone with the link can open this app.';
+      ? translateInterface("m2a2e0c73779e", {site: siteName})
+      : translateInterface("m35b0d6f9bfd7");
   const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
   const capabilityLabels = [
     app.capabilities?.widgets ? 'Widgets' : null,
     app.capabilities?.notifications ? 'Notifications' : null,
-    app.capabilities?.smtp ? 'Mail sending' : null,
-    app.capabilities?.link_handlers?.length ? 'Link handlers' : null,
-    app.surfaces?.length ? `${app.surfaces.length} app surface${app.surfaces.length === 1 ? '' : 's'}` : null,
-    app.entrances?.length ? `${app.entrances.length} entrance${app.entrances.length === 1 ? '' : 's'}` : null,
+    app.capabilities?.smtp ? translateInterface("m5208955c81b6") : null,
+    app.capabilities?.link_handlers?.length ? translateInterface("m0abf73ccd714") : null,
+    app.surfaces?.length ? translateInterface("m8861a842bbcd", {count: app.surfaces.length}) : null,
+    app.entrances?.length ? translateInterface("m3e8ee6da560e", {count: app.entrances.length}) : null,
   ].filter(Boolean) as string[];
 
   const latestInstallEvent = installEvents[installEvents.length - 1];
@@ -546,8 +553,7 @@ export default function AppDetailPage() {
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to Market
-      </button>
+        {translateInterface("m7e0461b96831")}</button>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       <div className="space-y-6">
@@ -569,7 +575,7 @@ export default function AppDetailPage() {
             {/* Unified market: apps are not labelled native vs external. Only the
                 distinct Integration item-kind keeps a badge. */}
             {isIntegration && (
-              <Badge variant="secondary" className="gap-1"><Plug className="h-3 w-3" /> Integration</Badge>
+              <Badge variant="secondary" className="gap-1"><Plug className="h-3 w-3" /> {translateInterface("m9a42d40a3f31")}</Badge>
             )}
           </div>
           <p className="mt-1 text-[15px] text-muted-foreground">{app.description}</p>
@@ -587,22 +593,21 @@ export default function AppDetailPage() {
 
       {/* Meta band */}
       <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-6">
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Version</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Category</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Source</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || 'Market'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.developer || app.sourceName || '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">License</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Account login</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mdd167905de0d")}</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m292c06f0045a")}</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m0e570ca6fabe")}</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || translateInterface("m5238d9bd03d5")}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m3fb7b39416f1")}</span><span className="truncate text-[13.5px] font-semibold">{app.developer || app.sourceName || '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mc011d6097bfb")}</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m50dfc76409a6")}</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}</span></div>
       </div>
 
       {isDirectEntry && (
         <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
           <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div>
-            <p className="text-sm font-semibold text-foreground">Added directly to this server</p>
+            <p className="text-sm font-semibold text-foreground">{translateInterface("m8687edd1b0f6")}</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              This app comes from the saved source shown below. YouEye records the exact content it installs, but has not verified who published it.
-            </p>
+              {translateInterface("m9ef0e4135980")}</p>
           </div>
         </div>
       )}
@@ -645,14 +650,14 @@ export default function AppDetailPage() {
       </div>
       {screenshots.length > 2 && (
         <div className="rounded-xl border bg-card p-[22px]">
-          <h2 className="mb-3 text-[15px] font-semibold">More screenshots</h2>
+          <h2 className="mb-3 text-[15px] font-semibold">{translateInterface("m60abd385d123")}</h2>
           <ScreenshotGallery screenshots={screenshots} />
         </div>
       )}
 
       {/* About */}
       <div className="rounded-xl border bg-card p-[22px]">
-        <h2 className="text-[15px] font-semibold">About this app</h2>
+        <h2 className="text-[15px] font-semibold">{translateInterface("m147cb2830419")}</h2>
         <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
           {longDescription}
         </div>
@@ -661,7 +666,7 @@ export default function AppDetailPage() {
       {/* What's new — release notes for the current version */}
       {app.detail?.releaseNotes && (
         <div className="rounded-xl border bg-card p-[22px]">
-          <h2 className="text-[15px] font-semibold">What&apos;s new{app.version ? ` in v${app.version}` : ''}</h2>
+          <h2 className="text-[15px] font-semibold">{translateInterface("m135e912e8905")}{app.version ? ' ' + translateInterface("me429bc12e900", {version: app.version}) : ''}</h2>
           <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
             {app.detail.releaseNotes}
           </div>
@@ -671,8 +676,7 @@ export default function AppDetailPage() {
       {/* Details section */}
       <div className="rounded-xl border border-border bg-card p-6">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-          What this app uses
-        </h2>
+          {translateInterface("m89a9f577c96e")}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* SSO / Forward-Auth */}
           {isIntegration ? (
@@ -681,34 +685,29 @@ export default function AppDetailPage() {
                 <Plug className="h-4 w-4 text-violet-600" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Target App</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("m83f58d099dbf")}</p>
                 <p className="text-sm font-medium text-foreground">
-                  {app.target?.appName || app.target?.appId || 'Unknown'}
+                  {app.target?.appName || app.target?.appId || translateInterface("mb764cdc0eab7")}
                   {app.target?.version ? ` ${app.target.version}` : ''}
                 </p>
               </div>
             </div>
           ) : isInstalled ? (
-            <ForwardAuthToggle
-              appId={app.id}
-              hasNativeSSO={app.supportsSSO}
-              forwardAuthEnabled={status?.forwardAuthEnabled ?? false}
-              onToggled={() => fetchStatus()}
-            />
+            <AppAccessSettings appId={app.id} />
           ) : (
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-muted">
                 <Shield className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">SSO Support</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("m7c3130232881")}</p>
                 <p className="text-sm font-medium text-foreground">
                   {app.supportsSSO ? (
-                    <span className="text-green-600">Native OAuth2</span>
+                    <span className="text-green-600">{translateInterface("m3b8ed34667d8")}</span>
                   ) : app.forwardAuth !== 'disabled' ? (
-                    <span className="text-green-600">Forward-auth (auto)</span>
+                    <span className="text-green-600">{translateInterface("ma6f7ed7701fa")}</span>
                   ) : (
-                    <span className="text-muted-foreground">Disabled</span>
+                    <span className="text-muted-foreground">{translateInterface("m75081b593d15")}</span>
                   )}
                 </p>
               </div>
@@ -721,7 +720,7 @@ export default function AppDetailPage() {
                 <Shield className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Permissions</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("mabccc78cc93c")}</p>
                 <p className="text-sm font-medium text-foreground">
                   {app.integrations[0].permissions.join(', ')}
                 </p>
@@ -735,7 +734,7 @@ export default function AppDetailPage() {
                 <Package className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">App features</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("ma14a04ae3d9d")}</p>
                 <p className="text-sm font-medium text-foreground">
                   {capabilityLabels.join(', ')}
                 </p>
@@ -750,7 +749,7 @@ export default function AppDetailPage() {
                 <Globe className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Website</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("mb5a229ac8bec")}</p>
                 <a
                   href={app.website}
                   target="_blank"
@@ -777,7 +776,7 @@ export default function AppDetailPage() {
                 <Code2 className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Source code</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("mbf046c7395cb")}</p>
                 <a href={app.sourceCode} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
                   {(() => { try { return new URL(app.sourceCode!).hostname; } catch { return app.sourceCode; } })()}
                   <ExternalLink className="h-3 w-3" />
@@ -793,9 +792,9 @@ export default function AppDetailPage() {
                 <BookOpen className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Documentation</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("mc205924de0fe")}</p>
                 <a href={app.docs} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-                  View docs<ExternalLink className="h-3 w-3" />
+                  {translateInterface("m61479fda2da0")}<ExternalLink className="h-3 w-3" />
                 </a>
               </div>
             </div>
@@ -808,9 +807,9 @@ export default function AppDetailPage() {
                 <MessageCircle className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Support</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("mbe91940b79f4")}</p>
                 <a href={app.support} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-                  Get help<ExternalLink className="h-3 w-3" />
+                  {translateInterface("mfd64e81bf74d")}<ExternalLink className="h-3 w-3" />
                 </a>
               </div>
             </div>
@@ -823,7 +822,7 @@ export default function AppDetailPage() {
                 <Package className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Market Source</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("m7c881e90d93a")}</p>
                 <p className="text-sm font-medium text-foreground">
                   {isInstalled && status?.sourceName ? status.sourceName : app.sourceName}
                 </p>
@@ -837,10 +836,10 @@ export default function AppDetailPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  This variant is from {app.sourceName || app.sourceId}.
+                  {translateInterface("mdcab824ab1f8", {source: app.sourceName || app.sourceId || ""})}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Current install source is {status?.sourceName || status?.sourceId}. Switching changes the source used for future update checks and updates.
+                  {translateInterface("m14d6f9f6432e", {source: status?.sourceName || status?.sourceId || ""})}
                 </p>
               </div>
               <Button
@@ -851,8 +850,7 @@ export default function AppDetailPage() {
                 className="border-primary/30 bg-card text-muted-foreground hover:bg-primary/15"
               >
                 {switchingSource ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
-                Use this source
-              </Button>
+                {translateInterface("m9d19bd2659fc")}</Button>
             </div>
           </div>
         )}
@@ -875,8 +873,7 @@ export default function AppDetailPage() {
             <div className="flex items-center gap-2 mb-2">
               <Tag className="h-4 w-4 text-muted-foreground" />
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
-                Tags
-              </p>
+                {translateInterface("m1331275bc537")}</p>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {app.tags.map((tag) => (
@@ -884,7 +881,7 @@ export default function AppDetailPage() {
                   key={tag}
                   type="button"
                   onClick={() => router.push(`/market?tag=${encodeURIComponent(tag)}`)}
-                  title={`Find apps tagged "${tag}"`}
+                  title={translateInterface("m08e9841e0650", { value0: String(tag) })}
                   className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   {tag}
@@ -910,8 +907,7 @@ export default function AppDetailPage() {
           <div className="flex items-center gap-2 mb-4">
             <KeyRound className="h-4 w-4 text-amber-600" />
             <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wide">
-              Default Credentials
-            </h2>
+              {translateInterface("m4b18a259d742")}</h2>
           </div>
           <div className="space-y-3">
             {credentials.map((cred, i) => (
@@ -919,20 +915,20 @@ export default function AppDetailPage() {
                 <p className="text-xs text-muted-foreground font-medium mb-2">{cred.label}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <p className="text-xs text-muted-foreground">Username</p>
+                    <p className="text-xs text-muted-foreground">{translateInterface("me3b89e9d33f8")}</p>
                     <div className="flex items-center gap-2">
                       <code className="text-sm font-mono text-foreground">{cred.username}</code>
                       <button
                         onClick={() => navigator.clipboard.writeText(cred.username)}
                         className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title="Copy username"
+                        title={translateInterface("m7ba3cdab9a58")}
                       >
                         <Copy className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Password</p>
+                    <p className="text-xs text-muted-foreground">{translateInterface("me7cf3ef4f17c")}</p>
                     <div className="flex items-center gap-2">
                       <code className="text-sm font-mono text-foreground">
                         {visiblePasswords.has(i) ? cred.password : '\u2022'.repeat(12)}
@@ -947,14 +943,14 @@ export default function AppDetailPage() {
                           });
                         }}
                         className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title={visiblePasswords.has(i) ? 'Hide password' : 'Show password'}
+                        title={visiblePasswords.has(i) ? translateInterface("ma60a56c584b3") : translateInterface("m6aeaa6a53d09")}
                       >
                         {visiblePasswords.has(i) ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                       </button>
                       <button
                         onClick={() => navigator.clipboard.writeText(cred.password)}
                         className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title="Copy password"
+                        title={translateInterface("me8cd8b5d57c9")}
                       >
                         <Copy className="h-3.5 w-3.5" />
                       </button>
@@ -965,8 +961,7 @@ export default function AppDetailPage() {
             ))}
           </div>
           <p className="text-xs text-amber-600/70 mt-3">
-            Use these credentials to access the app&apos;s admin panel. You can promote SSO users to admin from within the app.
-          </p>
+            {translateInterface("mfbb85e515554")}</p>
         </div>
       )}
 
@@ -976,7 +971,7 @@ export default function AppDetailPage() {
         <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
           <div className="space-y-4">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("m920e413c7d41")}</p>
               <div className="mt-2 flex items-center gap-2">
                 {isIntegration ? (
                   <Plug className="h-4 w-4 text-primary" />
@@ -987,12 +982,12 @@ export default function AppDetailPage() {
                 )}
                 <span className="text-sm font-medium text-foreground">
                   {isIntegration
-                    ? integrationInstalled ? 'Applied' : 'Available'
+                    ? integrationInstalled ? translateInterface("m0c79a9c22284") : translateInterface("me674447337e8")
                     : isInstalled
                       ? appStatus
                       : installing && installOperationAppId === appId && !installDone
-                        ? 'Installing'
-                        : 'Ready to install'}
+                        ? translateInterface("m8749b1693f74")
+                        : translateInterface("mbda18b9e55aa")}
                 </span>
                 {isInstalled && (
                   <HealthDot
@@ -1009,8 +1004,8 @@ export default function AppDetailPage() {
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium text-foreground">
                       {installDone
-                        ? installFailed ? 'Installation failed' : 'Ready'
-                        : `Installing ${app.name}`}
+                        ? installFailed ? translateInterface("md472ecf6a07e") : translateInterface("m5fa7aac5375c")
+                        : translateInterface("m336d8f982177", { value0: String(app.name) })}
                     </span>
                     <span className="text-muted-foreground">{installPercent}%</span>
                   </div>
@@ -1054,7 +1049,7 @@ export default function AppDetailPage() {
                     {!installFailed && status?.url && (
                       <Button onClick={() => window.open(status.url, '_blank')}>
                         <ExternalLink className="h-4 w-4 mr-2" />
-                        Open {app.name}
+                        {translateInterface("med077f3d8125")}{" "}{app.name}
                       </Button>
                     )}
                     <Button
@@ -1065,8 +1060,7 @@ export default function AppDetailPage() {
                         setInstallDone(false);
                       }}
                     >
-                      Dismiss
-                    </Button>
+                      {translateInterface("m48845bff334a")}</Button>
                   </div>
                 )}
               </div>
@@ -1077,8 +1071,7 @@ export default function AppDetailPage() {
                     <>
                       <Button disabled>
                         <CheckCircle2 className="h-4 w-4 mr-2" />
-                        Applied
-                      </Button>
+                        {translateInterface("m0c79a9c22284")}</Button>
                       <Button
                         variant="outline"
                         onClick={handleRemoveIntegration}
@@ -1086,7 +1079,7 @@ export default function AppDetailPage() {
                         className="text-red-600 hover:bg-red-50 hover:text-red-700"
                       >
                         {removingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-                        {app.integrations?.[0]?.hasUninstall ? `Remove ${app.name}` : 'Remove record'}
+                        {app.integrations?.[0]?.hasUninstall ? translateInterface("m3028bf7d2dec", { value0: String(app.name) }) : translateInterface("m4234755d5171")}
                       </Button>
                     </>
                   ) : (
@@ -1095,13 +1088,13 @@ export default function AppDetailPage() {
                       disabled={!targetIsInstalled || applyingIntegration}
                     >
                       {applyingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                      {targetIsInstalled ? `Apply ${app.name}` : `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`}
+                      {targetIsInstalled ? translateInterface("m7a0f69620a0d", { value0: String(app.name) }) : translateInterface("m8766f7298e81", { value0: String(app.target?.appName || app.target?.appId || translateInterface("ma60ed23b62ec")) })}
                     </Button>
                   )
                 ) : !isInstalled ? (
                   <>
                     <Button onClick={() => setShowInstallDialog(true)}>
-                      Install {app.name}
+                      {translateInterface("m569ca49f4aaf")}{" "}{app.name}
                     </Button>
                     {isDirectEntry && (
                       <Button
@@ -1110,8 +1103,7 @@ export default function AppDetailPage() {
                         disabled={removingDirectEntry}
                       >
                         {removingDirectEntry ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                        Remove from Market
-                      </Button>
+                        {translateInterface("mf466b942b616")}</Button>
                     )}
                   </>
                 ) : (
@@ -1119,7 +1111,7 @@ export default function AppDetailPage() {
                     {status?.url && (
                       <Button onClick={() => window.open(status.url, '_blank')}>
                         <ExternalLink className="h-4 w-4 mr-2" />
-                        Open {app.name}
+                        {translateInterface("med077f3d8125")}{" "}{app.name}
                       </Button>
                     )}
                     <Button
@@ -1128,8 +1120,7 @@ export default function AppDetailPage() {
                       disabled={syncingManifest}
                     >
                       {syncingManifest ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                      Sync manifest
-                    </Button>
+                      {translateInterface("m1119b6d92587")}</Button>
                     <Button
                       variant="outline"
                       className="text-red-600 hover:bg-red-50 hover:text-red-700"
@@ -1137,8 +1128,7 @@ export default function AppDetailPage() {
                       disabled={uninstalling}
                     >
                       {uninstalling ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-                      Uninstall
-                    </Button>
+                      {translateInterface("mfe199528850a")}</Button>
                   </>
                 )}
               </div>
@@ -1146,20 +1136,20 @@ export default function AppDetailPage() {
 
             <div className="border-t border-border pt-4 text-sm">
               <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Source</span>
-                <span className="text-right font-medium text-foreground">{app.sourceName || app.sourceId || 'Market'}</span>
+                <span className="text-muted-foreground">{translateInterface("m0e570ca6fabe")}</span>
+                <span className="text-right font-medium text-foreground">{app.sourceName || app.sourceId || translateInterface("m5238d9bd03d5")}</span>
               </div>
               {app.version && (
                 <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-muted-foreground">Version</span>
+                  <span className="text-muted-foreground">{translateInterface("mdd167905de0d")}</span>
                   <span className="font-medium text-foreground">v{app.version}</span>
                 </div>
               )}
               {!isIntegration && (
                 <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-muted-foreground">Account login</span>
+                  <span className="text-muted-foreground">{translateInterface("m50dfc76409a6")}</span>
                   <span className="text-right font-medium text-foreground">
-                    {app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}
+                    {app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}
                   </span>
                 </div>
               )}
@@ -1206,19 +1196,21 @@ function FeaturedScreenshot({
   screenshot: { url: string; caption?: string };
   index: number;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [unavailable, setUnavailable] = useState(false);
-  const label = screenshot.caption || `Screenshot ${index + 1}`;
+  const label = screenshot.caption || translateInterface("m7e71e3bb6213", { value0: String(index + 1) });
 
   return (
     <div className="relative overflow-hidden rounded-2xl border bg-muted/30" style={{ aspectRatio: '16 / 10' }}>
       {unavailable ? (
         <div
           role="img"
-          aria-label={`${label} unavailable`}
+          aria-label={translateInterface("m50ce40e10ef8", { value0: String(label) })}
           className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground/60"
         >
           <Camera className="h-7 w-7" />
-          <span className="text-xs">Screenshot unavailable</span>
+          <span className="text-xs">{translateInterface("mb9bfa8c88c0d")}</span>
         </div>
       ) : (
         <Image
@@ -1240,6 +1232,8 @@ function FeaturedScreenshot({
 }
 
 function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [unavailable, setUnavailable] = useState<Set<number>>(new Set());
 
@@ -1262,16 +1256,16 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
             {unavailable.has(i) ? (
               <div
                 role="img"
-                aria-label={`${shot.caption || `Screenshot ${i + 1}`} unavailable`}
+                aria-label={translateInterface("m50ce40e10ef8", { value0: String(shot.caption || translateInterface("m02f26e93f8eb", {number: i + 1})) })}
                 className="flex h-[180px] w-[280px] flex-col items-center justify-center gap-2 bg-muted/30 text-muted-foreground/60"
               >
                 <Camera className="h-7 w-7" />
-                <span className="text-xs">Screenshot unavailable</span>
+                <span className="text-xs">{translateInterface("mb9bfa8c88c0d")}</span>
               </div>
             ) : (
               <Image
                 src={shot.url}
-                alt={shot.caption || `Screenshot ${i + 1}`}
+                alt={shot.caption || translateInterface("m7e71e3bb6213", { value0: String(i + 1) })}
                 width={280}
                 height={180}
                 className="h-[180px] w-auto object-cover"
@@ -1321,7 +1315,7 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
               src={screenshots[selectedIndex].url}
               alt={
                 screenshots[selectedIndex].caption ||
-                `Screenshot ${selectedIndex + 1}`
+                translateInterface("m7e71e3bb6213", { value0: String(selectedIndex + 1) })
               }
               width={1200}
               height={800}

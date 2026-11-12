@@ -13,6 +13,7 @@
 import { chmod, readFile, mkdir, rm, writeFile } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { spineClient } from '@/lib/spine/client';
 import { execCommand, incusRequest, incusUploadFile } from '@/lib/incus/server';
 import {
@@ -21,9 +22,16 @@ import {
   removeRoute,
   setConfig as setCaddyConfig,
 } from '@/lib/caddy/client';
+import { withAppInventory, withAppLifecycles } from '@/lib/market/update-admission';
 import { restoreApp } from './app-restore';
-import { listInstalledApps } from '@/lib/market/metadata';
-import { uninstallApp } from '@/lib/market/uninstaller';
+import { listInstalledApps, listRetainedApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
+import { uninstallApp, deregisterAppFromUI } from '@/lib/market/uninstaller';
+import { getAdmissionPolicy } from '@/lib/admission/store';
+import { identityRows, identitySql } from '@/lib/identity/store';
+import { getInstalledApp, removeInstalledApp } from '@/lib/market/installed-apps';
+import { isUuid } from '../../../../shared/admission';
+import type { InstallMetadata } from '@/lib/market/types';
+import { quiesceAppCredentialRuntime } from '@/lib/apps/service-credential-probe';
 import { getClient } from '@/lib/identity/store';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import type {
@@ -32,10 +40,10 @@ import type {
   BackupEventCallback,
 } from './types';
 import { BACKUP_STAGING_ROOT, runningContainers } from './workspace';
-import { isPlatformDatabase, PLATFORM_DATABASES, replacePlatformDatabase } from './postgres';
+import { isPlatformDatabase, PLATFORM_DATABASES, replacePlatformDatabase, suspendRestoredAppCredentials } from './postgres';
 import { assessBackupCompatibility, readCurrentBackupSourceIdentity } from './compatibility';
 import * as caddy from '@/lib/caddy/client';
-import { setDomainDNS } from '@/lib/apps/pihole-api';
+import { getDNSRecords, setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
 import {
   configureControlPanelIdentitySSO,
@@ -43,15 +51,23 @@ import {
 } from '@/lib/identity/core-clients';
 import { tlsStorage } from '@/lib/acme/storage';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
+import { readRetainedAppInventory, restoreRetainedApps } from './retained-apps';
+import { markCredentialReady, reconcileRetainedAppCredential } from '@/lib/apps/service-credential-bridge';
+import { operateAppCredential } from '@/lib/apps/service-credential-operations';
+import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
+import { appServiceCredentials } from '@/lib/apps/service-credential-store';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
 const RESTORE_CONTAINER_START_ATTEMPTS = 5;
 const RESTORE_CONTAINER_START_DELAY_MS = 1500;
+const RESTORED_PIHOLE_READY_ATTEMPTS = 20;
+const RESTORED_PIHOLE_READY_DELAY_MS = 1000;
 const CORE_VOLUME_MAP_SCHEMA = 'youeye.backup.volume-map.v1';
 const SETUP_RESTORABLE_CORE_VOLUMES = new Set([
   '/var/lib/youeye/config',
   '/var/lib/youeye/pihole',
   '/var/lib/youeye/pointer',
+  '/var/lib/youeye/ui-data',
 ]);
 const SETUP_PRESERVED_MACHINE_CONFIG = [
   '/var/lib/youeye/config/cli-token',
@@ -64,10 +80,13 @@ const KNOWN_CORE_VOLUMES = new Set([
   '/var/lib/youeye/networks',
   '/var/lib/youeye/ui',
   '/var/lib/youeye/pointer',
+  '/var/lib/youeye/ui-data',
 ]);
 
 interface RestoredAppInventory {
   appId: string;
+  installationId: string;
+  containers: string[];
   subdomain?: string;
   domain?: string;
   ssoClientId?: string;
@@ -89,9 +108,20 @@ interface PreservedMachineConfig {
 async function captureSetupMachineConfig(): Promise<PreservedMachineConfig[]> {
   return Promise.all(SETUP_PRESERVED_MACHINE_CONFIG.map(async filePath => {
     try {
-      return { path: filePath, contents: await readFile(filePath) };
-    } catch {
-      return { path: filePath, contents: null };
+      const contents = await readFile(filePath);
+      if (filePath === SETUP_PRESERVED_MACHINE_CONFIG[0] && contents.length === 0) {
+        throw new Error('Target runtime credential is empty');
+      }
+      return { path: filePath, contents };
+    } catch (error) {
+      // Only an absent optional config may be removed after applying the
+      // source volume. An unreadable file is still target-owned state, and
+      // the credential is mandatory for exact-target recovery.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT'
+        && filePath !== SETUP_PRESERVED_MACHINE_CONFIG[0]) {
+        return { path: filePath, contents: null };
+      }
+      throw new Error('Target runtime configuration could not be captured before restore', { cause: error });
     }
   }));
 }
@@ -107,7 +137,7 @@ async function restoreSetupMachineConfig(files: PreservedMachineConfig[]): Promi
   }
 }
 
-async function prepareSetupRestoreVolumeMap(coreStagingDir: string): Promise<void> {
+async function prepareSetupRestoreVolumeMap(coreStagingDir: string, retainedApps: InstallMetadata[] = []): Promise<void> {
   const volumeMapPath = path.join(coreStagingDir, 'volume-map.json');
   const document = JSON.parse(await readFile(volumeMapPath, 'utf8')) as {
     schema?: unknown;
@@ -118,11 +148,13 @@ async function prepareSetupRestoreVolumeMap(coreStagingDir: string): Promise<voi
   }
 
   const volumes = document.volumes as CoreVolumeMapping[];
+  const retainedPaths = new Set(retainedApps.map(app => `/var/lib/youeye/app-${app.appId}`));
   for (const mapping of volumes) {
     const source = typeof mapping?.source === 'string'
       ? path.posix.normalize(mapping.source.replace(/\/$/, ''))
       : '';
-    if (!source || typeof mapping?.archive_path !== 'string' || !KNOWN_CORE_VOLUMES.has(source)) {
+    if (!source || typeof mapping?.archive_path !== 'string'
+      || (!KNOWN_CORE_VOLUMES.has(source) && !retainedPaths.has(source))) {
       throw new Error('Core backup contains an unsupported setup volume');
     }
     mapping.source = source;
@@ -133,12 +165,23 @@ async function prepareSetupRestoreVolumeMap(coreStagingDir: string): Promise<voi
   // setup browser and point services at the source appliance. Restore only
   // portable persistent state; the structured config/database records below
   // rebuild the target-specific service bindings.
-  const portable = volumes.filter(mapping => SETUP_RESTORABLE_CORE_VOLUMES.has(mapping.source));
+  const portable = volumes.filter(mapping => SETUP_RESTORABLE_CORE_VOLUMES.has(mapping.source) || retainedPaths.has(mapping.source));
   await writeFile(
     volumeMapPath,
     `${JSON.stringify({ schema: CORE_VOLUME_MAP_SCHEMA, volumes: portable }, null, 2)}\n`,
     { mode: 0o600 },
   );
+}
+
+async function preserveRetainedAppNetworks(coreStagingDir: string): Promise<void> {
+  const filename = path.join(coreStagingDir, 'volume-map.json');
+  const document = JSON.parse(await readFile(filename, 'utf8'));
+  if (document.schema !== CORE_VOLUME_MAP_SCHEMA || !Array.isArray(document.volumes)) {
+    throw new Error('Core backup contains an invalid volume map');
+  }
+  document.volumes = document.volumes.filter((mapping: CoreVolumeMapping) =>
+    path.posix.normalize(mapping.source) !== '/var/lib/youeye/networks');
+  await writeFile(filename, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
 }
 
 async function replaceSetupContainerRoute(
@@ -186,10 +229,7 @@ async function reconcileSetupRuntime(spineConfig: Record<string, unknown>): Prom
 
   await caddy.setDomain(domain);
   await replaceSetupContainerRoute(domain, 'youeye-control', 3000, controlSubdomain);
-  const identity = await getIdentityConfig();
-  await caddy.ensureIdentityRoute(`${identitySubdomain}.${domain}`, identity.containerName, identity.port);
   await replaceSetupContainerRoute(domain, 'youeye-ui', 3000, uiSubdomain);
-  await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
   await caddy.setDefaultRoute('youeye-control', 3000);
   await caddy.ensurePingRoute('youeye-control', 3000);
   await caddy.ensureHeaderStrippingRoute();
@@ -212,7 +252,7 @@ async function reconcileSetupRuntime(spineConfig: Record<string, unknown>): Prom
   }
 
   await configurePointerForPlatform();
-  await caddy.ensurePointerInferenceRoutes(domain);
+  await caddy.reconcileManagedRoutes(domain);
 }
 
 function parseRestoredAppInventory(value: unknown): RestoredAppInventory[] {
@@ -225,9 +265,16 @@ function parseRestoredAppInventory(value: unknown): RestoredAppInventory[] {
     if (typeof item.appId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(item.appId) || seen.has(item.appId)) {
       throw new Error('Core backup contains an invalid or duplicate app identifier');
     }
+    if (!isUuid(item.installationId) || !Array.isArray(item.containers) || item.containers.length > 100
+      || item.containers.some(container => !container || typeof container !== 'object'
+        || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(container.containerName))) {
+      throw new Error('Core backup is missing immutable installed-runtime ownership');
+    }
     seen.add(item.appId);
     result.push({
       appId: item.appId,
+      installationId: item.installationId,
+      containers: item.containers.map(container => container.containerName),
       subdomain: typeof item.subdomain === 'string' ? item.subdomain : undefined,
       domain: typeof item.domain === 'string' ? item.domain : undefined,
       ssoClientId: typeof item.ssoClientId === 'string' ? item.ssoClientId : undefined,
@@ -249,11 +296,37 @@ async function clearRestoredAppRegistration(app: RestoredAppInventory): Promise<
   // while app archives own the actual reinstall. Clear every restored app
   // registration first so omitted apps stay omitted and selected apps get a
   // collision-free, manifest-driven reinstall.
-  const result = await uninstallApp(app.appId, { dropSharedDatabase: false, keepData: true });
-  if (!result.success) {
-    const detail = result.errors.length > 0 ? `: ${result.errors.join('; ')}` : '';
-    throw new Error(`Could not reconcile restored registration for ${app.appId}${detail}`);
+  const policy = await getAdmissionPolicy(app.appId);
+  if (!policy || policy.installationId !== app.installationId) {
+    throw new Error('Restored registration has unknown installation ownership');
   }
+  if (await readInstallMetadata(app.appId)) {
+    // A restored registration is not authority to discard a live runtime.
+    throw new Error('Restored registration still has live installation metadata');
+  }
+  for (const name of app.containers) {
+    const runtime = await incusRequest('GET', `/1.0/instances/${encodeURIComponent(name)}`);
+    if (runtime.type !== 'error' || runtime.error_code !== 404) {
+      throw new Error('Restored registration cleanup refuses an existing or unverified runtime');
+    }
+  }
+  const clientID = app.ssoClientId || app.ssoSlug || (app.enableSSO ? `youeye-app-${app.appId}` : '');
+  if (clientID) {
+    const [binding] = await identityRows<{ installation_id: string }>(`SELECT installation_id::text
+      FROM admission_clients WHERE client_id = ${identitySql(clientID)}`);
+    if (binding?.installation_id !== app.installationId) throw new Error('Restored client has foreign ownership');
+  }
+  const hostname = app.subdomain && app.domain ? `${app.subdomain}.${app.domain}` : '';
+  if (hostname) {
+    const [binding] = await identityRows<{ installation_id: string }>(`SELECT installation_id::text
+      FROM admission_routes WHERE host = ${identitySql(hostname.toLowerCase())} AND path_prefix = '/'`);
+    if (binding?.installation_id !== app.installationId) throw new Error('Restored route has foreign ownership');
+  }
+  await removeInstalledApp(app.appId);
+  if (await getInstalledApp(app.appId)) throw new Error('Restored installed-app registration remains');
+  await deregisterAppFromUI(app.appId, true);
+  const { isAppRegisteredWithUI } = await import('@/lib/market/reconciler');
+  if (await isAppRegisteredWithUI(app.appId)) throw new Error('Restored dashboard registration remains');
 
   // The core archive owns Caddy's complete configuration, but app install
   // metadata lives with each app archive. After current apps are removed the
@@ -261,7 +334,6 @@ async function clearRestoredAppRegistration(app: RestoredAppInventory): Promise<
   // with no live install metadata for uninstallApp() to associate with the
   // app. Remove it using the independently validated core inventory before
   // the selected app's manifest-driven reinstall runs its collision preflight.
-  const hostname = app.subdomain && app.domain ? `${app.subdomain}.${app.domain}` : '';
   for (const route of await getRoutes()) {
     if ((hostname && route.hostname === hostname) || route.id.startsWith(`app-${app.appId}-`)) {
       await removeRoute(route.id);
@@ -274,7 +346,6 @@ async function clearRestoredAppRegistration(app: RestoredAppInventory): Promise<
     throw new Error(`Routing registration remains for ${app.appId}`);
   }
 
-  const clientID = app.ssoClientId || app.ssoSlug || (app.enableSSO ? `youeye-app-${app.appId}` : '');
   if (clientID) {
     await removeOAuthClient(clientID);
     if (await getClient(clientID)) throw new Error(`Identity registration remains for ${app.appId}`);
@@ -317,6 +388,26 @@ async function startContainerAfterRestore(container: string): Promise<void> {
   throw new Error(`Core service did not restart after volume restore: ${container}`);
 }
 
+async function waitForRestoredPiholeAPI(): Promise<void> {
+  // Applying Pi-hole's restored DNS settings can restart FTL after the config
+  // call returns. App cleanup uses its authenticated API immediately afterward.
+  // Require two spaced reads so a short-lived listener is not treated as ready.
+  let consecutive = 0;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RESTORED_PIHOLE_READY_ATTEMPTS; attempt += 1) {
+    try {
+      await getDNSRecords();
+      consecutive += 1;
+      if (consecutive === 2) return;
+    } catch (error) {
+      consecutive = 0;
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, RESTORED_PIHOLE_READY_DELAY_MS));
+  }
+  throw new Error(`Pi-hole API did not become ready after restoring DNS: ${lastError ?? 'readiness did not stabilize'}`);
+}
+
 /**
  * Restore the full YouEye platform from a backup directory.
  *
@@ -327,9 +418,27 @@ export async function fullRestore(
   config: FullRestoreConfig,
   onEvent: BackupEventCallback
 ): Promise<void> {
+  if (config.setupRecovery && !config.setupMode) throw new Error('Setup recovery requires setup admission');
+  const appDirectory = path.join(config.backupPath, 'youeye', 'apps');
+  const archivedIds = config.appIds ?? (existsSync(appDirectory) ? readdirSync(appDirectory) : []);
+  return withAppInventory(async () => {
+    const current = await listInstalledApps();
+    return withAppLifecycles(['identity', 'pointer', ...current.map(app => app.appId), ...archivedIds],
+      () => fullRestoreUnderLifecycle(config, onEvent));
+  });
+}
+
+async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: BackupEventCallback): Promise<void> {
   const { backupPath, passphrase } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const stagingDir = path.join(STAGING_BASE, `full-${timestamp}`);
+  const stagingDir = path.join(STAGING_BASE, `full-${timestamp}-${randomUUID()}`);
+  const retainedLeases: ReturnType<typeof beginContainerMaintenance>[] = [];
+  let retainedApps: InstallMetadata[] = [];
+  const preparedRetainedApps: InstallMetadata[] = [];
+  const checkpoint = config.setupRecovery;
+  const runStep = (name: string, retry: 'replace' | 'never', work: () => Promise<void>) =>
+    checkpoint ? checkpoint.step(name, retry, work) : work();
+  let quiesced: string[] = checkpoint?.quiesced() ?? [];
 
   // Discover available backup archives
   const coreDir = path.join(backupPath, 'youeye', 'core');
@@ -426,6 +535,7 @@ export async function fullRestore(
     const caddyConfigPath = path.join(coreStagingDir, 'caddy', 'caddy-config.json');
     const piholePath = path.join(coreStagingDir, 'pihole', 'pihole.toml');
     const installedAppsPath = path.join(coreStagingDir, 'installed-apps.json');
+    const archivedRetainedApps = await readRetainedAppInventory(coreStagingDir);
     for (const required of [coreMetaPath, configPath, caddyConfigPath, piholePath, installedAppsPath]) {
       if (!existsSync(required)) throw new Error(`Core backup is missing required input: ${path.basename(required)}`);
     }
@@ -433,12 +543,19 @@ export async function fullRestore(
     if (coreMeta.schema !== 'youeye.backup.core-meta.v1' || coreMeta.type !== 'core') {
       throw new Error('Core backup has an unsupported compatibility record.');
     }
+    if (coreMeta.admissionSchemaVersion !== 1) throw new Error('Core backup is missing supported identity/ownership metadata');
+    if (coreMeta.retainedDataSchemaVersion !== undefined && coreMeta.retainedDataSchemaVersion !== 1) {
+      throw new Error('Core backup has unsupported retained-data metadata');
+    }
     const compatibility = assessBackupCompatibility(coreMeta.source, await readCurrentBackupSourceIdentity());
     if (!compatibility.compatible) throw new Error(compatibility.summary);
     const spineConfig = JSON.parse(await readFile(configPath, 'utf-8')) as Record<string, unknown>;
     const caddyConfig = JSON.parse(await readFile(caddyConfigPath, 'utf-8'));
     const piholeContent = await readFile(piholePath, 'utf-8');
     const restoredApps = parseRestoredAppInventory(JSON.parse(await readFile(installedAppsPath, 'utf-8')));
+    if (archivedRetainedApps.some(retained => restoredApps.some(app => app.appId === retained.appId))) {
+      throw new Error('Core backup has conflicting active and retained app inventories');
+    }
     if (!existsSync(dbDir)) throw new Error('Core backup is missing required database dumps');
     const dbFiles = readdirSync(dbDir).filter(file => file.endsWith('.sql'));
     const databasesInArchive = new Set(dbFiles.map(file => file.replace(/-\d{4}-\d{2}.*\.sql$/, '')));
@@ -452,144 +569,242 @@ export async function fullRestore(
     const missingDatabases = PLATFORM_DATABASES.filter(database => !databasesInArchive.has(database));
     if (missingDatabases.length > 0) throw new Error(`Core backup is missing required database dumps: ${missingDatabases.join(', ')}`);
 
-    emit('remove-current-apps', 'Clearing current applications before server restore...');
-    for (const currentApp of await listInstalledApps()) await removeCurrentApp(currentApp.appId);
+    // Once removal is durably complete, the historical database may already
+    // have replaced the target inventory. Do not reinterpret that inventory as
+    // new removal authority. Unfinished removal itself is never auto-replayed.
+    if (!checkpoint?.completed('remove-current-apps') && (await listRetainedApps()).length) {
+      throw new Error('This target has retained app data; explicitly resolve it before a historical server restore');
+    }
+    const currentApps = checkpoint?.completed('remove-current-apps') ? [] : await listInstalledApps();
+    const selectedApps = new Set(appArchives.map(app => app.appId));
+    // An explicit selection restores those archives and retains other installed
+    // apps. A fresh/setup restore or whole-server restore replaces the inventory.
+    retainedApps = config.appIds !== undefined && !config.setupMode
+      ? currentApps.filter(app => !selectedApps.has(app.appId)) : [];
+    const retainedIds = new Set(retainedApps.map(app => app.appId));
+    for (const app of retainedApps) {
+      const archived = restoredApps.find(item => item.appId === app.appId);
+      // A core from another routing/identity installation cannot safely adopt
+      // these runtimes. Reject before changing data; include their app archives.
+      if (!archived || archived.installationId !== app.installationId || archived.domain !== app.domain || archived.subdomain !== app.subdomain
+        || archived.ssoClientId !== app.ssoClientId || archived.ssoSlug !== app.ssoSlug) {
+        throw new Error(`Retained ${app.appId} requires a matching core identity or its app archive`);
+      }
+    }
+    await runStep('remove-current-apps', 'never', async () => {
+      emit('remove-current-apps', 'Preparing applications for the selected server restore...');
+      for (const app of retainedApps) {
+        const names = app.containers.map(container => typeof container === 'string' ? container : container.containerName);
+        retainedLeases.push(beginContainerMaintenance(names, { operation: `core-restore:${app.appId}` }));
+        preparedRetainedApps.push(app);
+        app.serviceCredentialDesiredState ??= app.desiredState ?? 'running';
+        app.serviceCredentialState = 'pending';
+        app.enabled = false;
+        app.desiredState = 'stopped';
+        await saveInstallMetadata(app);
+        await quiesceAppCredentialRuntime(names);
+        if ((await appServiceCredentials.projection(app.appId))?.status === 'active') {
+          await markCredentialReady(app.appId, false);
+        }
+      }
+      for (const currentApp of currentApps) {
+        if (!retainedIds.has(currentApp.appId)) await removeCurrentApp(currentApp.appId);
+      }
+    });
 
-    emit('restore-volumes', 'Restoring persistent server configuration...');
-    const machineConfig = config.setupMode ? await captureSetupMachineConfig() : [];
-    if (config.setupMode) await prepareSetupRestoreVolumeMap(coreStagingDir);
-    const quiesced = await runningContainers(config.setupMode
-      ? ['youeye-pihole', 'youeye-pointer']
-      : ['youeye-caddy', 'youeye-pihole', 'youeye-ui', 'youeye-pointer']);
-    for (const container of quiesced) {
-      await incusRequest('PUT', `/1.0/instances/${container}/state`, { action: 'stop', force: true, timeout: 60 });
-    }
-    let machineConfigRestoreError: unknown;
-    try {
-      await spineClient.applyBackupVolumes(coreStagingDir);
-    } finally {
-      if (config.setupMode) {
-        try {
-          await restoreSetupMachineConfig(machineConfig);
-        } catch (error) {
-          machineConfigRestoreError = error;
+    await runStep('restore-volumes', 'never', async () => {
+      emit('restore-volumes', 'Restoring persistent server configuration...');
+      const machineConfig = config.setupMode ? await captureSetupMachineConfig() : [];
+      if (config.setupMode) await prepareSetupRestoreVolumeMap(coreStagingDir, archivedRetainedApps);
+      if (retainedApps.length) await preserveRetainedAppNetworks(coreStagingDir);
+      quiesced = await runningContainers(config.setupMode
+        ? ['youeye-pihole', 'youeye-pointer', 'youeye-ui']
+        : ['youeye-caddy', 'youeye-pihole', 'youeye-ui', 'youeye-pointer']);
+      if (checkpoint) await checkpoint.rememberQuiesced(quiesced);
+      await quiesceAppCredentialRuntime(quiesced);
+      let machineConfigRestoreError: unknown;
+      try {
+        await spineClient.applyBackupVolumes(coreStagingDir);
+      } finally {
+        if (config.setupMode) {
+          try {
+            await restoreSetupMachineConfig(machineConfig);
+          } catch (error) {
+            machineConfigRestoreError = error;
+          }
+        }
+        if (machineConfigRestoreError) {
+          throw new Error(`Target runtime credentials could not be preserved: ${machineConfigRestoreError}`);
         }
       }
-      const restartFailures: string[] = [];
-      for (const container of quiesced) {
-        try {
-          await startContainerAfterRestore(container);
-        } catch {
-          restartFailures.push(container);
-        }
-      }
-      if (restartFailures.length > 0) {
-        throw new Error(`Core services did not restart after volume restore: ${restartFailures.join(', ')}`);
-      }
-      if (machineConfigRestoreError) {
-        throw new Error(`Target runtime credentials could not be preserved: ${machineConfigRestoreError}`);
-      }
-    }
-    if (quiesced.length > 0) await new Promise(resolve => setTimeout(resolve, 3000));
+    });
 
     // ── Step 2: Restore youeye.yaml config ─────────────────
-    emit('restore-config', 'Restoring platform configuration...');
-    try {
-      await spineClient.setConfig(config.setupMode ? { ...spineConfig, setup_completed: false } : spineConfig);
-    } catch (err) {
-      throw new Error(`Could not restore the server configuration: ${err}`);
-    }
+    await runStep('restore-config', 'replace', async () => {
+      emit('restore-config', 'Restoring platform configuration...');
+      try {
+        await spineClient.setConfig(config.setupMode ? { ...spineConfig, setup_completed: false } : spineConfig);
+      } catch (err) {
+        throw new Error(`Could not restore the server configuration: ${err}`);
+      }
+    });
 
     // ── Step 3: Restore PostgreSQL databases ───────────────
-    emit('restore-databases', 'Restoring infrastructure databases...');
-	const restoredDatabases = new Set<string>();
-    for (const dbFile of dbFiles) {
-      // Extract database name from filename pattern: {dbName}-{timestamp}.sql
-      const dbName = dbFile.replace(/-\d{4}-\d{2}.*\.sql$/, '');
-      if (!isPlatformDatabase(dbName)) {
-        throw new Error('Core backup contains an unexpected database dump');
-      }
+    await runStep('restore-databases', 'never', async () => {
+      // SQL import/migrations can still be running after an execution reply is
+      // lost. A partial database step requires reconciliation, even though the
+      // ordinary restore replaces each database from a complete source dump.
+      await quiesceAppCredentialRuntime(quiesced);
+      emit('restore-databases', 'Restoring infrastructure databases...');
+      const restoredDatabases = new Set<string>();
+      for (const dbFile of [...dbFiles].sort((a, b) =>
+        Number(!a.startsWith('youeye-')) - Number(!b.startsWith('youeye-')))) {
+        // Extract database name from filename pattern: {dbName}-{timestamp}.sql
+        const dbName = dbFile.replace(/-\d{4}-\d{2}.*\.sql$/, '');
+        if (!isPlatformDatabase(dbName)) {
+          throw new Error('Core backup contains an unexpected database dump');
+        }
 
-      try {
-        const dump = await readFile(path.join(dbDir, dbFile));
-        await replacePlatformDatabase(dbName, dump);
-		restoredDatabases.add(dbName);
-      } catch (err) {
-        onEvent({
-          step,
-          totalSteps,
-          status: 'error',
-          stage: 'restore-databases',
-          message: `Failed to restore ${dbName}: ${err}`,
-        });
-        throw new Error(`Failed to restore ${dbName}: ${err}`);
+        try {
+          const dump = await readFile(path.join(dbDir, dbFile));
+          await replacePlatformDatabase(dbName, dump);
+          restoredDatabases.add(dbName);
+        } catch (err) {
+          onEvent({
+            step,
+            totalSteps,
+            status: 'error',
+            stage: 'restore-databases',
+            message: `Failed to restore ${dbName}: ${err}`,
+          });
+          throw new Error(`Failed to restore ${dbName}: ${err}`);
+        }
       }
-    }
-	const databasesNotRestored = PLATFORM_DATABASES.filter(database => !restoredDatabases.has(database));
-	if (databasesNotRestored.length > 0) throw new Error(`Core backup is missing required database dumps: ${databasesNotRestored.join(', ')}`);
+      const databasesNotRestored = PLATFORM_DATABASES.filter(database => !restoredDatabases.has(database));
+      if (databasesNotRestored.length > 0) throw new Error(`Core backup is missing required database dumps: ${databasesNotRestored.join(', ')}`);
+      const { identityCommand, refreshIdentitySchemaAfterRestore } = await import('@/lib/identity/store');
+      // The restored snapshot can predate additive ownership/queue migrations.
+      // Do not trust this surviving process's pre-restore schema-ready cache.
+      await refreshIdentitySchemaAfterRestore(path.basename(stagingDir));
+      // No restored projection is active until a fresh authenticated push.
+      await identityCommand(`UPDATE admission_outbox SET acknowledged_revision = 0`);
+      await suspendRestoredAppCredentials();
+    });
+    // Importing retained roots is not an idempotent database replacement.
+    // Existing roots may be foreign; uncertainty needs native reconciliation.
+    await runStep('restore-retained-apps', 'never', () => restoreRetainedApps(coreStagingDir, archivedRetainedApps));
+    // Keep UI and ordinary ingress stopped until identity, ownership and UI
+    // databases are coherent. A failed database restore remains closed.
+    await runStep('restart-services', 'replace', async () => {
+      const restartFailures: string[] = [];
+      const alreadyRunning = new Set(await runningContainers(quiesced));
+      for (const container of quiesced) {
+        if (alreadyRunning.has(container)) continue;
+        try { await startContainerAfterRestore(container); }
+        catch { restartFailures.push(container); }
+      }
+      if (restartFailures.length) {
+        throw new Error(`Core services did not restart after identity restore: ${restartFailures.join(', ')}`);
+      }
+      if (quiesced.length > 0) await new Promise(resolve => setTimeout(resolve, 3000));
+    });
+	// The issuer pin lives in the portable youeye database. Never derive a route
+	// from the fresh target's pre-restore database or mutable setup hostname.
+	const restoredIdentity = config.setupMode ? await getIdentityConfig() : null;
 
     // ── Step 5: Restore Caddy config ───────────────────────
-    emit('restore-caddy', config.setupMode
-      ? 'Rebuilding service connections for this server...'
-      : 'Restoring Caddy configuration...');
-    try {
-      if (config.setupMode) await reconcileSetupRuntime(spineConfig);
-      else await setCaddyConfig(caddyConfig);
-    } catch (err) {
-      throw new Error(`Could not restore the server routing configuration: ${err}`);
-    }
+    await runStep('restore-caddy', 'never', async () => {
+      emit('restore-caddy', config.setupMode
+        ? 'Rebuilding service connections for this server...'
+        : 'Restoring Caddy configuration...');
+      try {
+        if (config.setupMode) {
+          await reconcileSetupRuntime(spineConfig);
+          if (restoredIdentity) await caddy.ensureIdentityRoute(new URL(restoredIdentity.issuer).hostname, restoredIdentity.containerName, restoredIdentity.port);
+        }
+        else await setCaddyConfig(caddyConfig);
+      } catch (err) {
+        throw new Error(`Could not restore the server routing configuration: ${err}`);
+      }
+    });
 
     // ── Step 6: Restore Pi-Hole config ─────────────────────
-    emit('restore-pihole', 'Restoring Pi-Hole configuration...');
-    try {
-      await incusUploadFile(
-        'youeye-pihole',
-        '/etc/pihole/pihole.toml',
-        Buffer.from(piholeContent, 'utf8'),
-        { timeout: 10_000, mode: '0600' },
-      );
-      const reload = await execCommand('youeye-pihole', ['pihole', 'reloaddns'], { timeout: 15_000 });
-      if (reload.exitCode !== 0) throw new Error('Pi-hole DNS reload failed');
-      if (config.setupMode && typeof spineConfig.domain === 'string') {
-        const hostIP = (await spineClient.getMetrics()).primary_ip.trim();
-        await setDomainDNS(spineConfig.domain, hostIP);
+    await runStep('restore-pihole', 'never', async () => {
+      emit('restore-pihole', 'Restoring Pi-Hole configuration...');
+      try {
+        await incusUploadFile(
+          'youeye-pihole',
+          '/etc/pihole/pihole.toml',
+          Buffer.from(piholeContent, 'utf8'),
+          { timeout: 10_000, mode: '0600' },
+        );
+        const reload = await execCommand('youeye-pihole', ['pihole', 'reloaddns'], { timeout: 15_000 });
+        if (reload.exitCode !== 0) throw new Error('Pi-hole DNS reload failed');
+        if (config.setupMode && typeof spineConfig.domain === 'string') {
+          const hostIP = (await spineClient.getMetrics()).primary_ip.trim();
+          await setDomainDNS(spineConfig.domain, hostIP);
+          await waitForRestoredPiholeAPI();
+          const identity = await getIdentityConfig();
+          const canonicalHost = new URL(identity.issuer).hostname;
+          const configuredHost = `${String((spineConfig.subdomains as Record<string, string> | undefined)?.identity || 'id')}.${spineConfig.domain}`;
+          if (canonicalHost !== configuredHost) await setIdentityHostDNS(canonicalHost, hostIP);
+        }
+        await waitForRestoredPiholeAPI();
+      } catch (err) {
+        throw new Error(`Could not restore the network shield configuration: ${err}`);
       }
-    } catch (err) {
-      throw new Error(`Could not restore the network shield configuration: ${err}`);
-    }
+    });
 
-    emit('reconcile-apps', 'Applying the selected application recovery plan...');
-    for (const restoredApp of restoredApps) await clearRestoredAppRegistration(restoredApp);
+    await runStep('reconcile-apps', 'never', async () => {
+      emit('reconcile-apps', 'Applying the selected application recovery plan...');
+      for (const restoredApp of restoredApps) {
+        if (!retainedIds.has(restoredApp.appId)) await clearRestoredAppRegistration(restoredApp);
+      }
+      for (const app of retainedApps) {
+        // Install metadata and protected authority are target-owned, outside core
+        // volume restore. Never replace them with archived verifier hashes.
+        await saveInstallMetadata(app);
+        const state = await reconcileRetainedAppCredential(app.appId);
+        if (state === 'revoked') {
+          app.serviceCredentialState = 'revoked';
+          await saveInstallMetadata(app);
+        } else {
+          await operateAppCredential(app.appId, { action: 'reconcile' });
+        }
+      }
+    });
 
     // ── Restore each selected app ──────────────────────────
     for (const { appId, archivePath } of appArchives) {
-      emit('restore-app', `Restoring app: ${appId}...`);
-      try {
-        await restoreApp(
-          { appId, archivePath, passphrase },
-          (event) => {
-            // Relay app restore events as sub-events
-            onEvent({
-              step,
-              totalSteps,
-              status: event.status === 'error' ? 'error' : 'progress',
-              stage: `restore-app-${appId}`,
-              message: `[${appId}] ${event.message}`,
-              detail: event.detail,
-            });
-          },
-          false,
-        );
-      } catch (err) {
-        onEvent({
-          step,
-          totalSteps,
-          status: 'error',
-          stage: `restore-app-${appId}`,
-          message: `Failed to restore ${appId}: ${err}`,
-        });
-        throw new Error(`Failed to restore ${appId}: ${err}`);
-      }
+      await runStep(`restore-app:${appId}`, 'never', async () => {
+        emit('restore-app', `Restoring app: ${appId}...`);
+        try {
+          await restoreApp(
+            { appId, archivePath, passphrase },
+            (event) => {
+              // Relay app restore events as sub-events
+              onEvent({
+                step,
+                totalSteps,
+                status: event.status === 'error' ? 'error' : 'progress',
+                stage: `restore-app-${appId}`,
+                message: `[${appId}] ${event.message}`,
+                detail: event.detail,
+              });
+            },
+            false,
+          );
+        } catch (err) {
+          onEvent({
+            step,
+            totalSteps,
+            status: 'error',
+            stage: `restore-app-${appId}`,
+            message: `Failed to restore ${appId}: ${err}`,
+          });
+          throw new Error(`Failed to restore ${appId}: ${err}`);
+        }
+      });
     }
 
     // Final completion
@@ -601,7 +816,29 @@ export async function fullRestore(
       message: 'Full platform restore completed successfully',
       progress: 100,
     });
+  } catch (error) {
+    // A later app failure must not leave an earlier retained app reopened.
+    // Persist pending intent and stop writers before releasing watchdog leases.
+    for (const lease of retainedLeases) lease.markFailed('Server restore requires reconciliation');
+    let cleanupFailed = false;
+    for (const app of preparedRetainedApps) {
+      app.serviceCredentialState = 'pending';
+      app.enabled = false;
+      app.desiredState = 'stopped';
+      try {
+        try { await saveInstallMetadata(app); } finally {
+          await quiesceAppCredentialRuntime(app.containers.map(container =>
+            typeof container === 'string' ? container : container.containerName));
+        }
+        if ((await appServiceCredentials.projection(app.appId))?.status === 'active') {
+          await markCredentialReady(app.appId, false);
+        }
+      } catch { cleanupFailed = true; }
+    }
+    if (cleanupFailed) throw new Error('Server restore failed; retained app maintenance requires reconciliation');
+    throw error;
   } finally {
+    for (const lease of retainedLeases) lease.release();
     // Clean up staging directory
     try {
       if (existsSync(stagingDir)) {

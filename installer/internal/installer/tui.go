@@ -43,7 +43,7 @@ func (m rootModel) View() string {
 	return m.installer.View()
 }
 
-// RunInstallerMedia launches the interactive installer from booted signed media. It takes over the terminal
+// RunInstallerMedia launches the interactive installer from booted installer media. It takes over the terminal
 // and returns when the user exits.
 func RunInstallerMedia(opts CLIOptions) error {
 	p := tea.NewProgram(

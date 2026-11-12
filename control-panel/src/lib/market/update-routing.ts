@@ -28,24 +28,19 @@ export interface ResolvedCatalogUpdateEvidence {
   manifestIntegration: 'native' | 'basic';
 }
 
+/**
+ * `channel`: a native app; its candidate is its product release on the box's
+ * channel index. `catalog`: a catalog app; its candidate is the catalog manifest.
+ */
 export interface UpdateRoutingDecision {
   kind: 'catalog' | 'channel';
-  reason:
-    | 'explicit-channel-override'
-    | 'explicit-channel-source'
-    | 'native-repo-catalog-entry'
-    | 'recorded-external-catalog'
-    | 'legacy-release-source'
-    | 'default-catalog';
-  /** App release repository used as the base when channel config only changes the branch. */
-  channelDefaultSource?: string;
+  reason: 'native-app' | 'recorded-external-catalog' | 'default-catalog';
   /** Exact Market source retained for external catalog lookup and audit metadata. */
   catalogSourceId?: string;
 }
 
 export interface UpdateCandidate {
   version: string;
-  branch: string;
   tag: string;
 }
 
@@ -103,27 +98,6 @@ export function repositoriesMatch(
   return !!normalizedLeft && normalizedLeft === normalizedRight;
 }
 
-/** Resolve an `owner/repo` catalog entry against the Market source's forge. */
-export function catalogRepoReferenceToUrl(
-  repo: string | null | undefined,
-  catalogSourceRepoUrl: string | null | undefined,
-): string | undefined {
-  const reference = clean(repo);
-  if (!reference) return undefined;
-  if (reference.includes('://')) return normalizeRepositoryUrl(reference);
-
-  const sourceUrl = clean(catalogSourceRepoUrl);
-  if (sourceUrl) {
-    try {
-      const parsed = new URL(sourceUrl);
-      return `${parsed.protocol}//${parsed.host}/${reference.replace(/^\/+/, '').replace(/\.git$/i, '')}`;
-    } catch {
-      // Fall through to the platform forge used by legacy catalog entries.
-    }
-  }
-  return undefined;
-}
-
 function catalogKeySourceId(catalogKey: string | null | undefined): string | undefined {
   const value = clean(catalogKey);
   if (!value) return undefined;
@@ -155,170 +129,58 @@ export function hasRecordedCatalogIdentity(
     || installMetadata.itemKind === 'app';
 }
 
-/**
- * Decide the update source before release resolution or runtime mutation.
- * `installedBranch` is deliberately absent from the decision: older external
- * catalog updates wrote a synthetic `main` branch and must remain catalog-routed.
- */
+/** Decide the update source before release resolution or runtime mutation. */
 export function classifyAppUpdateRouting(input: {
   appId: string;
   installed: InstalledUpdateEvidence;
   installMetadata: InstallMetadataUpdateEvidence;
   catalog?: ResolvedCatalogUpdateEvidence | null;
-  hasExplicitChannelOverride: boolean;
 }): UpdateRoutingDecision {
   const { installed, installMetadata, catalog } = input;
-  const catalogSourceUrl = catalog?.sourceRepoUrl;
-  const catalogSourceUrls = [catalogSourceUrl, ...(catalog?.sourceRepoUrls ?? [])];
-  const isCatalogSource = (value: string | null | undefined) => (
-    catalogSourceUrls.some((sourceUrl) => repositoriesMatch(value, sourceUrl))
-  );
-  const channelSource = clean(installed.channelSource);
-  const nonCatalogChannelSource = channelSource && !isCatalogSource(channelSource)
-    ? channelSource
-    : undefined;
-  const installedRepoSource = clean(installed.sourceRepoUrl);
-  const nonCatalogInstalledRepo = installedRepoSource && !isCatalogSource(installedRepoSource)
-    ? installedRepoSource
-    : undefined;
-  const entryRepoSource = catalogRepoReferenceToUrl(catalog?.entry.repo, catalogSourceUrl);
-
-  if (input.hasExplicitChannelOverride) {
-    return {
-      kind: 'channel',
-      reason: 'explicit-channel-override',
-      channelDefaultSource: nonCatalogChannelSource || entryRepoSource || nonCatalogInstalledRepo,
-      catalogSourceId: catalog?.sourceId,
-    };
-  }
-
-  if (nonCatalogChannelSource) {
-    return {
-      kind: 'channel',
-      reason: 'explicit-channel-source',
-      channelDefaultSource: nonCatalogChannelSource,
-      catalogSourceId: catalog?.sourceId,
-    };
-  }
-
-  if (nonCatalogInstalledRepo) {
-    return {
-      kind: 'channel',
-      reason: 'legacy-release-source',
-      channelDefaultSource: nonCatalogInstalledRepo,
-      catalogSourceId: catalog?.sourceId,
-    };
-  }
-
-  const isNativeRepoEntry = !!catalog?.entry.repo
-    && (catalog.entry.integration === 'native'
-      || catalog.manifestIntegration === 'native'
-      || installMetadata.integration === 'native'
-      || installed.type === 'native');
-  if (isNativeRepoEntry) {
-    return {
-      kind: 'channel',
-      reason: 'native-repo-catalog-entry',
-      channelDefaultSource: entryRepoSource || nonCatalogInstalledRepo,
-      catalogSourceId: catalog?.sourceId,
-    };
-  }
-
-  const isExternalCatalogEntry = !!catalog && (
-    !!catalog.entry.path
-    || !!catalog.entry.file
-    || catalog.entry.integration === 'basic'
-    || catalog.manifestIntegration === 'basic'
-  );
-  if (isExternalCatalogEntry || hasRecordedCatalogIdentity(installed, installMetadata)) {
+  const native = catalog?.entry.integration === 'native'
+    || catalog?.manifestIntegration === 'native'
+    || installMetadata.integration === 'native'
+    || installed.type === 'native';
+  if (native) return { kind: 'channel', reason: 'native-app', catalogSourceId: catalog?.sourceId };
+  if (catalog || hasRecordedCatalogIdentity(installed, installMetadata)) {
     return {
       kind: 'catalog',
       reason: 'recorded-external-catalog',
       catalogSourceId: catalog?.sourceId || recordedCatalogSourceIds(installed, installMetadata)[0],
     };
   }
-
-  return {
-    kind: 'catalog',
-    reason: 'default-catalog',
-    catalogSourceId: catalog?.sourceId,
-  };
+  return { kind: 'catalog', reason: 'default-catalog' };
 }
 
-export function isChannelSwitchConfirmationRequired(input: {
-  force: boolean;
-  confirmSwitch: boolean;
-  installedBranch: string;
-  candidateBranch: string;
-  candidateIsNewer: boolean;
-}): boolean {
-  return !input.force
-    && !input.confirmSwitch
-    && input.candidateBranch !== input.installedBranch
-    && !input.candidateIsNewer;
-}
-
-/** Shared update-vs-switch projection used by Settings, Market, and UI bridge data. */
+/**
+ * Shared update projection used by Settings, Market, and UI bridge data. A
+ * native app's candidate older than the installed version is never offered:
+ * the box waits for its channel to catch up.
+ */
 export function projectUpdateAvailability(input: {
   routing: UpdateRoutingDecision;
   installedVersion: string | null | undefined;
-  installedBranch: string | null | undefined;
   catalogVersion: string | null;
   candidate?: UpdateCandidate | null;
 }): UpdateAvailability {
   const installedVersion = clean(input.installedVersion);
-
-  if (input.routing.kind === 'catalog') {
-    let updateAvailable = false;
-    if (input.catalogVersion) {
-      if (!installedVersion) {
-        updateAvailable = true;
-      } else {
-        try {
-          updateAvailable = isNewer(input.catalogVersion, installedVersion);
-        } catch {
-          updateAvailable = false;
-        }
-      }
-    }
-    return {
-      catalogVersion: input.catalogVersion,
-      updateAvailable,
-      switchPending: false,
-      candidateVersion: input.catalogVersion,
-      candidateBranch: null,
-      candidateTag: null,
-    };
-  }
-
-  const candidate = input.candidate ?? null;
-  if (!candidate) {
-    return {
-      catalogVersion: input.catalogVersion,
-      updateAvailable: false,
-      switchPending: false,
-      candidateVersion: input.catalogVersion,
-      candidateBranch: null,
-      candidateTag: null,
-    };
-  }
-
-  let candidateIsNewer = !installedVersion;
-  if (installedVersion) {
+  const candidate = input.routing.kind === 'channel' ? input.candidate ?? null : null;
+  const version = candidate ? candidate.version : input.routing.kind === 'catalog' ? input.catalogVersion : null;
+  let updateAvailable = false;
+  if (version) {
     try {
-      candidateIsNewer = isNewer(candidate.version, installedVersion);
+      updateAvailable = !installedVersion || isNewer(version, installedVersion);
     } catch {
-      candidateIsNewer = false;
+      updateAvailable = false;
     }
   }
-  const installedBranch = clean(input.installedBranch) || 'main';
   return {
-    catalogVersion: candidate.version,
-    updateAvailable: candidateIsNewer,
-    switchPending: !candidateIsNewer && candidate.branch !== installedBranch,
-    candidateVersion: candidate.version,
-    candidateBranch: candidate.branch,
-    candidateTag: candidate.tag,
+    catalogVersion: version ?? input.catalogVersion,
+    updateAvailable,
+    switchPending: false,
+    candidateVersion: version ?? input.catalogVersion,
+    candidateBranch: null,
+    candidateTag: candidate?.tag ?? null,
   };
 }
 

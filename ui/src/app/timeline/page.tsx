@@ -14,6 +14,7 @@ import { FontPreloadLink } from "@/components/layout/font-preload";
 import { TimelineFeed } from "@/components/timeline/timeline-feed";
 import { hasPIN, hasActivePINSession } from "@/lib/crypto/pin-session";
 import { getTranslations } from "next-intl/server";
+import { resolveTitle } from "@youeye/branding/appearance";
 
 export default async function TimelinePage() {
   const session = await getSession();
@@ -31,7 +32,8 @@ export default async function TimelinePage() {
   ]);
 
   // Preload the font being used for the site name
-  const activeStyle = wordartOverride ?? branding.site_name_style;
+  const title = resolveTitle(branding, wordartOverride);
+  const activeStyle = title.style;
   const fontFamily = activeStyle?.fontFamily ?? "Inter";
 
   return (
@@ -41,9 +43,10 @@ export default async function TimelinePage() {
         username={session.name || session.username}
         email={session.email}
         isAdmin={session.isAdmin}
-        siteName={branding.site_name}
-        siteNameStyle={wordartOverride ?? branding.site_name_style}
+        siteName={title.name}
+        siteNameStyle={title.style}
         logoUrl={branding.logo_url}
+        showLogo={branding.site_name_style?.showHeaderLogo === true}
       />
       <main className="max-w-[640px] mx-auto px-5 pt-7 pb-16">
         <div className="mb-5">

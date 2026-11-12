@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -30,11 +33,11 @@ const (
 	PhaseRollback  = "rolled-back"
 
 	maxManifestBytes    = int64(1024 * 1024)
-	maxSignatureBytes   = int64(4096)
 	updateHeadroomBytes = uint64(512 * 1024 * 1024)
 )
 
 type Journal struct {
+	CoreManifestSHA256  string           `json:"core_manifest_sha256,omitempty"`
 	Schema              string           `json:"schema"`
 	TransactionID       string           `json:"transaction_id"`
 	ManifestSHA256      string           `json:"manifest_sha256"`
@@ -54,6 +57,7 @@ type Journal struct {
 	AvailableCacheBytes uint64           `json:"available_cache_bytes,omitempty"`
 	StartedAt           string           `json:"started_at"`
 	UpdatedAt           string           `json:"updated_at"`
+	ActivationBootID    string           `json:"activation_boot_id,omitempty"`
 }
 
 type Status struct {
@@ -83,17 +87,16 @@ type Status struct {
 }
 
 type SourceOptions struct {
+	Core                   *CoreHostSelection
 	ManifestSource         string
-	SignatureSource        string
 	AllowTest              bool
 	ReplaceFailed          bool
-	Bootstrap              bool
 	ExpectedManifestSHA256 string
 	Channel                string
 	ReleaseTag             string
 	ReleaseNotes           string
-	ExpectedReleaseBranch  string
 	AllowCurrent           bool
+	discoveryOnly          bool
 }
 
 type ReconcileOptions struct {
@@ -106,14 +109,15 @@ type ReconcileResult struct {
 }
 
 type Config struct {
+	CoreStatePath       string
 	CurrentManifestPath string
 	StatePath           string
 	JournalPath         string
 	HealthyManifestPath string
 	ConvergencePath     string
 	CacheDir            string
-	TrustKeyPath        string
 	KernelCmdlinePath   string
+	BootIDPath          string
 	ESPMountpoint       string
 	HTTPClient          *http.Client
 	Now                 func() time.Time
@@ -123,7 +127,7 @@ type Config struct {
 	VerifyTarget        func(context.Context, string, Manifest) error
 	VerifyStagedRoot    func(context.Context, string, Artifact) error
 	VerifyBootAssets    func(context.Context, Layout, Manifest) error
-	InstallBootAssets   func(context.Context, Layout, Manifest, string, string, string) error
+	InstallBootAssets   func(context.Context, Layout, Manifest, string, string) error
 	CreateBootEntry     func(Layout, Manifest) error
 	RemoveBootEntries   func(Layout) error
 	ExecutablePath      func() (string, error)
@@ -134,17 +138,19 @@ type Manager struct{ config Config }
 
 func DefaultConfig() Config {
 	return Config{
+		CoreStatePath:       CoreStatePath,
 		CurrentManifestPath: appliance.ManifestPath,
 		StatePath:           appliance.StatePath,
 		JournalPath:         appliance.StateMountpoint + "/system-update/journal.json",
 		HealthyManifestPath: appliance.StateMountpoint + "/system-update/healthy-manifest.json",
 		ConvergencePath:     appliance.StateMountpoint + "/first-deploy/convergence-intent.json",
 		CacheDir:            appliance.DataMountpoint + "/system-update",
-		TrustKeyPath:        "/usr/share/youeye/appliance-development.pub",
 		KernelCmdlinePath:   "/proc/cmdline",
+		BootIDPath:          "/proc/sys/kernel/random/boot_id",
 		ESPMountpoint:       "/efi",
 		HTTPClient: &http.Client{
-			Timeout: 0,
+			Transport: releasecache.Wrap(nil),
+			Timeout:   0,
 			CheckRedirect: func(request *http.Request, via []*http.Request) error {
 				return validateSystemUpdateRedirect(request, via)
 			},
@@ -163,13 +169,14 @@ func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) er
 	if len(via) >= 5 {
 		return errors.New("too many system update redirects")
 	}
-	if err := validateRemoteURL(request.URL); err != nil {
-		return err
-	}
 	if len(via) == 0 {
-		return nil
+		return validateRemoteURL(request.URL)
 	}
 	origin := via[0].URL
+	if err := validateSystemUpdateDownloadURL(request.URL, origin); err != nil {
+		return err
+	}
+
 	if strings.EqualFold(origin.Hostname(), "github.com") {
 		switch strings.ToLower(request.URL.Hostname()) {
 		case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
@@ -186,6 +193,9 @@ func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) er
 
 func New(config Config) *Manager {
 	defaults := DefaultConfig()
+	if config.CoreStatePath == "" {
+		config.CoreStatePath = defaults.CoreStatePath
+	}
 	if config.CurrentManifestPath == "" {
 		config.CurrentManifestPath = defaults.CurrentManifestPath
 	}
@@ -204,11 +214,11 @@ func New(config Config) *Manager {
 	if config.CacheDir == "" {
 		config.CacheDir = defaults.CacheDir
 	}
-	if config.TrustKeyPath == "" {
-		config.TrustKeyPath = defaults.TrustKeyPath
-	}
 	if config.KernelCmdlinePath == "" {
 		config.KernelCmdlinePath = defaults.KernelCmdlinePath
+	}
+	if config.BootIDPath == "" {
+		config.BootIDPath = defaults.BootIDPath
 	}
 	if config.ESPMountpoint == "" {
 		config.ESPMountpoint = defaults.ESPMountpoint
@@ -276,11 +286,24 @@ func (m *Manager) Status() (Status, error) {
 }
 
 func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, error) {
+	if options.Core != nil {
+		copySelection := *options.Core
+		options.Core = &copySelection
+	}
+	bound, err := m.withCoreTransport(options.Core)
+	if err != nil {
+		return Status{}, err
+	}
+	m = bound
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err
 	}
 	defer unlock()
+	// Discovery may observe the exact installed release without treating it as
+	// an upgrade. Stage retains its stricter ordering guard.
+	options.AllowCurrent = true
+	options.discoveryOnly = true
 	_, _, _, _, err = m.resolve(ctx, options)
 	if err != nil {
 		return Status{}, err
@@ -289,6 +312,15 @@ func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, 
 }
 
 func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Status, returnedErr error) {
+	if options.Core != nil {
+		copySelection := *options.Core
+		options.Core = &copySelection
+	}
+	bound, err := m.withCoreTransport(options.Core)
+	if err != nil {
+		return Status{}, err
+	}
+	m = bound
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err
@@ -356,7 +388,7 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 	artifactPaths := map[string]string{}
 	for _, artifact := range verified.Manifest.Artifacts {
 		destination := filepath.Join(transactionDir, filepath.Base(artifact.Path))
-		source, err := resolveArtifactSource(options.ManifestSource, artifact.Path)
+		source, err := m.hostArtifactSource(options, artifact)
 		if err != nil {
 			return Status{}, err
 		}
@@ -385,10 +417,8 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 		ID: journal.TransactionID, Stage: PhaseWriting,
 		TargetImageVersion: verified.Manifest.TargetImageVersion,
 	}
-	if !options.Bootstrap {
-		state.Transaction.ManifestSHA256 = verified.SHA256
-		state.Transaction.ActiveSlot = layout.ActiveSlot
-	}
+	state.Transaction.ManifestSHA256 = verified.SHA256
+	state.Transaction.ActiveSlot = layout.ActiveSlot
 	if err := appliance.WriteStateAtomic(m.config.StatePath, state); err != nil {
 		return Status{}, err
 	}
@@ -402,8 +432,7 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 	}
 	ukiRole := "system-" + strings.ToLower(layout.InactiveSlot) + "-uki"
 	manifestPath := filepath.Join(transactionDir, "system-update-manifest.json")
-	signaturePath := manifestPath + ".sig"
-	if err := m.callInstallBootAssets(ctx, layout, verified.Manifest, artifactPaths[ukiRole], manifestPath, signaturePath); err != nil {
+	if err := m.callInstallBootAssets(ctx, layout, verified.Manifest, artifactPaths[ukiRole], manifestPath); err != nil {
 		return Status{}, err
 	}
 
@@ -422,16 +451,6 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 }
 
 func (m *Manager) Activate(ctx context.Context, reboot bool) (Status, error) {
-	return m.activate(ctx, reboot, false)
-}
-
-// ActivateBootstrap arms the first signed transition from the accepted Plan 1
-// image while keeping persistent State readable by that fallback image.
-func (m *Manager) ActivateBootstrap(ctx context.Context, reboot bool) (Status, error) {
-	return m.activate(ctx, reboot, true)
-}
-
-func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status, error) {
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err
@@ -441,7 +460,7 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err != nil {
 		return Status{}, err
 	}
-	if err := validateUpdateMode(current, bootstrap); err != nil {
+	if err := validateUpdateMode(current); err != nil {
 		return Status{}, err
 	}
 	journal, err := loadJournal(m.config.JournalPath)
@@ -459,15 +478,11 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err != nil {
 		return Status{}, err
 	}
-	if bootstrap {
-		if !state.Transaction.Plan1Compatible() {
-			return Status{}, errors.New("Plan 1 bootstrap State is not fallback-compatible")
-		}
-		if err := m.verifyBootstrapExecutable(transactionManifest); err != nil {
-			return Status{}, err
-		}
-	} else if state.Transaction.Plan1Compatible() {
-		return Status{}, errors.New("Plan 1-compatible transaction requires signed bootstrap activation")
+	if err := m.requireCoreHostStep(journal, "activate-host"); err != nil {
+		return Status{}, err
+	}
+	if state.Transaction.Plan1Compatible() {
+		return Status{}, errors.New("Plan 1-compatible transactions are no longer supported")
 	}
 	layout, err := m.config.DiscoverLayout(slot)
 	if err != nil {
@@ -486,11 +501,19 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err := m.callVerifyBootAssets(ctx, layout, transactionManifest); err != nil {
 		return Status{}, err
 	}
+	bootID, err := os.ReadFile(m.config.BootIDPath)
+	if err != nil {
+		return Status{}, fmt.Errorf("read activation boot identity: %w", err)
+	}
+	if strings.TrimSpace(string(bootID)) == "" {
+		return Status{}, errors.New("activation boot identity is empty")
+	}
 	state.Transaction.Stage = PhasePending
 	if err := appliance.WriteStateAtomic(m.config.StatePath, state); err != nil {
 		return Status{}, err
 	}
 	journal.Phase = PhasePending
+	journal.ActivationBootID = strings.TrimSpace(string(bootID))
 	journal.ErrorCode = ""
 	journal.Error = ""
 	journal.UpdatedAt = m.now()
@@ -565,11 +588,6 @@ func (m *Manager) Reconcile(ctx context.Context, options ReconcileOptions) (Reco
 
 	if slot == journal.CandidateSlot && current.ImageVersion == journal.TargetImage &&
 		(journal.Phase == PhasePending || journal.Phase == PhaseTrial || journal.Phase == PhaseFailed) {
-		if state.Transaction.Plan1Compatible() {
-			if err := m.verifyBootstrapJournal(state, journal); err != nil {
-				return ReconcileResult{}, err
-			}
-		}
 		if output, runErr := m.config.Run(ctx, "bootctl", "set-default", ""); runErr != nil {
 			return ReconcileResult{}, fmt.Errorf("enable counted candidate retries: %w: %s", runErr, strings.TrimSpace(string(output)))
 		}
@@ -600,6 +618,16 @@ func (m *Manager) Reconcile(ctx context.Context, options ReconcileOptions) (Reco
 
 	if slot == journal.ActiveSlot && current.ImageVersion == journal.CurrentImage &&
 		(journal.Phase == PhasePending || journal.Phase == PhaseTrial || journal.Phase == PhaseFailed) {
+		if journal.Phase == PhasePending && journal.ActivationBootID != "" {
+			bootID, readErr := os.ReadFile(m.config.BootIDPath)
+			if readErr != nil {
+				return ReconcileResult{}, fmt.Errorf("read current boot identity: %w", readErr)
+			}
+			if strings.TrimSpace(string(bootID)) == journal.ActivationBootID {
+				status, statusErr := m.Status()
+				return ReconcileResult{Status: status}, statusErr
+			}
+		}
 		journal.Phase = PhaseRollback
 		journal.ErrorCode = "candidate_rolled_back"
 		journal.Error = "candidate exhausted bounded boot attempts and the previous known-good slot resumed"
@@ -628,6 +656,10 @@ func (m *Manager) MarkHealthy(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	defer unlock()
+	return m.markHealthy(ctx)
+}
+
+func (m *Manager) markHealthy(ctx context.Context) (Status, error) {
 	current, state, slot, err := m.current()
 	if err != nil {
 		return Status{}, err
@@ -662,52 +694,32 @@ func (m *Manager) MarkHealthy(ctx context.Context) (Status, error) {
 	return m.Status()
 }
 
-func (m *Manager) verifyBootstrapExecutable(manifest Manifest) error {
-	updater, ok := manifest.Artifact("system-updater")
-	if !ok {
-		return errors.New("signed transaction has no bootstrap updater artifact")
-	}
-	executable, err := m.config.ExecutablePath()
-	if err != nil {
-		return fmt.Errorf("resolve running bootstrap updater: %w", err)
-	}
-	if err := verifyFile(executable, updater.SizeBytes, updater.SHA256); err != nil {
-		return fmt.Errorf("running bootstrap updater is not the signed target updater: %w", err)
-	}
-	return nil
-}
-
-func (m *Manager) verifyBootstrapJournal(state appliance.StateRecord, journal Journal) error {
-	if state.Transaction.ID != journal.TransactionID || state.Transaction.TargetImageVersion != journal.TargetImage || state.Slots.Candidate != journal.CandidateSlot {
-		return errors.New("Plan 1-compatible State does not match the durable system update journal")
-	}
-	_, err := m.loadTransactionManifest(journal)
-	return err
-}
-
-func validateUpdateMode(current appliance.Manifest, bootstrap bool) error {
-	native := appliance.ApplianceCapabilities(current).ImageUpdate
-	if bootstrap && native {
-		return errors.New("Plan 1 bootstrap is not valid on a native system-update image")
-	}
-	if !bootstrap && !native {
-		return errors.New("this appliance predates native system updates; use the signed Plan 1 bootstrap artifact once")
+func validateUpdateMode(current appliance.Manifest) error {
+	if !appliance.ApplianceCapabilities(current).ImageUpdate {
+		return errors.New("this appliance predates native system updates; reinstall it")
 	}
 	return nil
 }
 
 func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedManifest, Layout, appliance.StateRecord, Journal, error) {
+	if options.Core == nil {
+		if err := RequireLegacyUpdateAllowed(m.config.CoreStatePath); err != nil {
+			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, err
+		}
+		// Without a complete core release nothing else binds the host
+		// artifacts, so the manifest itself must be named by its digest.
+		if !validSHA256(strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))) {
+			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, errors.New("a System update without a core release requires its exact manifest SHA-256")
+		}
+	}
 	if strings.TrimSpace(options.ManifestSource) == "" {
 		return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, errors.New("manifest source is required")
-	}
-	if strings.TrimSpace(options.SignatureSource) == "" {
-		options.SignatureSource = options.ManifestSource + ".sig"
 	}
 	current, state, activeSlot, err := m.current()
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if err := validateUpdateMode(current, options.Bootstrap); err != nil {
+	if err := validateUpdateMode(current); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if state.Slots.Current != activeSlot || state.Slots.CurrentImageVersion != current.ImageVersion {
@@ -726,16 +738,18 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	manifestPath := filepath.Join(incomingDir, "system-update-manifest.json")
-	signaturePath := manifestPath + ".sig"
 	if err := m.downloadSourceAtMost(ctx, options.ManifestSource, manifestPath+".part", manifestPath, maxManifestBytes); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("download system update manifest: %w", err)
 	}
-	if err := m.downloadSourceAtMost(ctx, options.SignatureSource, signaturePath+".part", signaturePath, maxSignatureBytes); err != nil {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("download system update signature: %w", err)
-	}
-	verified, err := VerifyManifest(manifestPath, signaturePath, m.config.TrustKeyPath)
+	verified, coreDigest, err := m.verifyHostManifest(manifestPath, options.Core)
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
+	}
+	if options.Core != nil {
+		bound, err := m.CoreHostOptions(*options.Core)
+		if err != nil || options.ManifestSource != bound.ManifestSource || options.ReleaseTag != bound.ReleaseTag {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host source differs from frozen core selection")
+		}
 	}
 	expectedDigest := strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))
 	if expectedDigest != "" {
@@ -751,21 +765,25 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		if errors.As(err, &compatibility) && compatibility.Code == "bridge_required" {
 			compatibility.ManifestSHA256 = verified.SHA256
 			compatibility.TargetImage = verified.Manifest.TargetImageVersion
-			compatibility.ReleaseBranch = verified.Manifest.ReleaseSet.Branch
 		}
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if expected := strings.TrimSpace(options.ExpectedReleaseBranch); expected != "" && verified.Manifest.ReleaseSet.Branch != expected {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("signed platform bundle branch %q does not match requested branch %q", verified.Manifest.ReleaseSet.Branch, expected)
-	}
-	if options.Bootstrap {
-		if err := m.verifyBootstrapExecutable(verified.Manifest); err != nil {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, err
+
+	if options.discoveryOnly && verified.Manifest.TargetImageVersion == current.ImageVersion {
+		// Equality is only a no-op for the installed signed source and component
+		// set. A same-version rebuild must not replace the installed identity.
+		if verified.Manifest.SourceTree != current.SourceTree || current.ReleaseSet == nil ||
+			!reflect.DeepEqual(verified.Manifest.ReleaseSet, *current.ReleaseSet) {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("same-version system release does not match the installed identity")
 		}
+		return verified, layout, state, Journal{}, nil
 	}
 
 	existing, existingErr := loadJournal(m.config.JournalPath)
 	if existingErr == nil && existing.ManifestSHA256 == verified.SHA256 {
+		if existing.CoreManifestSHA256 != coreDigest {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host transaction is bound to a different core selection")
+		}
 		return verified, layout, state, existing, nil
 	}
 	if existingErr == nil {
@@ -783,7 +801,7 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 
 	transactionID := "update-" + verified.SHA256[:24]
 	journal := Journal{
-		Schema: JournalSchema, TransactionID: transactionID, ManifestSHA256: verified.SHA256,
+		Schema: JournalSchema, TransactionID: transactionID, ManifestSHA256: verified.SHA256, CoreManifestSHA256: coreDigest,
 		CurrentImage: current.ImageVersion,
 		TargetImage:  verified.Manifest.TargetImageVersion,
 		ActiveSlot:   activeSlot, CandidateSlot: layout.InactiveSlot, Phase: PhaseAvailable,
@@ -795,10 +813,10 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	if err := os.MkdirAll(transactionDir, 0700); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if err := atomicCopy(manifestPath, filepath.Join(transactionDir, "system-update-manifest.json"), 0600); err != nil {
+	if err := m.persistHostCore(transactionDir, options.Core); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if err := atomicCopy(signaturePath, filepath.Join(transactionDir, "system-update-manifest.json.sig"), 0600); err != nil {
+	if err := atomicCopy(manifestPath, filepath.Join(transactionDir, "system-update-manifest.json"), 0600); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if err := writeJournal(m.config.JournalPath, journal); err != nil {
@@ -830,17 +848,17 @@ func (m *Manager) current() (appliance.Manifest, appliance.StateRecord, string, 
 
 func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 	manifestPath := filepath.Join(m.transactionDir(journal.TransactionID), "system-update-manifest.json")
-	verified, err := VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+	verified, err := m.verifyTransactionManifest(journal, manifestPath)
 	if err != nil && journal.Phase == PhaseHealthy && errors.Is(err, os.ErrNotExist) {
 		manifestPath = m.config.HealthyManifestPath
-		verified, err = VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+		verified, err = m.verifyTransactionManifest(journal, manifestPath)
 	}
 	if err != nil {
 		return Manifest{}, err
 	}
 	manifest := verified.Manifest
 	if verified.SHA256 != journal.ManifestSHA256 {
-		return Manifest{}, errors.New("staged signed manifest digest no longer matches the durable journal")
+		return Manifest{}, errors.New("staged manifest digest no longer matches the durable journal")
 	}
 	if manifest.TargetImageVersion != journal.TargetImage {
 		return Manifest{}, errors.New("staged system update manifest no longer matches the durable journal")
@@ -849,18 +867,18 @@ func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 }
 
 func (m *Manager) persistHealthyUpdateProof(journal Journal) error {
+	if err := m.requireCoreHostStep(journal, "commit-host"); err != nil {
+		return err
+	}
 	manifestPath := filepath.Join(m.transactionDir(journal.TransactionID), "system-update-manifest.json")
-	verified, err := VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+	verified, err := m.verifyTransactionManifest(journal, manifestPath)
 	if err != nil {
 		return err
 	}
 	if verified.SHA256 != journal.ManifestSHA256 || verified.Manifest.TargetImageVersion != journal.TargetImage {
-		return errors.New("signed System update proof does not match the durable journal")
+		return errors.New("System update proof does not match the durable journal")
 	}
-	if err := atomicCopy(manifestPath, m.config.HealthyManifestPath, 0o600); err != nil {
-		return err
-	}
-	return atomicCopy(manifestPath+".sig", m.config.HealthyManifestPath+".sig", 0o600)
+	return atomicCopy(manifestPath, m.config.HealthyManifestPath, 0o600)
 }
 
 func (m *Manager) transactionDir(id string) string { return filepath.Join(m.config.CacheDir, id) }
@@ -922,4 +940,24 @@ func cloneBytes(values map[string]int64) map[string]int64 {
 		clone[key] = value
 	}
 	return clone
+}
+
+// Signed CDN query parameters are transport details, not manifest source inputs.
+// Only GitHub's HTTPS release redirect may introduce them.
+func validateSystemUpdateDownloadURL(target, origin *url.URL) error {
+	if err := validateRemoteURL(origin); err != nil {
+		return err
+	}
+	if target == nil {
+		return validateRemoteURL(target)
+	}
+	if origin.Scheme == "https" && target.Scheme != "https" {
+		return errors.New("system update redirect must preserve HTTPS")
+	}
+	candidate := *target
+	if origin.Scheme == "https" && strings.EqualFold(origin.Host, "github.com") &&
+		target.Scheme == "https" && (strings.EqualFold(target.Host, "release-assets.githubusercontent.com") || strings.EqualFold(target.Host, "objects.githubusercontent.com")) {
+		candidate.RawQuery = ""
+	}
+	return validateRemoteURL(&candidate)
 }

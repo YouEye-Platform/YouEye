@@ -8,7 +8,10 @@
 import { db, ensureSchema } from "@/db";
 import { timelineEntries, pendingTimelineEvents } from "@/db/schema";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { encrypt, decrypt, hybridEncrypt, hybridDecrypt } from "@/lib/crypto/encryption";
+import { withTimelineUserLock } from "../timeline-lock";
+import { admitTimelineWrite } from "./timeline-collection";
+import { userEncryptionKeys } from "@/db/schema";
+import { encrypt, decrypt, hybridEncrypt, hybridDecrypt, hashKey, exportPublicKey } from "@/lib/crypto/encryption";
 
 /** The plaintext content stored inside encrypted blobs */
 export interface TimelineEntryData {
@@ -49,56 +52,34 @@ export interface DecryptedTimelineEntry {
   entry: TimelineEntryData;
 }
 
-/** Create a new encrypted timeline entry */
+/** Every persistence path is fenced against disable/re-enable and key rotation. */
 export async function createTimelineEntry(
-  userId: string,
-  collection: "history" | "future" | "imported",
-  entryData: TimelineEntryData,
-  encryptionKey: CryptoKey
+  userId: string, collection: "history" | "future" | "imported",
+  entryData: TimelineEntryData, encryptionKey: CryptoKey, collectionRevision?: string,
 ): Promise<string> {
-  await ensureSchema();
-
-  const plaintext = JSON.stringify(entryData);
-  const { ciphertext, nonce } = await encrypt(plaintext, encryptionKey);
-
-  const [row] = await db
-    .insert(timelineEntries)
-    .values({
-      userId,
-      collection,
-      encryptedBlob: ciphertext,
-      nonce,
-    })
-    .returning({ id: timelineEntries.id });
-
-  return row.id;
+  return withTimelineUserLock(userId, async (tx) => {
+    await admitTimelineWrite(userId, collectionRevision, entryData.timestamp, tx);
+    const [key] = await tx.select().from(userEncryptionKeys).where(eq(userEncryptionKeys.userId, userId));
+    if (!key || await hashKey(encryptionKey) !== key.keyHash) throw new Error("Encryption session changed; unlock again");
+    const { ciphertext, nonce } = await encrypt(JSON.stringify(entryData), encryptionKey);
+    const [row] = await tx.insert(timelineEntries).values({ userId, collection, encryptedBlob: ciphertext, nonce }).returning({ id: timelineEntries.id });
+    return row.id;
+  });
 }
-
-/** Create a new hybrid-encrypted timeline entry (RSA-wrapped per-entry AES key) */
 export async function createHybridTimelineEntry(
-  userId: string,
-  collection: "history" | "future" | "imported",
-  entryData: TimelineEntryData,
-  publicKey: CryptoKey
+  userId: string, collection: "history" | "future" | "imported",
+  entryData: TimelineEntryData, publicKey: CryptoKey, collectionRevision?: string,
 ): Promise<string> {
-  await ensureSchema();
-
-  const plaintext = JSON.stringify(entryData);
-  const { ciphertext, nonce, wrappedKey } = await hybridEncrypt(plaintext, publicKey);
-
-  const [row] = await db
-    .insert(timelineEntries)
-    .values({
-      userId,
-      collection,
-      encryptedBlob: ciphertext,
-      nonce,
-      encryptionType: "hybrid",
-      wrappedKey,
-    })
-    .returning({ id: timelineEntries.id });
-
-  return row.id;
+  return withTimelineUserLock(userId, async (tx) => {
+    await admitTimelineWrite(userId, collectionRevision, entryData.timestamp, tx);
+    const [key] = await tx.select().from(userEncryptionKeys).where(eq(userEncryptionKeys.userId, userId));
+    if (!key?.publicKey || await exportPublicKey(publicKey) !== key.publicKey) throw new Error("Encryption key changed; retry the action");
+    const { ciphertext, nonce, wrappedKey } = await hybridEncrypt(JSON.stringify(entryData), publicKey);
+    const [row] = await tx.insert(timelineEntries).values({
+      userId, collection, encryptedBlob: ciphertext, nonce, encryptionType: "hybrid", wrappedKey,
+    }).returning({ id: timelineEntries.id });
+    return row.id;
+  });
 }
 
 /** Read and decrypt timeline entries with optional filtering */
@@ -293,9 +274,13 @@ export async function updateTimelineEntry(
   userId: string,
   entryData: Partial<TimelineEntryData>,
   encryptionKey: CryptoKey,
-  privateKey?: CryptoKey
+  privateKey?: CryptoKey,
+  collectionRevision?: string
 ): Promise<boolean> {
-  await ensureSchema();
+  return withTimelineUserLock(userId, async (tx) => {
+  await admitTimelineWrite(userId, collectionRevision, new Date().toISOString(), tx);
+  const [key] = await tx.select().from(userEncryptionKeys).where(eq(userEncryptionKeys.userId, userId));
+  if (!key || await hashKey(encryptionKey) !== key.keyHash) throw new Error("Encryption session changed; unlock again");
 
   // Get existing entry
   const existing = await getTimelineEntry(entryId, userId, encryptionKey, privateKey);
@@ -316,7 +301,7 @@ export async function updateTimelineEntry(
   const plaintext = JSON.stringify(merged);
   const { ciphertext, nonce } = await encrypt(plaintext, encryptionKey);
 
-  const result = await db
+  const result = await tx
     .update(timelineEntries)
     .set({ encryptedBlob: ciphertext, nonce })
     .where(
@@ -325,6 +310,7 @@ export async function updateTimelineEntry(
     .returning({ id: timelineEntries.id });
 
   return result.length > 0;
+  });
 }
 
 /** Get entry counts per collection for a user */
@@ -347,109 +333,12 @@ export async function getTimelineCounts(
   return counts;
 }
 
-// ============================================
-// Pending Timeline Events (for app-generated events)
-// ============================================
-
-/** Queue a pending timeline event (unencrypted, to be encrypted on next PIN unlock) */
-export async function queuePendingEvent(
-  userId: string,
-  appId: string,
-  collection: string,
-  payload: Record<string, unknown>
-): Promise<string> {
-  await ensureSchema();
-
-  const [row] = await db
-    .insert(pendingTimelineEvents)
-    .values({
-      userId,
-      appId,
-      collection,
-      payload,
-    })
-    .returning({ id: pendingTimelineEvents.id });
-
-  return row.id;
-}
-
-/** Get all pending events for a user */
-export async function getPendingEvents(
-  userId: string
-): Promise<
-  Array<{
-    id: string;
-    appId: string;
-    collection: string;
-    payload: Record<string, unknown>;
-  }>
-> {
-  await ensureSchema();
-
-  return db
-    .select({
-      id: pendingTimelineEvents.id,
-      appId: pendingTimelineEvents.appId,
-      collection: pendingTimelineEvents.collection,
-      payload: pendingTimelineEvents.payload,
-    })
-    .from(pendingTimelineEvents)
-    .where(eq(pendingTimelineEvents.userId, userId))
-    .orderBy(asc(pendingTimelineEvents.createdAt));
-}
-
-/** Delete a pending event after it has been encrypted and moved */
-export async function deletePendingEvent(eventId: string): Promise<void> {
-  await ensureSchema();
-
-  await db
-    .delete(pendingTimelineEvents)
-    .where(eq(pendingTimelineEvents.id, eventId));
-}
-
-/**
- * Process pending events: encrypt and move to timelineEntries.
- * Called when the user has an active PIN session and loads the timeline.
+/** Unfenced legacy pending payloads cannot be replayed into a new consent interval.
+ * New ingestion requires an encryption key and never queues plaintext.
  */
-export async function processPendingEvents(
-  userId: string,
-  encryptionKey: CryptoKey
-): Promise<number> {
-  const pending = await getPendingEvents(userId);
-  if (pending.length === 0) return 0;
-
-  let processed = 0;
-
-  for (const event of pending) {
-    try {
-      const entryData: TimelineEntryData = {
-        app_id: event.appId,
-        entry_type: (event.payload.entry_type as string) ?? "unknown",
-        title: (event.payload.title as string) ?? "Untitled",
-        timestamp:
-          (event.payload.timestamp as string) ?? new Date().toISOString(),
-        embed_path: (event.payload.embed_path as string) ?? undefined,
-        info_card: event.payload.info_card as
-          | { card_type: string; endpoint: string }
-          | undefined,
-        tags: (event.payload.tags as Record<string, unknown>) ?? {},
-        data: (event.payload.data as Record<string, unknown>) ?? {},
-      };
-
-      await createTimelineEntry(
-        userId,
-        event.collection as "history" | "future" | "imported",
-        entryData,
-        encryptionKey
-      );
-
-      await deletePendingEvent(event.id);
-      processed++;
-    } catch {
-      // Skip events that fail to process — they'll be retried next time
-      continue;
-    }
-  }
-
-  return processed;
+export async function processPendingEvents(userId: string, _encryptionKey: CryptoKey): Promise<number> {
+  return withTimelineUserLock(userId, async (tx) => {
+    await tx.delete(pendingTimelineEvents).where(eq(pendingTimelineEvents.userId, userId));
+    return 0;
+  });
 }

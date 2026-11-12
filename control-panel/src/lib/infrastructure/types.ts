@@ -60,6 +60,8 @@ export interface LXDContainerSpec {
   port: number;
   entryFile?: string;
   runtime?: 'node' | 'bun';
+  /** Wait for the owning provisioner to write configuration before starting. */
+  deferStart?: boolean;
   postInstallCommands?: string[];
   volumes?: VolumeMapping[];
 }

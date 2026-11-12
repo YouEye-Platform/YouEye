@@ -9,14 +9,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { unregisterApp } from "@/lib/db/queries/app-management";
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
 
 function validateBridgeAuth(request: Request): boolean {
-  const provided =
-    request.headers.get("X-UI-Bridge-Token") ??
-    request.headers.get("x-ui-bridge-token");
-  if (!provided) return false;
-  const expected = getBridgeToken();
-  return expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function DELETE(
@@ -37,7 +33,8 @@ export async function DELETE(
     }
   }
 
-  await unregisterApp(appId);
+  const keepData = isBridgeAuth && request.headers.get('X-YouEye-Keep-Data') === 'true';
+  await unregisterApp(appId, keepData);
 
   return NextResponse.json({ success: true, app_id: appId });
 }

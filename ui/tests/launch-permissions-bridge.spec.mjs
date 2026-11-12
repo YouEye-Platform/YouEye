@@ -19,9 +19,8 @@ test('UI bridge exposes launch permission preview and selected grants for YouEye
   assert.match(route, /connection:\$\{record\.appId/);
   assert.match(route, /getPermissionDecision\(userId, appId, permission\)/);
   assert.match(route, /findUserByIdentityId/);
-  assert.match(route, /findUserByUsername/);
-  assert.match(route, /findUserByEmail/);
-  assert.match(route, /findUserById/);
+  assert.doesNotMatch(route, /\b(?:findUserByUsername|findUserByEmail|findUserById)\b/);
+  assert.match(route, /evaluateLocalAdmission/);
   assert.match(route, /identityUserId/);
   assert.match(route, /User not found in UI database/);
   assert.match(route, /getUserAppsWithConfig\(user\.id\)/);

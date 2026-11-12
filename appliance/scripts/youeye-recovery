@@ -186,17 +186,28 @@ repair_boot() (
     state=${YOUEYE_RECOVERY_INSTALLER_STATE:-/var/lib/youeye-state/installer}
     backup=$state/boot
     manifest=$state/appliance-manifest.json
-    signature=$state/appliance-manifest.json.sig
-	trust_key=${YOUEYE_RECOVERY_TRUST_KEY:-/usr/share/youeye/appliance-development.pub}
+	core_release=${YOUEYE_RECOVERY_CORE_RELEASE:-/var/lib/youeye-state/bootstrap/core-release.json}
 	appliance_state=${YOUEYE_RECOVERY_APPLIANCE_STATE:-/var/lib/youeye-state/appliance-state.json}
 	update_boot=${YOUEYE_RECOVERY_UPDATE_BOOT:-/var/lib/youeye-state/system-update/boot}
     esp_device="${YOUEYE_RECOVERY_ESP_DEVICE:-$(findfs PARTLABEL=YE-ESP)}"
     esp_mount=${YOUEYE_RECOVERY_ESP_MOUNT:-/run/youeye-recovery-esp}
 
-    if ! openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
-        -in "$manifest" -sigfile "$signature" >/dev/null; then
-        return 1
-    fi
+	# Protected State is written only by the installer and Spine. A file that is
+	# a symlink, foreign-owned or group/world-writable is never trusted.
+	protected_file() {
+		[ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %u "$1")" = "$(id -u)" ] &&
+			[ $((0$(stat -c %a "$1") & 0022)) -eq 0 ]
+	}
+	# The installed appliance manifest must be the exact appliance member of the
+	# accepted core release recorded at install time.
+	protected_file "$manifest" || return 1
+	protected_file "$core_release" || return 1
+	accepted=$(jq -er '
+		if .schema != "youeye.core-release.v1" or .authority != "digest" then error("unsupported core release") else
+		[.members[] | select(.role == "appliance") | .artifact.sha256] |
+		if length == 1 then .[0] else error("missing or duplicate appliance member") end end
+	' "$core_release") || return 1
+	[ "$(sha256sum "$manifest" | cut -d ' ' -f 1)" = "$accepted" ] || return 1
 
     verify_boot_asset() {
         role=$1
@@ -252,10 +263,10 @@ repair_boot() (
 		fi
 		candidate_dir="$update_boot/$slot/$image_version"
 		candidate_manifest="$candidate_dir/manifest.json"
-		candidate_signature="$candidate_manifest.sig"
 		candidate_asset="$candidate_dir/system.efi"
-		openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
-			-in "$candidate_manifest" -sigfile "$candidate_signature" >/dev/null || return 1
+		# Spine verified this manifest against the selected release digest
+		# before staging it into protected State.
+		protected_file "$candidate_manifest" || return 1
 		role="system-${slot}-uki"
 		expected=$(jq -er --arg role "$role" --arg version "$image_version" \
 			--arg recovery "$recovery_version" '

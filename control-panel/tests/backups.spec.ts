@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { recoveryImportErrorMessage } from '../src/lib/backup/platform-backup';
 import { assessBackupCompatibility, parseBackupSourceIdentity } from '../src/lib/backup/compatibility';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
-const read = (filename: string) => readFileSync(path.join(root, filename), 'utf8');
+const read = (filename: string) => englishInterfaceSource(readFileSync(path.join(root, filename), 'utf8'));
 
 test('shared database restore reads the manifest-declared password file', () => {
   assert.equal(resolveSharedDatabasePasswordFile({
@@ -195,8 +196,7 @@ test('whole-server recovery removes omitted app registrations and keeps setup ga
 
 test('setup-only protected actions use the setup CSRF endpoint', () => {
   const restore = read('src/components/setup/SetupRestore.tsx');
-  const update = read('src/components/setup/SetupApplianceUpdate.tsx');
-  for (const component of [restore, update]) {
+  for (const component of [restore]) {
     assert.match(component, /fetch\('\/api\/auth\/csrf'/);
     assert.doesNotMatch(component, /fetch\('\/settings\/api\/auth\/csrf'/);
   }

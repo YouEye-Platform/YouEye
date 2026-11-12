@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+const { guardCanonicalFeatures, canonicalizeNextOutput } = require('./reproducible-next.cjs');
 const rootDir = path.join(__dirname, '..');
+guardCanonicalFeatures(rootDir);
 const nextDir = path.join(rootDir, '.next');
 const cacheDir = path.join(nextDir, 'cache');
 const deterministicExpiry = 4102444800000;
@@ -72,11 +74,12 @@ const env = {
   YOUEYE_BUILD_ID: commit,
   NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: actionKey,
 };
-execFileSync(path.join(rootDir, 'node_modules', '.bin', 'next'), ['build'], {
+execFileSync(path.join(rootDir, 'node_modules', '.bin', 'next'), ['build', '--webpack'], {
   cwd: rootDir,
   env,
   stdio: 'inherit',
 });
+canonicalizeNextOutput(rootDir);
 execFileSync(process.execPath, [path.join(__dirname, 'postbuild.js')], {
   cwd: rootDir,
   env,

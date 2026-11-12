@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { updateAppConfig } from "@/lib/db/queries/apps";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
 
 export async function PUT(
   request: NextRequest,
@@ -19,6 +20,9 @@ export async function PUT(
 
   try {
     const { appId } = await params;
+    if (!evaluateLocalAdmission(appId, session.identityId).allowed) {
+      return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+    }
     const body = await request.json();
 
     const updated = await updateAppConfig(session.userId, appId, {

@@ -106,6 +106,7 @@ export function uiContainerSpec(): LXDContainerSpec {
     nodeVersion: '22.x',
     appDir: '/opt/youeye-ui',
     port: 3000,
+    volumes: [{ kind: 'bind', host: '/var/lib/youeye/ui-data', container: '/var/lib/youeye/ui-data' }],
   };
 }
 
@@ -122,5 +123,7 @@ export function pointerContainerSpec(): LXDContainerSpec {
     port: 4001,
     entryFile: 'server.js',
     runtime: 'bun',
+    deferStart: true,
+    volumes: [{ kind: 'bind', host: '/var/lib/youeye/pointer/runtime', container: '/var/lib/pointer' }],
   };
 }

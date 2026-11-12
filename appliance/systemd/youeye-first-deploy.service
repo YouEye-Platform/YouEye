@@ -10,6 +10,7 @@ StartLimitBurst=8
 
 [Service]
 Type=oneshot
+TimeoutStartSec=4h
 ExecStart=/usr/local/libexec/youeye-first-deploy
 Restart=on-failure
 RestartSec=30

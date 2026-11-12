@@ -9,13 +9,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
 import { getAdminUsers } from "@/lib/db/queries/users";
 
 function validateBridgeAuth(request: NextRequest): boolean {
-  const provided = request.headers.get("X-UI-Bridge-Token");
-  if (!provided) return false;
-  const expected = getBridgeToken();
-  return expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function GET(request: NextRequest) {

@@ -30,7 +30,8 @@
 import { access } from 'node:fs/promises';
 import { NextRequest } from 'next/server';
 import { settingsService } from '@/lib/settings';
-import { setDomainDNS } from '@/lib/apps/pihole-api';
+import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
+import { getIdentityIssuerOrigin } from '@/lib/identity/config';
 import { removeIPLiteralRoute } from '@/lib/caddy/client';
 import { tlsStorage } from '@/lib/acme/storage';
 import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
@@ -140,6 +141,15 @@ export async function POST(request: NextRequest) {
   if (dnsRequired) {
     try {
       await setDomainDNS(domain, newIP);
+      // A rename can leave the canonical issuer under an older domain. Its
+      // explicit DNS record must follow the appliance's new address as well.
+      const issuerOrigin = await getIdentityIssuerOrigin();
+      if (issuerOrigin) {
+        const issuerHost = new URL(issuerOrigin).hostname;
+        if (issuerHost !== domain && !issuerHost.endsWith(`.${domain}`)) {
+          await setIdentityHostDNS(issuerHost, newIP);
+        }
+      }
       dnsOk = true;
       console.log(`[host-ip/migrate] dnsmasq_lines: *.${domain} → ${newIP}`);
     } catch (err) {

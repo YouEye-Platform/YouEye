@@ -82,11 +82,6 @@ var domainSetCmd = &cobra.Command{
 			output.Success("Domain set to " + newDomain)
 			return nil
 		}
-		if state.Domain == newDomain {
-			output.Info("The server URL is already " + newDomain)
-			return nil
-		}
-
 		selfsigned := domainSetTLS == "selfsigned" || domainSetTLS == "" || domainSetTLS == "auto"
 		if !confirmURLChange(newDomain, state.Domain, selfsigned, domainSetYes) {
 			return nil
@@ -183,10 +178,6 @@ var domainImportCmd = &cobra.Command{
 		if state.SetupCompleted {
 			// Live switch: the platform is running — apply the bundle now.
 			if !requireCP() {
-				return nil
-			}
-			if state.Domain == strings.ToLower(b.Domain) {
-				output.Info("The server URL is already " + b.Domain + " — nothing to do")
 				return nil
 			}
 			if !confirmURLChange(strings.ToLower(b.Domain), state.Domain, false, domainImportYes) {

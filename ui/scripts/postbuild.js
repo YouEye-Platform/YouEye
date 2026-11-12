@@ -11,7 +11,9 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.join(__dirname, '..');
-const standalonePath = path.join(rootDir, '.next', 'standalone');
+const standaloneContainer = path.join(rootDir, '.next', 'standalone');
+const standalonePath = fs.existsSync(path.join(standaloneContainer, 'ui', 'server.js'))
+  ? path.join(standaloneContainer, 'ui') : standaloneContainer;
 const staticSrc = path.join(rootDir, '.next', 'static');
 const staticDest = path.join(standalonePath, '.next', 'static');
 const publicSrc = path.join(rootDir, 'public');

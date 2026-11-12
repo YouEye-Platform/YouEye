@@ -13,6 +13,10 @@ printf 'test-boot-id\n' > "$tmp/boot-id"
 cat > "$tmp/bin/youeye" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "$*" = "update system check-commit" ]; then
+    [ "${FAIL_CORE_GATE:-0}" = 0 ]
+    exit
+fi
 if [ "$*" = "appliance commit-healthy-slot" ]; then
     printf 'commit\n' >> "$CALL_LOG"
     if [ "${FAIL_COMMIT:-0}" = 1 ]; then
@@ -181,5 +185,14 @@ test ! -e "$tmp/trial-grace-state/system-update-health-wait.json"
 run_bless "$tmp/counted-efivars" "$tmp/trial-failed-state" "$tmp/trial-failed-calls" 1 0 0 1 1
 test "$(cat "$tmp/trial-failed-calls")" = "$(printf 'reconcile\nhealth\nreconcile-failed\nreboot')"
 test ! -e "$tmp/trial-failed-state/last-bless.json"
+
+export FAIL_CORE_GATE=1
+if run_bless "$tmp/counted-efivars" "$tmp/core-held-state" "$tmp/core-held-calls"; then
+    printf 'FAIL: grouped update bypassed core commit gate\n' >&2
+    exit 1
+fi
+unset FAIL_CORE_GATE
+test "$(cat "$tmp/core-held-calls")" = reconcile
+test ! -e "$tmp/core-held-state/pending-bless.json"
 
 printf 'PASS: health-gated appliance boot blessing and uncounted slot reconciliation\n'

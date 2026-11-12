@@ -14,6 +14,13 @@ import {
   setPassword,
 } from '@/lib/identity/provider';
 import { validateIdentityPassword } from '@/lib/identity/password-policy';
+import { reconcileAdmissionProjections, admissionReconciliationState } from '@/lib/admission/projection';
+
+async function reconciledResponse(body: Record<string, unknown>) {
+  await reconcileAdmissionProjections().catch(() => undefined);
+  const admissionReconciliation = await admissionReconciliationState();
+  return NextResponse.json({ ...body, admissionReconciliation }, { status: admissionReconciliation === 'pending' ? 202 : 200 });
+}
 
 export async function PUT(
   request: NextRequest,
@@ -39,7 +46,7 @@ export async function PUT(
       case 'toggle-active': {
         const user = await getUser(id);
         await updateUser(id, { is_active: !user.is_active });
-        return NextResponse.json({ success: true, is_active: !user.is_active });
+        return reconciledResponse({ success: true, is_active: !user.is_active });
       }
 
       case 'toggle-admin': {
@@ -51,7 +58,7 @@ export async function PUT(
           : currentGroups.filter((g) => g !== 'admin');
 
         await updateUser(id, { groups, isAdmin });
-        return NextResponse.json({ success: true, is_superuser: isAdmin });
+        return reconciledResponse({ success: true, is_superuser: isAdmin });
       }
 
       default:
@@ -78,7 +85,7 @@ export async function DELETE(
 
   try {
     await deleteUser(id);
-    return NextResponse.json({ success: true });
+    return reconciledResponse({ success: true });
   } catch (err) {
     console.error('[UI Bridge] Delete user error:', err);
     const message = err instanceof Error ? err.message : 'Failed to delete user';

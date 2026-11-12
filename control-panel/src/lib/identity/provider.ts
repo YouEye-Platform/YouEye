@@ -19,7 +19,6 @@ export interface IdentityProviderConfig {
   externalUrl: string;
   internalUrl: string;
   issuer: string;
-  discoveryUrl: string;
   name: string;
   containerName: string;
   port: number;
@@ -117,7 +116,6 @@ export async function getIdentityProviderConfig(): Promise<IdentityProviderConfi
     externalUrl: config.externalUrl,
     internalUrl: config.internalUrl,
     issuer: config.issuer,
-    discoveryUrl: `${config.externalUrl}/.well-known/openid-configuration`,
     name: configuredName,
     containerName: config.containerName,
     port: config.port,
@@ -128,15 +126,50 @@ export async function createOAuthClient(params: {
   clientId: string;
   name: string;
   redirectUris: string[];
+  postLogoutRedirectUris?: string[];
+  backchannelLogoutUri?: string | null;
+  publicClient?: boolean;
   scopes?: string[];
   clientSecret?: string;
 }): Promise<{ clientId: string; clientSecret: string }> {
-  const clientSecret = params.clientSecret || randomBytes(32).toString('hex');
+  if (params.publicClient && params.clientSecret) throw new Error('Public clients cannot have a client secret');
+  if (params.publicClient && params.backchannelLogoutUri) throw new Error('Public clients cannot register a back-channel endpoint');
+  if (params.publicClient && params.redirectUris.some((redirect) => {
+    try {
+      const uri = new URL(redirect);
+      return !['https:', 'http:'].includes(uri.protocol) || Boolean(uri.username || uri.password || uri.hash)
+        || (uri.protocol === 'http:' && !['127.0.0.1', '[::1]', 'localhost'].includes(uri.hostname));
+    } catch { return true; }
+  })) throw new Error('Public client redirects must use HTTPS or loopback HTTP');
+  if (params.backchannelLogoutUri) {
+    const uri = new URL(params.backchannelLogoutUri);
+    if (!['https:', 'http:'].includes(uri.protocol) || uri.username || uri.password || uri.hash || uri.search) {
+      throw new Error('Invalid back-channel logout URI');
+    }
+    const identity = await getIdentityConfig();
+    const managedHost = uri.hostname === identity.domain || uri.hostname.endsWith(`.${identity.domain}`);
+    const trustedApp = params.clientId.startsWith('youeye-app-')
+      && uri.protocol === 'http:'
+      && uri.hostname === `app-${params.clientId.slice('youeye-app-'.length)}.youeye` && uri.port === '3000';
+    const trustedCore = params.clientId === 'youeye-ui' && uri.protocol === 'http:'
+      && uri.hostname === 'youeye-ui.youeye' && uri.port === '3000';
+    if (uri.protocol !== 'https:' && !trustedApp && !trustedCore) {
+      throw new Error('Back-channel logout URI must use HTTPS or a managed private host');
+    }
+    if (uri.protocol === 'https:' && (!managedHost || uri.port || !params.redirectUris.some((redirect) => {
+      try { return new URL(redirect).origin === uri.origin; } catch { return false; }
+    }))) {
+      throw new Error('Back-channel logout URI must use a managed host and registered redirect origin');
+    }
+  }
+  const clientSecret = params.publicClient ? '' : params.clientSecret || randomBytes(32).toString('hex');
   const client = await ensureClient({
     clientId: params.clientId,
     clientSecret,
     name: params.name,
     redirectUris: params.redirectUris,
+    postLogoutRedirectUris: params.postLogoutRedirectUris,
+    backchannelLogoutUri: params.backchannelLogoutUri,
     scopes: params.scopes || ['openid', 'profile', 'email', 'groups'],
   });
 
@@ -275,33 +308,42 @@ export async function updateUser(id: string, input: {
   isAdmin?: boolean;
   is_active?: boolean;
 }): Promise<IdentityAdminUser> {
-  const current = await getUserById(id);
-  if (!current) throw new Error(`Identity user not found: ${id}`);
-  const isAdmin = typeof input.isAdmin === 'boolean' ? input.isAdmin : current.is_admin;
-  if (typeof input.is_active === 'boolean' && input.is_active !== current.is_active) {
-    const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
-    await setPointerManagedActorState(id, input.is_active ? 'active' : 'disabled');
-  }
-  return toAdminUser(await updateIdentityUser(id, {
-    name: input.name,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    email: input.email,
-    groups: input.groups ? normalizeGroups(input.groups, isAdmin) : undefined,
-    isAdmin,
-    isActive: input.is_active,
+  return toAdminUser(await updateIdentityUser(id, async current => {
+    if (input.is_active === false || input.isAdmin === false) {
+      const { assertIdentityDisposition } = await import('./store');
+      await assertIdentityDisposition(id, 'disable');
+    }
+    const isAdmin = typeof input.isAdmin === 'boolean' ? input.isAdmin : current.is_admin;
+    if (input.is_active === false) {
+      const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+      await setPointerManagedActorState(id, 'disabled');
+    }
+    return {
+      name: input.name,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      groups: input.groups ? normalizeGroups(input.groups, isAdmin) : undefined,
+      isAdmin: input.isAdmin,
+      isActive: input.is_active,
+    };
+  }, async () => {
+    // Enabling follows the authoritative identity commit. An explicit active
+    // request also repairs a prior fail-closed external/SQL interruption.
+    if (input.is_active === true) {
+      const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+      await setPointerManagedActorState(id, 'active');
+    }
   }));
 }
 
 export async function deleteUser(id: string): Promise<void> {
-  const current = await getUserById(id);
-  if (!current) throw new Error(`Identity user not found: ${id}`);
-  // Pause every app credential routed through this identity before the account
-  // disappears. Pointer treats an unknown actor as an idempotent no-op, while
-  // a known actor and all of their managed applications become unavailable.
-  const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
-  await setPointerManagedActorState(current.id, 'disabled');
-  await deleteIdentityUser(id);
+  return deleteIdentityUser(id, async current => {
+    // The store checks disposition before this callback and retains admission
+    // through Pointer suspension and the authoritative deletion.
+    const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+    await setPointerManagedActorState(current.id, 'disabled');
+  });
 }
 
 export async function setPassword(id: string, password: string): Promise<void> {

@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,11 +16,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kdomanski/iso9660"
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 func TestParseOptionsSelectsSupportedInstallerCommands(t *testing.T) {
-	t.Setenv("YOUEYE_INSTALLER_PROVIDER", "")
-	t.Setenv("YOUEYE_INSTALLER_RELEASES_API", "")
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "")
 	opts, err := ParseOptions([]string{"proxmox", "--silent", "--yes", "--vmid", "166"}, strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +28,7 @@ func TestParseOptionsSelectsSupportedInstallerCommands(t *testing.T) {
 	if !IsProxmoxMode(opts) || !opts.Silent || !opts.Yes || opts.ContainerID != "166" {
 		t.Fatalf("unexpected Proxmox options: %+v", opts)
 	}
-	if opts.ApplianceReleaseProvider != "github" || opts.ApplianceReleasesAPI != defaultApplianceReleasesAPI || opts.ApplianceChannel != "stable" {
+	if opts.ApplianceRepository != releasecache.OfficialRepository || opts.ApplianceChannel != "stable" || opts.ApplianceReleaseTag != "" {
 		t.Fatalf("official release defaults were not selected: %+v", opts)
 	}
 	opts, err = ParseOptions([]string{"install", "--silent", "--yes"}, strings.NewReader(""), io.Discard)
@@ -52,260 +50,82 @@ func TestParseOptionsSelectsSupportedInstallerCommands(t *testing.T) {
 	}
 }
 
-func TestParseOptionsDoesNotPrefillAlternativeReleaseSources(t *testing.T) {
-	t.Setenv("YOUEYE_INSTALLER_PROVIDER", "forgejo")
-	t.Setenv("YOUEYE_INSTALLER_RELEASES_API", "")
-	opts, err := ParseOptions([]string{"proxmox"}, strings.NewReader(""), io.Discard)
+func TestParseOptionsRepositoryAndChannel(t *testing.T) {
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "")
+	opts, err := ParseOptions([]string{"proxmox", "--repository", "https://Code.Example.test/owner/YouEye.git", "--channel", "DEV"}, strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.ApplianceReleaseProvider != "forgejo" || opts.ApplianceReleasesAPI != "" {
-		t.Fatalf("Forgejo was unexpectedly prefilled: %+v", opts)
+	if opts.ApplianceRepository != "https://code.example.test/owner/YouEye" || opts.ApplianceChannel != "dev" {
+		t.Fatalf("repository or channel was not normalized: %+v", opts)
 	}
-
-	opts, err = ParseOptions([]string{"proxmox", "--provider", "custom", "--releases-api", "https://releases.example.test/api/releases"}, strings.NewReader(""), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.ApplianceReleaseProvider != "custom" || opts.ApplianceReleasesAPI != "https://releases.example.test/api/releases" {
-		t.Fatalf("explicit custom source was not preserved: %+v", opts)
-	}
-}
-
-func TestResolveApplianceReleaseNeverFallsBackChannels(t *testing.T) {
-	var serverURL string
-	assets := func(tag string) []applianceReleaseAsset {
-		var result []applianceReleaseAsset
-		for _, name := range append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName) {
-			result = append(result, applianceReleaseAsset{Name: name, BrowserDownloadURL: serverURL + "/owner/YouEye/releases/download/" + tag + "/" + name})
-		}
-		return result
-	}
-	published := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
-	tags := []string{
-		"appliance-dev-v0.5.23.0.0.4", "appliance-dev-v0.5.23.0.0.999-invalid+",
-		"appliance-v0.5.9", "appliance-dev-v0.5.23.0.0.5", "appliance-v0.6.0",
-		"appliance-dev-v0.5.23.0.0.7", "appliance-dev-v0.5.23.0.0.8",
-		"appliance-dev-v0.5.23.0.0.9", "appliance-dev-v0.5.23.0.0.12",
-	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("page") != "1" {
-			_ = json.NewEncoder(response).Encode([]applianceRelease{})
-			return
-		}
-		releases := make([]applianceRelease, 0, len(tags))
-		for index, tag := range tags {
-			releases = append(releases, applianceRelease{TagName: tag, PublishedAt: published.Add(time.Duration(index) * time.Minute), Assets: assets(tag)})
-		}
-		if err := json.NewEncoder(response).Encode(releases); err != nil {
-			t.Error(err)
-		}
-	}))
-	serverURL = server.URL
-	defer server.Close()
-
-	development, err := resolveApplianceRelease(context.Background(), server.Client(), "custom", server.URL, "development", "")
-	if err != nil || development.TagName != "appliance-dev-v0.5.23.0.0.12" {
-		t.Fatalf("development resolution: release=%+v err=%v", development, err)
-	}
-	stable, err := resolveApplianceRelease(context.Background(), server.Client(), "custom", server.URL, "stable", "")
-	if err != nil || stable.TagName != "appliance-v0.6.0" {
-		t.Fatalf("stable resolution: release=%+v err=%v", stable, err)
-	}
-	if _, err := resolveApplianceRelease(context.Background(), server.Client(), "custom", server.URL, "exact", "appliance-dev-v9.9.9"); err == nil {
-		t.Fatal("missing exact release unexpectedly fell back")
-	}
-}
-
-func TestResolveApplianceReleaseFindsNewestCandidateAfterFirstPage(t *testing.T) {
-	var serverURL string
-	assets := func(tag string) []applianceReleaseAsset {
-		var result []applianceReleaseAsset
-		for _, name := range append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName) {
-			result = append(result, applianceReleaseAsset{Name: name, BrowserDownloadURL: serverURL + "/owner/YouEye/releases/download/" + tag + "/" + name})
-		}
-		return result
-	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("limit") != "50" {
-			t.Errorf("limit = %q, want 50", request.URL.Query().Get("limit"))
-		}
-		if request.URL.Query().Get("page") == "1" {
-			releases := make([]applianceRelease, applianceForgejoPageSize)
-			for index := range releases {
-				releases[index] = applianceRelease{TagName: fmt.Sprintf("cp-dev-v0.0.%d", index), PublishedAt: time.Unix(int64(index+1), 0).UTC()}
-			}
-			_ = json.NewEncoder(response).Encode(releases)
-			return
-		}
-		if request.URL.Query().Get("page") == "2" {
-			tag := "appliance-dev-v0.5.6.0.3"
-			_ = json.NewEncoder(response).Encode([]applianceRelease{{TagName: tag, PublishedAt: time.Now().UTC(), Assets: assets(tag)}})
-			return
-		}
-		_ = json.NewEncoder(response).Encode([]applianceRelease{})
-	}))
-	serverURL = server.URL
-	defer server.Close()
-
-	release, err := resolveApplianceRelease(context.Background(), server.Client(), "forgejo", server.URL+"?limit=1", "development", "")
-	if err != nil || release.TagName != "appliance-dev-v0.5.6.0.3" {
-		t.Fatalf("paginated development resolution: release=%+v err=%v", release, err)
-	}
-}
-
-func TestResolveApplianceReleaseUsesGitHubPaginationAndPublicationOrder(t *testing.T) {
-	assets := func(tag string) []applianceReleaseAsset {
-		var result []applianceReleaseAsset
-		for _, name := range append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName) {
-			result = append(result, applianceReleaseAsset{Name: name, BrowserDownloadURL: "https://github.com/YouEye-Platform/YouEye/releases/download/" + tag + "/" + name})
-		}
-		return result
-	}
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Query().Get("per_page") != "100" || request.URL.Query().Get("limit") != "" {
-			t.Errorf("unexpected GitHub pagination: %s", request.URL.RawQuery)
-		}
-		var payload []applianceRelease
-		switch request.URL.Query().Get("page") {
-		case "1":
-			payload = make([]applianceRelease, applianceGitHubPageSize)
-			for index := range payload {
-				payload[index] = applianceRelease{TagName: fmt.Sprintf("unrelated-v%d", index), PublishedAt: time.Unix(int64(index+1), 0).UTC()}
-			}
-		case "2":
-			payload = []applianceRelease{
-				{TagName: "appliance-dev-v9.0.0", PublishedAt: time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC), Assets: assets("appliance-dev-v9.0.0")},
-				{TagName: "appliance-dev-v1.0.0", PublishedAt: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC), Assets: assets("appliance-dev-v1.0.0")},
-			}
-		}
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(raw)), Request: request}, nil
-	})}
-
-	release, err := resolveApplianceRelease(context.Background(), client, "github", defaultApplianceReleasesAPI, "development", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if release.TagName != "appliance-dev-v1.0.0" {
-		t.Fatalf("release = %s, want most recently published tag", release.TagName)
-	}
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return function(request)
-}
-
-func TestValidateApplianceReleaseAssetURLRejectsUnsafeIdentities(t *testing.T) {
-	api, err := url.Parse("https://api.github.com/repos/YouEye-Platform/YouEye/releases")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []string{
-		"https://downloads.example.test/YouEye-Platform/YouEye/releases/download/appliance-dev-v1.0.0/youeye-appliance-amd64.iso",
-		"https://github.com/YouEye-Platform/YouEye/attachments/uuid",
-		"https://github.com/YouEye-Platform/YouEye/releases/download/appliance-dev-v1.0.0/nested%2Fyoueye-appliance-amd64.iso",
-		"https://github.com/another/YouEye/releases/download/appliance-dev-v1.0.0/youeye-appliance-amd64.iso",
-	}
-	for _, raw := range tests {
-		if err := validateApplianceReleaseAssetURL("github", api, "appliance-dev-v1.0.0", applianceISOFilename, raw); err == nil {
-			t.Fatalf("unsafe asset URL was accepted: %s", raw)
+	for _, channel := range []string{"dev", "alpha", "beta", "stable"} {
+		if _, err := ParseOptions([]string{"proxmox", "--channel", channel}, strings.NewReader(""), io.Discard); err != nil {
+			t.Fatalf("channel %s rejected: %v", channel, err)
 		}
 	}
-}
-
-func TestApplianceReleaseAssetURLPreservesEncodedMultiSegmentBranchTag(t *testing.T) {
-	api, err := url.Parse("https://api.github.com/repos/YouEye-Platform/YouEye/releases")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag := "appliance-codex/phase1-repository-builds-v1.2.3"
-	raw := "https://github.com/YouEye-Platform/YouEye/releases/download/appliance-codex%2Fphase1-repository-builds-v1.2.3/youeye-appliance-amd64.iso"
-	if !validExactApplianceReleaseTag(tag) {
-		t.Fatalf("safe multi-segment exact release tag was rejected: %s", tag)
-	}
-	if err := validateApplianceReleaseAssetURL("github", api, tag, applianceISOFilename, raw); err != nil {
-		t.Fatalf("encoded multi-segment release tag was rejected: %v", err)
-	}
-}
-
-func TestGitHubReleaseAPIRequiresOneRepository(t *testing.T) {
-	for _, raw := range []string{
-		"https://api.github.com/repos/owner/repository/extra/releases",
-		"https://api.github.com/repos/owner/releases",
-		"https://github.com/repos/owner/repository/releases",
+	for _, args := range [][]string{
+		{"proxmox", "--provider", "custom"},
+		{"proxmox", "--releases-api", "https://code.example.test/releases"},
+		{"proxmox", "--release-branch", "dev"},
+		{"proxmox", "--freshness", "require-current"},
+		{"proxmox", "--channel", "development"},
+		{"proxmox", "--channel", "branch"},
+		{"proxmox", "--repository", "https://user:password@code.example.test/owner/YouEye"},
+		{"proxmox", "--repository", "http://code.example.test/owner/YouEye"},
+		{"proxmox", "--repository", "https://code.example.test/api/v1/repos/owner/YouEye/releases"},
+		{"proxmox", "--release-tag", "youeye-v0.6.1-rc.1"},
+		{"proxmox", "--core-manifest-sha256", strings.Repeat("a", 64)},
 	} {
-		if _, _, err := normalizeApplianceReleaseSource("github", raw); err == nil {
-			t.Fatalf("unsafe GitHub releases API was accepted: %s", raw)
+		if _, err := ParseOptions(args, strings.NewReader(""), io.Discard); err == nil {
+			t.Fatalf("retired flag, unknown channel or unsafe repository accepted: %v", args)
 		}
 	}
-}
-
-func TestApplianceReleaseRequiresExactAssetAndChecksumSets(t *testing.T) {
-	api, err := url.Parse("https://api.github.com/repos/YouEye-Platform/YouEye/releases")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag := "appliance-dev-v1.0.0"
-	assets := make([]applianceReleaseAsset, 0, len(applianceSignedAssetNames)+2)
-	for _, name := range append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName) {
-		assets = append(assets, applianceReleaseAsset{
-			Name: name, BrowserDownloadURL: "https://github.com/YouEye-Platform/YouEye/releases/download/" + tag + "/" + name,
-		})
-	}
-	release := applianceRelease{TagName: tag, Assets: assets}
-	if err := validateApplianceReleaseAssets("github", api, release); err != nil {
-		t.Fatalf("exact release assets rejected: %v", err)
-	}
-	release.Assets = append(release.Assets, applianceReleaseAsset{Name: "unexpected.bin", BrowserDownloadURL: "https://github.com/YouEye-Platform/YouEye/releases/download/" + tag + "/unexpected.bin"})
-	if err := validateApplianceReleaseAssets("github", api, release); err == nil {
-		t.Fatal("unexpected release asset was accepted")
-	}
-
-	var sums strings.Builder
-	for _, name := range applianceSignedAssetNames {
-		fmt.Fprintf(&sums, "%s  %s\n", strings.Repeat("a", 64), name)
-	}
-	parsed, err := parseSHA256SUMS([]byte(sums.String()))
-	if err != nil || len(parsed) != len(applianceSignedAssetNames) {
-		t.Fatalf("exact checksum set failed to parse: entries=%d err=%v", len(parsed), err)
-	}
-	if err := validateApplianceChecksumSet(parsed); err != nil {
-		t.Fatalf("exact checksum set rejected: %v", err)
-	}
-	parsed["unexpected.bin"] = strings.Repeat("b", 64)
-	if err := validateApplianceChecksumSet(parsed); err == nil {
-		t.Fatal("unexpected checksum was accepted")
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "https://forge.example.test/owner/YouEye/")
+	if opts, err := ParseOptions([]string{"proxmox"}, strings.NewReader(""), io.Discard); err != nil || opts.ApplianceRepository != "https://forge.example.test/owner/YouEye" {
+		t.Fatalf("environment repository: %+v %v", opts.ApplianceRepository, err)
 	}
 }
 
-func TestDevelopmentInstallerFailsClosedForStableTrust(t *testing.T) {
-	_, err := downloadVerifiedApplianceRelease(context.Background(), http.DefaultClient, applianceRelease{TagName: "appliance-v1.0.0"}, t.TempDir(), "")
-	if err == nil || !strings.Contains(err.Error(), "public stable trust is not provisioned") {
-		t.Fatalf("stable release did not fail closed: %v", err)
+func TestDownloadVerifiedApplianceReleaseRequiresCoreDocument(t *testing.T) {
+	_, err := downloadVerifiedApplianceRelease(context.Background(), http.DefaultClient, applianceRelease{TagName: "youeye-v1.0.0"}, t.TempDir(), "")
+	if err == nil || !strings.Contains(err.Error(), "no core release document") {
+		t.Fatalf("release without core document did not fail closed: %v", err)
 	}
 }
 
 func TestProxmoxAdvancedReleaseSourceDefaults(t *testing.T) {
 	model := newProxmoxApplianceModel(CLIOptions{
 		ProxmoxOperation: "create", ProxmoxTargetDiskGB: 128, ProxmoxNetworkMode: "dhcp",
-		ApplianceChannel: "stable", ApplianceReleaseProvider: "github", ApplianceReleasesAPI: defaultApplianceReleasesAPI,
+		ApplianceChannel: "stable", ApplianceRepository: releasecache.OfficialRepository,
 	})
 	updated, _ := model.Update(proxmoxInventoryMsg{Inventory: proxmoxApplianceInventory{
 		ImageStorages: []string{"local-lvm"}, ISOStorages: []string{"local"}, Bridges: []string{"vmbr0"}, NextVMID: 166,
 	}})
 	model = updated.(proxmoxApplianceModel)
-	if model.config.ReleaseProvider != "github" || model.config.ReleasesAPI != defaultApplianceReleasesAPI || model.inputs["releases-api"].Value() != "" {
+	if model.config.ReleaseProvider != defaultApplianceProvider || model.config.RepositoryURL != releasecache.OfficialRepository || model.inputs["releases-api"].Value() != "" {
 		t.Fatalf("official source defaults are not safely hidden: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
 	}
 	model.cycleAdvancedSelection("release-provider", true)
-	if model.config.ReleaseProvider != "forgejo" || model.config.ReleasesAPI != "" || model.inputs["releases-api"].Value() != "" {
-		t.Fatalf("Forgejo source was unexpectedly prefilled: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
+	if model.config.ReleaseProvider != "custom" || model.config.RepositoryURL != "" || model.inputs["releases-api"].Value() != "" {
+		t.Fatalf("repository source was unexpectedly prefilled: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
+	}
+	model.cycleAdvancedSelection("release-provider", true)
+	if model.config.ReleaseProvider != defaultApplianceProvider || model.config.RepositoryURL != releasecache.OfficialRepository {
+		t.Fatalf("official source was not restored: %+v", model.config)
+	}
+	var channels []string
+	for range 4 {
+		model.cycleAdvancedSelection("channel", true)
+		channels = append(channels, model.config.Channel)
+	}
+	if strings.Join(channels, ",") != "beta,alpha,dev,stable" {
+		t.Fatalf("channel choices = %v", channels)
+	}
+	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.6.1-rc.1", strings.Repeat("a", 64)
+	model.cycleAdvancedSelection("channel", true)
+	if model.config.ReleaseTag != "" || model.config.CoreManifestSHA256 != "" {
+		t.Fatal("changing the channel kept a pinned release of another channel")
 	}
 	if got := estimatedProxmoxDataGiB(32); got != 7 {
 		t.Fatalf("estimated 32 GiB data capacity = %d, want 7", got)
@@ -315,8 +135,7 @@ func TestProxmoxAdvancedReleaseSourceDefaults(t *testing.T) {
 func TestProxmoxQuickAndAdvancedUsePagedConditionalControls(t *testing.T) {
 	model := newProxmoxApplianceModel(CLIOptions{
 		ProxmoxOperation: "create", ProxmoxTargetDiskGB: 128, ProxmoxNetworkMode: "dhcp",
-		ProxmoxImportHostSSHKeys: false, ApplianceChannel: "stable", ApplianceFreshness: "require-current",
-		ApplianceReleaseProvider: defaultApplianceProvider, ApplianceReleasesAPI: defaultApplianceReleasesAPI,
+		ProxmoxImportHostSSHKeys: false, ApplianceChannel: "stable", ApplianceRepository: releasecache.OfficialRepository,
 	})
 	updated, _ := model.Update(proxmoxInventoryMsg{Inventory: proxmoxApplianceInventory{
 		ImageStorages: []string{"local-lvm"}, ISOStorages: []string{"local"}, Bridges: []string{"vmbr0"}, NextVMID: 166,
@@ -333,19 +152,43 @@ func TestProxmoxQuickAndAdvancedUsePagedConditionalControls(t *testing.T) {
 		t.Fatalf("Quick software page did not keep the public default plus Advanced route: %+v", fields)
 	}
 	model.quick = false
-	model.page = 4
-	model.config.Channel = "branch"
-	model.config.ReleaseBranch = "feature/test"
-	branchVisible, exactVisible := false, false
-	for _, field := range model.visibleAdvancedFields() {
-		branchVisible = branchVisible || field.InputKey == "branch"
-		exactVisible = exactVisible || field.InputKey == "tag" || field.InputKey == "digest"
+	model.page = 4 // Advanced "Software" page
+	repositoryVisible := func() bool {
+		for _, field := range model.visibleAdvancedFields() {
+			if field.InputKey == "releases-api" {
+				return true
+			}
+		}
+		return false
 	}
-	if !branchVisible || exactVisible {
-		t.Fatalf("branch page controls were not conditional: %+v", model.visibleAdvancedFields())
+	if repositoryVisible() {
+		t.Fatalf("official source showed a repository URL field: %+v", model.visibleAdvancedFields())
+	}
+	model.cycleAdvancedSelection("release-provider", true)
+	if !repositoryVisible() {
+		t.Fatalf("custom source hid its repository URL field: %+v", model.visibleAdvancedFields())
+	}
+	for _, field := range model.visibleAdvancedFields() {
+		if field.InputKey == "branch" || field.InputKey == "tag" || field.InputKey == "digest" || field.Kind == "freshness" {
+			t.Fatalf("removed release control %+v is still offered", field)
+		}
+	}
+	input := model.inputs["releases-api"]
+	input.SetValue("https://forge.example.test/owner/YouEye.git")
+	model.inputs["releases-api"] = input
+	if err := model.applyAdvancedInputs(); err != nil || model.config.RepositoryURL != "https://forge.example.test/owner/YouEye" {
+		t.Fatalf("custom repository was not canonicalized: %q %v", model.config.RepositoryURL, err)
+	}
+	if err := model.validateAdvancedPage(); err != nil {
+		t.Fatalf("custom repository was not canonicalized: %q %v", model.config.RepositoryURL, err)
+	}
+	input.SetValue("https://forge.example.test/api/v1/repos/owner/YouEye/releases")
+	model.inputs["releases-api"] = input
+	if err := model.applyAdvancedInputs(); err == nil {
+		t.Fatal("releases API URL accepted as a repository")
 	}
 
-	model.page = 6
+	model.page = 6 // Advanced "Development access" page
 	for _, key := range []string{"root-password", "root-password-confirm"} {
 		input := model.inputs[key]
 		input.SetValue("a masked testing passphrase")
@@ -365,8 +208,7 @@ func TestProxmoxQuickAndAdvancedUsePagedConditionalControls(t *testing.T) {
 func TestProxmoxPageModelRendersDeterministicallyAtSupportedConsoleSizes(t *testing.T) {
 	model := newProxmoxApplianceModel(CLIOptions{
 		ProxmoxOperation: "create", ProxmoxTargetDiskGB: 128, ProxmoxNetworkMode: "dhcp",
-		ApplianceChannel: "stable", ApplianceReleaseProvider: defaultApplianceProvider,
-		ApplianceReleasesAPI: defaultApplianceReleasesAPI,
+		ApplianceChannel: "stable", ApplianceRepository: releasecache.OfficialRepository,
 	})
 	updated, _ := model.Update(proxmoxInventoryMsg{Inventory: proxmoxApplianceInventory{
 		ImageStorages: []string{"local-lvm"}, ISOStorages: []string{"local"}, Bridges: []string{"vmbr0"}, NextVMID: 166,
@@ -397,18 +239,22 @@ func TestProxmoxPageModelRendersDeterministicallyAtSupportedConsoleSizes(t *test
 }
 
 func TestProxmoxQuickExplicitlyRestoresOfficialStablePolicy(t *testing.T) {
-	model := newProxmoxApplianceModel(CLIOptions{
-		ProxmoxOperation: "create", ProxmoxTargetDiskGB: 128, ProxmoxNetworkMode: "dhcp",
-		ApplianceChannel: "branch", ApplianceReleaseBranch: "codex/phase1",
-		ApplianceReleaseProvider: "custom", ApplianceReleasesAPI: "https://updates.example.test/releases",
-	})
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "")
+	opts, err := ParseOptions([]string{"proxmox"}, strings.NewReader(""), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newProxmoxApplianceModel(opts)
 	updated, _ := model.Update(proxmoxInventoryMsg{Inventory: proxmoxApplianceInventory{
 		ImageStorages: []string{"local-lvm"}, ISOStorages: []string{"local"}, Bridges: []string{"vmbr0"}, NextVMID: 166,
 	}})
 	model = updated.(proxmoxApplianceModel)
+	// Advanced edits made before choosing Quick do not survive into it.
+	model.config.Channel, model.config.ReleaseProvider, model.config.RepositoryURL = "dev", "custom", "https://updates.example.test/owner/YouEye"
+	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.7.0-rc.1", strings.Repeat("a", 64)
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(proxmoxApplianceModel)
-	if model.config.Channel != "stable" || model.config.ReleaseProvider != "github" || model.config.ReleaseBranch != "" || model.inputs["branch"].Value() != "" {
+	if model.config.Channel != "stable" || model.config.ReleaseProvider != defaultApplianceProvider || model.config.RepositoryURL != releasecache.OfficialRepository || model.config.ReleaseTag != "" || model.config.CoreManifestSHA256 != "" {
 		t.Fatalf("Quick retained an Advanced release override: %+v", model.config)
 	}
 }
@@ -464,8 +310,8 @@ func TestProxmoxDurableReadinessRequiresCompletedDeploymentAndCurrentBless(t *te
 	}
 }
 
-func TestReadProxmoxGuestProgressAcceptsOnlyBoundedV2Records(t *testing.T) {
-	progressJSON := `{"schema":"youeye.appliance.progress.v2","operation":"first-deploy","state":"running","stage":"server_interface","detail":"Installing the Server interface","percent":55,"attempt":2,"updated_at":"2026-08-16T00:00:00Z"}`
+func TestReadProxmoxGuestProgressAcceptsOnlyBoundedRecords(t *testing.T) {
+	progressJSON := `{"schema":"youeye.installer.progress.v1","operation":"first-deploy","state":"running","stage":"server_interface","detail":"Installing the Server interface","percent":55,"attempt":2,"updated_at":"2026-08-16T00:00:00Z"}`
 	runner := fakeProxmoxRunner{outputs: map[string]string{
 		"qm guest exec 166 --timeout 10 -- /bin/sh -c test -s /var/lib/youeye-state/first-deploy/progress.json && test $(stat -c %s /var/lib/youeye-state/first-deploy/progress.json) -le 4096 && cat /var/lib/youeye-state/first-deploy/progress.json": `{"exited":1,"exitcode":0,"out-data":` + fmt.Sprintf("%q", progressJSON) + `}`,
 	}}
@@ -474,7 +320,7 @@ func TestReadProxmoxGuestProgressAcceptsOnlyBoundedV2Records(t *testing.T) {
 		t.Fatalf("safe guest progress was rejected: ok=%v record=%+v", ok, record)
 	}
 	runner.outputs["qm guest exec 166 --timeout 10 -- /bin/sh -c test -s /var/lib/youeye-state/first-deploy/progress.json && test $(stat -c %s /var/lib/youeye-state/first-deploy/progress.json) -le 4096 && cat /var/lib/youeye-state/first-deploy/progress.json"] =
-		`{"exited":1,"exitcode":0,"out-data":"{\"schema\":\"youeye.appliance.progress.v2\",\"operation\":\"first-deploy\",\"stage\":\"unsafe stage\",\"percent\":101,\"attempt\":1}"}`
+		`{"exited":1,"exitcode":0,"out-data":"{\"schema\":\"youeye.installer.progress.v1\",\"operation\":\"first-deploy\",\"stage\":\"unsafe stage\",\"percent\":101,\"attempt\":1}"}`
 	if _, ok := readProxmoxGuestProgress(166, runner); ok {
 		t.Fatal("malformed or out-of-range guest progress was accepted")
 	}
@@ -497,7 +343,7 @@ func TestTerminalProxmoxGuestProgressFailsImmediatelyWithBoundedDetail(t *testin
 }
 
 func TestWaitForProxmoxApplianceReadyStopsOnNeedsAttention(t *testing.T) {
-	progressJSON := `{"schema":"youeye.appliance.progress.v2","operation":"first-deploy","state":"needs_attention","stage":"needs_attention","detail":"First deployment stopped during verifying","percent":99,"attempt":8,"updated_at":"2026-08-19T00:00:00Z"}`
+	progressJSON := `{"schema":"youeye.installer.progress.v1","operation":"first-deploy","state":"needs_attention","stage":"needs_attention","detail":"First deployment stopped during verifying","percent":99,"attempt":8,"updated_at":"2026-08-19T00:00:00Z"}`
 	runner := fakeProxmoxRunner{outputs: map[string]string{
 		"qm guest exec 171 --timeout 10 -- /bin/sh -c test -s /var/lib/youeye-state/first-deploy/progress.json && test $(stat -c %s /var/lib/youeye-state/first-deploy/progress.json) -le 4096 && cat /var/lib/youeye-state/first-deploy/progress.json": `{"exited":1,"exitcode":0,"out-data":` + fmt.Sprintf("%q", progressJSON) + `}`,
 	}}
@@ -612,7 +458,7 @@ func TestInspectCompatibleProxmoxApplianceVM(t *testing.T) {
 		"qm status 166": "status: stopped",
 		"qm config 166": strings.Join([]string{
 			"name: youeye-166", "bios: ovmf", "machine: q35",
-			"description: YouEye signed appliance appliance-dev-v0.5.23.0.0.12; one-drive ISO install.",
+			"description: YouEye appliance appliance-dev-v0.5.23.0.0.12; one-drive ISO install.",
 			"scsi0: local-lvm:vm-166-disk-1,size=128G,serial=TARGET166",
 		}, "\n"),
 		"pvesm path local-lvm:vm-166-disk-1": "/dev/pve/vm-166-disk-1",
@@ -677,7 +523,7 @@ func TestAttachProxmoxApplianceMediaRefreshesReleaseDescription(t *testing.T) {
 	joined := strings.Join(runner.calls, "\n")
 	for _, required := range []string{
 		"qm status 166",
-		"qm set 166 --description YouEye signed appliance appliance-dev-v0.5.23.0.0.12; one-drive ISO install.",
+		"qm set 166 --description YouEye appliance appliance-dev-v0.5.23.0.0.12; one-drive ISO install.",
 		"qm set 166 --ide2 local:iso/youeye.iso,media=cdrom",
 		"qm set 166 --sata0 local:iso/answer.iso,media=cdrom",
 		"qm set 166 --boot order=ide2;scsi0",
@@ -768,27 +614,142 @@ func (runner fakeProxmoxRunner) Run(name string, args ...string) (string, error)
 	return runner.outputs[key], runner.errors[key]
 }
 
-func TestPrivateForgejoMainTrustIsProviderAndDepthBound(t *testing.T) {
-	good := applianceRelease{TagName: "appliance-v0.5.6.0.3", sourceProvider: "forgejo", sourceRepository: "https://forgejo.example.test/owner/YouEye"}
-	if !privateForgejoMainRelease(good) {
-		t.Fatal("private main profile rejected")
+func TestAnswerISOTransportsFullCacheDigestsAndPreflightsObjects(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("YOUEYE_RELEASE_CACHE", cache)
+	if err := os.Mkdir(filepath.Join(cache, "objects"), 0700); err != nil {
+		t.Fatal(err)
 	}
-	for _, change := range []func(*applianceRelease){
-		func(r *applianceRelease) { r.sourceProvider = "github" },
-		func(r *applianceRelease) { r.sourceProvider = "custom" },
-		func(r *applianceRelease) { r.sourceRepository = "https://github.com/owner/YouEye" },
-		func(r *applianceRelease) { r.sourceRepository = "http://forgejo.example.test/owner/YouEye" },
-		func(r *applianceRelease) {
-			r.sourceRepository = "https://user:password@forgejo.example.test/owner/YouEye"
-		},
-		func(r *applianceRelease) { r.TagName = "appliance-v1.0.0" },
-		func(r *applianceRelease) { r.TagName = "appliance-dev-v0.5.6.0.3" },
-		func(r *applianceRelease) { r.TagName = "appliance-v0.5.6.0.3.1" },
+	objects := map[string]map[string]any{}
+	for i, body := range []string{"original component bytes", "original document bytes"} {
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+		if err := os.WriteFile(filepath.Join(cache, "objects", digest), []byte(body), 0400); err != nil {
+			t.Fatal(err)
+		}
+		objects[fmt.Sprintf("https://example.test/releases/download/test/object-%d", i)] = map[string]any{"sha256": digest, "bytes": len(body)}
+	}
+	index, _ := json.Marshal(map[string]any{"schema": "youeye.release-cache.v1", "objects": objects})
+	for _, name := range []string{"index.json", "guest-index.json"} {
+		if err := os.WriteFile(filepath.Join(cache, name), index, 0400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	destination := filepath.Join(t.TempDir(), "answer.iso")
+	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "0123456789abcdef0123456789abcdef", TargetSerial: "TARGET-TEST", Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy()}
+	if err := writeApplianceAnswerISO(destination, answer); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	image, err := iso9660.OpenImage(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := image.RootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	extracted := t.TempDir()
+	var extract func(*iso9660.File, string)
+	extract = func(dir *iso9660.File, target string) {
+		children, err := dir.GetChildren()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, child := range children {
+			path := filepath.Join(target, child.Name())
+			if child.IsDir() {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				extract(child, path)
+			} else {
+				raw, err := io.ReadAll(child.Reader())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, raw, 0400); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	extract(root, extracted)
+	cfg := installConfig{ApplianceAnswerPath: filepath.Join(extracted, "appliance-answer.json")}
+	if _, err := loadApplianceInstallInput(cfg); err != nil {
+		t.Fatalf("actual ISO cache failed install preflight: %v", err)
+	}
+	// Digest identity must survive ISO serialization and missing media must fail
+	// before partitioning, rather than only at first deployment.
+	for _, obj := range objects {
+		digest := obj["sha256"].(string)
+		path := filepath.Join(extracted, "release-cache", "objects", digest[:16], digest[16:32], digest[32:48], digest[48:])
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("ISO truncated digest %s: %v", digest, err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadApplianceInstallInput(cfg); err == nil {
+			t.Fatal("missing cache object passed destructive-install preflight")
+		}
+		break
+	}
+}
+
+func TestProxmoxQuickPreservesExplicitRepository(t *testing.T) {
+	opts, err := ParseOptions([]string{"proxmox", "--repository", "https://code.example.test/owner/YouEye", "--channel", "dev"}, strings.NewReader(""), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newProxmoxApplianceModel(opts)
+	model.inventory = proxmoxApplianceInventory{}
+	model.config = proxmoxApplianceConfigFromOptions(opts, model.inventory)
+	model.initAdvancedInputs()
+	model.phase = proxmoxPhaseChoice
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(proxmoxApplianceModel)
+	if result.config.ReleaseProvider != "custom" || result.config.RepositoryURL != "https://code.example.test/owner/YouEye" || result.config.Channel != "dev" {
+		t.Fatalf("explicit source reset by quick install: %+v", result.config)
+	}
+}
+
+// The piped bootstrap verifies one release and pins the installer to it while
+// the machine keeps following its channel for later System updates.
+func TestProxmoxChannelAcceptsOnlyACompleteReleasePin(t *testing.T) {
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "")
+	inventory := proxmoxApplianceInventory{ImageStorages: []string{"local-lvm"}, ISOStorages: []string{"local"}, Bridges: []string{"vmbr0"}, NextVMID: 166}
+	digest := strings.Repeat("d", 64)
+	for _, tc := range []struct {
+		args  []string
+		valid bool
+	}{
+		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-rc.10", "--core-manifest-sha256", digest}, true},
+		{[]string{"--channel", "stable", "--release-tag", "youeye-v0.6.1", "--core-manifest-sha256", digest}, true},
+		{[]string{"--channel", "beta"}, true},
+		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-rc.10"}, false},
+		{[]string{"--channel", "dev", "--core-manifest-sha256", digest}, false},
+		{[]string{"--channel", "stable", "--release-tag", "appliance-v0.6.1", "--core-manifest-sha256", digest}, false},
+		{[]string{"--channel", "stable", "--release-tag", "youeye-v0.6.1", "--core-manifest-sha256", strings.Repeat("D", 64)}, false},
+		{[]string{"--channel", "branch", "--release-branch", "team/fix", "--release-tag", "youeye-v0.7.0-rc.3", "--core-manifest-sha256", digest}, false},
 	} {
-		bad := good
-		change(&bad)
-		if privateForgejoMainRelease(bad) {
-			t.Fatal("unapproved main profile accepted", bad.TagName, bad.sourceProvider)
+		opts, err := ParseOptions(append([]string{"proxmox", "--repository", "https://code.example.test/owner/YouEye", "--yes"}, tc.args...), strings.NewReader(""), io.Discard)
+		if err == nil {
+			opts.ProxmoxEraseConfirmed = true
+			config := proxmoxApplianceConfigFromOptions(opts, inventory)
+			if err = validateProxmoxApplianceConfig(config, inventory); err == nil {
+				policy := config.releasePolicy()
+				if policy.Repository != "https://code.example.test/owner/YouEye" || policy.Channel != opts.ApplianceChannel || policy.CoreManifestSHA256 != opts.CoreManifestSHA256 {
+					t.Fatalf("%v: policy did not record repository, channel and pin: %+v", tc.args, policy)
+				}
+				err = validateApplianceReleasePolicy(policy)
+			}
+		}
+		if (err == nil) != tc.valid {
+			t.Fatalf("%v: valid=%v err=%v", tc.args, tc.valid, err)
 		}
 	}
 }

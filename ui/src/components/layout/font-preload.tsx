@@ -55,41 +55,15 @@ const FONT_FILE_MAP: Record<string, string> = {
 };
 
 export async function FontPreload() {
+  let fontFamily: string;
   try {
     const branding = await getBranding();
-    const fontFamily = branding.site_name_style?.fontFamily ?? "Inter";
-    const cssPath = FONT_CSS_MAP[fontFamily];
-    const fontPath = FONT_FILE_MAP[fontFamily];
-
-    if (!cssPath) return null;
-
-    // Preload font file first (critical for eliminating flicker),
-    // then load CSS (which references the font)
-    const fontType = fontPath?.endsWith('.woff2') ? 'font/woff2' : 'font/ttf';
-
-    return (
-      <>
-        {fontPath && (
-          <link
-            rel="preload"
-            href={fontPath}
-            as="font"
-            type={fontType}
-            crossOrigin="anonymous"
-          />
-        )}
-        <link
-          rel="stylesheet"
-          href={cssPath}
-          data-font-preload={fontFamily}
-        />
-      </>
-    );
+    fontFamily = branding.site_name_style?.fontFamily ?? "Inter";
   } catch {
-    // During build (no database) or on error, return null
-    // The client-side SiteName component will load the font as fallback
+    // The client-side SiteName component loads the font if the database is unavailable.
     return null;
   }
+  return <FontPreloadLink fontFamily={fontFamily} />;
 }
 
 /**

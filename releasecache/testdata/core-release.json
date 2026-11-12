@@ -1,0 +1,186 @@
+{
+  "schema": "youeye.core-release.v1",
+  "version": "0.6.1-rc.1",
+  "tag": "youeye-v0.6.1-rc.1",
+  "source_tree": "1111111111111111111111111111111111111111",
+  "sequence": 1762950000,
+  "minimum_reader": 1,
+  "authority": "digest",
+  "compatibility": {
+    "state_min": 2,
+    "state_max": 2,
+    "data_min": 1,
+    "data_max": 1,
+    "minimum_release": "0.6.1-rc.1",
+    "capabilities": [
+      "core-release-v1"
+    ]
+  },
+  "members": [
+    {
+      "role": "installer",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "9b2abab70e1120c9d3805d4d0cfa612d8a94b34d9576476f7457f9ce7b716bcb",
+      "artifact": {
+        "name": "youeye-installer-linux-amd64",
+        "sha256": "ec5940f572eff34142f800751bd90863805b2e9f33b7dcb024f0b69370b493a9",
+        "size_bytes": 37
+      }
+    },
+    {
+      "role": "media",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "f42ddc970ce7d3397ab56e9f6c81e1b409d1c7b29af98a812c1a9336d5364f34",
+      "artifact": {
+        "name": "youeye-appliance-amd64.iso",
+        "sha256": "7f57d2da0d21a637d3b76ec5993c7365d8b748fc3610df00c2b461edd15c684d",
+        "size_bytes": 35
+      }
+    },
+    {
+      "role": "appliance",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "babd4b964bee91ec9c93f770c891f714551078c5494e59704b5a386583efb0a9",
+      "artifact": {
+        "name": "appliance-manifest.json",
+        "sha256": "67b657bc32120410a7784246dcae8c6ad2085c996c18fe376dcaf19512f45aeb",
+        "size_bytes": 32
+      },
+      "build_inputs": {
+        "name": "build-inputs.json",
+        "sha256": "deb5a0011c42c247b726f1bbba697f471e36d0b9536f63750bc246ebb1f72681",
+        "size_bytes": 26
+      }
+    },
+    {
+      "role": "system-update",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "cb080e7d0beae6a05b14bbbeb67f3564252cd7fe6cc459c1f201281c92541510",
+      "artifact": {
+        "name": "system-update-manifest.json",
+        "sha256": "b18816360b5073a669a87bd0b28eb7acf790841e54667d500f08f2724935ad68",
+        "size_bytes": 36
+      }
+    },
+    {
+      "role": "system-root",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "f74b88ac35a076539e81a3526f736c65ed1e493c88ca1442fcb388d82278da72",
+      "artifact": {
+        "name": "system-root.img.zst",
+        "sha256": "6b59f32738285bd99a9bdfe1a2f6f814cc71483b6b556dcadf01469fcda788f2",
+        "size_bytes": 28
+      }
+    },
+    {
+      "role": "system-a-uki",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "f4d330dc60b175d401a4725cf30edab5c79247422920f6d44d2c3284b407451a",
+      "artifact": {
+        "name": "system-a.efi",
+        "sha256": "ffd298b4f3b3ec5b7c58ece4f45bac71b23448bbd8304bc0d41af8f91b559840",
+        "size_bytes": 21
+      }
+    },
+    {
+      "role": "system-b-uki",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "a21e4e86e8f88da3427059427fee99d59a0905ad01ae814b6ca090ab03119341",
+      "artifact": {
+        "name": "system-b.efi",
+        "sha256": "839b0ac3878cda4e37b316d274e165d68d0e8d5c772aa71af6764adb3b4e745d",
+        "size_bytes": 21
+      }
+    },
+    {
+      "role": "system-updater",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "c57563ccdb5017724f111326a6c061f137c650d91d4855af8977722fd64ecf9a",
+      "artifact": {
+        "name": "youeye-system-updater-linux-amd64",
+        "sha256": "5ac63e69d9c3c4fc1fe6b00d33b13f31b46a9e73daa0465c8c969e250835fa1f",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "internal-recovery",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "d77080561296beb0c87a21d6ffcbf830eddd892c5741e5ea92d5b21f424f32a6",
+      "artifact": {
+        "name": "internal-recovery.img.zst",
+        "sha256": "9875deca09d079624d66e9a39315a66f94132f059fe3be8de20b84b4858d0794",
+        "size_bytes": 34
+      }
+    },
+    {
+      "role": "recovery-uki",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "fb89cf18df085ab699bede8b319cf1bd73e0a0bcb45411154dc18530e41a6d04",
+      "artifact": {
+        "name": "recovery.efi",
+        "sha256": "5241a9707094612b518f067f20fef70c327af78cc8aa3036ee4726128cfdb7a4",
+        "size_bytes": 21
+      }
+    },
+    {
+      "role": "update-bootstrap",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "6337e2300c3769e0dee160d2edcc9c0147b44590ac95e6496e20016dd793358f",
+      "artifact": {
+        "name": "youeye-system-update-bootstrap",
+        "sha256": "4aea60cbbbee0ea92b1aeb1057ae597a5b57bb4438479ee4057771ef8ad654f8",
+        "size_bytes": 39
+      }
+    },
+    {
+      "role": "spine",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "439ad87d7ac631324c57ab3ffea8469fd7e5a3c2bc8bec2cc49388697a9134ef",
+      "artifact": {
+        "name": "spine-linux-amd64",
+        "sha256": "9aa0b71728a9c533b0f816198df4750a97627366575d10f7642925a6d1e7512f",
+        "size_bytes": 26
+      }
+    },
+    {
+      "role": "cp",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "eb77797bf9b23acd7e0a5247bea3709331dd6391f3de5c5330165628c0e759ee",
+      "artifact": {
+        "name": "cp-standalone.tar",
+        "sha256": "42d140f8bc142d1a988ca147640b47eb561f6b546049eb3c5e44d6fc7d8b2afc",
+        "size_bytes": 26
+      },
+      "depends_on": [
+        "spine"
+      ]
+    },
+    {
+      "role": "ui",
+      "build_version": "0.6.1-rc.1",
+      "source_tree": "1111111111111111111111111111111111111111",
+      "input_sha256": "5a879f1e4f17168fad33e3e5240f793c27dde0c199b07f86cf8a641967684319",
+      "artifact": {
+        "name": "ui-standalone.tar",
+        "sha256": "3226f5da145af2c334d7ffac8d1bdbfc85ca55c39d2fd417bbad947d02280603",
+        "size_bytes": 26
+      },
+      "depends_on": [
+        "cp"
+      ]
+    }
+  ]
+}

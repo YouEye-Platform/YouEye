@@ -1,5 +1,9 @@
 'use client';
 
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { FormEvent, useEffect, useState } from 'react';
 import { AlertCircle, Loader2, UserRound } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -16,6 +20,8 @@ type ClaimState = {
 };
 
 export function ApplianceClaim() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [state, setState] = useState<ClaimState | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -25,10 +31,10 @@ export function ApplianceClaim() {
     fetch('/api/appliance/claim', { cache: 'no-store' })
       .then(async response => {
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || 'YouEye ID is unavailable.');
+        if (!response.ok) throw new Error(body.error || translateInterface("m781199706a50"));
         setState(body);
       })
-      .catch(reason => setError(reason instanceof Error ? reason.message : 'YouEye ID is unavailable.'))
+      .catch(reason => setError(translateInterface("m781199706a50")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -52,13 +58,13 @@ export function ApplianceClaim() {
       }),
     }).catch(() => null);
     if (!response) {
-      setError('Could not reach the appliance. Try again.');
+      setError(translateInterface("macb428772ef9"));
       setSubmitting(false);
       return;
     }
     const body = await response.json();
     if (!response.ok) {
-      setError(body.error || 'Could not continue setup.');
+      setError(body.error || translateInterface("mebd15d646165"));
       setSubmitting(false);
       if (response.status === 409) window.location.reload();
       return;
@@ -69,7 +75,7 @@ export function ApplianceClaim() {
   if (loading) {
     return (
       <main className="flex min-h-screen w-full items-center justify-center px-6 py-10">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Preparing YouEye ID" />
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label={translateInterface("m99dffbe6bc08")} />
       </main>
     );
   }
@@ -81,11 +87,11 @@ export function ApplianceClaim() {
         <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
           <UserRound className="h-5 w-5" />
         </div>
-        <h1 className="text-xl font-semibold">{state?.claimed ? 'Resume server setup' : 'Create your YouEye ID'}</h1>
+        <h1 className="text-xl font-semibold">{state?.claimed ? translateInterface("m28e14d5f8603") : translateInterface("m299765892600")}</h1>
         <p className="text-sm text-muted-foreground">
           {state?.claimed
-            ? `Sign in as ${state.ownerUsername || 'the appliance owner'} to continue.`
-            : 'This account becomes the first owner of this server.'}
+            ? translateInterface("m2187e7ff2743", { value0: String(state.ownerUsername || translateInterface("m3bdb6567b498")) })
+            : translateInterface("mc595401544ae")}
         </p>
       </div>
 
@@ -100,17 +106,17 @@ export function ApplianceClaim() {
         {!state?.claimed && (
           <>
             <div className="space-y-2">
-              <Label htmlFor="firstName">First name</Label>
+              <Label htmlFor="firstName">{translateInterface("m702ef921ed1d")}</Label>
               <Input id="firstName" name="firstName" autoComplete="given-name" maxLength={100} required autoFocus />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="lastName">Last name <span className="text-muted-foreground">(optional)</span></Label>
+              <Label htmlFor="lastName">{translateInterface("m7b4888049459")}{" "}<span className="text-muted-foreground">{translateInterface("m0059798b7f70")}</span></Label>
               <Input id="lastName" name="lastName" autoComplete="family-name" maxLength={100} />
             </div>
           </>
         )}
         <div className="space-y-2">
-          <Label htmlFor="username">Username</Label>
+          <Label htmlFor="username">{translateInterface("me3b89e9d33f8")}</Label>
           <Input
             id="username"
             name="username"
@@ -123,12 +129,12 @@ export function ApplianceClaim() {
         </div>
         {!state?.claimed && (
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">{translateInterface("m969ccbd3cf63")}</Label>
             <Input id="email" name="email" type="email" autoComplete="email" maxLength={254} required />
           </div>
         )}
         <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+          <Label htmlFor="password">{translateInterface("me7cf3ef4f17c")}</Label>
           <Input
             id="password"
             name="password"
@@ -141,7 +147,7 @@ export function ApplianceClaim() {
         </div>
         {!state?.claimed && (
           <div className="space-y-2">
-            <Label htmlFor="repeatPassword">Repeat password</Label>
+            <Label htmlFor="repeatPassword">{translateInterface("mb74070f90e8c")}</Label>
             <Input
               id="repeatPassword"
               name="repeatPassword"
@@ -157,10 +163,10 @@ export function ApplianceClaim() {
 
       <Button type="submit" className="w-full" disabled={submitting || !state}>
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        {state?.claimed ? 'Continue setup' : 'Create owner account'}
+        {state?.claimed ? translateInterface("mc5702c19da53") : translateInterface("m75d8201c860a")}
       </Button>
       {state?.operationActive && (
-        <p className="text-center text-xs text-muted-foreground">Another browser is currently applying setup changes.</p>
+        <p className="text-center text-xs text-muted-foreground">{translateInterface("m1b3650fe2b8f")}</p>
       )}
     </form>
     </main>

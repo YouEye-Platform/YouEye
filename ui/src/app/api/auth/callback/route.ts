@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { oauthTransactionName, readOAuthTransaction } from "../../../../../../shared/oauth-transaction";
 import {
   exchangeCodeForToken,
   fetchUserInfo,
@@ -20,8 +21,9 @@ import {
   generateCSRFToken,
 } from "@/lib/auth";
 import { upsertUser } from "@/lib/db/queries/users";
+import { verifyIdentityToken } from "@/lib/auth/id-token";
 
-const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days
+const SESSION_DURATION = 60 * 60 * 24 * 30; // ID session sets the earlier idle limit
 
 function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
   return isAdminClaim === true || groups.includes("admin");
@@ -49,6 +51,8 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
   const errorParam = request.nextUrl.searchParams.get("error");
+  const transactionName = oauthTransactionName("ui", state);
+  const returnTo = readOAuthTransaction(transactionName ? request.cookies.get(transactionName)?.value : undefined, state);
 
   // Handle identity provider errors
   if (errorParam) {
@@ -58,7 +62,7 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(
       new URL(`/login?error=${encodeURIComponent(desc)}`, baseUrl)
     );
-    response.cookies.delete("oauth-state");
+    if (transactionName) response.cookies.delete(transactionName);
     return response;
   }
 
@@ -66,30 +70,17 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(
       new URL("/login?error=Missing+code+or+state", baseUrl)
     );
-    response.cookies.delete("oauth-state");
+    if (transactionName) response.cookies.delete(transactionName);
     return response;
   }
 
-  // Read state from the actual HTTP Cookie header (request.cookies),
-  // NOT from cookies() which uses the implicit response context.
-  const savedState = request.cookies.get("oauth-state")?.value;
-
-  if (!savedState || savedState !== state) {
-    // Diagnostic logging for debugging
-    const allCookieNames = request.cookies.getAll().map((c) => c.name).join(",");
-    console.error(
-      "OAuth2 state mismatch — " +
-        `savedState=${savedState ? `present(${savedState.substring(0, 8)}...)` : "MISSING"}, ` +
-        `urlState=${state.substring(0, 8)}..., ` +
-        `cookies=[${allCookieNames}], ` +
-        `host=${request.headers.get("host")}, ` +
-        `referer=${request.headers.get("referer") || "none"}, ` +
-        `secure_cookies=${process.env.SECURE_COOKIES || "unset"}`
-    );
+  // The cookie is scoped to this exact client/attempt, including its return path.
+  if (returnTo === null) {
+    console.error("OAuth2 state mismatch");
     const response = NextResponse.redirect(
       new URL("/login?error=Invalid+state", baseUrl)
     );
-    response.cookies.delete("oauth-state");
+    if (transactionName) response.cookies.delete(transactionName);
     return response;
   }
 
@@ -101,6 +92,22 @@ export async function GET(request: NextRequest) {
 
     // Fetch user profile from identity provider
     const userInfo = await fetchUserInfo(tokenData.access_token);
+    const identityUrl = process.env.IDENTITY_URL || '';
+    const clientId = process.env.IDENTITY_CLIENT_ID || '';
+    if (!tokenData.id_token || !identityUrl || !clientId) throw new Error('Missing ID token or provider configuration');
+    // The registered issuer can be pinned through a domain rename. Read the
+    // provider's current discovery contract instead of rebuilding it from the
+    // browser URL, which may now point at a different host.
+    const discoveryBase = process.env.IDENTITY_INTERNAL_URL || identityUrl;
+    const discoveryResponse = await fetch(`${discoveryBase}/application/o/${encodeURIComponent(clientId)}/.well-known/openid-configuration`, {
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    if (!discoveryResponse.ok) throw new Error("Identity discovery unavailable");
+    const discovery = await discoveryResponse.json() as { issuer?: string; jwks_uri?: string };
+    const { payload: idClaims } = await verifyIdentityToken(tokenData.id_token, discovery, clientId, discoveryBase);
+    if (idClaims.token_use !== 'id' || typeof idClaims.sid !== 'string' || idClaims.sub !== userInfo.sub) {
+      throw new Error('Identity session is missing or mismatched');
+    }
 
     const username = userInfo.preferred_username || userInfo.sub;
     const groups = userInfo.groups || [];
@@ -123,6 +130,7 @@ export async function GET(request: NextRequest) {
     const sessionToken = await createSession({
       userId: user.id,
       identityId: userInfo.sub,
+      identitySessionId: idClaims.sid,
       username,
       name: userInfo.name || username,
       email: userInfo.email || "",
@@ -137,7 +145,7 @@ export async function GET(request: NextRequest) {
     // Set ALL cookies directly on the redirect response.
     // Do NOT use setSessionCookies() — it writes to the implicit response
     // context via cookies() which won't merge into NextResponse.redirect().
-    const response = NextResponse.redirect(new URL("/", baseUrl));
+    const response = NextResponse.redirect(new URL(returnTo, baseUrl));
 
     response.cookies.set("ye-ui-session", sessionToken, {
       httpOnly: true,
@@ -155,8 +163,8 @@ export async function GET(request: NextRequest) {
       path: "/",
     });
 
-    // Clean up the oauth-state cookie
-    response.cookies.delete("oauth-state");
+    // Consume only this login attempt; parallel client transactions remain valid.
+    if (transactionName) response.cookies.delete(transactionName);
 
     return response;
   } catch (error) {
@@ -166,7 +174,7 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(
       new URL(`/login?error=${encodeURIComponent(msg)}`, baseUrl)
     );
-    response.cookies.delete("oauth-state");
+    if (transactionName) response.cookies.delete(transactionName);
     return response;
   }
 }

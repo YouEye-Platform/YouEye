@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function read(path) {
-  return readFileSync(join(root, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(root, path), "utf8")) : readFileSync(join(root, path), "utf8");
 }
 
 test('Settings apps list exposes a real update action for pending app updates', () => {
@@ -32,8 +33,10 @@ test('Settings app update route is admin-scoped and reuses existing update engin
   assert.match(route, /verifyCSRFToken/);
   assert.match(route, /session\?\.isAdmin/);
   assert.match(route, /updateLXDApp/);
-  assert.match(route, /updateMarketApp/);
+  assert.match(route, /handleMarketUpdate\(request, appId, 'json'\)/);
+  assert.match(read('src/lib/market/update-http.ts'), /updateMarketApp/);
   assert.match(route, /updateOCIApp/);
-  assert.match(route, /spineClient\.updateControl/);
+  assert.doesNotMatch(route, /spineClient\.update(Control|Self)/);
+  assert.match(route, /spineClient\.updateIncus/);
   assert.match(route, /statusComponentFor\(appId\)/);
 });

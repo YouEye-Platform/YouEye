@@ -31,11 +31,11 @@ test('permission requests require explicit approval before granting', () => {
   const grantIndex = route.indexOf('await grantPermission');
   assert.ok(approvalIndex > -1 && grantIndex > -1 && approvalIndex < grantIndex);
 
-  assert.match(page, /YouEye permission request/);
-  assert.match(page, /describePermission\(permission\)/);
+  assert.match(page, /translateInterface\("m8d3dd4321240"\)/);
+  assert.match(page, /describePermission\(permission, translateInterface\)/);
   assert.match(page, /findUserById\(session\.userId\)/);
   assert.match(page, /AvatarImage src=\{avatarUrl\}/);
   assert.match(page, /AvatarFallback/);
   assert.match(form, /approved: true/);
-  assert.match(form, /Permission granted/);
+  assert.match(form, /translateInterface\("m63895f3e9bc1"\)/);
 });

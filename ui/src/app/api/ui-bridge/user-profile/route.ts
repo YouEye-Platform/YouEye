@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { username, firstName, lastName } = body;
+    const { username, identityId, firstName, lastName } = body;
 
     if (!username) {
       return NextResponse.json(
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userId = (await ensureBridgeUser(username)).id;
+    const userId = (await ensureBridgeUser(username, identityId)).id;
 
     const name = [firstName, lastName].filter(Boolean).join(" ") || undefined;
 

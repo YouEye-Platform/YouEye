@@ -7,7 +7,7 @@ const controlPanelRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirn
 const youEyeRoot = join(controlPanelRoot, '..');
 const repoRoot = join(youEyeRoot, '..');
 
-// The app-market is a SEPARATE repo (forgejo.example.test/potemsla/YE-AppMarket; GitHub
+// The app-market is a SEPARATE repo (forgejo.example.test/owner/YE-AppMarket; GitHub
 // name "Market"). It sits beside the YouEye monorepo when checked out. Resolve it
 // robustly across both names + an env override, and skip catalog assertions when
 // it isn't present (it isn't part of control-panel).

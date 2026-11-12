@@ -298,3 +298,8 @@ html:has([data-youeye-overlay-embed]) body {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 }
+
+/* Artwork fills the resizable title widget rather than inheriting header sizing. */
+.title-studio-widget { --mytitle-width: 100%; --mytitle-height: auto; }
+
+.greeting-studio-title { --mytitle-width: 100%; --mytitle-height: auto; width: min(100%, 36rem); }

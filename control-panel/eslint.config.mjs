@@ -9,6 +9,7 @@ const eslintConfig = defineConfig([
     // Keep inherited migration debt visible without making unrelated feature
     // validation impossible. New and touched code is still typechecked, tested,
     // and built; these rules remain reported on every full lint run.
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "react-hooks/preserve-manual-memoization": "warn",
@@ -19,7 +20,7 @@ const eslintConfig = defineConfig([
   {
     // Release tooling is deliberately CommonJS because Node executes these
     // repository entrypoints as .js without a package-wide ESM mode.
-    files: ["scripts/**/*.js"],
+    files: ["scripts/**/*.{js,cjs}"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },

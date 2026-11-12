@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function read(path) {
-  return readFileSync(join(root, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(root, path), "utf8")) : readFileSync(join(root, path), "utf8");
 }
 
 test('app detail uses a sticky action panel and keeps install progress in that panel', () => {
@@ -14,8 +15,8 @@ test('app detail uses a sticky action panel and keeps install progress in that p
 
   assert.match(detail, /lg:grid-cols-\[minmax\(0,1fr\)_340px\]/);
   assert.match(detail, /lg:sticky lg:top-24/);
-  assert.match(detail, /Installing \$\{app\.name\}/);
-  assert.match(detail, /Open \{app\.name\}/);
+  assert.match(detail, /Installing \{(?:app\.name|String\(app\.name\))\}/);
+  assert.match(detail, /Open(?:\{" "\})?\s*\{app\.name\}/);
   assert.match(detail, /What this app uses/);
 });
 
@@ -36,9 +37,9 @@ test('install progress remains scoped to the current app across navigation and a
   assert.match(detail, /return \(\) => \{ active = false; \}/);
   assert.match(detail, /installOperationAppId === appId && installEvents\.length > 0/);
   assert.match(detail, /!!installError \|\| latestInstallEvent\?\.status === 'error'/);
-  assert.match(detail, /message: 'Preparing installation\.\.\.'/);
+  assert.match(detail, /message: ['"]Preparing installation\.\.\.['"]/);
   assert.match(detail, /if \(data\.events\?\.length\) setInstallEvents\(data\.events\)/);
-  assert.match(detail, /installOperationAppId === appId && !installDone\s*\? 'Installing'/);
+  assert.match(detail, /installOperationAppId === appId && !installDone\s*\? ["']Installing["']/);
 });
 
 test('install dialog submits an immediate manifest-defaulted account-login choice', () => {

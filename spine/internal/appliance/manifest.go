@@ -10,12 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 const (
@@ -97,7 +97,7 @@ type Manifest struct {
 	SchemaVersion       int         `json:"schema_version"`
 	ImageVersion        string      `json:"image_version"`
 	BuildID             string      `json:"build_id"`
-	SourceCommit        string      `json:"source_commit"`
+	SourceTree          string      `json:"source_tree"`
 	Architecture        string      `json:"architecture"`
 	FirmwareMode        string      `json:"firmware_mode"`
 	DiskLayoutVersion   int         `json:"disk_layout_version"`
@@ -119,9 +119,6 @@ type Manifest struct {
 // Spine is baked into the image; Control Panel and UI are immutable release
 // assets selected by tag and verified by digest during first deployment.
 type ReleaseSet struct {
-	Source       string           `json:"source"`
-	Branch       string           `json:"branch"`
-	Fallback     []string         `json:"fallback"`
 	Spine        ComponentRelease `json:"spine"`
 	ControlPanel ComponentRelease `json:"control_panel"`
 	UI           ComponentRelease `json:"ui"`
@@ -129,8 +126,7 @@ type ReleaseSet struct {
 
 type ComponentRelease struct {
 	Version        string `json:"version"`
-	Tag            string `json:"tag,omitempty"`
-	SourceCommit   string `json:"source_commit"`
+	SourceTree     string `json:"source_tree"`
 	ArtifactSHA256 string `json:"artifact_sha256"`
 }
 
@@ -143,14 +139,12 @@ type RuntimeStatus struct {
 	ErrorCode         string       `json:"error_code,omitempty"`
 	ImageVersion      string       `json:"image_version,omitempty"`
 	BuildID           string       `json:"build_id,omitempty"`
-	SourceCommit      string       `json:"source_commit,omitempty"`
+	SourceTree        string       `json:"source_tree,omitempty"`
 	Architecture      string       `json:"architecture,omitempty"`
 	FirmwareMode      string       `json:"firmware_mode,omitempty"`
 	DiskLayoutVersion int          `json:"disk_layout_version,omitempty"`
 	RecoveryVersion   string       `json:"recovery_version,omitempty"`
 	ArtifactKind      string       `json:"artifact_kind,omitempty"`
-	ReleaseSource     string       `json:"release_source,omitempty"`
-	ReleaseBranch     string       `json:"release_branch,omitempty"`
 	Capabilities      Capabilities `json:"capabilities"`
 }
 
@@ -213,14 +207,10 @@ func DetectAt(path string) (RuntimeStatus, *Manifest, error) {
 	}
 	status := RuntimeStatus{
 		Kind: RuntimeApplianceImage, ManifestValid: true,
-		ImageVersion: m.ImageVersion, BuildID: m.BuildID, SourceCommit: m.SourceCommit,
+		ImageVersion: m.ImageVersion, BuildID: m.BuildID, SourceTree: m.SourceTree,
 		Architecture: m.Architecture, FirmwareMode: m.FirmwareMode,
 		DiskLayoutVersion: m.DiskLayoutVersion, RecoveryVersion: m.RecoveryVersion,
 		ArtifactKind: m.ArtifactKind, Capabilities: ApplianceCapabilities(m),
-	}
-	if m.ReleaseSet != nil {
-		status.ReleaseSource = m.ReleaseSet.Source
-		status.ReleaseBranch = m.ReleaseSet.Branch
 	}
 	return status, &m, nil
 }
@@ -293,7 +283,7 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("unsupported manifest schema %d (want %d)", m.SchemaVersion, ManifestSchemaVersion)
 	}
 	required := map[string]string{
-		"image_version": m.ImageVersion, "build_id": m.BuildID, "source_commit": m.SourceCommit,
+		"image_version": m.ImageVersion, "build_id": m.BuildID, "source_tree": m.SourceTree,
 		"architecture": m.Architecture, "firmware_mode": m.FirmwareMode,
 		"kernel_compatibility": m.KernelCompatibility, "zfs_compatibility": m.ZFSCompatibility,
 		"zfs_feature_profile": m.ZFSFeatureProfile,
@@ -318,9 +308,9 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("invalid data schema compatibility range")
 	}
 	switch m.ArtifactKind {
-	case "production", "development", "test":
+	case "production", "stable", "beta", "development", "test":
 	default:
-		return fmt.Errorf("artifact_kind must be production, development, or test")
+		return fmt.Errorf("artifact_kind must be production, stable, beta, development, or test")
 	}
 	if m.ReleaseSet != nil {
 		if err := m.ReleaseSet.Validate(); err != nil {
@@ -330,72 +320,19 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
+// Validate checks the exact core payload recorded by the image builder. The
+// image names no repository, branch or channel: it is host-neutral.
 func (r ReleaseSet) Validate() error {
-	u, err := url.Parse(r.Source)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("source must be an absolute HTTP(S) repository URL")
-	}
-	if err := validateReleaseBranch(r.Branch); err != nil {
-		return err
-	}
-	if r.Fallback == nil || len(r.Fallback) != 0 {
-		return fmt.Errorf("fallback must be an explicit empty array")
-	}
-	if err := validateComponentRelease("spine", r.Branch, r.Spine, false); err != nil {
-		return err
-	}
-	if err := validateComponentRelease("cp", r.Branch, r.ControlPanel, true); err != nil {
-		return err
-	}
-	if err := validateComponentRelease("ui", r.Branch, r.UI, true); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateReleaseBranch(branch string) error {
-	if branch == "" || len(branch) > 128 {
-		return fmt.Errorf("branch is required")
-	}
-	for _, component := range strings.Split(branch, "/") {
-		if component == "" || component == "." || component == ".." || strings.HasPrefix(component, ".") ||
-			strings.HasSuffix(component, ".") || strings.HasSuffix(component, ".lock") {
-			return fmt.Errorf("invalid branch %q", branch)
+	for name, release := range map[string]ComponentRelease{"spine": r.Spine, "control_panel": r.ControlPanel, "ui": r.UI} {
+		if !releasecache.ValidCoreVersion(release.Version) {
+			return fmt.Errorf("%s.version is required", name)
 		}
-		for _, c := range component {
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-				return fmt.Errorf("invalid branch %q", branch)
-			}
+		if !isHexDigest(release.SourceTree, 40) {
+			return fmt.Errorf("%s.source_tree must be a 40-character hexadecimal git tree id", name)
 		}
-	}
-	return nil
-}
-
-func validateComponentRelease(prefix, branch string, release ComponentRelease, requireTag bool) error {
-	name := prefix
-	if prefix == "cp" {
-		name = "control_panel"
-	}
-	if strings.TrimSpace(release.Version) == "" {
-		return fmt.Errorf("%s.version is required", name)
-	}
-	if requireTag && release.Tag == "" {
-		return fmt.Errorf("%s.tag is required", name)
-	}
-	if release.Tag != "" {
-		want := prefix + "-v" + release.Version
-		if branch != "main" {
-			want = prefix + "-" + branch + "-v" + release.Version
+		if !isHexDigest(release.ArtifactSHA256, 64) {
+			return fmt.Errorf("%s.artifact_sha256 must be a 64-character hexadecimal digest", name)
 		}
-		if release.Tag != want {
-			return fmt.Errorf("%s.tag %q does not match exact branch/version tag %q", name, release.Tag, want)
-		}
-	}
-	if !isHexDigest(release.SourceCommit, 40) {
-		return fmt.Errorf("%s.source_commit must be a 40-character hexadecimal commit", name)
-	}
-	if !isHexDigest(release.ArtifactSHA256, 64) {
-		return fmt.Errorf("%s.artifact_sha256 must be a 64-character hexadecimal digest", name)
 	}
 	return nil
 }

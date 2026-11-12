@@ -29,9 +29,13 @@ cat > "$temp/bin/getent" <<'EOF'
 EOF
 cat > "$temp/bin/curl" <<'EOF'
 #!/bin/sh
-[ "${FAKE_SOURCE_FAIL:-0}" != 1 ] || exit 22
+[ "${FAKE_SOURCE_FAIL:-0}" != 1 ] || exit 6
+for arg do
+  case "$arg" in https://api.github.com/*|*/api/v1/repos/*) echo "release API called: $arg" >&2; exit 99 ;; esac
+done
+printf '%s\n' "$*" > "$FAKE_CURL_LOG"
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = --output ]; then shift; printf '[]\n' > "$1"; exit 0; fi
+  if [ "$1" = --output ]; then shift; printf '{"schema":"youeye.channel.v1"}\n' > "$1"; printf '%s' "${FAKE_HTTP_STATUS:-200}"; exit 0; fi
   shift
 done
 exit 1
@@ -42,7 +46,7 @@ cat > "$temp/state/network-profile.json" <<'EOF'
 {"schema":"youeye.network-profile.v1","id":"primary","kind":"ethernet","ipv4":{"mode":"dhcp"}}
 EOF
 cat > "$temp/state/release-policy.json" <<'EOF'
-{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"}
+{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 EOF
 
 run_network() {
@@ -56,7 +60,7 @@ run_network() {
         YOUEYE_NETWORK_CARRIER="$temp/sys/carrier" \
         YOUEYE_NETWORK_MAX_ATTEMPTS=1 YOUEYE_NETWORK_RETRY_SECONDS=0 \
         IP_BIN="$temp/bin/ip" NETWORKCTL_BIN="$temp/bin/networkctl" \
-        GETENT_BIN="$temp/bin/getent" CURL_BIN="$temp/bin/curl" \
+        GETENT_BIN="$temp/bin/getent" CURL_BIN="$temp/bin/curl" FAKE_CURL_LOG="$temp/curl.log" \
         "$@" "$script"
 }
 
@@ -65,6 +69,23 @@ grep -Fqx 'Name=ens18' "$temp/network/20-youeye.network"
 grep -Fqx 'DHCP=ipv4' "$temp/network/20-youeye.network"
 jq -e '.phase == "ready" and .interface == "ens18" and .ipv4_mode == "dhcp"' "$temp/state/network-status.json" >/dev/null
 test "$(stat -c %a "$temp/state/network-last-good-profile.json")" = 600
+grep -Fq 'https://releases.youeye.me/v1/channels/stable.json' "$temp/curl.log"
+
+# A rate-limited release host still proves the network works.
+run_network FAKE_HTTP_STATUS=429
+jq -e '.phase == "ready"' "$temp/state/network-status.json" >/dev/null
+# A missing index is a source problem, not a network one.
+if run_network FAKE_HTTP_STATUS=404; then
+    echo 'missing channel index unexpectedly passed' >&2
+    exit 1
+fi
+jq -e '.error_code == "source_invalid"' "$temp/state/network-status.json" >/dev/null
+# Another repository is read from its own release downloads.
+cp "$temp/state/release-policy.json" "$temp/state/policy.saved"
+jq '.repository = "https://forge.example.test/owner/YouEye" | .channel = "dev"' "$temp/state/policy.saved" > "$temp/state/release-policy.json"
+run_network
+grep -Fq 'https://forge.example.test/owner/YouEye/releases/download/channel-dev/index.json' "$temp/curl.log"
+cp "$temp/state/policy.saved" "$temp/state/release-policy.json"
 
 cat > "$temp/state/network-profile.json" <<'EOF'
 {"schema":"youeye.network-profile.v1","id":"primary","kind":"ethernet","adapter_mac":"02:00:00:00:00:19","ipv4":{"mode":"dhcp"}}

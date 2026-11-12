@@ -75,6 +75,15 @@ export interface AppRestoreConfig {
 }
 
 /** Full platform restore configuration */
+export interface SetupRestoreCheckpoint {
+  /** Only a completed durable step may be skipped. */
+  completed(step: string): boolean;
+  /** "replace" requires an idempotent assignment/readback; never use it for an unknown native import or SQL execution. */
+  step(name: string, retry: 'replace' | 'never', work: () => Promise<void>): Promise<void>;
+  rememberQuiesced(names: string[]): Promise<void>;
+  quiesced(): string[];
+}
+
 export interface FullRestoreConfig {
   backupPath: string;  // root of backup dir (contains youeye/)
   passphrase: string;
@@ -83,6 +92,8 @@ export interface FullRestoreConfig {
   appIds?: string[];
   /** Keep setup incomplete until the setup route has finished every restore gate. */
   setupMode?: boolean;
+  /** Setup-only durable checkpoints, held under the setup and backup lifecycle locks. */
+  setupRecovery?: SetupRestoreCheckpoint;
 }
 
 /** Backup schedule configuration */
@@ -141,7 +152,6 @@ export interface BackupSourceIdentity {
   runtime_kind: 'mutable-host' | 'appliance-image';
   image_version?: string;
   source_commit?: string;
-  release_branch?: string;
   state_schema_version?: number;
   data_schema_version?: number;
   disk_layout_version?: number;

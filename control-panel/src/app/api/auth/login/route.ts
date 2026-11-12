@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     const csrfToken = generateCSRFToken();
 
     // Set cookies
-    await setSessionCookies(sessionToken, csrfToken, { request });
+    await setSessionCookies(sessionToken, csrfToken, { request, maxAge: 86400 });
 
     // Log successful login
     console.log(`Successful login for user "${username}" from IP ${ip}`);

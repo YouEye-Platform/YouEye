@@ -1,9 +1,10 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 function source(path: string) {
-  return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+  return englishInterfaceSource(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'));
 }
 
 test('host bootstrap network status is administrator-only and read-only', () => {

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // RestoreConfig is the request body for POST /api/backup/restore.
@@ -38,6 +40,11 @@ func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
 	if cfg.StagingDir == "" {
 		return nil, fmt.Errorf("staging_dir is required")
 	}
+	release, err := (systemupdate.CoreLifecycleBarrier{Root: filepath.Join(backupDataRoot, "state", "app-updates")}).AdmitOrdinary()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	cfg.ArchivePath = filepath.Clean(cfg.ArchivePath)
 	cfg.StagingDir = filepath.Clean(cfg.StagingDir)

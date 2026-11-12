@@ -1,4 +1,6 @@
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -34,6 +36,8 @@ export function PlatformOverlayFrame({
   onOpenLauncher?: () => void;
   onUnreadCountChange?: (count: number) => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [mounted, setMounted] = useState(active || preload);
   const [loaded, setLoaded] = useState(false);
@@ -87,7 +91,7 @@ export function PlatformOverlayFrame({
     <iframe
       ref={iframeRef}
       key={src}
-      title={`YouEye ${kind}`}
+      title={translateInterface("m17755da34536", { value0: kind === "drawer" ? translateInterface("m6880ed028305") : kind === "launcher" ? translateInterface("mf290ead4af85") : translateInterface("m788011833a5a") })}
       src={src}
       sandbox={OVERLAY_SANDBOX}
       className={`fixed inset-0 z-[90] h-screen w-screen border-0 bg-transparent transition-opacity duration-100 ${active && loaded ? "pointer-events-auto" : "pointer-events-none"}`}

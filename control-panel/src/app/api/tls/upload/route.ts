@@ -9,17 +9,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { tlsStorage } from '@/lib/acme/storage';
 import * as caddy from '@/lib/caddy/client';
+import { withTlsMutation } from '@/lib/acme/mutation';
+import { validateUploadedCertificate } from '@/lib/acme/upload-validation';
+import { settingsService } from '@/lib/settings';
+import { applyUploadedCertificateWithRecovery } from '@/lib/acme/upload-activation';
 
 /** Basic PEM format validation */
 function isPem(str: string, type: string): boolean {
   return str.includes(`-----BEGIN ${type}-----`) && str.includes(`-----END ${type}-----`);
-}
-
-/** Extract domain names from a PEM certificate's Subject/SAN (best-effort) */
-function extractDomainsFromCert(certPem: string): string[] {
-  // Without an ASN.1 parser, we can't reliably extract SANs from PEM.
-  // Return empty — caller should provide domains or we infer from the configured domain.
-  return [];
 }
 
 export async function POST(request: NextRequest) {
@@ -59,6 +56,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (chain !== undefined && typeof chain !== 'string') {
+      return NextResponse.json({ error: 'Certificate chain must be PEM text.' }, { status: 400 });
+    }
+    return await withTlsMutation(session.authMethod, async () => {
     // Combine certificate + chain if provided
     let fullCert = certificate.trim();
     if (chain && typeof chain === 'string' && chain.trim()) {
@@ -84,31 +85,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[TLS/Upload] Loading custom cert for: ${domains.join(', ')}`);
+    let validated: ReturnType<typeof validateUploadedCertificate>;
+    try { validated = validateUploadedCertificate({ certificate: fullCert, privateKey, domains }); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid certificate material.' }, { status: 400 }); }
 
-    // Store the certificate
-    await tlsStorage.storeCert({
+    const previousSettings = await settingsService.getRaw() as Record<string, unknown>;
+    const previousCertificate = await tlsStorage.getCert();
+    if (['manual', 'acme'].includes(String(previousSettings.tls_mode)) && !previousCertificate) {
+      throw new Error('Current TLS state cannot be read safely.');
+    }
+    const previousProxy = await caddy.getConfig();
+    const outcome = await applyUploadedCertificateWithRecovery({
+    persist: () => tlsStorage.storeCert({
       mode: 'manual',
-      certPem: fullCert,
-      keyPem: privateKey.trim(),
+      certPem: validated.certificate,
+      keyPem: validated.privateKey,
       issuer: 'Custom',
-      domains,
-      expiresAt: '', // User should know their cert's expiry
-      issuedAt: new Date().toISOString(),
-    });
+      domains: validated.domains,
+      expiresAt: validated.expiresAt,
+      issuedAt: validated.issuedAt,
+    }),
 
     // Load into Caddy
-    await caddy.loadExternalCert(fullCert, privateKey.trim(), domains);
+    activate: () => caddy.loadExternalCert(validated.certificate, validated.privateKey, validated.domains),
+    restoreProxy: () => caddy.setConfig(previousProxy),
+    restoreStorage: async () => {
+        if (previousCertificate) await tlsStorage.storeCert(previousCertificate);
+        else await tlsStorage.revertToInternal();
+    },
+    });
+    if (!outcome.ok) {
+      return NextResponse.json({ error: outcome.recovered
+        ? 'The certificate could not be applied. The previous TLS configuration was restored.'
+        : 'Certificate activation and recovery could not be confirmed. Reconcile TLS before retrying.' }, { status: 503 });
+    }
 
     return NextResponse.json({
       success: true,
       domains,
       message: 'Custom certificate uploaded and applied.',
     });
-  } catch (error) {
-    console.error('[TLS/Upload] Failed:', error);
+    });
+  } catch {
+    console.error('[TLS/Upload] Certificate activation failed');
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Certificate upload failed' },
+      { error: 'Certificate activation could not be confirmed. Reconcile the current TLS state before retrying.' },
       { status: 500 },
     );
   }

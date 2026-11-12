@@ -183,3 +183,29 @@ func (r *wizardInventoryRunner) Run(name string, args ...string) (string, error)
 	}
 	return "", nil
 }
+
+func TestApplianceWizardReleasePolicyOffersChannelsAndCustomRepository(t *testing.T) {
+	wizard := newApplianceWizardModel(installConfig{}, &applianceExecutionRunner{})
+	if policy := wizard.releasePolicyAnswer(); policy != defaultApplianceReleasePolicy() {
+		t.Fatalf("default wizard policy = %+v", policy)
+	}
+	for index, channel := range []string{"stable", "beta", "alpha", "dev"} {
+		wizard.releaseCur = index
+		policy := wizard.releasePolicyAnswer()
+		if policy.Channel != channel || validateApplianceReleasePolicy(policy) != nil {
+			t.Fatalf("channel %d = %+v", index, policy)
+		}
+	}
+	wizard.releaseProvider = "custom"
+	input := wizard.releaseInputs["api"]
+	input.SetValue("https://Forge.example.test/owner/YouEye.git")
+	wizard.releaseInputs["api"] = input
+	if policy := wizard.releasePolicyAnswer(); policy.Repository != "https://forge.example.test/owner/YouEye" || policy.Channel != "dev" {
+		t.Fatalf("custom repository policy = %+v", policy)
+	}
+	input.SetValue("https://forge.example.test/api/v1/repos/owner/YouEye/releases")
+	wizard.releaseInputs["api"] = input
+	if err := validateApplianceReleasePolicy(wizard.releasePolicyAnswer()); err == nil {
+		t.Fatal("releases API URL accepted as a repository")
+	}
+}

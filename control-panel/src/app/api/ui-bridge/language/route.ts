@@ -19,7 +19,7 @@ import { settingsService } from "@/lib/settings";
 import { readFileSync } from "fs";
 import { CONTAINER_DOMAIN } from "@/lib/market/constants";
 
-const SUPPORTED_LOCALES = ["en", "ru", "es", "de", "fr"];
+import { locales as SUPPORTED_LOCALES } from "@/i18n/config";
 
 /** Cached system language */
 let cachedSystemLang: { value: string; expiresAt: number } | null = null;

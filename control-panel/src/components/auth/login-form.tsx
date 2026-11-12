@@ -1,5 +1,8 @@
 'use client';
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -17,6 +20,8 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ initialError = null, settingsFlow = false }: LoginFormProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
@@ -27,8 +32,8 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
   const authBase = settingsFlow ? '/settings/api/auth' : '/api/auth';
   const showRootTree = username.trim() === 'root';
   const prompt = showRootTree
-    ? 'Enter your root password'
-    : 'Sign in with your Linux system credentials';
+    ? translateInterface("m70484e9d335a")
+    : translateInterface("m587525b98274");
 
   async function handleSubmit(formData: FormData) {
     setError(null);
@@ -38,7 +43,7 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
     const password = formData.get('password') as string;
 
     if (!username || !password) {
-      setError('Please enter both username and password');
+      setError(translateInterface("m47bdd7fe238a"));
       return;
     }
 
@@ -52,7 +57,7 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || 'Login failed');
+        setError(data.error || translateInterface("m5a96e8452f1e"));
         if (data.remaining !== undefined) {
           setRemaining(data.remaining);
         }
@@ -92,7 +97,7 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
       });
     } catch (err) {
       console.error('Login error:', err);
-      setError('Network error. Please try again.');
+      setError(translateInterface("m9ff8cfaf7d94"));
     }
   }
 
@@ -133,8 +138,7 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
               {error}
               {remaining !== null && remaining > 0 && (
                 <span className="mt-1 block text-sm">
-                  {remaining} attempt{remaining !== 1 ? 's' : ''} remaining
-                </span>
+                  {translateInterface("loginAttemptsRemaining", {count: remaining})}</span>
               )}
             </AlertDescription>
           </Alert>

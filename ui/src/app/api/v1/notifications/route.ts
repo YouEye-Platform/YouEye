@@ -5,15 +5,17 @@
  * POST /api/notifications — Create notification (system/app use)
  * PUT  /api/notifications — Mark all as read
  *
- * Authentication:
- * - Session cookie for browser requests
- * - X-YouEye-App + X-YouEye-User for service-to-service (Incus internal)
+ * Inbox management requires a platform browser session. App services may
+ * send to their admitted acting user with notifications:send permission;
+ * that permission does not expose the user's other applications' messages.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
+import { checkPermission } from '@/lib/db/queries/permissions';
 import { getBridgeToken } from "@/lib/admin/bridge-client";
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
 import {
   getUserNotifications,
   getUnreadCount,
@@ -25,18 +27,13 @@ import {
 import { getNotificationSurfaceMap, getAppMetaMap } from "@/lib/db/queries/app-management";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
-async function resolveUserId(request: NextRequest): Promise<string | null> {
+async function resolveInboxUserId(): Promise<string | null> {
   const session = await getSession();
-  if (session) return session.userId;
-
-  const serviceUser = await resolveServiceAuth(request);
-  if (serviceUser) return serviceUser.id;
-
-  return null;
+  return session?.userId ?? null;
 }
 
 export async function GET(request: NextRequest) {
-  const userId = await resolveUserId(request);
+  const userId = await resolveInboxUserId();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -87,10 +84,7 @@ export async function GET(request: NextRequest) {
  * Returns true if token is valid, false otherwise.
  */
 function validateBridgeAuth(request: NextRequest): boolean {
-  const provided = request.headers.get("X-UI-Bridge-Token");
-  if (!provided) return false;
-  const expected = getBridgeToken();
-  return expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function POST(request: NextRequest) {
@@ -103,12 +97,21 @@ export async function POST(request: NextRequest) {
     // non-session auth paths (bridge token, service auth)
   }
   const isBridgeAuth = validateBridgeAuth(request);
+  if (request.headers.has("x-ui-bridge-token")
+    && (!isBridgeAuth || request.headers.has("authorization")
+      || request.headers.has("x-youeye-app") || request.headers.has("x-youeye-user"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const serviceUser = !session && !isBridgeAuth
     ? await resolveServiceAuth(request)
     : null;
 
   if (!session && !isBridgeAuth && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const actingApp = serviceUser ? request.headers.get('x-youeye-app') : session?.actingAppId;
+  if (actingApp && !await checkPermission((serviceUser?.id || session?.userId)!, actingApp, 'notifications:send')) {
+    return NextResponse.json({ error: 'notifications:send permission required' }, { status: 403 });
   }
 
   // Rate limit inter-app notification ingest (skip for bridge auth — that's Control Panel system calls)
@@ -134,8 +137,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Service/bridge auth requires explicit user_id; session auth defaults to current user
-    const userId = body.user_id ?? session?.userId ?? serviceUser?.id;
+    if (serviceUser && (
+      (body.user_id !== undefined && body.user_id !== serviceUser.id && body.user_id !== serviceUser.identityId)
+      || (body.app_id !== undefined && body.app_id !== serviceUser.appId)
+    )) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (session && body.user_id !== undefined && body.user_id !== session.userId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const userId = serviceUser?.id ?? session?.userId ?? body.user_id;
     if (!userId) {
       return NextResponse.json(
         { error: "Missing user_id for non-session-authenticated request" },
@@ -143,9 +154,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Derive app_id from service auth or request body
-    const rawAppId = request.headers.get("x-youeye-app");
-    const appId = body.app_id ?? (rawAppId ? `ye-${rawAppId.replace("ye-", "")}` : undefined);
+    const appId = serviceUser?.appId ?? body.app_id;
 
     const notif = await createNotification({
       userId,
@@ -165,8 +174,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function PUT(request: NextRequest) {
-  const userId = await resolveUserId(request);
+export async function PUT() {
+  const userId = await resolveInboxUserId();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -175,8 +184,8 @@ export async function PUT(request: NextRequest) {
   return NextResponse.json({ success: true });
 }
 
-export async function DELETE(request: NextRequest) {
-  const userId = await resolveUserId(request);
+export async function DELETE() {
+  const userId = await resolveInboxUserId();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

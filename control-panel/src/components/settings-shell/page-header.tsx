@@ -5,11 +5,11 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description }: PageHeaderProps) {
   return (
-    <div className="mb-6">
-      <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+    <header className="settings-page-header">
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
       {description && (
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       )}
-    </div>
+    </header>
   );
 }

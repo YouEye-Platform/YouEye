@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { incusRequest } from '@/lib/incus/server';
+import { AppLifecycleAdmissionError, withContainerLifecycle } from '@/lib/market/update-admission';
 
 // Methods that modify state require CSRF token
 const CSRF_REQUIRED_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
@@ -96,10 +97,28 @@ async function handleIncusRequest(
     }
 
     // Make the Incus request
-    const response = await incusRequest(method, fullPath, body);
+    const instanceWrite = method !== 'GET'
+      && pathParts[0] === '1.0' && pathParts[1] === 'instances' && pathParts[2];
+    const send = async () => {
+      const response = await incusRequest(method, fullPath, body);
+      if (instanceWrite && response.type === 'async' && response.operation) {
+        const waited = await incusRequest('GET', `${response.operation}/wait?timeout=90`, undefined, { timeout: 100_000 });
+        if (waited.type === 'error'
+          || (waited.metadata as { status?: string } | undefined)?.status === 'Failure') {
+          throw new Error('Container mutation failed');
+        }
+      }
+      return response;
+    };
+    const response = instanceWrite
+      ? await withContainerLifecycle(decodeURIComponent(pathParts[2]), send)
+      : await send();
 
     return NextResponse.json(response);
   } catch (error) {
+    if (error instanceof AppLifecycleAdmissionError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    }
     console.error('Incus proxy error:', error);
     return NextResponse.json(
       { 

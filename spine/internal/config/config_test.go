@@ -4,25 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Releases.RepoURL != "https://github.com/YouEye-Platform/YouEye" {
-		t.Errorf("default RepoURL = %q, want the official GitHub repository", cfg.Releases.RepoURL)
-	}
-	if cfg.CoreReleaseRepo().Organization != "YouEye-Platform" {
-		t.Errorf("default Organization = %q, want YouEye-Platform", cfg.CoreReleaseRepo().Organization)
-	}
-	if cfg.Releases.Repositories.Spine != "YouEye" {
-		t.Errorf("default Spine repo = %q, want %q", cfg.Releases.Repositories.Spine, "YouEye")
-	}
-	if cfg.Releases.Repositories.ControlPanel != "YouEye" {
-		t.Errorf("default ControlPanel repo = %q", cfg.Releases.Repositories.ControlPanel)
-	}
 	if cfg.Deployment.Container.Name != "youeye-control" {
 		t.Errorf("default container name = %q", cfg.Deployment.Container.Name)
 	}
@@ -48,46 +35,6 @@ func TestValidateDefaultConfig(t *testing.T) {
 	err := cfg.Validate()
 	if err != nil {
 		t.Errorf("default config should be valid, got error: %v", err)
-	}
-}
-
-func TestValidateEmptyBaseURL(t *testing.T) {
-	cfg := Default()
-	cfg.Releases.RepoURL = ""
-	cfg.Releases.BaseURL = ""
-	err := cfg.Validate()
-	if err == nil {
-		t.Error("expected error for empty BaseURL")
-	}
-}
-
-func TestValidateEmptyOrganization(t *testing.T) {
-	cfg := Default()
-	cfg.Releases.RepoURL = ""
-	cfg.Releases.Organization = ""
-	err := cfg.Validate()
-	if err == nil {
-		t.Error("expected error for empty Organization")
-	}
-}
-
-func TestValidateEmptySpineRepo(t *testing.T) {
-	cfg := Default()
-	cfg.Releases.RepoURL = ""
-	cfg.Releases.Repositories.Spine = ""
-	err := cfg.Validate()
-	if err == nil {
-		t.Error("expected error for empty Spine repo")
-	}
-}
-
-func TestValidateEmptyControlPanelRepo(t *testing.T) {
-	cfg := Default()
-	cfg.Releases.RepoURL = ""
-	cfg.Releases.Repositories.ControlPanel = ""
-	err := cfg.Validate()
-	if err == nil {
-		t.Error("expected error for empty ControlPanel repo")
 	}
 }
 
@@ -202,99 +149,6 @@ func TestValidateValidLogFormats(t *testing.T) {
 	}
 }
 
-func TestGetReleasesAPIURL(t *testing.T) {
-	cfg := Default()
-	url := cfg.GetReleasesAPIURL()
-	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=100"
-	if url != expected {
-		t.Errorf("GetReleasesAPIURL() = %q, want %q", url, expected)
-	}
-}
-
-func TestGetRepoPath(t *testing.T) {
-	cfg := Default()
-
-	if path := cfg.GetSpineRepoPath(); path != "YouEye-Platform/YouEye" {
-		t.Errorf("GetSpineRepoPath() = %q", path)
-	}
-	if path := cfg.GetControlPanelRepoPath(); path != "YouEye-Platform/YouEye" {
-		t.Errorf("GetControlPanelRepoPath() = %q", path)
-	}
-	if path := cfg.GetUIRepoPath(); path != "YouEye-Platform/YouEye" {
-		t.Errorf("GetUIRepoPath() = %q", path)
-	}
-}
-
-func TestParseReleaseRepoURLForgejo(t *testing.T) {
-	repo, err := ParseReleaseRepoURL("https://forge.example.org/acme/YouEye.git")
-	if err != nil {
-		t.Fatalf("ParseReleaseRepoURL() error: %v", err)
-	}
-	if repo.Provider != "gitea" {
-		t.Errorf("Provider = %q, want gitea", repo.Provider)
-	}
-	if repo.BaseURL != "https://forge.example.org" {
-		t.Errorf("BaseURL = %q", repo.BaseURL)
-	}
-	if repo.Organization != "acme" || repo.Repository != "YouEye" {
-		t.Errorf("repo = %s/%s, want acme/YouEye", repo.Organization, repo.Repository)
-	}
-	if repo.APIPath != "/api/v1" {
-		t.Errorf("APIPath = %q, want /api/v1", repo.APIPath)
-	}
-}
-
-func TestCoreReleaseRepoLegacyFallback(t *testing.T) {
-	cfg := Default()
-	cfg.Releases.RepoURL = ""
-	cfg.Releases.Provider = "gitea"
-	cfg.Releases.BaseURL = "https://forge.example.org"
-	cfg.Releases.APIPath = "/api/v1"
-	cfg.Releases.Organization = "acme"
-	cfg.Releases.Repositories.Spine = "YouEye"
-
-	repo := cfg.CoreReleaseRepo()
-	if repo.RepoURL != "https://forge.example.org/acme/YouEye" {
-		t.Errorf("RepoURL = %q", repo.RepoURL)
-	}
-	if repo.Provider != "gitea" {
-		t.Errorf("Provider = %q", repo.Provider)
-	}
-}
-
-func TestWriteCoreRepoURL(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(`releases:
-  provider: github
-  base_url: https://github.com
-  organization: youeye-platform
-  repositories:
-    spine: YouEye
-deployment:
-  control_panel:
-    app_dir: /opt/app
-`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	if err := WriteCoreRepoURL(path, "https://forge.example.org/acme/YouEye"); err != nil {
-		t.Fatalf("WriteCoreRepoURL() error: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	text := string(data)
-	if !strings.Contains(text, "repo_url: https://forge.example.org/acme/YouEye") {
-		t.Fatalf("repo_url not written:\n%s", text)
-	}
-	if strings.Contains(text, "provider:") || strings.Contains(text, "base_url:") || strings.Contains(text, "organization:") || strings.Contains(text, "repositories:") {
-		t.Fatalf("deprecated release source keys were not removed:\n%s", text)
-	}
-}
-
 func TestLoadFromFile(t *testing.T) {
 	// Create a temp config file
 	dir := t.TempDir()
@@ -326,12 +180,7 @@ logging:
 		t.Fatalf("LoadFromFile() error: %v", err)
 	}
 
-	if cfg.CoreReleaseRepo().BaseURL != "https://custom.example.com" {
-		t.Errorf("BaseURL = %q, want custom URL", cfg.CoreReleaseRepo().BaseURL)
-	}
-	if cfg.CoreReleaseRepo().Organization != "testorg" {
-		t.Errorf("Organization = %q, want testorg", cfg.CoreReleaseRepo().Organization)
-	}
+	// A retired releases block from an old config file is ignored.
 	if cfg.Deployment.ControlPanel.Port != 8080 {
 		t.Errorf("Port = %d, want 8080", cfg.Deployment.ControlPanel.Port)
 	}
@@ -368,10 +217,8 @@ func TestLoadFromFileNotFound(t *testing.T) {
 func TestLoadFromFileInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	// Valid YAML but invalid config (empty repo_url)
+	// Valid YAML but invalid config (unknown log level)
 	content := `
-releases:
-  repo_url: "not-a-url"
 deployment:
   container:
     name: "c"
@@ -383,7 +230,7 @@ api:
     max_attempts: 1
     window_minutes: 1
 logging:
-  level: "info"
+  level: "loud"
   format: "text"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
@@ -393,7 +240,7 @@ logging:
 	Reset()
 	_, err := LoadFromFile(cfgPath)
 	if err == nil {
-		t.Error("expected validation error for invalid repo_url")
+		t.Error("expected validation error for an invalid log level")
 	}
 }
 
@@ -418,7 +265,7 @@ func TestGetReturnsDefault(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Get() should never return nil")
 	}
-	if cfg.CoreReleaseRepo().RepoURL != "https://github.com/YouEye-Platform/YouEye" {
-		t.Errorf("Get() should return defaults when loading fails, got RepoURL=%q", cfg.CoreReleaseRepo().RepoURL)
+	if cfg.Deployment.Container.Name != "youeye-control" {
+		t.Errorf("Get() should return defaults when loading fails, got container %q", cfg.Deployment.Container.Name)
 	}
 }

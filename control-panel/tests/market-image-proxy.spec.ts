@@ -13,3 +13,11 @@ test('Control Panel image proxy trusts official GitHub assets and validates ever
   assert.match(route, /redirect: 'manual'/);
   assert.match(route, /isTrustedImageURL\(current\)/);
 });
+
+test('official catalog images come from the accepted catalog.tar, never from a catalog host', async () => {
+  const { GET } = await import('../src/app/api/market/image/route');
+  assert.match(route, /officialCatalogFile\(catalogPath\)/);
+  assert.doesNotMatch(route, /catalog\.youeye\.me/);
+  assert.equal((await GET(new Request('https://control.example.test/api/market/image?catalog=catalog.yaml'))).status, 400);
+  assert.equal((await GET(new Request(`https://control.example.test/api/market/image?url=${encodeURIComponent('https://catalog.youeye.me/v1/snapshots/x/icon.svg')}`))).status, 403);
+});

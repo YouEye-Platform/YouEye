@@ -1,8 +1,10 @@
 'use client';
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useState, useEffect, useRef } from 'react';
 import {
-  Globe, ExternalLink, Download, Monitor, Apple, Terminal,
+   ExternalLink, Download, Monitor, Apple, Terminal,
   Copy, Check, ChevronDown, Smartphone, ShieldCheck,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -330,6 +332,8 @@ export default function SetupDnsExplainer({
   continuing = false,
   continueError = null,
 }: Props) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const t = useTranslations('setup');
   const [platform, setPlatform] = useState<Platform>('windows');
   const { reachable, checking } = useConnectivityCheck(domain);
@@ -349,11 +353,6 @@ export default function SetupDnsExplainer({
     <div className={`w-full ${standalone ? 'max-w-xl' : 'max-w-lg'} mx-auto space-y-5`}>
       {/* Header */}
       <div className="text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-5">
-          {reachable
-            ? <ShieldCheck className="h-8 w-8 text-green-500" />
-            : <Globe className="h-8 w-8 text-primary" />}
-        </div>
         <h1 className="text-2xl font-bold mb-2">
           {reachable ? t('allSet') : standalone ? t('accessYourServer') : t('almostThere')}
         </h1>
@@ -411,7 +410,7 @@ export default function SetupDnsExplainer({
                 : 'bg-muted text-muted-foreground hover:bg-muted/80'
             }`}
           >
-            {continuing ? 'Signing you in…' : t('goTo', { name: siteName })}
+            {continuing ? translateInterface("mafc99407f777") : t('goTo', { name: siteName })}
             <ExternalLink className="h-4 w-4" />
           </button>
         ) : (

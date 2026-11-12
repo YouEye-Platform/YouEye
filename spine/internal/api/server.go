@@ -19,17 +19,14 @@ import (
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/backup"
-	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/container"
 	"github.com/youeye-platform/YouEye/spine/internal/developmentaccess"
 	"github.com/youeye-platform/YouEye/spine/internal/networkstatus"
-	"github.com/youeye-platform/YouEye/spine/internal/releases"
 	"github.com/youeye-platform/YouEye/spine/internal/remoteaccess"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
-	"github.com/youeye-platform/YouEye/spine/internal/version"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
@@ -116,26 +113,33 @@ func (l *authRateLimiter) cleanup() {
 }
 
 type Server struct {
-	version           string
-	socketPath        string
-	mux               *http.ServeMux
-	cfg               *config.Config
-	authLimiter       *authRateLimiter
-	runtimeDetect     func() (appliance.RuntimeStatus, *appliance.Manifest, error)
-	systemUpdate      systemUpdateService
-	remoteAccess      remoteAccessService
-	developmentAccess developmentAccessService
-	networkStatus     networkStatusService
-	releaseHTTP       *http.Client
+	coreUpdateOperations CoreUpdateOperations
+	coreStatePath        string
+	coreBootstrapPath    string
+	version              string
+	socketPath           string
+	mux                  *http.ServeMux
+	cfg                  *config.Config
+	authLimiter          *authRateLimiter
+	runtimeDetect        func() (appliance.RuntimeStatus, *appliance.Manifest, error)
+	systemUpdate         systemUpdateService
+	remoteAccess         remoteAccessService
+	developmentAccess    developmentAccessService
+	networkStatus        networkStatusService
 
 	// Status cache — avoids shelling out on every request
-	statusMu    sync.Mutex
-	statusCache map[string]interface{}
-	statusTime  time.Time
+	statusMu     sync.Mutex
+	statusCache  map[string]interface{}
+	statusTime   time.Time
+	metricsMu    sync.Mutex
+	metricsCache map[string]interface{}
+	metricsTime  time.Time
+	metricsCPU   hostCPUCounters
 
 	// Updates cache
 	updatesMu    sync.Mutex
 	updatesCache map[string]interface{}
+	releaseIndex releaseIndexCache
 	updatesTime  time.Time
 }
 
@@ -151,7 +155,6 @@ func NewServer(version string, cfg *config.Config) *Server {
 		remoteAccess:      remoteaccess.NewDefault(),
 		developmentAccess: developmentaccess.NewDefault(),
 		networkStatus:     networkstatus.NewDefault(),
-		releaseHTTP:       systemupdate.ReleaseHTTPClient(),
 	}
 	s.setupRoutes()
 	return s
@@ -227,12 +230,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/health", s.handleHealth)
 	s.mux.HandleFunc("/api/version", s.handleVersion)
 	s.mux.HandleFunc("/api/status", s.handleStatus)
-	s.mux.HandleFunc("/api/updates/check", s.handleUpdatesCheck)
 	s.mux.HandleFunc("/api/auth/verify", s.handleAuthVerify)
-	s.mux.HandleFunc("/api/update/self", s.handleUpdateSelf)
 	s.mux.HandleFunc("/api/update/incus", s.handleUpdateIncus)
 	s.mux.HandleFunc("/api/update/system", s.handleUpdateSystem)
-	s.mux.HandleFunc("/api/update/control", s.handleUpdateControl)
 	s.mux.HandleFunc("/api/update/app/", s.handleUpdateApp)
 	s.mux.HandleFunc("/api/postgres/credentials", s.handlePostgresCredentials)
 	s.mux.HandleFunc("/api/pihole/credentials", s.handlePiholeCredentials)
@@ -241,11 +241,15 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/ui/sso", s.handleUISSO)
 	// UI updates are handled by the Control Panel directly (lxd-updater), not Spine
 	s.mux.HandleFunc("/api/config", s.handleYouEyeConfig)
+	s.mux.HandleFunc("/api/releases/channel", s.handleReleaseChannel)
+	s.mux.HandleFunc("/api/releases/index", s.handleReleaseIndex)
 	s.mux.HandleFunc("/api/update/status", s.handleUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/core-update/status", s.handleCoreUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/core-update/check", s.handleCoreUpdateCheck)
+	for _, action := range []string{"stage", "activate", "resume", "recover", "cancel"} {
+		s.mux.HandleFunc("/api/appliance/core-update/"+action, s.handleCoreUpdateAction(action))
+	}
 	s.mux.HandleFunc("/api/appliance/system-update/status", s.handleSystemUpdateStatus)
-	s.mux.HandleFunc("/api/appliance/system-update/check", s.handleSystemUpdateCheck)
-	s.mux.HandleFunc("/api/appliance/system-update/stage", s.handleSystemUpdateStage)
-	s.mux.HandleFunc("/api/appliance/system-update/activate", s.handleSystemUpdateActivate)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys", s.handleRemoteAccessKeys)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys/", s.handleRemoteAccessKey)
 	s.mux.HandleFunc("/api/appliance/development-access", s.handleDevelopmentAccess)
@@ -371,7 +375,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, cached)
 		return
 	}
-	s.statusMu.Unlock()
+	// Keep the collector serialized until the cache is populated. Waiting
+	// readers reuse this result instead of launching duplicate Incus execs.
 
 	// Parallel data collection
 	var wg sync.WaitGroup
@@ -405,201 +410,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["runtime_warning"] = "appliance_recovery_required"
 	}
 
-	s.statusMu.Lock()
 	s.statusCache = status
 	s.statusTime = time.Now()
 	s.statusMu.Unlock()
 
 	jsonResponse(w, status)
-}
-
-// handleUpdatesCheck checks for available updates from configured release source
-func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	const cacheTTL = 60 * time.Second
-
-	s.updatesMu.Lock()
-	if s.updatesCache != nil && time.Since(s.updatesTime) < cacheTTL {
-		cached := s.updatesCache
-		s.updatesMu.Unlock()
-		jsonResponse(w, cached)
-		return
-	}
-	s.updatesMu.Unlock()
-
-	runtimeStatus, _, runtimeErr := s.runtimeDetect()
-	if runtimeErr != nil {
-		jsonStatusResponse(w, map[string]interface{}{"code": "appliance_recovery_required", "runtime": runtimeStatus}, http.StatusServiceUnavailable)
-		return
-	}
-
-	// Parallel version + release checks
-	var wg sync.WaitGroup
-	var controlVer, uiVer string
-	var spineLatestRel, controlLatestRel, uiLatestRel string
-
-	wg.Add(4)
-	go func() { defer wg.Done(); controlVer = s.getControlVersion() }()
-	go func() { defer wg.Done(); uiVer = s.getUIVersion() }()
-	if runtimeStatus.Capabilities.SpineUpdate {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			spineLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix)
-		}()
-	}
-	go func() {
-		defer wg.Done()
-		controlLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-	}()
-	go func() {
-		defer wg.Done()
-		uiLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.UI, s.cfg.Releases.Repositories.UITagPrefix)
-	}()
-	wg.Wait()
-
-	updates := map[string]interface{}{
-		"checked_at": time.Now().UTC().Format(time.RFC3339),
-		"runtime":    runtimeStatus,
-		"spine": map[string]interface{}{
-			"current":   s.version,
-			"latest":    spineLatestRel,
-			"available": false,
-			"supported": runtimeStatus.Capabilities.SpineUpdate,
-		},
-		"control": map[string]interface{}{
-			"current":   controlVer,
-			"latest":    controlLatestRel,
-			"available": false,
-			"supported": runtimeStatus.Capabilities.ControlUpdate,
-		},
-		"ui": map[string]interface{}{
-			"current":   uiVer,
-			"latest":    uiLatestRel,
-			"available": false,
-			"supported": runtimeStatus.Capabilities.UIUpdate,
-		},
-	}
-
-	// Check if updates are available
-	spineLatest := updates["spine"].(map[string]interface{})["latest"].(string)
-	spineUpdate := updates["spine"].(map[string]interface{})
-	if spineLatest != "" && spineLatest != s.version && spineLatest != "unknown" {
-		spineUpdate["available"] = true
-	}
-
-	controlCurrent := updates["control"].(map[string]interface{})["current"].(string)
-	controlLatest := updates["control"].(map[string]interface{})["latest"].(string)
-	controlUpdate := updates["control"].(map[string]interface{})
-	if controlLatest != "" && controlLatest != controlCurrent && controlLatest != "unknown" {
-		controlUpdate["available"] = true
-	}
-
-	uiCurrent := updates["ui"].(map[string]interface{})["current"].(string)
-	uiLatest := updates["ui"].(map[string]interface{})["latest"].(string)
-	uiUpdate := updates["ui"].(map[string]interface{})
-	if uiLatest != "" && uiLatest != uiCurrent && uiLatest != "unknown" {
-		uiUpdate["available"] = true
-	}
-
-	// Channel-aware enrichment (keeps the legacy current/latest/available keys
-	// above for old Control Panels). Each entry gains channel + installed +
-	// candidate detail and switch_pending.
-	if runtimeStatus.Capabilities.SpineUpdate {
-		s.resolveComponentUpdate(channels.ComponentSpine, s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix, s.version).merge(spineUpdate)
-	} else {
-		spineUpdate["managed_by"] = "system-image"
-	}
-	s.resolveComponentUpdate(channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix, controlVer).merge(controlUpdate)
-	s.resolveComponentUpdate(channels.ComponentUI, s.cfg.Releases.Repositories.UI, s.cfg.Releases.Repositories.UITagPrefix, uiVer).merge(uiUpdate)
-
-	// Single apt call for both incus upgrade check and system count
-	aptLines := ""
-	if runtimeStatus.Capabilities.IncusUpdate || runtimeStatus.Capabilities.SystemUpdate {
-		aptOutput, _ := exec.Command("apt", "list", "--upgradeable").CombinedOutput()
-		aptLines = string(aptOutput)
-	}
-	incusUpgradeable := strings.Contains(aptLines, "incus/")
-	upgradeableCount := 0
-	for _, line := range strings.Split(strings.TrimSpace(aptLines), "\n") {
-		if strings.Contains(line, "/") && !strings.HasPrefix(line, "Listing") {
-			upgradeableCount++
-		}
-	}
-
-	updates["incus"] = map[string]interface{}{
-		"current":    getIncusVersion(),
-		"available":  incusUpgradeable,
-		"supported":  runtimeStatus.Capabilities.IncusUpdate,
-		"managed_by": map[bool]string{true: "package-manager", false: "system-image"}[runtimeStatus.Capabilities.IncusUpdate],
-	}
-	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
-		imageStatus, imageErr := s.systemUpdate.Status()
-		system := map[string]interface{}{
-			"current": runtimeStatus.ImageVersion, "available": imageStatus.State == systemupdate.PhaseAvailable,
-			"supported": runtimeStatus.Capabilities.ImageUpdate, "managed_by": "system-image", "transaction": imageStatus,
-		}
-		if imageErr != nil {
-			system["error"] = imageErr.Error()
-		}
-		updates["system"] = system
-	} else {
-		updates["system"] = map[string]interface{}{
-			"current": getOSRelease(), "upgradeable_count": upgradeableCount,
-			"available": upgradeableCount > 0, "supported": runtimeStatus.Capabilities.SystemUpdate,
-			"managed_by": "package-manager",
-		}
-	}
-
-	// OCI app updates — check each deployed container's image fingerprint
-	// against the latest available from the registry
-	type ociAppCheck struct {
-		Name          string `json:"name"`
-		DisplayName   string `json:"display_name"`
-		ContainerName string `json:"container_name"`
-		Status        string `json:"status"`
-		ImageTag      string `json:"image_tag"`
-		Available     bool   `json:"available"`
-	}
-	var appUpdates []ociAppCheck
-
-	// Define the OCI apps we track
-	ociApps := []struct {
-		name, displayName, container, image string
-	}{
-		{"caddy", "Caddy", "youeye-caddy", "docker.io/library/caddy"},
-		{"pihole", "Pi-Hole", "youeye-pihole", "docker.io/pihole/pihole:latest"},
-		{"postgres", "PostgreSQL", "youeye-postgres", "docker.io/library/postgres:17-alpine"},
-	}
-
-	for _, a := range ociApps {
-		status := getAppContainerStatus(a.container)
-		// Extract image tag from the image reference
-		imageTag := "latest"
-		if idx := strings.LastIndex(a.image, ":"); idx > strings.LastIndex(a.image, "/") {
-			imageTag = a.image[idx+1:]
-		}
-		appUpdates = append(appUpdates, ociAppCheck{
-			Name:          a.name,
-			DisplayName:   a.displayName,
-			ContainerName: a.container,
-			Status:        status,
-			ImageTag:      imageTag,
-			Available:     false, // OCI updates require manual pull — we track status only
-		})
-	}
-	updates["apps"] = appUpdates
-
-	s.updatesMu.Lock()
-	s.updatesCache = updates
-	s.updatesTime = time.Now()
-	s.updatesMu.Unlock()
-
-	jsonResponse(w, updates)
 }
 
 // getAppContainerStatus returns the status of an Incus container.
@@ -663,82 +478,6 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		"username":      req.Username,
 		"groups":        groups,
 	})
-}
-
-func (s *Server) handleUpdateSelf(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.runtimeCapabilityGuard(w, appliance.ActionSpineUpdate) {
-		return
-	}
-
-	confirmSwitch := readConfirmSwitch(r)
-
-	// If resolution shows a channel switch and the caller did not confirm, refuse
-	// with 409 so the Control Panel can prompt.
-	if switchErr := s.channelSwitchGuard(channels.ComponentSpine, s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix, s.version, confirmSwitch); switchErr != nil {
-		errorResponse(w, switchErr.Error(), http.StatusConflict)
-		return
-	}
-
-	// Write initial status before starting background update
-	update.Start("spine", s.version)
-
-	// Run update in background — the CLI now writes status to disk at each stage.
-	// -y is passed so the CLI does not block on its own confirmation prompt; the
-	// switch guard above already enforced explicit confirmation.
-	go func() {
-		cmd := exec.Command("youeye", "update", "self", "-y")
-		cmd.Run()
-	}()
-
-	jsonResponse(w, map[string]string{
-		"status":  "started",
-		"message": "Spine update initiated",
-	})
-}
-
-// readConfirmSwitch parses an optional {"confirm_switch": true} body.
-func readConfirmSwitch(r *http.Request) bool {
-	if r.Body == nil {
-		return false
-	}
-	var body struct {
-		ConfirmSwitch bool `json:"confirm_switch"`
-	}
-	// Ignore decode errors — an empty/absent body means "not confirmed".
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	return body.ConfirmSwitch
-}
-
-// channelSwitchGuard returns a descriptive error when the resolved candidate for
-// a component is a channel switch (different branch than installed) and the
-// caller has not confirmed it. Returns nil when it is a normal same-branch
-// update, when the candidate is newer on the new branch (surfaced as an update),
-// or when confirmSwitch is true.
-func (s *Server) channelSwitchGuard(component, repo, tagPrefix, currentVersion string, confirmSwitch bool) error {
-	if confirmSwitch {
-		return nil
-	}
-	cand, err := releases.ResolveComponent(s.cfg, component, repo, tagPrefix)
-	if err != nil {
-		return nil // resolution failure is handled by the update path itself
-	}
-	installedBranch := ""
-	if prov, ok := update.GetProvenance(component); ok {
-		installedBranch = prov.Branch
-	}
-	if installedBranch == "" || installedBranch == cand.Branch {
-		return nil // same branch — normal update rules apply
-	}
-	if version.IsNewer(cand.Version, currentVersion) {
-		return nil // newer on the new branch — surfaces as a normal update
-	}
-	return fmt.Errorf("channel switch requires confirmation: %s %s → %s %s (set confirm_switch=true)",
-		installedBranch, version.FormatVersion(currentVersion),
-		cand.Branch, version.FormatVersion(cand.Version))
 }
 
 // handleUpdateStatus returns the current update status from the status file.
@@ -807,243 +546,6 @@ func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
 		"message":         "System updated",
 		"reboot_required": rebootRequired,
 	})
-}
-
-func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.runtimeCapabilityGuard(w, appliance.ActionControlUpdate) {
-		return
-	}
-
-	confirmSwitch := readConfirmSwitch(r)
-
-	containerName := s.cfg.Deployment.Container.Name
-	port := s.cfg.Deployment.ControlPanel.Port
-	appDir := s.cfg.Deployment.ControlPanel.AppDir
-
-	// Get current and latest versions
-	currentVersion := s.getControlVersion()
-
-	// Refuse an unconfirmed channel switch before doing any work.
-	if switchErr := s.channelSwitchGuard(channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix, currentVersion, confirmSwitch); switchErr != nil {
-		errorResponse(w, switchErr.Error(), http.StatusConflict)
-		return
-	}
-
-	// Resolve the candidate through the control channel (may differ from
-	// getLatestRelease when a per-component source/branch is set).
-	cpCand, cpErr := releases.ResolveComponent(s.cfg, channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-	latestVersion := ""
-	if cpErr == nil {
-		latestVersion = cpCand.Version
-	} else {
-		latestVersion = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-	}
-
-	if latestVersion == "" || latestVersion == "unknown" {
-		errorResponse(w, "could not determine latest version", http.StatusInternalServerError)
-		return
-	}
-
-	if currentVersion == latestVersion {
-		if err := s.ensureControlIdentityService(containerName, appDir); err != nil {
-			errorResponse(w, fmt.Sprintf("Control Panel is up to date, but identity provider service repair failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-		update.NoOp("control", currentVersion)
-		jsonResponse(w, map[string]string{
-			"status":  "up-to-date",
-			"message": fmt.Sprintf("Control Panel is already at version %s", currentVersion),
-		})
-		return
-	}
-
-	update.Start("control", currentVersion)
-	update.Emit("control", update.StatusDownloading, 10, "Creating snapshot...")
-
-	// A verified rollback point is mandatory before any service or file mutation.
-	if err := prepareIncusSnapshot(containerName, "pre-update", runIncusCommand); err != nil {
-		update.Fail("control", currentVersion, err.Error())
-		errorResponse(w, err.Error(), http.StatusConflict)
-		return
-	}
-
-	// Get download URL from the resolved candidate (honors the control channel
-	// source), falling back to the default-channel asset resolver.
-	var downloadURL string
-	if cpErr == nil {
-		downloadURL = releases.BuildCandidateDownloadURL(s.cfg, cpCand, s.cfg.Releases.Repositories.ControlPanel, "standalone.tar")
-	} else {
-		url, err := s.getAssetDownloadURL(s.cfg.Releases.Repositories.ControlPanel, "standalone.tar", s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-		if err != nil {
-			errorResponse(w, fmt.Sprintf("failed to get download URL: %v", err), http.StatusInternalServerError)
-			return
-		}
-		downloadURL = url
-	}
-	fmt.Printf("Downloading from %s...\n", downloadURL)
-
-	update.Emit("control", update.StatusDownloading, 20, fmt.Sprintf("Downloading %s...", latestVersion))
-
-	dlClient := releases.NewIPv4Client(10 * time.Minute)
-	resp, err := dlClient.Get(downloadURL)
-	if err != nil {
-		update.Fail("control", currentVersion, fmt.Sprintf("download failed: %v", err))
-		errorResponse(w, fmt.Sprintf("failed to download update: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		update.Fail("control", currentVersion, fmt.Sprintf("download returned status %d", resp.StatusCode))
-		errorResponse(w, fmt.Sprintf("download failed with status: %d", resp.StatusCode), http.StatusInternalServerError)
-		return
-	}
-
-	// Save to temp file on host
-	tmpFile, err := os.CreateTemp("", "control-update-*.tar")
-	if err != nil {
-		update.Fail("control", currentVersion, fmt.Sprintf("temp file creation failed: %v", err))
-		errorResponse(w, fmt.Sprintf("failed to create temp file: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(tmpFile.Name())
-
-	_, err = io.Copy(tmpFile, resp.Body)
-	closeErr := tmpFile.Close()
-	if err != nil {
-		update.Fail("control", currentVersion, fmt.Sprintf("download failed: %v", err))
-		errorResponse(w, fmt.Sprintf("failed to download: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if closeErr != nil {
-		update.Fail("control", currentVersion, fmt.Sprintf("download close failed: %v", closeErr))
-		errorResponse(w, fmt.Sprintf("failed to finish download: %v", closeErr), http.StatusInternalServerError)
-		return
-	}
-	if cpErr == nil {
-		if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256); err != nil {
-			update.Fail("control", currentVersion, err.Error())
-			errorResponse(w, err.Error(), http.StatusConflict)
-			return
-		}
-	}
-
-	update.Emit("control", update.StatusInstalling, 40, "Stopping Control Panel...")
-
-	// Stop service
-	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-id").Run()
-	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
-
-	// Clear old files and deploy new ones
-	exec.Command("incus", "exec", containerName, "--", "rm", "-rf", appDir).Run()
-	exec.Command("incus", "exec", containerName, "--", "mkdir", "-p", appDir).Run()
-
-	update.Emit("control", update.StatusInstalling, 50, "Deploying new version...")
-
-	// Push tarball to container
-	if err := exec.Command("incus", "file", "push", tmpFile.Name(), containerName+"/tmp/update.tar").Run(); err != nil {
-		// Rollback
-		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
-		update.Fail("control", currentVersion, "failed to push update to container")
-		errorResponse(w, fmt.Sprintf("failed to push update: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Extract tarball
-	if err := exec.Command("incus", "exec", containerName, "--",
-		"tar", "-xf", "/tmp/update.tar", "-C", appDir, "--no-same-owner").Run(); err != nil {
-		// Rollback
-		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
-		update.Fail("control", currentVersion, "failed to extract update")
-		errorResponse(w, fmt.Sprintf("failed to extract update: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Install dependencies (styled-jsx fix)
-	if out, err := exec.Command("incus", "exec", containerName, "--",
-		"bash", "-c", fmt.Sprintf("cd %s && pnpm install styled-jsx --silent 2>/dev/null || true", appDir)).CombinedOutput(); err != nil {
-		fmt.Printf("[update] Warning: styled-jsx install issue: %s (%v)\n", strings.TrimSpace(string(out)), err)
-	}
-
-	// Clean up
-	exec.Command("incus", "exec", containerName, "--", "rm", "/tmp/update.tar").Run()
-
-	update.Emit("control", update.StatusRestarting, 70, "Starting Control Panel...")
-
-	if err := s.ensureControlIdentityService(containerName, appDir); err != nil {
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
-		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
-		update.Fail("control", currentVersion, fmt.Sprintf("failed to ensure identity provider service: %v", err))
-		errorResponse(w, fmt.Sprintf("failed to ensure identity provider service: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Start service
-	exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
-	exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-id").Run()
-
-	update.Emit("control", update.StatusVerifying, 80, "Checking health...")
-
-	// Health check
-	healthy := false
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/api/auth/session", port)
-	for i := 0; i < 15; i++ {
-		time.Sleep(2 * time.Second)
-		out, err := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", healthURL).Output()
-		if err == nil && (string(out) == "200" || string(out) == "401") {
-			healthy = true
-			break
-		}
-	}
-
-	if !healthy {
-		// Rollback
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-id").Run()
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
-		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-id").Run()
-
-		update.Fail("control", currentVersion, "health check failed, rolled back")
-		errorResponse(w, "update failed, rolled back", http.StatusInternalServerError)
-		return
-	}
-
-	update.Complete("control", currentVersion, latestVersion)
-	if out, err := runIncusCommand("snapshot", "delete", containerName, "pre-update"); err != nil {
-		fmt.Printf("Warning: Control Panel updated but rollback snapshot cleanup failed: %v: %s\n", err, strings.TrimSpace(string(out)))
-	}
-
-	// Record channel provenance for the installed release.
-	if cpErr == nil {
-		if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
-			Version:        latestVersion,
-			Tag:            cpCand.Tag,
-			Branch:         cpCand.Branch,
-			Source:         cpCand.Source,
-			ArtifactSHA256: cpCand.ArtifactSHA256,
-		}); err != nil {
-			fmt.Printf("Warning: could not record provenance: %v\n", err)
-		}
-	}
-
-	jsonResponse(w, map[string]string{
-		"status":      "success",
-		"message":     fmt.Sprintf("Control Panel updated from %s to %s", version.FormatVersion(currentVersion), version.FormatVersion(latestVersion)),
-		"old_version": currentVersion,
-		"new_version": latestVersion,
-	})
-
-	// Trigger infrastructure reconciliation asynchronously after responding.
-	// This deploys any missing infrastructure containers (Pi-Hole, Caddy, etc.)
-	// without touching existing ones. Run in a goroutine so the API response
-	// returns immediately — reconciliation can take several minutes.
-	go s.reconcileInfrastructure()
 }
 
 func (s *Server) ensureControlIdentityService(containerName, appDir string) error {
@@ -1386,6 +888,13 @@ func getUserGroups(username string) []string {
 	return strings.Fields(strings.TrimSpace(string(out)))
 }
 
+// Read status metadata without starting an operation/process inside the guest.
+func readStatusContainerFile(container, path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "incus", "file", "pull", container+path, "-").Output()
+}
+
 func getIncusVersion() string {
 	out, err := exec.Command("incus", "version").Output()
 	if err != nil {
@@ -1420,8 +929,7 @@ func getControlStatus() map[string]interface{} {
 
 	// Try to get version
 	if strings.ToUpper(status) == "RUNNING" {
-		verOut, err := exec.Command("incus", "exec", "youeye-control", "--",
-			"cat", "/opt/app/package.json").Output()
+		verOut, err := readStatusContainerFile("youeye-control", "/opt/app/package.json")
 		if err == nil {
 			var pkg struct {
 				Version string `json:"version"`
@@ -1447,18 +955,6 @@ func getOSRelease() string {
 		}
 	}
 	return "Linux"
-}
-
-// getLatestRelease fetches the latest release version for a repo using the shared
-// releases package, respecting the configured release branch.
-func (s *Server) getLatestRelease(repo, tagPrefix string) string {
-	return releases.GetLatestVersionForBranch(s.cfg, repo, releases.ReadReleaseBranch(), tagPrefix)
-}
-
-// getAssetDownloadURL gets the download URL for a specific asset from a release,
-// filtered by the configured release branch (with fallback to main).
-func (s *Server) getAssetDownloadURL(repo, assetName, tagPrefix string) (string, error) {
-	return releases.GetAssetURLForBranch(s.cfg, repo, assetName, tagPrefix)
 }
 
 // getControlVersion gets the current Control Panel version from container
@@ -1502,8 +998,7 @@ func readPackageVersionFromContainer(containerName string, appDirs ...string) st
 			continue
 		}
 		seen[appDir] = true
-		out, err := exec.Command("incus", "exec", containerName, "--",
-			"cat", appDir+"/package.json").Output()
+		out, err := readStatusContainerFile(containerName, appDir+"/package.json")
 		if err != nil {
 			continue
 		}
@@ -1872,8 +1367,7 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		}()
 		go func() {
 			defer wg.Done()
-			envOut, err := exec.Command("incus", "exec", containerName, "--",
-				"cat", "/etc/youeye-ui.env").CombinedOutput()
+			envOut, err := readStatusContainerFile(containerName, "/etc/youeye-ui.env")
 			ssoConfigured = err == nil && strings.Contains(string(envOut), "IDENTITY_CLIENT_ID")
 		}()
 		wg.Wait()
@@ -2172,13 +1666,7 @@ type YouEyeConfig struct {
 	Domain         string            `yaml:"domain" json:"domain"`
 	Subdomains     map[string]string `yaml:"subdomains" json:"subdomains"`
 	SetupCompleted bool              `yaml:"setup_completed" json:"setup_completed"`
-	ReleaseBranch  string            `yaml:"release_branch,omitempty" json:"release_branch"`
 	Language       string            `yaml:"language,omitempty" json:"language"`
-	ReleaseSource  *ReleaseSource    `yaml:"-" json:"release_source,omitempty"`
-	// ReleaseChannels is populated on GET only (effective + raw override view).
-	// It is never written back through this struct — channels.Save is the single
-	// writer for the release_channels block.
-	ReleaseChannels *channelsView `yaml:"-" json:"release_channels,omitempty"`
 	// Extra holds arbitrary key-value pairs that the Control Panel needs
 	// to persist (e.g. tls_acme_account_key, tls_cert_pem). Spine doesn't
 	// interpret these — it just stores and returns them.
@@ -2191,100 +1679,15 @@ type YouEyeConfig struct {
 
 // structOwnedConfigKeys are the top-level youeye.yaml keys produced by the
 // YouEyeConfig struct marshal. Anything else in the file is foreign and is
-// preserved verbatim across saves (release_channels, identity, …).
+// preserved verbatim across saves (identity, …).
 var structOwnedConfigKeys = map[string]bool{
 	"site_name": true, "domain": true, "subdomains": true,
-	"setup_completed": true, "release_branch": true, "language": true,
+	"setup_completed": true, "language": true,
 	"extra": true,
-}
-
-type ReleaseSource struct {
-	RepoURL      string `json:"repo_url"`
-	Provider     string `json:"provider"`
-	BaseURL      string `json:"base_url"`
-	APIPath      string `json:"api_path"`
-	Organization string `json:"organization"`
-	Repository   string `json:"repository"`
 }
 
 var youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
 var youeyeConfigMu sync.Mutex
-
-func (s *Server) releaseSource() *ReleaseSource {
-	repo := s.cfg.CoreReleaseRepo()
-	return &ReleaseSource{
-		RepoURL:      repo.RepoURL,
-		Provider:     repo.Provider,
-		BaseURL:      repo.BaseURL,
-		APIPath:      repo.APIPath,
-		Organization: repo.Organization,
-		Repository:   repo.Repository,
-	}
-}
-
-// attachChannels populates the release_channels view on a config response.
-// A load failure is non-fatal — the rest of the config still returns.
-func (s *Server) attachChannels(cfg *YouEyeConfig) {
-	chCfg, err := channels.Load()
-	if err != nil {
-		return
-	}
-	view := s.buildChannelsView(chCfg)
-	cfg.ReleaseChannels = &view
-}
-
-func releaseRepoURLFromPatch(patch map[string]interface{}) (string, bool, error) {
-	if raw, ok := patch["release_source"]; ok {
-		source, ok := raw.(map[string]interface{})
-		if !ok {
-			return "", false, fmt.Errorf("release_source must be an object")
-		}
-		if repoURL, ok := source["repo_url"].(string); ok {
-			return repoURL, true, nil
-		}
-	}
-	if repoURL, ok := patch["repo_url"].(string); ok {
-		return repoURL, true, nil
-	}
-	return "", false, nil
-}
-
-func (s *Server) clearUpdatesCache() {
-	s.updatesMu.Lock()
-	defer s.updatesMu.Unlock()
-	s.updatesCache = nil
-	s.updatesTime = time.Time{}
-}
-
-func (s *Server) applyReleaseRepoURL(rawURL string) error {
-	repo, err := config.ParseReleaseRepoURL(rawURL)
-	if err != nil {
-		return err
-	}
-	if err := config.WriteCoreRepoURL("", repo.RepoURL); err != nil {
-		return err
-	}
-
-	s.cfg.Releases.RepoURL = repo.RepoURL
-	s.cfg.Releases.Provider = repo.Provider
-	s.cfg.Releases.BaseURL = repo.BaseURL
-	s.cfg.Releases.APIPath = repo.APIPath
-	s.cfg.Releases.Organization = repo.Organization
-	s.cfg.Releases.Repositories.Spine = repo.Repository
-	s.cfg.Releases.Repositories.ControlPanel = repo.Repository
-	s.cfg.Releases.Repositories.UI = repo.Repository
-	if s.cfg.Releases.Repositories.SpineTagPrefix == "" {
-		s.cfg.Releases.Repositories.SpineTagPrefix = "spine"
-	}
-	if s.cfg.Releases.Repositories.ControlPanelTagPrefix == "" {
-		s.cfg.Releases.Repositories.ControlPanelTagPrefix = "cp"
-	}
-	if s.cfg.Releases.Repositories.UITagPrefix == "" {
-		s.cfg.Releases.Repositories.UITagPrefix = "ui"
-	}
-	s.clearUpdatesCache()
-	return nil
-}
 
 // loadYouEyeConfig reads the youeye.yaml config file
 func loadYouEyeConfig() (*YouEyeConfig, error) {
@@ -2310,11 +1713,11 @@ func loadYouEyeConfig() (*YouEyeConfig, error) {
 	}
 
 	// Collect foreign top-level keys so they round-trip through GET/PATCH.
-	// release_channels is excluded: it is exposed via the channelsView instead.
+	// Retired release settings from older files are not exposed.
 	var raw map[string]interface{}
 	if yaml.Unmarshal(data, &raw) == nil {
 		for key, val := range raw {
-			if structOwnedConfigKeys[key] || key == "release_channels" {
+			if structOwnedConfigKeys[key] || key == "release_channels" || key == "release_branch" || key == "releases" {
 				continue
 			}
 			if cfg.Foreign == nil {
@@ -2347,7 +1750,7 @@ func configJSON(cfg *YouEyeConfig) map[string]interface{} {
 
 // saveYouEyeConfig writes the youeye.yaml config file. The struct marshal only
 // produces struct-owned keys, so every foreign top-level block in the existing
-// file (release_channels, identity, …) is preserved, and cfg.Foreign edits are
+// file (identity, …) is preserved, and cfg.Foreign edits are
 // applied on top (nil = delete).
 func saveYouEyeConfig(cfg *YouEyeConfig) error {
 	if err := os.MkdirAll(filepath.Dir(youeyeConfigPath), 0755); err != nil {
@@ -2360,7 +1763,7 @@ func saveYouEyeConfig(cfg *YouEyeConfig) error {
 	}
 
 	// The struct marshal only produces struct-owned keys. Preserve every
-	// foreign block from the existing file (release_channels, identity, …),
+	// foreign block from the existing file (identity, …),
 	// then overlay cfg.Foreign edits (nil value = delete the key).
 	var merged map[string]yaml.Node
 	if yaml.Unmarshal(data, &merged) != nil || merged == nil {
@@ -2460,8 +1863,6 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		cfg.ReleaseSource = s.releaseSource()
-		s.attachChannels(cfg)
 		jsonResponse(w, configJSON(cfg))
 
 	case "PUT":
@@ -2484,8 +1885,6 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		newCfg.ReleaseSource = s.releaseSource()
-		s.attachChannels(&newCfg)
 		jsonResponse(w, map[string]interface{}{
 			"status": "saved",
 			"config": configJSON(&newCfg),
@@ -2520,44 +1919,8 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if v, ok := patch["release_branch"].(string); ok {
-			existing.ReleaseBranch = v
-			s.clearUpdatesCache()
-		}
 		if v, ok := patch["language"].(string); ok {
 			existing.Language = v
-		}
-		if repoURL, ok, err := releaseRepoURLFromPatch(patch); err != nil {
-			errorResponse(w, err.Error(), http.StatusBadRequest)
-			return
-		} else if ok {
-			if err := s.applyReleaseRepoURL(repoURL); err != nil {
-				errorResponse(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
-
-		// Validate release_channels up-front so a bad patch fails before we
-		// write anything. The actual channel write happens AFTER
-		// saveYouEyeConfig below, because saveYouEyeConfig marshals a partial
-		// struct that would otherwise clobber the release_channels block.
-		var chCfg *channels.Config
-		if raw, ok := patch["release_channels"]; ok {
-			chPatch, ok := raw.(map[string]interface{})
-			if !ok {
-				errorResponse(w, "release_channels must be an object", http.StatusBadRequest)
-				return
-			}
-			loaded, err := channels.Load()
-			if err != nil {
-				errorResponse(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if err := applyChannelsPatch(loaded, chPatch); err != nil {
-				errorResponse(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			chCfg = loaded
 		}
 
 		// Store unrecognized keys so the Control Panel can persist arbitrary
@@ -2567,9 +1930,10 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 		// block, and an explicit null deletes the foreign key.
 		knownKeys := map[string]bool{
 			"site_name": true, "domain": true, "subdomains": true,
-			"setup_completed": true, "release_branch": true, "language": true,
-			"release_source": true, "repo_url": true, "extra": true,
-			"release_channels": true,
+			"setup_completed": true, "language": true, "extra": true,
+			// Retired release settings: the box's repository and channel live
+			// only in protected State (youeye channel / /api/releases/channel).
+			"release_branch": true, "release_source": true, "repo_url": true, "release_channels": true,
 		}
 		for key, val := range patch {
 			if knownKeys[key] {
@@ -2593,20 +1957,6 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Persist channels AFTER the youeye.yaml write. channels.Save does a
-		// read-modify-write of the full document, re-adding release_channels (and
-		// mirroring the default branch into release_branch) without disturbing the
-		// keys just written.
-		if chCfg != nil {
-			if err := chCfg.Save(); err != nil {
-				errorResponse(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			s.clearUpdatesCache()
-		}
-
-		existing.ReleaseSource = s.releaseSource()
-		s.attachChannels(existing)
 		jsonResponse(w, map[string]interface{}{
 			"status": "updated",
 			"config": configJSON(existing),
@@ -3169,6 +2519,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.metricsMu.Lock()
+	if s.metricsCache != nil && time.Since(s.metricsTime) < 15*time.Second {
+		cached := s.metricsCache
+		s.metricsMu.Unlock()
+		jsonResponse(w, cached)
+		return
+	}
 
 	result := map[string]interface{}{}
 
@@ -3240,39 +2597,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		cpuCores = 1
 	}
 
-	// CPU usage from /proc/stat (two samples, 200ms apart)
-	cpuUsage := 0.0
-	readCPUStat := func() (idle, total uint64) {
-		data, err := os.ReadFile("/proc/stat")
-		if err != nil {
-			return 0, 0
-		}
-		lines := strings.Split(string(data), "\n")
-		if len(lines) == 0 {
-			return 0, 0
-		}
-		fields := strings.Fields(lines[0]) // "cpu" aggregate line
-		if len(fields) < 5 {
-			return 0, 0
-		}
-		var vals [10]uint64
-		for i := 1; i < len(fields) && i <= 10; i++ {
-			fmt.Sscanf(fields[i], "%d", &vals[i-1])
-		}
-		for _, v := range vals {
-			total += v
-		}
-		idle = vals[3] // idle is 4th field
-		return idle, total
-	}
-	idle1, total1 := readCPUStat()
-	time.Sleep(200 * time.Millisecond)
-	idle2, total2 := readCPUStat()
-	if total2 > total1 {
-		totalDelta := float64(total2 - total1)
-		idleDelta := float64(idle2 - idle1)
-		cpuUsage = ((totalDelta - idleDelta) / totalDelta) * 100
-	}
+	// Steady observations cover the interval between shared snapshots rather
+	// than repeatedly measuring only the request's own short startup burst.
+	cpuUsage := s.sampleHostCPU()
 
 	result["cpu"] = map[string]interface{}{
 		"cores":         cpuCores,
@@ -3325,5 +2652,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"free_gb":  freeGB,
 	}
 
+	s.metricsCache = result
+	s.metricsTime = time.Now()
+	s.metricsMu.Unlock()
 	jsonResponse(w, result)
 }

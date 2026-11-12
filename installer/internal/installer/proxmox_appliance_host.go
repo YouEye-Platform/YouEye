@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"io"
 	"net"
 	"net/http"
@@ -18,9 +19,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 
 	"github.com/kdomanski/iso9660"
 )
@@ -45,35 +49,35 @@ var (
 
 const proxmoxDurableReadinessScript = `set -eu
 test -e /var/lib/youeye-state/first-deploy/complete
-jq -e '(.schema == "youeye.installer.progress.v1" or .schema == "youeye.appliance.progress.v1" or .schema == "youeye.appliance.progress.v2") and .operation == "first-deploy" and .stage == "complete"' /var/lib/youeye-state/first-deploy/progress.json >/dev/null
+jq -e '.schema == "youeye.installer.progress.v1" and .operation == "first-deploy" and .stage == "complete"' /var/lib/youeye-state/first-deploy/progress.json >/dev/null
 jq -e '.status == "healthy" and .exit_code == 0' /var/lib/youeye-state/first-deploy/health.json >/dev/null
 test "$(jq -r '.boot_id' /var/lib/youeye-state/boot/last-bless.json)" = "$(cat /proc/sys/kernel/random/boot_id)"
 jq -e '.schema == "youeye.appliance.boot-bless.v1" and .status == "healthy"' /var/lib/youeye-state/boot/last-bless.json >/dev/null
 jq -e '.status == "healthy" and .exit_code == 0' /var/lib/youeye-state/boot/last-bless-health.json >/dev/null`
 
 type proxmoxApplianceConfig struct {
-	Operation         string
-	VMID              int
-	Name              string
-	CPUCores          int
-	RAMMiB            int
-	TargetStorage     string
-	ISOStorage        string
-	TargetDiskGiB     int
-	Bridge            string
-	Network           applianceAnswerNetwork
-	ImportHostSSHKeys bool
-	SSHKeysPath       string
-	EraseConfirmed    bool
-	Channel           string
-	ReleaseBranch     string
-	Freshness         string
-	ReleaseTag        string
-	ISOSHA256         string
-	ReleaseProvider   string
-	ReleasesAPI       string
-	CacheRoot         string
-	Development       developmentAccessPolicy
+	Operation          string
+	VMID               int
+	Name               string
+	CPUCores           int
+	RAMMiB             int
+	TargetStorage      string
+	ISOStorage         string
+	TargetDiskGiB      int
+	Bridge             string
+	Network            applianceAnswerNetwork
+	ImportHostSSHKeys  bool
+	SSHKeysPath        string
+	EraseConfirmed     bool
+	Channel            string
+	ServiceSelection   string
+	ReleaseTag         string
+	CoreManifestSHA256 string
+	ISOSHA256          string
+	RepositoryURL      string
+	ReleaseProvider    string
+	CacheRoot          string
+	Development        developmentAccessPolicy
 }
 
 type proxmoxApplianceInventory struct {
@@ -207,11 +211,15 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		ImportHostSSHKeys: opts.ProxmoxImportHostSSHKeys, SSHKeysPath: opts.ProxmoxSSHKeysPath,
 		EraseConfirmed: opts.ProxmoxEraseConfirmed,
 		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
-		ReleaseBranch: opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness,
-		ISOSHA256: opts.ApplianceISOSHA256, ReleaseProvider: opts.ApplianceReleaseProvider,
-		ReleasesAPI: opts.ApplianceReleasesAPI,
-		CacheRoot:   "/var/cache/youeye-installer/releases",
-		Development: defaultDevelopmentAccessPolicy(),
+		CoreManifestSHA256: opts.CoreManifestSHA256,
+		ServiceSelection:   opts.ApplianceServiceSelection,
+		ISOSHA256:          opts.ApplianceISOSHA256, ReleaseProvider: defaultApplianceProvider,
+		RepositoryURL: opts.ApplianceRepository,
+		CacheRoot:     "/var/cache/youeye-installer/releases",
+		Development:   defaultDevelopmentAccessPolicy(),
+	}
+	if opts.ApplianceRepository != "" && opts.ApplianceRepository != releasecache.OfficialRepository {
+		config.ReleaseProvider = "custom"
 	}
 	config.TargetStorage = firstSelected(opts.ProxmoxTargetStorage, inventory.ImageStorages)
 	config.ISOStorage = firstSelected(opts.ProxmoxISOStorage, inventory.ISOStorages)
@@ -219,21 +227,11 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 	return config
 }
 
-func (config proxmoxApplianceConfig) releasePolicy(manifestSHA256 string) applianceReleasePolicy {
-	policy := applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: config.ReleaseProvider,
-		ReleasesAPI: nonDefaultReleaseAPI(config.ReleaseProvider, config.ReleasesAPI),
-		Mode:        "track", Track: config.Channel, Branch: config.ReleaseBranch,
-		Freshness: config.Freshness,
+func (config proxmoxApplianceConfig) releasePolicy() applianceReleasePolicy {
+	return applianceReleasePolicy{
+		Schema: releasePolicySchema, Repository: config.RepositoryURL, Channel: config.Channel,
+		CoreManifestSHA256: config.CoreManifestSHA256, ServiceSelection: config.ServiceSelection,
 	}
-	if policy.Freshness == "" {
-		policy.Freshness = "require-current"
-	}
-	if config.Channel == "exact" {
-		policy.Mode, policy.Track, policy.Branch = "exact", "", ""
-		policy.ExactTag, policy.ManifestSHA256 = config.ReleaseTag, manifestSHA256
-	}
-	return policy
 }
 
 func (config proxmoxApplianceConfig) developmentPolicy() developmentAccessPolicy {
@@ -254,24 +252,18 @@ func firstSelected(selected string, values []string) string {
 	return values[0]
 }
 
-func nonDefaultReleaseAPI(provider, apiURL string) string {
-	if strings.EqualFold(strings.TrimSpace(provider), defaultApplianceProvider) {
-		return ""
+func releaseProviderLabel(provider string) string {
+	if provider == defaultApplianceProvider {
+		return "Official releases"
 	}
-	return strings.TrimSpace(apiURL)
+	return "Repository URL"
 }
 
-func releaseProviderLabel(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case defaultApplianceProvider:
-		return "Official GitHub"
-	case "forgejo":
-		return "Forgejo"
-	case "custom":
-		return "Custom HTTPS"
-	default:
-		return "Unknown"
+func repositoryInputValue(provider, repository string) string {
+	if provider == defaultApplianceProvider || repository == releasecache.OfficialRepository {
+		return ""
 	}
+	return repository
 }
 
 func estimatedProxmoxDataGiB(targetGiB int) int {
@@ -312,32 +304,22 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 	}
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET", Network: config.Network,
-		ReleasePolicy: config.releasePolicy(strings.Repeat("0", 64)), Development: config.developmentPolicy(),
+		ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
 	}
+	// The core selection is checked after discovery; this preflight answer
+	// checks the remaining policy, network and development-access fields.
+	answer.ReleasePolicy.CoreManifestSHA256 = ""
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
-	if config.Freshness != "require-current" && config.Freshness != "prefer-current" {
-		return fmt.Errorf("freshness must be require-current or prefer-current")
+	if !releasecache.ValidChannel(config.Channel) {
+		return fmt.Errorf("appliance channel must be dev, alpha, beta or stable")
 	}
-	switch config.Channel {
-	case "stable", "development", "dev":
-		if config.ReleaseBranch != "" || config.ReleaseTag != "" || config.ISOSHA256 != "" {
-			return fmt.Errorf("channel selection cannot include an exact tag or ISO digest")
-		}
-	case "branch":
-		if !validApplianceReleaseBranch(config.ReleaseBranch) || config.ReleaseTag != "" || config.ISOSHA256 != "" {
-			return fmt.Errorf("branch selection requires a safe signed release branch and cannot include an exact identity")
-		}
-	case "exact":
-		if config.ReleaseBranch != "" || !validExactApplianceReleaseTag(config.ReleaseTag) || !validSHA256Hex(config.ISOSHA256) {
-			return fmt.Errorf("exact selection requires an exact release tag and lowercase ISO SHA-256")
-		}
-	default:
-		return fmt.Errorf("appliance channel must be stable, development, branch, or exact")
+	if (config.ReleaseTag == "") != (config.CoreManifestSHA256 == "") || config.ReleaseTag != "" && (!validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256)) {
+		return fmt.Errorf("an exact release needs its youeye-v tag together with its core-release.json SHA-256")
 	}
-	if _, _, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI); err != nil {
-		return err
+	if config.ISOSHA256 != "" && !validSHA256Hex(config.ISOSHA256) {
+		return fmt.Errorf("ISO SHA-256 must be 64 lowercase hexadecimal characters")
 	}
 	return nil
 }
@@ -374,33 +356,19 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		return fmt.Errorf("no compatible SSH public key was found; choose no SSH-key import explicitly or provide a supported key")
 	}
 	emitProxmoxProgress(progress, "Check SSH keys", fmt.Sprintf("%d compatible key(s); %d restricted or invalid entry/entries will be skipped", len(keyPreflight.Accepted), keyPreflight.RejectedTotal()), 0.02)
-	emitProxmoxProgress(progress, "Resolve signed appliance", "Selecting one exact release without channel fallback", 0.03)
-	selection := config.Channel
-	if config.Channel == "branch" {
-		selection = "branch:" + config.ReleaseBranch
-	}
-	release, err := resolveApplianceRelease(ctx, client, config.ReleaseProvider, config.ReleasesAPI, selection, config.ReleaseTag)
+	emitProxmoxProgress(progress, "Resolve release", "Reading the "+config.Channel+" channel index", 0.03)
+	// A given tag and digest (from install.sh) installs exactly that release;
+	// the box still records its channel for updates.
+	release, err := resolveApplianceRelease(ctx, client, config.RepositoryURL, config.Channel, config.ReleaseTag, config.CoreManifestSHA256)
 	if err != nil {
 		return err
 	}
-	emitProxmoxProgress(progress, "Verify signed appliance", "Downloading signed metadata for "+release.TagName, 0.08)
+	emitProxmoxProgress(progress, "Verify release", "Downloading the image manifest and ISO for "+release.TagName, 0.08)
 	verified, err := downloadVerifiedApplianceRelease(ctx, client, release, config.CacheRoot, config.ISOSHA256)
 	if err != nil {
 		return err
 	}
-	expectedBranch := ""
-	switch config.Channel {
-	case "stable":
-		expectedBranch = "main"
-	case "development", "dev":
-		expectedBranch = "dev"
-	case "branch":
-		expectedBranch = config.ReleaseBranch
-	}
-	if expectedBranch != "" && verified.Manifest.ReleaseSet.Branch != expectedBranch {
-		return fmt.Errorf("signed appliance provenance branch %q does not match requested track %q", verified.Manifest.ReleaseSet.Branch, expectedBranch)
-	}
-	emitProxmoxProgress(progress, "Verify signed appliance", "Manifest, checksums, and ISO verified for "+verified.Manifest.ImageVersion, 0.35)
+	emitProxmoxProgress(progress, "Verify release", "Manifest and ISO verified by SHA-256 for "+verified.Manifest.ImageVersion, 0.35)
 
 	keyFinal, err := loadProxmoxAuthorizedKeys(config)
 	if err != nil {
@@ -432,9 +400,14 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true,
 		TransactionID: transactionID, TargetSerial: targetSerial,
-		Network: config.Network, ReleasePolicy: config.releasePolicy(verified.ManifestSHA), Development: config.developmentPolicy(),
+		Network: config.Network, ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
 		AuthorizedKeys: keyFinal.Accepted,
 	}
+	if config.Operation != "create" {
+		return fmt.Errorf("core releases require a fresh installation")
+	}
+	answer.CoreRelease = coreAnswerFromRelease(release)
+	answer.ReleasePolicy.CoreManifestSHA256 = release.coreSHA256
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -480,7 +453,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		return fmt.Errorf("start YouEye Installer VM: %w", err)
 	}
 
-	emitProxmoxProgress(progress, "Run ISO installer", "The signed ISO now owns discovery, validation, and disk writes", 0.55)
+	emitProxmoxProgress(progress, "Run ISO installer", "The verified ISO now owns discovery, validation, and disk writes", 0.55)
 	installCtx, cancelInstall := context.WithTimeout(ctx, proxmoxInstallTimeout)
 	defer cancelInstall()
 	serial := make(chan applianceProgressRecord, 16)
@@ -521,6 +494,29 @@ func emitProxmoxProgress(progress chan<- proxmoxApplianceProgress, stage, detail
 }
 
 func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
+	cacheRoot := releasecache.Root()
+	guestIndex, e := os.ReadFile(filepath.Join(cacheRoot, "guest-index.json"))
+	var cached releasecache.Index
+	var hostIndex releasecache.Index
+	if e == nil {
+		if json.Unmarshal(guestIndex, &cached) != nil || cached.Schema != "youeye.release-cache.v1" {
+			return fmt.Errorf("invalid guest release cache")
+		}
+		hostIndex, e = releasecache.Load(cacheRoot)
+		if e != nil {
+			return e
+		}
+		for source, object := range cached.Objects {
+			if hostIndex.Objects[source] != object {
+				return fmt.Errorf("guest release cache differs from verified host cache")
+			}
+		}
+		digest := sha256.Sum256(guestIndex)
+		answer.ReleaseCacheSHA256 = hex.EncodeToString(digest[:])
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -539,6 +535,32 @@ func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
 	defer writer.Cleanup()
 	if err := writer.AddFile(bytes.NewReader(raw), "appliance-answer.json"); err != nil {
 		return fmt.Errorf("add appliance answer to ISO: %w", err)
+	}
+	if guestIndex != nil {
+		if err := writer.AddFile(bytes.NewReader(guestIndex), "release-cache/index.json"); err != nil {
+			return err
+		}
+		names := make([]string, 0, len(cached.Objects))
+		for u := range cached.Objects {
+			names = append(names, u)
+		}
+		sort.Strings(names)
+		seen := map[string]bool{}
+		for _, u := range names {
+			obj := cached.Objects[u]
+			if seen[obj.SHA256] {
+				continue
+			}
+			f, _, err := releasecache.Open(cacheRoot, u)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if err = writer.AddFile(f, "release-cache/objects/"+filepath.ToSlash(releasecache.MediaObjectPath(obj.SHA256))); err != nil {
+				return err
+			}
+			seen[obj.SHA256] = true
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(destination), ".answer-*.iso")
 	if err != nil {
@@ -690,7 +712,7 @@ func createProxmoxApplianceVM(config proxmoxApplianceConfig, targetSerial, isoVo
 }
 
 func proxmoxApplianceDescription(releaseTag string) string {
-	return fmt.Sprintf("YouEye signed appliance %s; one-drive ISO install.", releaseTag)
+	return fmt.Sprintf("YouEye appliance %s; one-drive ISO install.", releaseTag)
 }
 
 func attachProxmoxApplianceMedia(vmid int, isoVolume, answerVolume, releaseTag string, runner proxmoxCommandRunner) error {
@@ -755,7 +777,7 @@ func inspectCompatibleProxmoxApplianceVM(vmid int, runner proxmoxCommandRunner) 
 }
 
 func parseProxmoxRecordedRelease(description string) string {
-	const prefix = "YouEye signed appliance "
+	const prefix = "YouEye appliance "
 	description = strings.TrimSpace(description)
 	if !strings.HasPrefix(description, prefix) {
 		return ""
@@ -883,7 +905,7 @@ func decodeApplianceProgressLine(line []byte) (applianceProgressRecord, bool) {
 		line = line[start:]
 		var record applianceProgressRecord
 		if json.NewDecoder(bytes.NewReader(line)).Decode(&record) == nil &&
-			(record.Schema == "youeye.installer.progress.v1" || record.Schema == "youeye.appliance.progress.v1" || record.Schema == "youeye.appliance.progress.v2") {
+			record.Schema == "youeye.installer.progress.v1" {
 			return record, true
 		}
 		line = line[1:]
@@ -939,7 +961,7 @@ func waitForProxmoxInstaller(ctx context.Context, vmid int, runner proxmoxComman
 					}
 					grace.Stop()
 				}
-				emitProxmoxProgress(progress, "Verify installer completion", "Installer powered off after its signed terminal success record", 0.89)
+				emitProxmoxProgress(progress, "Verify installer completion", "Installer powered off after its terminal success record", 0.89)
 				return nil
 			}
 		}
@@ -1063,7 +1085,7 @@ func readProxmoxGuestProgress(vmid int, runner proxmoxCommandRunner) (proxmoxGue
 	var record proxmoxGuestProgress
 	decoder := json.NewDecoder(strings.NewReader(result.OutData))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil || record.Schema != "youeye.appliance.progress.v2" || record.Operation != "first-deploy" ||
+	if err := decoder.Decode(&record); err != nil || record.Schema != "youeye.installer.progress.v1" || record.Operation != "first-deploy" ||
 		record.Percent < 0 || record.Percent > 100 || record.Attempt < 1 || len(record.Stage) > 64 || len(record.Detail) > 256 ||
 		!regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(record.Stage) || !validProxmoxGuestProgressState(record.State) {
 		return proxmoxGuestProgress{}, false
@@ -1094,7 +1116,7 @@ func terminalProxmoxGuestProgressError(vmid int, progress proxmoxGuestProgress) 
 
 func friendlyGuestProgressStage(stage string) string {
 	labels := map[string]string{
-		"network": "Check wired network", "release_convergence": "Verify signed platform bundle",
+		"network": "Check wired network", "release_convergence": "Verify platform release",
 		"system_restart": "Restart into updated System", "market_seed": "Prepare Market",
 		"storage": "Prepare storage", "incus": "Start Incus", "system_core": "Start System core",
 		"server_interface": "Install Server interface", "database": "Prepare Database",

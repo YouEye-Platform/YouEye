@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * UI Bridge — App launch permission preview/grant endpoint.
  *
@@ -10,7 +11,8 @@ import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { getApp } from "@/lib/db/queries/app-management";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db/queries/permissions";
-import { findUserByIdentityId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
+import { findUserByIdentityId, ensureBridgeUser } from "@/lib/db/queries/users";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
@@ -32,6 +34,9 @@ function stringArray(value: unknown): string[] {
 
 function collectManifestPermissions(manifest: Record<string, unknown> | null): string[] {
   const permissions = new Set<string>();
+  // Native header integration exposes the acting user's profile. It requires
+  // the existing independent runtime consent, including on older installations.
+  if (manifest?.integration === 'native') permissions.add('profile:read');
   for (const permission of stringArray(manifest?.permissions)) {
     permissions.add(permission);
   }
@@ -60,6 +65,7 @@ function collectConnectionPermissions(connections: Record<string, unknown> | nul
 }
 
 async function permissionState(userId: string, appId: string) {
+  const { t } = await getUserTranslator(userId);
   const app = await getApp(appId);
   if (!app) {
     return { error: NextResponse.json({ error: `App "${appId}" not found` }, { status: 404 }) };
@@ -83,9 +89,9 @@ async function permissionState(userId: string, appId: string) {
     appId,
     required,
     missing,
-    permissions: missing.map((permission) => describePermission(permission)),
-    granted: checks.filter((check) => check.decision === true).map((check) => describePermission(check.permission)),
-    denied: denied.map((permission) => describePermission(permission)),
+    permissions: missing.map((permission) => describePermission(permission, t)),
+    granted: checks.filter((check) => check.decision === true).map((check) => describePermission(check.permission, t)),
+    denied: denied.map((permission) => describePermission(permission, t)),
   };
 }
 
@@ -97,16 +103,7 @@ async function resolveUiUser(input: {
   if (input.identityUserId) {
     const user = await findUserByIdentityId(input.identityUserId);
     if (user) return user;
-    const legacyUser = await findUserById(input.identityUserId);
-    if (legacyUser) return legacyUser;
-  }
-  if (input.username) {
-    const user = await findUserByUsername(input.username);
-    if (user) return user;
-  }
-  if (input.email) {
-    const user = await findUserByEmail(input.email);
-    if (user) return user;
+    if (input.username) return ensureBridgeUser(input.username, input.identityUserId);
   }
   return null;
 }
@@ -150,7 +147,9 @@ async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolv
     }
   }
 
+  const { locale } = await getUserTranslator(user.id);
   return {
+    locale,
     app: {
       id: app?.id ?? appId,
       name: app?.customName ?? app?.name ?? appId,
@@ -195,11 +194,15 @@ export async function POST(request: NextRequest) {
   }
 
   const user = await resolveUiUser({ identityUserId, username, email });
+  if (!identityUserId || !evaluateLocalAdmission(appId, identityUserId).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   if (!user) {
     return NextResponse.json({ error: "User not found in UI database" }, { status: 404 });
   }
   const userId = user.id;
 
+  const { t } = await getUserTranslator(userId);
   const before = await permissionState(userId, appId);
   if ("error" in before) return before.error;
 
@@ -222,7 +225,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     success: true,
     app_id: appId,
-    required_permissions: after.required.map((permission) => describePermission(permission)),
+    required_permissions: after.required.map((permission) => describePermission(permission, t)),
     missing_permissions: after.missing,
     permissions: after.permissions,
     granted_permissions: after.granted,

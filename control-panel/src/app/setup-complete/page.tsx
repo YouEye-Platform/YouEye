@@ -1,4 +1,6 @@
 'use client';
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -22,6 +24,8 @@ function isTlsChoice(value: string | null | undefined): value is TlsChoice {
  * Displays DNS configuration instructions and a connectivity checker.
  */
 export default function SetupCompletePage() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [config, setConfig] = useState<SetupConfig | null>(null);
   const [tlsChoice, setTlsChoice] = useState<TlsChoice | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -57,13 +61,13 @@ export default function SetupCompletePage() {
     try {
       const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
       const { csrfToken } = await csrfResponse.json();
-      if (!csrfToken) throw new Error('Sign in as the appliance owner to continue.');
+      if (!csrfToken) throw new Error(translateInterface("mfd8014e9ab02"));
       const response = await fetch('/api/appliance/handoff', {
         method: 'POST',
         headers: { 'X-CSRF-Token': csrfToken },
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not continue to the server.');
+      if (!response.ok) throw new Error(body.error || translateInterface("mb5ab949113b7"));
 
       const form = document.createElement('form');
       form.method = 'POST';
@@ -76,7 +80,7 @@ export default function SetupCompletePage() {
       document.body.appendChild(form);
       form.submit();
     } catch (error) {
-      setContinueError(error instanceof Error ? error.message : 'Could not continue to the server.');
+      setContinueError(error instanceof Error ? error.message : translateInterface("mb5ab949113b7"));
       setContinuing(false);
     }
   }

@@ -1,0 +1,34 @@
+import {expect,mock,test} from 'bun:test';
+import {createHash} from 'node:crypto';
+const sourceInstallation='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',destinationInstallation='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const manifest:any={metadata:{id:'notes'},secrets:[{name:'jwt_secret',file:'.jwt_secret'}],containers:[{name:'main',type:'lxd'}],configFiles:[],env_mapping:{JWT_SECRET:'${secrets.jwt_secret}',IDENTITY_CLIENT_ID:'${sso.client_id}',IDENTITY_CLIENT_SECRET:'${sso.client_secret}',YOUEYE_APP_TOKEN:'${integration.app_token}',YOUEYE_APP_ID:'${app.id}'}};
+const source:any={appId:'notes',installationId:sourceInstallation,clientId:'youeye-app-notes',manifestSHA256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),containers:['app-notes'],desiredState:'running',serviceCredential:{installationId:'source-service',revision:4}};
+const request={requestId:'copy-app-fixture',sourceHardware:'smbios:11111111-1111-1111-1111-111111111111',destinationHardware:'smbios:22222222-2222-2222-2222-222222222222',sourceReceiptSHA256:'a'.repeat(64),manifestSHA256:'b'.repeat(64),clientIds:['youeye-app-notes','youeye-control','youeye-ui']};
+let metadata:any={appId:'notes',installationId:sourceInstallation,integration:'native',lifecycleState:'active',serviceCredentialState:'ready',enableSSO:true,ssoClientId:'youeye-app-notes',domain:'copy.example.test',containers:[{containerName:'app-notes'}],desiredState:'running'};
+let journal:any=null,status:any={status:'active',installationId:'source-service',revision:4,pendingPublications:0};
+let resource:any={'user.youeye.app_id':'notes','user.youeye.installation_id':sourceInstallation,'user.youeye.data_owner_id':'fixture-owner'};
+let environment=Buffer.from('JWT_SECRET=source-fixture\nIDENTITY_CLIENT_SECRET=source-fixture\nTEST_DATA_SETTING=preserve\n');
+let failWrite=true,revokes=0,quiesces=0,secret='';
+mock.module('../../src/lib/market/update-admission',()=>({assertIndependentCopyLifecycle:()=>{},withAppLifecycle:(_id:string,work:any)=>work()}));
+mock.module('../../src/lib/copy/journal',()=>({withCopyJournal:(_id:string,_component:string,work:any)=>work({read:async()=>structuredClone(journal),write:async(value:any)=>{journal=structuredClone(value);}})}));
+mock.module('../../src/lib/market/metadata',()=>({readInstallMetadata:async()=>structuredClone(metadata),saveInstallMetadata:async(value:any)=>{metadata=structuredClone(value);}}));
+mock.module('../../src/lib/market/frozen-manifest',()=>({readFrozenUpdateManifest:async()=>manifest}));
+mock.module('../../src/lib/identity/store',()=>({identitySql:(value:string)=>"'"+value+"'",identityRows:async(query:string)=>query.includes('admission_copy_bindings')?[{app_id:'notes',source_installation_id:sourceInstallation,destination_installation_id:destinationInstallation}]:[{resource_id:'runtime:app-notes',owner_id:'fixture-owner'}],getClient:async()=>({client_secret:'destination-client-fixture'})}));
+mock.module('../../src/lib/incus/server',()=>({incusRequest:async(method:string,_path:string,body:any)=>{if(method==='PATCH')resource={...resource,...body.config};return {type:'sync',metadata:{config:resource}};},incusDownloadFile:async()=>environment,incusUploadFile:async(_name:string,_path:string,data:Buffer)=>{if(failWrite)throw Error('fixture interruption');environment=data;}}));
+mock.module('../../src/lib/incus/snapshot',()=>({waitForOperation:async()=>{}}));
+mock.module('../../src/lib/apps/service-credential-probe',()=>({quiesceAppCredentialRuntime:async()=>{quiesces++;}}));
+mock.module('../../src/lib/apps/service-credential-store',()=>({appServiceCredentials:{status:async()=>status}}));
+mock.module('../../src/lib/apps/service-credential-operations',()=>({operateAppCredential:async(_id:string,operation:any)=>{if(operation.action==='revoke'){revokes++;expect(operation.expectedRevision).toBe(4);status={...status,status:'revoked',revision:5};}else{expect(operation.expectedRevision).toBe(5);status={...status,status:'active',revision:7,installationId:'destination-service'};}}}));
+mock.module('../../src/lib/settings',()=>({settingsService:{getRaw:async()=>({domain:'copy.example.test'})}}));
+mock.module('../../src/lib/copy/app-database',()=>({prepareCopyAppDatabase:async()=>{throw Error('No database expected');}}));
+mock.module('../../src/lib/copy/app-secret',()=>({writeCopyAppSecret:async(_id:string,value:string)=>{secret=value;}}));
+
+test('interrupted app copy retains its new authority and resumes without a second revocation',async()=>{
+ const {prepareIndependentApp}=await import('../../src/lib/copy/app-runtime');
+ await expect(prepareIndependentApp(request,source)).rejects.toThrow('fixture interruption');
+ expect(journal.revoked).toBe(true);expect(journal.ready).toBe(false);expect(metadata.serviceCredentialState).toBe('pending');
+ const generated=secret;failWrite=false;
+ const result=await prepareIndependentApp(request,source);
+ expect(revokes).toBe(1);expect(quiesces).toBe(2);expect(secret).toBe(generated);expect(result.installationId).toBe(destinationInstallation);expect(result.serviceInstallationId).toBe('destination-service');
+ expect(environment.toString()).toContain('TEST_DATA_SETTING=preserve');expect(environment.toString()).not.toContain('source-fixture');expect(journal.ready).toBe(true);
+});

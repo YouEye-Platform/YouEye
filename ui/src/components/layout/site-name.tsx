@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 import { FONT_CSS_MAP } from "@/lib/site-name-utils";
+import { Brand } from "@youeye/branding/brand";
 
 // Re-export for any existing consumers
 export { FONT_CSS_MAP } from "@/lib/site-name-utils";
@@ -82,6 +83,8 @@ export function SiteName({ name, style, className, as: Tag = "span" }: SiteNameP
   const charShape = s.charShapeId
     ? CHARACTER_SHAPE_PRESETS.find(p => p.id === s.charShapeId) ?? null
     : null;
+
+  if (s.mytitle) return <Tag className={className}><Brand design={s.mytitle} name={name} /></Tag>;
 
   if (charShape) {
     const intensity = s.charShapeIntensity ?? 1;

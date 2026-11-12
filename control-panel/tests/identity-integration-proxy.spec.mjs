@@ -25,7 +25,6 @@ test('LXD updater creates rollback state before trust repair or no-op restart', 
 
   assert.match(updater, /injectCaddyRootCA/);
   assert.match(updater, /Caddy root CA trusted in \$\{containerName\}/);
-  assert.match(updater, /systemctl restart \$\{serviceName\}/);
+  assert.match(updater, /systemctl start \$\{serviceName\}/);
   assert.ok(updater.indexOf('await createSnapshot(containerName, SNAPSHOT_NAME)') < updater.indexOf('await injectCaddyRootCA(containerName)'));
-  assert.ok(updater.indexOf('const releaseIsCurrent') < updater.indexOf('if (releaseIsCurrent)'));
 });

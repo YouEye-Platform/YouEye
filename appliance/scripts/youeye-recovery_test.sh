@@ -22,9 +22,6 @@ printf 'system-a-trusted\n' > "$state/boot/system-a.efi"
 printf 'system-b-trusted\n' > "$state/boot/system-b.efi"
 printf 'recovery-trusted\n' > "$state/boot/recovery.efi"
 
-openssl genpkey -algorithm ED25519 -out "$tmp/private.pem" >/dev/null 2>&1
-openssl pkey -in "$tmp/private.pem" -pubout -out "$tmp/public.pem" >/dev/null 2>&1
-
 write_manifest() {
     jq -nc \
         --arg a "$(sha256sum "$state/boot/system-a.efi" | cut -d ' ' -f 1)" \
@@ -35,9 +32,11 @@ write_manifest() {
             {role:"system-b-uki",sha256:$b},
             {role:"recovery-uki",sha256:$r}
         ]}' > "$state/appliance-manifest.json"
-    openssl pkeyutl -sign -rawin -inkey "$tmp/private.pem" \
-        -in "$state/appliance-manifest.json" \
-        -out "$state/appliance-manifest.json.sig"
+    chmod 0600 "$state/appliance-manifest.json"
+    jq -nc --arg sha "$(sha256sum "$state/appliance-manifest.json" | cut -d ' ' -f 1)" \
+        '{schema:"youeye.core-release.v1",authority:"digest",members:[{role:"spine",artifact:{sha256:"x"}},{role:"appliance",artifact:{sha256:$sha}}]}' \
+        > "$tmp/core-release.json"
+    chmod 0600 "$tmp/core-release.json"
 }
 
 cat > "$fake_bin/findfs" <<EOF
@@ -110,7 +109,7 @@ touch "$tmp/esp-device" "$tmp/support-device" "$tmp/support-device-2"
 run_repair() {
     YOUEYE_RECOVERY_PATH="$fake_bin:/usr/bin:/bin" \
     YOUEYE_RECOVERY_INSTALLER_STATE="$state" \
-	YOUEYE_RECOVERY_TRUST_KEY="$tmp/public.pem" \
+	YOUEYE_RECOVERY_CORE_RELEASE="$tmp/core-release.json" \
 	YOUEYE_RECOVERY_APPLIANCE_STATE="$tmp/appliance-state.json" \
 	YOUEYE_RECOVERY_UPDATE_BOOT="$tmp/update-boot" \
     YOUEYE_RECOVERY_ESP_DEVICE="$tmp/esp-device" \
@@ -181,9 +180,17 @@ for role in system-a system-b recovery; do
 done
 
 before="$(esp_digest)"
-printf 'corrupt\n' >> "$state/appliance-manifest.json.sig"
+jq '.members[1].artifact.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"' "$tmp/core-release.json" > "$tmp/core-release.next"
+mv "$tmp/core-release.next" "$tmp/core-release.json"
 if run_repair >/dev/null 2>&1; then
-    printf '%s\n' 'corrupt manifest signature was accepted' >&2
+    printf '%s\n' 'manifest outside the accepted core release was accepted' >&2
+    exit 1
+fi
+test "$(esp_digest)" = "$before"
+write_manifest
+chmod 0666 "$state/appliance-manifest.json"
+if run_repair >/dev/null 2>&1; then
+    printf '%s\n' 'unprotected installed manifest was accepted' >&2
     exit 1
 fi
 test "$(esp_digest)" = "$before"
@@ -196,8 +203,7 @@ jq -nc \
 	'{schema:"youeye.system-update.v1",target_image_version:"0.6.0-dev.27",
 	  recovery_version:"1",artifacts:[{role:"system-b-uki",sha256:$hash}]}' \
 	> "$tmp/update-boot/b/0.6.0-dev.27/manifest.json"
-openssl pkeyutl -sign -rawin -inkey "$tmp/private.pem" \
-	-in "$tmp/update-boot/b/0.6.0-dev.27/manifest.json" -out "$tmp/update-boot/b/0.6.0-dev.27/manifest.json.sig"
+chmod 0600 "$tmp/update-boot/b/0.6.0-dev.27/manifest.json"
 jq -nc '{schema_version:2,slots:{current:"B",current_image_version:"0.6.0-dev.27",
 	previous:"A",previous_image_version:"0.6.0-dev.26"},transaction:{}}' \
 	> "$tmp/appliance-state.json"
@@ -208,7 +214,7 @@ grep -Fxq 'version 0.6.0-dev.27-b' "$esp/loader/entries/youeye-system-b+3-0.conf
 before="$(esp_digest)"
 printf 'corrupt\n' >> "$tmp/update-boot/b/0.6.0-dev.27/system.efi"
 if run_repair >/dev/null 2>&1; then
-	printf '%s\n' 'corrupt signed-version UKI was accepted' >&2
+	printf '%s\n' 'corrupt updated-version UKI was accepted' >&2
 	exit 1
 fi
 test "$(esp_digest)" = "$before"
@@ -221,7 +227,7 @@ write_manifest
 before="$(esp_digest)"
 printf 'corrupt\n' >> "$state/appliance-manifest.json"
 if run_repair >/dev/null 2>&1; then
-    printf '%s\n' 'changed signed manifest was accepted' >&2
+    printf '%s\n' 'changed installed manifest was accepted' >&2
     exit 1
 fi
 test "$(esp_digest)" = "$before"

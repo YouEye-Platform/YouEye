@@ -1,3 +1,4 @@
+import { validateStudioStyle } from "@/lib/studio-style";
 /**
  * Settings Database Queries
  *
@@ -110,7 +111,7 @@ export async function saveUserWordartOverride(
 ) {
   await ensureSchema();
   const existing = await getUserSettings(userId);
-  const merged = { ...existing, wordartOverride: style };
+  const merged = { ...existing, wordartOverride: validateStudioStyle(style) };
 
   const rows = await db
     .select()

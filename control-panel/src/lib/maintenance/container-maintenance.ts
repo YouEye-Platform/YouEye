@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { appUpdateJournalStore } from '../market/update-admission';
 
 const DEFAULT_STATE_DIRECTORY = '/var/lib/youeye/state/container-maintenance';
 const SCHEMA = 'youeye.container-maintenance/1';
@@ -45,6 +46,7 @@ interface ContainerMaintenanceRecord {
 export interface ContainerMaintenanceOptions {
   stateDirectory?: string;
   operation?: string;
+  updateJournalDirectory?: string;
 }
 
 export interface ContainerMaintenanceLease {
@@ -153,7 +155,19 @@ export function isContainerMaintenanceActive(
   options?: ContainerMaintenanceOptions,
 ): boolean {
   try {
-    return readRecords(stateDirectory(options)).some(
+    // Resource keys do not include ownerAppId. Exact Incus identity also covers
+    // containers whose app metadata is missing or has changed during an update.
+    if (appUpdateJournalStore(options?.updateJournalDirectory).isReserved({
+      kind: 'container', scope: 'incus', name, ownerAppId: 'watchdog', mutable: true,
+    })) return true;
+    const directory = stateDirectory(options);
+    try {
+      lstatSync(path.join(directory, 'locks', `${name}.lock`));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return readRecords(directory).some(
       (record) => record.containers.includes(name) && record.state !== 'completed',
     );
   } catch {

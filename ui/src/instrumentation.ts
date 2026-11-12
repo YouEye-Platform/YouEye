@@ -18,6 +18,14 @@ export async function register() {
     const net = await import("net");
     net.setDefaultAutoSelectFamilyAttemptTimeout(2000);
 
+    // Fresh managed installations finish the durable UI schema attempt before
+    // native first-boot health opens setup. Updates keep their explicit action.
+    const { isNextProductionBuild } = await import("@/lib/runtime-phase");
+    if (!isNextProductionBuild()) {
+      const { ensureFreshSchema } = await import("@/db");
+      await ensureFreshSchema();
+    }
+
     // Import tracker to initialize it (starts flush interval)
     await import("@/lib/telemetry/tracker");
   }

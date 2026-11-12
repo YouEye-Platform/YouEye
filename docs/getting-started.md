@@ -3,7 +3,7 @@
 YouEye has one installer and one installed-system model. The
 `youeye-installer` binary supports:
 
-- `install` when booted from the signed YouEye ISO on physical hardware or a
+- `install` when booted from the YouEye ISO on physical hardware or a
   VM;
 - `proxmox` on a Proxmox VE host, where it selects and verifies that same ISO,
   provisions a Q35/OVMF VM, and waits for the installed appliance to become
@@ -29,7 +29,7 @@ persistent State, and a Data partition using the remaining capacity.
 ### Proxmox mode
 
 Run as root on a Proxmox VE host with `qm`, `pvesm`, `pvesh`, `sgdisk`,
-`curl`, `openssl`, `sha256sum`, and Python 3. The host needs one active storage
+`curl`, and Python 3. The host needs one active storage
 pool supporting VM images, one supporting ISO images, and an available network
 bridge.
 
@@ -38,68 +38,66 @@ bridge.
 Stable channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
+curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
-This is the canonical no-argument public path. It requires a separately keyed
-Stable appliance release on official GitHub. The development candidate does
-not provision Stable trust and therefore fails closed if that release is not
-present; it never reuses the development key.
+Run this canonical public command from the Proxmox root shell. It does not
+depend on `sudo` being installed.
 
-Development channel from an explicitly selected Forgejo-compatible provider:
+Development channel from an explicitly selected repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
-  sudo sh -s -- --provider forgejo \
-    --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
-    --channel development
+curl -fsSL https://releases.youeye.me/install.sh | \
+  sh -s -- --repository https://code.example.test/example/YouEye \
+    --channel dev
 ```
 
-The bootstrap defaults to the official GitHub Stable release API, paginates the
-selected GitHub, Forgejo, or custom HTTPS API, refuses cross-channel
-fallback, requires API-provided release download URLs, verifies the detached
-Ed25519 signature over the complete checksum set, and verifies the exact
-installer binary digest before executing it. Alternative providers are never
-prefilled. Exact selection requires the release tag plus both Installer and ISO
-SHA-256 digests without replacing signed verification.
+Options: `--repository <https URL>` (default
+`https://github.com/YouEye-Platform/YouEye`) and `--channel dev|alpha|beta|stable`
+(default `stable`). `--release-tag youeye-vX.Y.Z-rc.N` with its
+`--core-manifest-sha256` installs one exact release of the channel.
+
+The bootstrap reads the channel index — `https://releases.youeye.me/v1/channels/<channel>.json`
+for the official beta and stable channels, otherwise
+`<repository>/releases/download/channel-<channel>/index.json` — and never calls a
+release-listing API. It downloads the indexed release's `core-release.json`,
+checks it against the index digest, then downloads the `installer` member
+(`youeye-installer-linux-amd64`), checks its SHA-256 and size and runs it. The
+Installer records the repository, the channel and the `core-release.json` SHA-256
+in the installed release policy, and checks the image manifest and ISO against
+the digests in that document. A release host that refuses or rate-limits a
+request (HTTP 403/429) is retried with backoff. Release signing is not used:
+integrity comes from HTTPS with normal certificate checks and SHA-256. GitHub
+downloads may redirect only to GitHub's asset hosts; other repositories may not
+redirect to another host. See [releases.md](releases.md).
 
 Quick mode creates a 4-vCPU, 8-GiB Q35/OVMF VM with one 128-GiB installation
 drive and DHCP. Advanced mode can select the VMID, name, storage pools, a
 32-GiB-or-larger drive, bridge, static IPv4 settings, public SSH keys, release
-provider and channel, or an exact release. Drives below 64 GiB receive a strong
+source and channel. Drives below 64 GiB receive a strong
 capacity warning; the 32 GiB minimum leaves about 7 GiB for `YE-DATA`. Reinstall
 accepts only a stopped, compatible, one-drive YouEye VM and
 requires confirmation naming the exact target whose contents were inspected.
 
 The host helper never writes guest partitions. It attaches verified installer
 and non-secret answer media, then the booted ISO owns every destructive disk
-operation. Completion is accepted only after the ISO emits its signed terminal
+operation. Completion is accepted only after the ISO emits its terminal success
 record, the installed system boots, first deployment is durable, and the
 operational health profile passes.
 
 ## Install from ISO
 
-Download these assets from one exact `appliance-v*` or `appliance-dev-v*`
-release:
-
-- `youeye-appliance-amd64.iso`;
-- `SHA256SUMS`;
-- `SHA256SUMS.sig`.
-
-Use the channel trust anchor obtained through an independently authenticated
-path. For the current Development identity, the DER SHA-256 fingerprint is:
-
-```text
-51d5cd19886aa2cb3f541a2e90525993bf1a483063bb689838b41f1fd43cfe94
-```
-
-Verify the checksum document and ISO before writing media:
+Download `core-release.json` and `youeye-appliance-amd64.iso` from one exact
+`youeye-v*` release. Check the ISO against the `media` member of the document:
 
 ```bash
-openssl pkeyutl -verify -pubin -inkey appliance-development.pub -rawin \
-  -in SHA256SUMS -sigfile SHA256SUMS.sig
-grep -E '^[0-9a-f]{64}  youeye-appliance-amd64\.iso$' SHA256SUMS | sha256sum -c -
+expected=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(m["artifact"]["sha256"] for m in d["members"] if m["role"] == "media"))' core-release.json)
+printf '%s  youeye-appliance-amd64.iso\n' "$expected" | sha256sum -c -
 ```
+
+The release also carries a `SHA256SUMS` file for convenience. The booted
+Installer downloads the same release's `core-release.json` over HTTPS and refuses
+to continue unless the ISO's image manifest matches its `appliance` member.
 
 Write the ISO to the exact removable device using your preferred imaging tool,
 then boot it in UEFI mode. Select the dedicated installation drive, review its
@@ -112,9 +110,9 @@ verification.
 
 The console shows the HTTPS setup address only after first deployment passes
 its durable health gates. Open it and create the single initial YouEye ID owner.
-There is no default appliance password. Root password login is locked; root SSH
-is available only for public keys supplied by the installer or later managed in
-Settings.
+There is no default appliance password. The interactive installer requires a
+root password for local console recovery. SSH public keys and optional local
+password SSH are configured separately, as described below.
 
 On the appliance console, the authoritative operational check is:
 
@@ -133,6 +131,50 @@ containers—Control Panel (`youeye-control`), PostgreSQL, Caddy, Pi-hole, and
 YouEye UI—must be running. `youeye-id.service` is a separately verified process
 inside the Control Panel container; it is not a sixth container.
 
+## Root SSH access
+
+The Installer's **Root password SSH** option permits root password login only
+from the directly connected IPv4 subnet. It uses the password chosen for the
+local console. Leaving it off keeps SSH key-only, even when local console login
+works. The **Development access** page name does not select the software release
+channel. Public-key import supplies a separate way to authenticate and does not
+enable password SSH. Routed networks and VPN clients may fall outside the
+permitted subnet.
+
+If SSH reports `Permission denied (publickey)`, inspect the applied policy from
+the appliance's local root console before changing authentication settings:
+
+```sh
+cat /var/lib/youeye-state/bootstrap/development-access-status.json
+systemctl status youeye-development-access.service --no-pager
+passwd -S root
+```
+
+The status JSON contains requested/effective access, the detected subnet and a
+non-secret failure explanation. `passwd -S` reports account state, not the
+password or hash. Do not share `development-access.json` or `/etc/shadow`, which
+contain password hashes. If password SSH was requested but is not effective,
+investigate the reported policy, network or service failure first.
+
+To inspect sshd's effective policy for the connecting client, replace the
+example client address below with that client's actual IPv4 address:
+
+```sh
+/usr/sbin/sshd -T -C user=root,addr=192.0.2.10,host=client | \
+  grep -E '^(permitrootlogin|passwordauthentication|pubkeyauthentication|authenticationmethods|authorizedkeysfile) '
+```
+
+To recover key access without enabling password login, bring your **public**
+key to the console as a file and register it with the managed key command:
+
+```sh
+youeye appliance ssh-key add --file /path/to/your-public-key.pub
+youeye appliance ssh-key list
+```
+
+Keep the private key on the client. Do not weaken global sshd settings or
+reinstall the appliance merely to diagnose SSH authentication.
+
 ## Platform management
 
 ```bash
@@ -146,14 +188,14 @@ youeye update system status
 System-image updates write and read back only the inactive System slot, arm a
 bounded boot trial, and preserve State, Recovery, and Data. Failed trials return
 to the prior known-good slot. Recovery can select a slot once, verify or repair
-signed boot assets, and export support evidence without mounting the active
+boot assets, and export support evidence without mounting the active
 system read-write.
 
 ## Retired installers
 
 The mutable Debian/Ubuntu host installer, Debian-cloud Proxmox VM provider,
 Proxmox LXC provider, and two-disk guest installer are retired. They did not
-provide the signed one-drive appliance layout, independent Recovery, A/B system
+provide the one-drive appliance layout, independent Recovery, A/B system
 updates, or sealed-image integrity guarantees. The temporary `appliance`
 command, `proxmox.sh` entry point, and `--appliance-*` compatibility flags have
 completed their migration window and are removed. Use `install`, `proxmox`,

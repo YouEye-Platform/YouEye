@@ -7,11 +7,17 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const withSerwist = withSerwistInit({
   swSrc: "src/app/sw.ts",
   swDest: "public/sw.js",
+  cacheOnNavigation: false,
   disable: process.env.NODE_ENV === "development",
 });
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  transpilePackages: ['@youeye/branding'],
+  // Preserve encoded OIDC redirect_uri values before the proxy middleware.
+  // Next's default URL normalization rewrites 127.0.0.1 to localhost even
+  // inside an encoded query value, breaking exact registered URI matching.
+  skipProxyUrlNormalize: true,
   reactCompiler: true,
   generateBuildId: async () => {
     const buildId = process.env.YOUEYE_BUILD_ID;

@@ -10,29 +10,30 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"strings"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"golang.org/x/crypto/ssh"
 )
 
 const (
-	applianceAnswerSchema       = "youeye.appliance.answer.v3"
-	applianceAnswerLegacySchema = "youeye.appliance.answer.v2"
-	releasePolicySchema         = "youeye.release-policy.v1"
-	developmentAccessSchema     = "youeye.development-access.v1"
+	applianceAnswerSchema   = "youeye.appliance.answer.v1"
+	releasePolicySchema     = "youeye.release-policy.v1"
+	developmentAccessSchema = "youeye.development-access.v1"
 )
 
 type applianceAnswer struct {
-	Schema         string                  `json:"schema"`
-	Operation      string                  `json:"operation"`
-	TransactionID  string                  `json:"transaction_id,omitempty"`
-	TargetSerial   string                  `json:"target_serial,omitempty"`
-	EraseConfirmed bool                    `json:"erase_confirmed,omitempty"`
-	Network        applianceAnswerNetwork  `json:"network"`
-	ReleasePolicy  applianceReleasePolicy  `json:"release_policy,omitempty"`
-	Development    developmentAccessPolicy `json:"development_access,omitempty"`
-	AuthorizedKeys []string                `json:"authorized_keys,omitempty"`
+	CoreRelease        *coreAnswerSelection    `json:"core_release,omitempty"`
+	ReleaseCacheSHA256 string                  `json:"release_cache_sha256,omitempty"`
+	Schema             string                  `json:"schema"`
+	Operation          string                  `json:"operation"`
+	TransactionID      string                  `json:"transaction_id,omitempty"`
+	TargetSerial       string                  `json:"target_serial,omitempty"`
+	EraseConfirmed     bool                    `json:"erase_confirmed,omitempty"`
+	Network            applianceAnswerNetwork  `json:"network"`
+	ReleasePolicy      applianceReleasePolicy  `json:"release_policy,omitempty"`
+	Development        developmentAccessPolicy `json:"development_access,omitempty"`
+	AuthorizedKeys     []string                `json:"authorized_keys,omitempty"`
 }
 
 type applianceAnswerNetwork struct {
@@ -43,19 +44,15 @@ type applianceAnswerNetwork struct {
 	DNS        string `json:"dns,omitempty"`
 }
 
-// applianceReleasePolicy is persisted on YE-STATE and consumed by the sealed
-// first-boot bootstrap. A branch identifies a signed release track; it never
-// authorizes a mutable branch archive or raw source checkout.
+// applianceReleasePolicy is persisted on YE-STATE (release-policy.json). The
+// box follows Channel of Repository; the repository never changes after
+// installation. CoreManifestSHA256 is the root of trust.
 type applianceReleasePolicy struct {
-	Schema         string `json:"schema"`
-	Provider       string `json:"provider"`
-	ReleasesAPI    string `json:"releases_api,omitempty"`
-	Mode           string `json:"mode"`
-	Track          string `json:"track,omitempty"`
-	Branch         string `json:"branch,omitempty"`
-	ExactTag       string `json:"exact_tag,omitempty"`
-	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
-	Freshness      string `json:"freshness"`
+	Schema             string `json:"schema"`
+	Repository         string `json:"repository"`
+	Channel            string `json:"channel"`
+	CoreManifestSHA256 string `json:"core_manifest_sha256,omitempty"`
+	ServiceSelection   string `json:"service_selection,omitempty"`
 }
 
 type developmentAccessPolicy struct {
@@ -67,10 +64,7 @@ type developmentAccessPolicy struct {
 }
 
 func defaultApplianceReleasePolicy() applianceReleasePolicy {
-	return applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: defaultApplianceProvider,
-		Mode: "track", Track: "stable", Freshness: "require-current",
-	}
+	return applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: "stable"}
 }
 
 func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
@@ -79,6 +73,9 @@ func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
 
 func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 	var answer applianceAnswer
+	if len(raw) > 18<<20 {
+		return answer, fmt.Errorf("appliance answer exceeds bounded selection limit")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&answer); err != nil {
@@ -95,11 +92,14 @@ func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 }
 
 func validateApplianceAnswer(answer applianceAnswer) error {
-	if answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
+	if answer.Schema != applianceAnswerSchema {
 		return fmt.Errorf("unsupported appliance answer schema %q", answer.Schema)
 	}
 	if answer.Operation != "erase-install" && answer.Operation != "preserve-reinstall" && answer.Operation != "resume" && answer.Operation != "cancel" {
 		return fmt.Errorf("unsupported appliance answer operation %q", answer.Operation)
+	}
+	if answer.ReleaseCacheSHA256 != "" && !validSHA256Hex(answer.ReleaseCacheSHA256) {
+		return fmt.Errorf("release cache requires an exact digest")
 	}
 	if answer.Operation != "cancel" && !validApplianceTransactionID(answer.TransactionID) {
 		return fmt.Errorf("appliance answer transaction_id must be 32 lowercase hexadecimal characters")
@@ -119,11 +119,14 @@ func validateApplianceAnswer(answer applianceAnswer) error {
 	if answer.Network.AdapterMAC != "" && !validEthernetMAC(answer.Network.AdapterMAC) {
 		return fmt.Errorf("appliance answer adapter_mac must be a unicast Ethernet MAC address")
 	}
-	if answer.Schema == applianceAnswerSchema {
-		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
-			return err
-		}
-		if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
+	if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
+		return err
+	}
+	if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
+		return err
+	}
+	if answer.CoreRelease != nil || answer.ReleasePolicy.CoreManifestSHA256 != "" {
+		if err := validateCoreAnswer(answer); err != nil {
 			return err
 		}
 	}
@@ -163,47 +166,17 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 	if policy.Schema != releasePolicySchema {
 		return fmt.Errorf("release policy schema must be %s", releasePolicySchema)
 	}
-	provider := strings.ToLower(strings.TrimSpace(policy.Provider))
-	if provider != "github" && provider != "forgejo" && provider != "custom" {
-		return fmt.Errorf("release policy provider must be github, forgejo, or custom")
+	if repository, err := releasecache.CanonicalRepository(policy.Repository); err != nil || repository != policy.Repository {
+		return fmt.Errorf("release policy repository must be a canonical https://host/owner/repository URL")
 	}
-	api := strings.TrimSpace(policy.ReleasesAPI)
-	if provider == defaultApplianceProvider {
-		if api != "" && api != defaultApplianceReleasesAPI {
-			return fmt.Errorf("Official GitHub release policy uses the fixed public releases API")
-		}
-	} else {
-		parsed, err := url.Parse(api)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("non-default release policy requires an HTTPS releases API without credentials, query, or fragment")
-		}
+	if !releasecache.ValidChannel(policy.Channel) {
+		return fmt.Errorf("release policy channel must be dev, alpha, beta or stable")
 	}
-	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
-		return fmt.Errorf("release policy freshness must be require-current or prefer-current")
+	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
+		return fmt.Errorf("service selection must be sealed or current")
 	}
-	switch policy.Mode {
-	case "track":
-		if policy.ExactTag != "" || policy.ManifestSHA256 != "" {
-			return fmt.Errorf("tracking release policy cannot include an exact identity")
-		}
-		switch policy.Track {
-		case "stable", "development":
-			if policy.Branch != "" {
-				return fmt.Errorf("stable and development release tracks cannot include a branch")
-			}
-		case "branch":
-			if !validApplianceReleaseBranch(policy.Branch) {
-				return fmt.Errorf("branch-associated release policy requires a safe branch name")
-			}
-		default:
-			return fmt.Errorf("release policy track must be stable, development, or branch")
-		}
-	case "exact":
-		if policy.Track != "" || policy.Branch != "" || !validExactApplianceReleaseTag(policy.ExactTag) || !validSHA256Hex(policy.ManifestSHA256) {
-			return fmt.Errorf("exact release policy requires an appliance tag and lowercase manifest SHA-256")
-		}
-	default:
-		return fmt.Errorf("release policy mode must be track or exact")
+	if policy.CoreManifestSHA256 != "" && !validSHA256Hex(policy.CoreManifestSHA256) {
+		return fmt.Errorf("core manifest digest must be exact lowercase SHA-256")
 	}
 	return nil
 }
@@ -237,25 +210,6 @@ func validYescryptHash(value string) bool {
 	}
 	parts := strings.Split(value, "$")
 	return len(parts) == 5 && parts[1] == "y" && parts[2] != "" && parts[3] != "" && parts[4] != ""
-}
-
-func validExactApplianceReleaseTag(value string) bool {
-	if !strings.HasPrefix(value, "appliance-") || len(value) > 180 || strings.ContainsAny(value, "\\%\x00") {
-		return false
-	}
-	if _, ok := parseApplianceReleaseTag(value, "appliance-v"); ok {
-		return true
-	}
-	if _, ok := parseApplianceReleaseTag(value, "appliance-dev-v"); ok {
-		return true
-	}
-	marker := strings.LastIndex(value, "-v")
-	if marker <= len("appliance-") {
-		return false
-	}
-	branch := value[len("appliance-"):marker]
-	_, versionOK := parseApplianceReleaseTag(value, "appliance-"+branch+"-v")
-	return versionOK && validApplianceReleaseBranch(branch)
 }
 
 func validateApplianceAuthorizedKey(value string) error {

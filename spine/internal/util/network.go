@@ -1,23 +1,17 @@
 package util
 
 import (
+	"context"
+	"encoding/json"
+	"net"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-// IncusBridgeSubnetPrefix is the /24 prefix of the Incus bridge created
-// during `spine deploy` (10.199.59.0/24 — see container/control.go and
-// Incus's default for `incusbr0` after our setup). We MUST exclude any
-// address from this range when detecting the host's primary IP, otherwise
-// `GetPrimaryIP()` could return 10.199.59.1 (the bridge gateway) on a host
-// where the LAN interface comes up after Incus's bridge — and `runHostIPCheck`
-// would then write the bridge IP to every pinned location.
-const IncusBridgeSubnetPrefix = "10.199.59."
-
-// GetPrimaryIP attempts to detect the primary non-loopback, non-Incus-bridge
-// IPv4 address of the host. Returns "<your-ip>" only as an absolute last
-// resort — `runHostIPCheck` refuses to migrate when it sees that placeholder.
+// GetPrimaryIP detects an assigned LAN IPv4 address from kernel route and
+// interface observations. Container bridges and tunnels are never LAN evidence.
+// Returns "<your-ip>" when no unambiguous address can be established.
 //
 // Retries for up to ~10 seconds when no acceptable address is found, because
 // at boot time on hosts that don't fully order spine.service after
@@ -37,43 +31,135 @@ func GetPrimaryIP() string {
 	}
 }
 
-// detectPrimaryIPOnce is a single non-retrying attempt. Exposed for tests
-// and so that callers that explicitly want a no-retry probe (none yet) can
-// use it.
-func detectPrimaryIPOnce() string {
-	if ip := firstAcceptableIP(runIPv4ListCmd("ip -4 addr show | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}'")); ip != "" {
-		return ip
-	}
-	if ip := firstAcceptableIP(runIPv4ListCmd("hostname -I | tr ' ' '\\n'")); ip != "" {
-		return ip
-	}
-	return ""
+type primaryIPInterface struct {
+	Name     string   `json:"ifname"`
+	Flags    []string `json:"flags"`
+	LinkInfo struct {
+		Kind string `json:"info_kind"`
+	} `json:"linkinfo"`
+	Addresses []struct {
+		Family string `json:"family"`
+		Local  string `json:"local"`
+		Scope  string `json:"scope"`
+	} `json:"addr_info"`
 }
 
-// runIPv4ListCmd executes the given shell pipeline and returns its lines.
-func runIPv4ListCmd(pipeline string) []string {
-	out, err := exec.Command("sh", "-c", pipeline).Output()
+type primaryIPRoute struct {
+	Device          string `json:"dev"`
+	PreferredSource string `json:"prefsrc"`
+	Source          string `json:"src"`
+}
+
+// This is a kernel lookup, not a connection to the lookup destination. Use
+// argv and bounded commands: boot-time observation must not hang the updater.
+func detectPrimaryIPOnce() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	addresses, err := exec.CommandContext(ctx, "ip", "-j", "-d", "-4", "address", "show", "up").Output()
 	if err != nil {
+		return ""
+	}
+	routes, err := exec.CommandContext(ctx, "ip", "-j", "-4", "route", "get", "1.1.1.1").Output()
+	if err != nil {
+		routes = []byte("[]")
+	}
+	return selectPrimaryIP(addresses, routes)
+}
+
+func managedOrTunnelInterface(i primaryIPInterface) bool {
+	for _, prefix := range []string{"incusbr", "lxdbr", "yeapp", "docker", "virbr", "veth", "br-", "fwbr", "fwpr", "fwln", "tap", "tun", "wg", "tailscale"} {
+		if strings.HasPrefix(i.Name, prefix) {
+			return true
+		}
+	}
+	switch i.LinkInfo.Kind {
+	case "veth", "tun", "wireguard", "vxlan", "geneve", "gre", "gretap", "ipip", "sit", "ip6tnl", "dummy":
+		return true
+	}
+	return false
+}
+
+func assignedLANAddresses(i primaryIPInterface) []string {
+	up := false
+	for _, flag := range i.Flags {
+		if flag == "LOOPBACK" {
+			return nil
+		}
+		if flag == "UP" {
+			up = true
+		}
+	}
+	if !up || i.Name == "" || managedOrTunnelInterface(i) {
 		return nil
 	}
-	return strings.Split(strings.TrimSpace(string(out)), "\n")
+	var result []string
+	for _, a := range i.Addresses {
+		ip := net.ParseIP(a.Local)
+		if a.Family == "inet" && a.Scope == "global" && ip != nil && ip.To4() != nil && ip.IsGlobalUnicast() {
+			result = append(result, ip.String())
+		}
+	}
+	return result
 }
 
-// firstAcceptableIP returns the first IPv4 address in the slice that is
-// not loopback and not in the Incus bridge subnet.
-func firstAcceptableIP(lines []string) string {
-	for _, line := range lines {
-		ip := strings.TrimSpace(line)
-		if ip == "" {
-			continue
-		}
-		if strings.HasPrefix(ip, "127.") {
-			continue
-		}
-		if strings.HasPrefix(ip, IncusBridgeSubnetPrefix) {
-			continue
-		}
-		return ip
+func selectPrimaryIP(addressJSON, routeJSON []byte) string {
+	var interfaces []primaryIPInterface
+	var routes []primaryIPRoute
+	if json.Unmarshal(addressJSON, &interfaces) != nil || json.Unmarshal(routeJSON, &routes) != nil {
+		return ""
 	}
-	return ""
+	// Require the preferred source to belong to the exact up interface. A stale
+	// route or malformed observation must not silently choose a different address.
+	if len(routes) > 1 {
+		return ""
+	}
+	if len(routes) == 1 {
+		r := routes[0]
+		for _, i := range interfaces {
+			if i.Name != r.Device {
+				continue
+			}
+			if managedOrTunnelInterface(i) {
+				break
+			}
+			source := r.PreferredSource
+			if source == "" {
+				source = r.Source
+			}
+			for _, address := range assignedLANAddresses(i) {
+				if address == source {
+					return address
+				}
+			}
+			return ""
+		}
+		// A missing device is inconsistent; a tunnel route may instead use the
+		// single physical LAN below, without treating its tunnel address as a LAN.
+		found := false
+		for _, i := range interfaces {
+			if i.Name == r.Device {
+				found = true
+			}
+		}
+		if !found {
+			return ""
+		}
+	}
+	// Offline/early-boot fallback: exactly one address on an eligible interface.
+	// Generic bridges are permitted only with explicit route evidence above.
+	var candidate string
+	for _, i := range interfaces {
+		switch i.LinkInfo.Kind {
+		case "", "vlan", "bond", "team":
+		default:
+			continue
+		}
+		for _, address := range assignedLANAddresses(i) {
+			if candidate != "" {
+				return ""
+			}
+			candidate = address
+		}
+	}
+	return candidate
 }

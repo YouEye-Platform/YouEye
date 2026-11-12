@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getApp, updateAppManifest } from "@/lib/db/queries/app-management";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
 
 interface LinkHandler {
   type: string;
@@ -45,6 +46,9 @@ export async function GET(
   }
 
   const { appId } = await params;
+  if (!evaluateLocalAdmission(appId, session.identityId).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   const app = await getApp(appId);
   if (!app) {
     return NextResponse.json({ error: "App not found" }, { status: 404 });

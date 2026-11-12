@@ -10,13 +10,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getBranding, updateBranding } from "@/lib/db/queries/branding";
+import { getBranding, updateBranding, BrandingConflictError } from "@/lib/db/queries/branding";
 import { renderIconPNGs } from "@/lib/icon-renderer";
 import type { IconConfig } from "@/lib/icon-config";
 
 export async function GET() {
   const branding = await getBranding();
-  return NextResponse.json(branding);
+  return NextResponse.json(branding, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function PUT(request: NextRequest) {
@@ -36,6 +36,7 @@ export async function PUT(request: NextRequest) {
       site_name_style: body.site_name_style,
       accent_color: body.accent_color,
       icon_config: body.icon_config,
+      expected_revision: body.expected_revision,
     });
 
     // Auto-regenerate icon PNGs if the effective icon is in letter mode.
@@ -47,7 +48,7 @@ export async function PUT(request: NextRequest) {
       | null
       | undefined;
 
-    if (effectiveIcon?.mode === "letter" && updated.site_name_style) {
+    if (effectiveIcon?.mode === "letter" && updated.site_name_style && !updated.site_name_style.mytitle) {
       try {
         await renderIconPNGs(
           effectiveIcon,
@@ -60,7 +61,8 @@ export async function PUT(request: NextRequest) {
     }
 
     return NextResponse.json(updated);
-  } catch {
+  } catch (error) {
+    if (error instanceof BrandingConflictError) return NextResponse.json({ error: error.message }, { status: 409 });
     return NextResponse.json(
       { error: "Invalid branding data" },
       { status: 400 }

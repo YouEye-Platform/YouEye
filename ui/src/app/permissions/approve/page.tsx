@@ -1,3 +1,4 @@
+import { getTranslations as getInterfaceTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { findUserById } from "@/lib/db/queries/users";
@@ -15,6 +16,8 @@ interface PermissionApprovalPageProps {
 }
 
 export default async function PermissionApprovalPage({ searchParams }: PermissionApprovalPageProps) {
+  const translateInterface = await getInterfaceTranslations("interface");
+
   const session = await getSession();
   if (!session) redirect("/login");
 
@@ -41,10 +44,9 @@ export default async function PermissionApprovalPage({ searchParams }: Permissio
   if (!appId || permissions.length === 0) {
     return (
       <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-12">
-        <h1 className="text-2xl font-semibold">Permission request unavailable</h1>
+        <h1 className="text-2xl font-semibold">{translateInterface("m22c42a3d485b")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          This request is missing the app or permission details.
-        </p>
+          {translateInterface("m9a514bd77a58")}</p>
       </main>
     );
   }
@@ -62,11 +64,11 @@ export default async function PermissionApprovalPage({ searchParams }: Permissio
             <p className="truncate font-medium">{displayName}</p>
           </div>
         </div>
-        <p className="text-sm font-medium text-muted-foreground">YouEye permission request</p>
-        <h1 className="mt-2 text-2xl font-semibold">{appId.replace(/^ye-/, "")} wants access</h1>
+        <p className="text-sm font-medium text-muted-foreground">{translateInterface("m8d3dd4321240")}</p>
+        <h1 className="mt-2 text-2xl font-semibold">{translateInterface("m4034ecdd3dff", { app: appId.replace(/^ye-/, "") })}</h1>
         <div className="mt-5 space-y-3">
           {permissions.map((permission) => {
-            const descriptor = describePermission(permission);
+            const descriptor = describePermission(permission, translateInterface);
             return (
               <div key={permission} className="rounded-md border border-border bg-background p-3">
                 <p className="font-medium">{descriptor.title}</p>

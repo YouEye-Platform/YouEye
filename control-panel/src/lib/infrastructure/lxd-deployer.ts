@@ -1,3 +1,7 @@
+import { createHash } from 'crypto';
+import { cachedReleaseBytes } from '../releases/cache';
+import { canonicalReleaseRepository, releaseAssetURL, selectedCoreRole } from '../releases/core-release';
+import { spineClient } from '../spine/client';
 /**
  * LXD container deployment via Incus REST API (v2).
  * Used for full-OS containers (Debian) that run Node.js apps.
@@ -8,30 +12,27 @@
  */
 
 import { incusRequest, execShell, incusUploadFile } from '../incus/server';
-import { applyStaticIP } from '../incus/static-ips';
+import { applyStaticIP, getSystemStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
-import type { ReleaseSource } from '../apps/release-source';
-import {
-  resolveExactInfrastructureStandaloneRelease,
-  resolveInfrastructureStandaloneRelease,
-  type ResolvedInfrastructureRelease,
-} from './release-resolver';
-import { signedReleaseVerificationShell } from '@/lib/releases/verify';
-import { effectiveChannel } from '@/lib/updates/channels';
+import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '@/lib/releases/artifact';
+import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
   readStagedMarketNativeArtifact,
   type StagedMarketNativeArtifact,
 } from '@/lib/market/native-artifact';
 
 type LXDDeploymentConfig = {
-  spineSocketPath: string;
-  giteaBaseURL: string;
-  giteaOrg: string;
-  giteaRepo: string;
-  releaseChannelKey?: string;
-  tagPrefix?: string;
   exposeHostPort?: boolean;
+};
+
+/** The exact release artifact a container runs. */
+export type LXDRelease = {
+  tag: string;
+  version: string;
+  url: string;
+  artifactSHA256: string;
+  sizeBytes?: number;
 };
 
 function storageDevices(spec: LXDContainerSpec): Record<string, Record<string, string>> {
@@ -64,7 +65,7 @@ export async function deployLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
   return deployLXDContainerInternal(spec, cfg, nicDevices);
 }
 
@@ -73,14 +74,14 @@ export async function deployLXDContainer(
  * inspected, classified, and digest-bound these exact bytes before it creates
  * any app-owned resources. Platform callers deliberately cannot select this
  * policy through deployLXDContainer; Pointer and stock YouEye LXD releases
- * remain signature-required there.
+ * keep their own digest-bound selection there.
  */
 export async function deployMarketLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   artifact: StagedMarketNativeArtifact,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
   return deployLXDContainerInternal(spec, cfg, nicDevices, artifact);
 }
 
@@ -89,22 +90,29 @@ async function deployLXDContainerInternal(
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
   marketArtifact?: StagedMarketNativeArtifact,
-): Promise<ResolvedInfrastructureRelease | null> {
+  preparedRelease?: LXDRelease,
+): Promise<LXDRelease | null> {
   if (await containerExists(spec.containerName)) return null;
 
   // Resolve the exact asset before mutating Incus. This avoids leaving a
   // half-created container merely because the desired release was beyond the
   // first API page or did not carry standalone.tar.
-  const release = marketArtifact
+  const release = preparedRelease ?? (marketArtifact
     ? {
         tag: marketArtifact.tag,
         version: marketArtifact.version,
         url: '',
         artifactSHA256: marketArtifact.artifactSHA256,
       }
-    : await resolveLXDRelease(cfg);
+    : await resolveUIRelease());
 
-  // Create the LXD container
+  // The watchdog can observe the instance as soon as creation completes.
+  // Pin system networking atomically and retain installation ownership through
+  // boot.autostart=false until the runtime has been installed successfully.
+  const staticIP = await getSystemStaticIP(spec.containerName);
+  const systemNIC = staticIP ? { eth0: {
+    type: 'nic', network: 'incusbr0', name: 'eth0', 'ipv4.address': staticIP,
+  } } : {};
   const createPayload: Record<string, unknown> = {
     name: spec.containerName,
     source: {
@@ -114,13 +122,13 @@ async function deployLXDContainerInternal(
       alias: spec.image,
     },
     config: {
-      'boot.autostart': 'true',
+      'boot.autostart': 'false',
       'security.privileged': 'false',
     },
   };
 
   // If per-app bridge NIC provided, attach to container at creation time
-  createPayload.devices = { ...storageDevices(spec), ...(nicDevices ?? {}) };
+  createPayload.devices = { ...storageDevices(spec), ...(nicDevices ?? {}), ...systemNIC };
 
   const result = await incusRequest<Record<string, unknown>>(
     'POST',
@@ -129,7 +137,7 @@ async function deployLXDContainerInternal(
     { timeout: 300_000 } // 5 min for image download
   );
 
-  if (result.error && result.error !== '') {
+  if (result.type === 'error' || result.error) {
     throw new Error(`Failed to create LXD container: ${result.error}`);
   }
 
@@ -137,12 +145,9 @@ async function deployLXDContainerInternal(
     await waitForLXDOperation(result.operation, 300);
   }
 
-  // Set static IP for system containers before starting
-  try {
-    await applyStaticIP(spec.containerName);
-  } catch (err) {
-    console.warn(`[lxd-deployer] Could not apply static IP to ${spec.containerName}:`, err);
-  }
+  // Reconcile the system DNS records and prove configuration settled before
+  // starting. An unverified address must never be advertised as installed.
+  await applyStaticIP(spec.containerName);
 
   // Start the container
   const startResult = await incusRequest<Record<string, unknown>>(
@@ -150,6 +155,9 @@ async function deployLXDContainerInternal(
     `/1.0/instances/${spec.containerName}/state`,
     { action: 'start' }
   );
+  if (startResult.type === 'error' || startResult.error) {
+    throw new Error(`Failed to start ${spec.containerName}: ${startResult.error}`);
+  }
   if (startResult.type === 'async' && startResult.operation) {
     await waitForLXDOperation(startResult.operation, 60);
   }
@@ -195,12 +203,14 @@ async function deployLXDContainerInternal(
   }
 
   // Install Node.js and deploy the application
-  const artifactSHA256 = await installNodeAndApp(
-    spec,
-    release.url,
-    release.artifactSHA256,
-    marketArtifact,
-  );
+  const artifactSHA256 = await installNodeAndApp(spec, release, marketArtifact);
+  const enabled = await incusRequest('PATCH', `/1.0/instances/${spec.containerName}`, {
+    config: { 'boot.autostart': 'true' },
+  });
+  if (enabled.type === 'error' || enabled.error) {
+    throw new Error(`Failed to enable ${spec.containerName}: ${enabled.error}`);
+  }
+  if (enabled.type === 'async' && enabled.operation) await waitForLXDOperation(enabled.operation, 60);
   return { ...release, artifactSHA256 };
 }
 
@@ -215,9 +225,19 @@ export async function adoptRestoredLXDContainer(
     profiles?: string[];
     description?: string;
     status?: string;
+    devices?: Record<string, Record<string, string>>;
+    expanded_devices?: Record<string, Record<string, string>>;
   }>('GET', `/1.0/instances/${encodeURIComponent(spec.containerName)}`);
   if (current.type === 'error') throw new Error('Imported application runtime is unavailable');
   if (current.metadata.status !== 'Stopped') throw new Error('Imported application runtime must be stopped before adoption');
+  // Retained roots have no inherited profile or network. Keep their verified
+  // root explicitly when replacing devices with the target mounts and NICs.
+  const roots = Object.values(current.metadata.expanded_devices ?? current.metadata.devices ?? {})
+    .filter(device => device.type === 'disk' && device.path === '/');
+  if (roots.length !== 1 || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(roots[0].pool ?? '')) {
+    throw new Error('Imported application runtime root pool is unresolved');
+  }
+
   const update = await incusRequest(
     'PUT',
     `/1.0/instances/${encodeURIComponent(spec.containerName)}`,
@@ -228,7 +248,7 @@ export async function adoptRestoredLXDContainer(
         'boot.autostart': 'true',
         'security.privileged': 'false',
       },
-      devices: { ...storageDevices(spec), ...(nicDevices ?? {}) },
+      devices: { ...storageDevices(spec), ...(nicDevices ?? {}), root: roots[0] },
       profiles: current.metadata.profiles ?? ['default'],
       ephemeral: false,
       description: current.metadata.description ?? '',
@@ -256,7 +276,32 @@ export async function redeployLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
+  await removeLXDContainer(spec);
+  return deployLXDContainer(spec, cfg, nicDevices);
+}
+
+/** Managed Pointer consumes only its digest-bound product archive. Validate
+ * before deleting any partial prior runtime. */
+export async function deployPointerLXDContainer(
+  spec: LXDContainerSpec,
+  cfg: LXDDeploymentConfig,
+  artifact: StagedMarketNativeArtifact,
+  replaceExisting: boolean,
+): Promise<LXDRelease | null> {
+  if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun') throw new Error('Invalid managed Pointer installation');
+  if (artifact.verification.status !== 'product-release' || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
+  const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer'});
+  if (selected.release.tag !== artifact.tag || selected.release.version !== artifact.version || selected.build.kind !== 'native'
+    || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
+    throw new Error('Pointer archive differs from its product release selection');
+  }
+  await readStagedMarketNativeArtifact(artifact);
+  if (replaceExisting) await removeLXDContainer(spec);
+  return deployLXDContainerInternal(spec, cfg, undefined, artifact);
+}
+
+async function removeLXDContainer(spec: LXDContainerSpec): Promise<void> {
   if (await containerExists(spec.containerName)) {
     const stopped = await incusRequest<Record<string, unknown>>(
       'PUT',
@@ -282,7 +327,6 @@ export async function redeployLXDContainer(
     }
   }
 
-  return deployLXDContainer(spec, cfg, nicDevices);
 }
 
 /** Wait for an async Incus operation. */
@@ -293,8 +337,8 @@ async function waitForLXDOperation(operationPath: string, timeoutSeconds = 300):
   });
 
   const meta = resp.metadata as Record<string, unknown> | undefined;
-  if (meta && (meta.status as string) === 'Failure') {
-    throw new Error(`Operation failed: ${(meta.err as string) || 'unknown'}`);
+  if (resp.type === 'error' || !meta || meta.status !== 'Success') {
+    throw new Error(`Operation failed: ${resp.error || (meta?.err as string) || 'terminal success not observed'}`);
   }
 }
 
@@ -329,44 +373,21 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
   await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
-async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
-  const releaseSource: ReleaseSource = {
-    provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
-    base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
-    api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
-    organization: cfg.giteaOrg,
+/**
+ * The UI artifact of the accepted System release, downloaded from the box's
+ * repository: `<repository>/releases/download/<tag>/<name>`.
+ */
+export async function resolveUIRelease(): Promise<LXDRelease> {
+  const selected = selectedCoreRole('ui');
+  const repository = canonicalReleaseRepository((await spineClient.getReleaseChannel()).repository);
+  const artifact = selected.member.artifact;
+  return {
+    tag: selected.release.tag,
+    version: selected.member.build_version,
+    url: releaseAssetURL(repository, selected.release.tag, artifact),
+    artifactSHA256: artifact.sha256,
+    sizeBytes: artifact.size_bytes,
   };
-
-  let releaseBranch = 'main';
-  let exactTag = '';
-  let artifactSHA256 = '';
-  try {
-    const channel = await effectiveChannel(cfg.releaseChannelKey || 'ui');
-    if (/^[a-zA-Z0-9._/-]+$/.test(channel.branch)) releaseBranch = channel.branch;
-    exactTag = channel.tag || '';
-    artifactSHA256 = channel.artifact_sha256 || '';
-  } catch {
-    // Stable main remains the explicit fallback when Spine config is unavailable.
-  }
-
-  if (exactTag || artifactSHA256) {
-    if (!exactTag || !artifactSHA256) {
-      throw new Error('Exact UI release requires both a tag and artifact SHA-256');
-    }
-    return resolveExactInfrastructureStandaloneRelease(
-      releaseSource,
-      cfg.giteaRepo,
-      exactTag,
-      artifactSHA256,
-    );
-  }
-
-  return resolveInfrastructureStandaloneRelease(
-    releaseSource,
-    cfg.giteaRepo,
-    cfg.tagPrefix || '',
-    releaseBranch,
-  );
 }
 
 function shellQuote(value: string): string {
@@ -376,11 +397,28 @@ function shellQuote(value: string): string {
 /** Install Node.js and deploy the app from the configured release source. */
 async function installNodeAndApp(
   spec: LXDContainerSpec,
-  releaseURL: string,
-  artifactSHA256?: string,
+  release: LXDRelease,
   marketArtifact?: StagedMarketNativeArtifact,
 ): Promise<string> {
   const cn = spec.containerName;
+  const releaseURL = release.url;
+  const artifactSHA256 = release.artifactSHA256;
+  const selectedCore = spec.name === 'ui' ? selectedCoreRole('ui') : null;
+  if (selectedCore && (selectedCore.member.artifact.sha256 !== artifactSHA256 || release.sizeBytes !== selectedCore.member.artifact.size_bytes)) {
+    throw new Error('UI artifact differs from the accepted System release');
+  }
+  const expected = { sha256: artifactSHA256, size_bytes: release.sizeBytes };
+  const digestPath = selectedCore ? '/etc/youeye/core-artifact-sha256' : `${spec.appDir}/.youeye-artifact-sha256`;
+  const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
+  if (cachedRelease) verifyReleaseArtifactBuffer(cachedRelease, expected);
+  const releaseVerification = !marketArtifact && !cachedRelease
+    ? releaseArtifactVerificationShell('/tmp/app.tar', expected)
+    : '';
+
+  if (selectedCore) {
+    const directory = await execShell(cn, 'mkdir -p /etc/youeye && chmod 0700 /etc/youeye', { timeout: 10_000 });
+    if (directory.exitCode !== 0) throw new Error('Cannot prepare protected core component identity');
+  }
 
   // Install prerequisites
   await execShell(cn, 'apt-get update && apt-get install -y curl ca-certificates pamtester', {
@@ -392,7 +430,7 @@ async function installNodeAndApp(
   await execShell(cn, 'passwd --lock root', { timeout: 10_000 });
 
   // Node applications use the established repository install. Bun applications
-  // carry their exact runtime inside the signed release artifact so deployment
+  // carry their exact runtime inside the digest-verified release artifact so deployment
   // never executes an unpinned runtime installer from the network.
   if (spec.runtime !== 'bun') {
     await execShell(cn, `curl -fsSL https://deb.nodesource.com/setup_${spec.nodeVersion} | bash -`, {
@@ -401,8 +439,8 @@ async function installNodeAndApp(
     await execShell(cn, 'apt-get install -y nodejs', { timeout: 60_000 });
   }
 
-  // The Control Panel resolves the exact release across every API page before
-  // creating the container. The container only downloads that selected asset.
+  // The Control Panel selected the exact release asset before creating the
+  // container. The container only downloads that asset and checks its digest.
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
   if (marketArtifact) {
@@ -410,16 +448,23 @@ async function installNodeAndApp(
     await incusUploadFile(cn, '/tmp/app.tar', bytes, { timeout: 300_000, mode: '0600' });
   }
 
-  const downloadURL = marketArtifact ? '' : shellQuote(releaseURL);
-  const artifactPreparation = marketArtifact
+  if (cachedRelease) {
+    await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
+  }
+  const artifactPreparation = cachedRelease
+    ? `test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(createHash('sha256').update(cachedRelease).digest('hex'))}`
+    : marketArtifact
     ? `
     echo "Using preflighted Market artifact..."
     test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(marketArtifact.artifactSHA256)}
     `
     : `
     echo "Downloading selected standalone release..."
-    retry 3 5 curl -fsSL ${downloadURL} -o /tmp/app.tar
-    ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256)}
+    download_selected_release() {
+      ${releaseDownloadShell(releaseURL, '/tmp/app.tar')}
+    }
+    retry 3 5 download_selected_release
+    ${releaseVerification}
     `;
 
   const downloadScript = `
@@ -440,7 +485,7 @@ async function installNodeAndApp(
     }
 
     ${artifactPreparation}
-    sha256sum /tmp/app.tar | awk '{print \$1}' > ${spec.appDir}/.youeye-artifact-sha256
+    sha256sum /tmp/app.tar | awk '{print \$1}' > ${shellQuote(digestPath)}
     tar -xf /tmp/app.tar -C ${spec.appDir} --no-same-owner
     rm /tmp/app.tar
 
@@ -450,7 +495,7 @@ async function installNodeAndApp(
       ls -la ${spec.appDir}
       exit 1
     fi
-    ${spec.runtime === 'bun' ? `test -x "${spec.appDir}/bun" || { echo "ERROR: signed Bun runtime is missing or not executable"; exit 1; }` : ''}
+    ${spec.runtime === 'bun' ? `test -x "${spec.appDir}/bun" || { echo "ERROR: bundled Bun runtime is missing or not executable"; exit 1; }` : ''}
     echo "App downloaded and verified successfully"
   `;
   const dlResult = await execShell(cn, downloadScript, { timeout: 300_000 });
@@ -464,6 +509,20 @@ async function installNodeAndApp(
     for (const cmd of spec.postInstallCommands) {
       await execShell(cn, `cd ${spec.appDir} && ${cmd}`, { timeout: 120_000 });
     }
+  }
+
+  if (marketArtifact) {
+    const { publishProductProjection } = await import('../releases/product-projection');
+    marketArtifact.runtimeUUID = await publishProductProjection(cn,marketArtifact.productRelease);
+  }
+
+  if (selectedCore) {
+    const marker = Buffer.from(JSON.stringify({ schema: 'youeye.core-component.v1', role: 'ui',
+      requestId: `install-${selectedCore.manifestSHA256}`, manifestSHA256: selectedCore.manifestSHA256,
+      artifactSHA256: selectedCore.member.artifact.sha256 }));
+    await incusUploadFile(cn, '/etc/youeye/.core-component.install.json', marker, { mode: '0600' });
+    const staged = await execShell(cn, 'set -e; target=/etc/youeye/core-component.json; staged=/etc/youeye/.core-component.install.json; if test -e "$target" || test -L "$target"; then test -f "$target" && test ! -L "$target" && cmp -s "$target" "$staged"; fi; mv "$staged" "$target"; sync -f /etc/youeye', { timeout: 10_000 });
+    if (staged.exitCode !== 0) throw new Error('Fresh core component identity differs from retained state');
   }
 
   // Create systemd service file using base64 (more reliable than heredoc over exec API)
@@ -493,12 +552,14 @@ WantedBy=multi-user.target
 
   // Enable and start the service
   await execShell(cn, 'systemctl daemon-reload', { timeout: 10_000 });
-  await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
+  if (!spec.deferStart) {
+    await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
+  }
 
-  const digestResult = await execShell(cn, `cat ${spec.appDir}/.youeye-artifact-sha256`, { timeout: 10_000 });
+  const digestResult = await execShell(cn, `cat ${shellQuote(digestPath)}`, { timeout: 10_000 });
   const verifiedDigest = digestResult.stdout.trim().toLowerCase();
   if (digestResult.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(verifiedDigest)) {
-    throw new Error(`Signed artifact digest was not retained for ${cn}`);
+    throw new Error(`Verified artifact digest was not retained for ${cn}`);
   }
   if (artifactSHA256 && verifiedDigest !== artifactSHA256.toLowerCase()) {
     throw new Error(`Retained artifact digest does not match the exact channel for ${cn}`);

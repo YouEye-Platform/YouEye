@@ -1,0 +1,32 @@
+{
+  "name": "@youeye/branding",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./design": "./lib/design.ts",
+    "./studio": "./Studio.tsx",
+    "./locale": "./locale.tsx",
+    "./messages": "./messages/index.ts",
+    "./artwork": "./components.tsx",
+    "./style.css": "./style.css",
+    "./brand": "./Brand.tsx",
+    "./renderer": "./lib/render.ts",
+    "./fonts": "./lib/fonts.ts",
+    "./coverage": "./lib/coverage.ts",
+    "./appearance": "./appearance.ts",
+    "./appearance-events": "./appearance-events.ts",
+    "./server": "./server.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "peerDependencies": {
+    "react": "19.3.1",
+    "lucide-react": "0.563.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0"
+  }
+}

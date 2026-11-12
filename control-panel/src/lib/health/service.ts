@@ -6,8 +6,9 @@
  * Pi-Hole, Caddy, PostgreSQL, and Spine.
  */
 
-import { getInstanceState, execShell } from '@/lib/incus/server';
+import { getInstanceState, execShell, incusDownloadFile } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
+import { platformCommand } from '@/lib/postgres/platform';
 
 export type ServiceStatus = 'running' | 'stopped' | 'error' | 'degraded' | 'unknown';
 
@@ -34,7 +35,16 @@ interface CpuReading {
   timestamp: number;
 }
 
-const lastCpuReadings = new Map<string, CpuReading>();
+// Route bundles and the monitor share state in the same server process.
+const healthKey = Symbol.for('youeye.service-health');
+interface HealthState {
+  readings: Map<string, CpuReading>;
+  cache?: { value: ServiceHealth[]; at: number };
+  pending?: Promise<ServiceHealth[]>;
+}
+const processState = globalThis as typeof globalThis & { [healthKey]?: HealthState };
+const healthState: HealthState = processState[healthKey] ??= { readings: new Map() };
+const lastCpuReadings = healthState.readings;
 
 function computeCpuPercent(container: string, currentNs: number): number {
   const now = Date.now();
@@ -115,11 +125,9 @@ async function getContainerHealth(container: string): Promise<{
     // Get uptime from /proc/uptime inside the container
     let uptime = '—';
     try {
-      const result = await execShell(container, 'cat /proc/uptime', { timeout: 5000 });
-      if (result.exitCode === 0 && result.stdout.trim()) {
-        const uptimeSec = parseFloat(result.stdout.trim().split(' ')[0]);
-        uptime = formatUptime(Math.floor(uptimeSec));
-      }
+      const uptimeText = (await incusDownloadFile(container, '/proc/uptime')).toString('utf8');
+      const uptimeSec = Number(uptimeText.trim().split(/\s+/)[0]);
+      if (Number.isFinite(uptimeSec)) uptime = formatUptime(Math.floor(uptimeSec));
     } catch {
       // Uptime not available
     }
@@ -142,14 +150,11 @@ async function checkPiholeHealth(container: string): Promise<{ status: ServiceSt
     // Use 'pihole status' inside the container instead.
     const result = await execShell(container, 'pihole status 2>&1', { timeout: 5000 });
     if (result.exitCode === 0 && result.stdout.includes('FTL is listening')) {
-      // Try to extract version from pihole -v
+      // Read the installed version without starting another process.
       let version = '';
       try {
-        const vResult = await execShell(container, 'pihole -v -c 2>&1', { timeout: 5000 });
-        if (vResult.exitCode === 0) {
-          const match = vResult.stdout.match(/v(\d+\.\d+[\.\d]*)/);
-          version = match?.[1] || '';
-        }
+        const versions = (await incusDownloadFile(container, '/etc/pihole/versions')).toString('utf8');
+        version = versions.match(/^CORE_VERSION=v?([^\s]+)$/m)?.[1] || '';
       } catch {
         // Version not critical
       }
@@ -186,30 +191,10 @@ async function checkCaddyHealth(container: string): Promise<ServiceStatus> {
   return 'degraded';
 }
 
-async function checkPostgresHealth(container: string): Promise<{ status: ServiceStatus; version: string }> {
+async function checkPostgresHealth(): Promise<{ status: ServiceStatus; version: string }> {
   try {
-    // BUG-019: BusyBox 'su' in Alpine containers doesn't support 'su - postgres'
-    // syntax. Use pg_isready for health check (no shell user switch needed).
-    const result = await execShell(container, 'pg_isready', { timeout: 5000 });
-    if (result.exitCode === 0 && result.stdout.includes('accepting connections')) {
-      // Try to get version via psql with BusyBox-compatible su
-      let version = '';
-      try {
-        const vResult = await execShell(
-          container,
-          'su postgres -c "psql -t -c \'SELECT version()\'"',
-          { timeout: 5000 }
-        );
-        if (vResult.exitCode === 0 && vResult.stdout.includes('PostgreSQL')) {
-          const match = vResult.stdout.match(/PostgreSQL\s+(\d+\.\d+)/);
-          version = match?.[1] || '';
-        }
-      } catch {
-        // Version extraction not critical
-      }
-      return { status: 'running', version };
-    }
-    return { status: 'degraded', version: '' };
+    const version = await platformCommand('SHOW server_version');
+    return { status: 'running', version };
   } catch {
     return { status: 'degraded', version: '' };
   }
@@ -275,7 +260,7 @@ async function checkSpineHealth(): Promise<ServiceHealth> {
 /**
  * Get health status for all platform services
  */
-export async function getAllServicesHealth(): Promise<ServiceHealth[]> {
+async function collectServicesHealth(): Promise<ServiceHealth[]> {
   const now = new Date().toISOString();
 
   // Check all container services in parallel
@@ -303,9 +288,8 @@ export async function getAllServicesHealth(): Promise<ServiceHealth[]> {
             break;
           }
           case 'postgres': {
-            // BUG-019: BusyBox su doesn't support 'su - postgres'.
-            // Use pg_isready for health check.
-            const pg = await checkPostgresHealth(svc.container);
+            // Check the real platform connection without a container exec.
+            const pg = await checkPostgresHealth();
             appStatus = pg.status;
             version = pg.version;
             break;
@@ -339,4 +323,16 @@ export async function getAllServicesHealth(): Promise<ServiceHealth[]> {
   const spineHealth = await checkSpineHealth();
 
   return [...containerResults, spineHealth];
+}
+
+// Share one observation between dashboard clients and the background monitor.
+// The 15s display cache does not change admission leases or the watchdog cadence.
+export function getAllServicesHealth(): Promise<ServiceHealth[]> {
+  if (healthState.pending) return healthState.pending;
+  if (healthState.cache && Date.now() - healthState.cache.at < 15_000) return Promise.resolve(healthState.cache.value);
+  healthState.pending = collectServicesHealth().then(value => {
+    healthState.cache = { value, at: Date.now() };
+    return value;
+  }).finally(() => { healthState.pending = undefined; });
+  return healthState.pending;
 }

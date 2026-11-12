@@ -19,6 +19,7 @@ import {
   incusUploadVolumeFile,
 } from '../incus/server';
 import path from 'path';
+import { waitForContainerExec } from '../incus/snapshot';
 
 /** Full-word language names for manifests that use format: "full" */
 const FULL_LANG_NAMES: Record<string, string> = {
@@ -84,6 +85,9 @@ export async function enforceConfigFilePermissions(
   ctx: Partial<VariableContext>
 ): Promise<void> {
   const resolvedPath = resolvedConfigPath(spec, ctx);
+  // Running state alone does not mean Incus can execute the permission checks.
+  // Wait for transport readiness, then enforce and verify every exact mode.
+  await waitForContainerExec(containerName);
   const targets = [
     { path: path.posix.dirname(resolvedPath), mode: permissionDigits(spec.directoryPermission) },
     { path: resolvedPath, mode: permissionDigits(spec.permission) },
@@ -254,9 +258,16 @@ export async function writeAllConfigFiles(
   runtimeContainerName: string,
   ctx: Partial<VariableContext>,
   volumes?: StorageVolumeMeta[],
+  allowRootFiles = false,
 ): Promise<void> {
   for (const spec of configFiles.filter((candidate) => candidate.container === logicalContainerName)) {
-    await writeConfigFileToStorage(runtimeContainerName, spec, ctx, volumes);
+    // A stopped native instance exposes its root, but not custom-volume mounts.
+    // Select the scoped volume transport for every declared mounted path; native
+    // root files remain covered by the runtime checkpoint. OCI stays volume-only.
+    const backing = allowRootFiles && !deepestConfigStorageMount(
+      (volumes ?? []).map(volume => ({ ...volume, ephemeral: false })), resolvedConfigPath(spec, ctx),
+    ) ? undefined : volumes;
+    await writeConfigFileToStorage(runtimeContainerName, spec, ctx, backing);
   }
 }
 

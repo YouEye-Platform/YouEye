@@ -8,6 +8,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { withPlatformLifecycle } from '@/lib/market/update-admission';
+import { withReadySetupWork } from '@/lib/setup/readiness';
+import { verifyCSRFToken } from '@/lib/auth';
 import { settingsService } from '@/lib/settings';
 
 export async function GET() {
@@ -17,14 +20,7 @@ export async function GET() {
     const config = await settingsService.getRaw();
     return NextResponse.json(config);
   } catch {
-    // Return defaults if Spine config endpoint not available
-    return NextResponse.json({
-      site_name: 'YouEye',
-      domain: '',
-      subdomains: { control: 'control', identity: 'id', dns: 'dns' },
-      identity: { provider: 'youeye-id' },
-      setup_completed: false,
-    });
+    return NextResponse.json({ error: 'Setup configuration is unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
   }
 }
 
@@ -34,10 +30,11 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
+  if (!(await verifyCSRFToken(request.headers.get('X-CSRF-Token') ?? ''))) return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
   try {
     const body = await request.json();
     // BUG-003 fix: use patchConfig instead of setConfig to preserve other fields
-    await settingsService.setRaw(body);
+    await (session.authMethod === 'setup' ? withReadySetupWork : withPlatformLifecycle)(() => settingsService.setRaw(body));
     const result = await settingsService.getRaw();
     return NextResponse.json(result);
   } catch (error) {
@@ -54,9 +51,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
+  if (!(await verifyCSRFToken(request.headers.get('X-CSRF-Token') ?? ''))) return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
   try {
     const body = await request.json();
-    await settingsService.setRaw(body);
+    await (session.authMethod === 'setup' ? withReadySetupWork : withPlatformLifecycle)(() => settingsService.setRaw(body));
     const result = await settingsService.getRaw();
     return NextResponse.json(result);
   } catch (error) {

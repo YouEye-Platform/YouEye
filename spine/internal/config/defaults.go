@@ -4,21 +4,6 @@ package config
 // The public default points at the official GitHub release repository.
 func Default() *Config {
 	return &Config{
-		Releases: ReleasesConfig{
-			RepoURL:      "https://github.com/YouEye-Platform/YouEye",
-			Provider:     "github",
-			BaseURL:      "https://github.com",
-			APIPath:      "",
-			Organization: "YouEye-Platform",
-			Repositories: RepositoriesConfig{
-				Spine:                 "YouEye",
-				ControlPanel:          "YouEye",
-				UI:                    "YouEye",
-				SpineTagPrefix:        "spine",
-				ControlPanelTagPrefix: "cp",
-				UITagPrefix:           "ui",
-			},
-		},
 		Deployment: DeploymentConfig{
 			Container: ContainerConfig{
 				Name:       "youeye-control",

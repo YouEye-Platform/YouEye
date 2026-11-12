@@ -13,12 +13,17 @@
  */
 
 import { NextRequest } from 'next/server';
+import { withSetupMutation } from '@/lib/setup/lifecycle';
+import { assertProvisioningStepsComplete } from '@/lib/setup/readiness';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
+import { designSchema } from '@youeye/branding';
+import { syncSetupBranding } from '@/lib/ui/setup-branding';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import * as caddy from '@/lib/caddy/client';
-import { setDomainDNS } from '@/lib/apps/pihole-api';
+import { recordSetupRouteResult } from '@/lib/caddy/setup-result';
+import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
 import {
   configureControlPanelIdentitySSO,
@@ -33,6 +38,7 @@ import {
 import { tlsStorage } from '@/lib/acme/storage';
 import {
   claimName,
+  registerVerifiedSetup,
   getCertificateTerms,
   getCurrentCertificate,
   getLease,
@@ -66,6 +72,7 @@ import { syncByoDomainDns } from '@/lib/dns-providers/sync';
 import { validateDnsProvider } from '@/lib/dns-providers/validation';
 import type { ByoDnsProviderConfig } from '@/lib/dns-providers/types';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
+import { nextSetupStepErrors, setupStepReason, type SetupStepErrors } from '@/lib/setup/step-reason';
 
 /** True for the private/VPN IPv4 ranges YouEye Names accepts. */
 function isPrivateIPv4(ip: string): boolean {
@@ -87,6 +94,7 @@ interface SetupRequest {
   domain: string;
   subdomains: Record<string, string>;
   site_name_style?: Record<string, unknown>;
+  branding_revision?: string | null;
   icon_config?: Record<string, unknown>;
   identity_name?: string;
   /** TLS mode chosen during setup (youeye-names, letsencrypt, selfsigned, upload) */
@@ -104,6 +112,8 @@ interface SetupRequest {
   yen_ct_accepted?: boolean;
   /** One-use, memory-only proof bound to the exact selected name and server IP. */
   yen_human_verification_proof?: string;
+  /** Short-lived human-verified setup session; never persisted in setup state. */
+  yen_verified_setup_session?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
 }
@@ -157,21 +167,32 @@ async function checkConnectivity(name: string, url: string): Promise<boolean> {
   }
 }
 
-/** Read persisted setup step state from youeye.yaml */
-async function getSetupSteps(): Promise<SetupSteps> {
+async function getSetupConfig(): Promise<Record<string, unknown>> {
   try {
-    const raw = await spineClient.getConfig();
-    return (raw as Record<string, unknown>).setup_steps as SetupSteps || {};
+    return await spineClient.getConfig() as Record<string, unknown>;
   } catch {
     return {};
   }
 }
 
-/** Persist step completion to youeye.yaml */
-async function saveStepState(stepId: string, state: StepState): Promise<void> {
-  const current = await getSetupSteps();
-  const updated = { ...current, [stepId]: state };
-  await spineClient.patchConfig({ setup_steps: updated });
+/** Read persisted setup step state from youeye.yaml */
+async function getSetupSteps(): Promise<SetupSteps> {
+  return (await getSetupConfig()).setup_steps as SetupSteps || {};
+}
+
+/**
+ * Persist step completion to youeye.yaml. A failed step may carry a short,
+ * sanitized reason (`setup_step_errors.<step>`); any other state clears it.
+ */
+async function saveStepState(stepId: string, state: StepState, reason?: string): Promise<void> {
+  const raw = await getSetupConfig();
+  const updated = { ...(raw.setup_steps as SetupSteps || {}), [stepId]: state };
+  const currentErrors = raw.setup_step_errors as SetupStepErrors | undefined;
+  const errors = nextSetupStepErrors(currentErrors || {}, stepId, state, reason);
+  await spineClient.patchConfig({
+    setup_steps: updated,
+    ...(errors || currentErrors ? { setup_step_errors: errors } : {}),
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -191,6 +212,12 @@ export async function POST(request: NextRequest) {
   }
 
   const body: SetupRequest = await request.json();
+  if (body.site_name_style?.mytitle !== undefined) {
+    const design = designSchema.safeParse(body.site_name_style.mytitle);
+    if (!design.success || design.data.name !== body.site_name) return new Response('Invalid title and sticker', { status: 400 });
+    if (body.branding_revision !== null && (typeof body.branding_revision !== 'string' || !/^[a-f0-9]{64}$/.test(body.branding_revision))) return new Response('An appearance revision is required', { status: 400 });
+    body.site_name_style.mytitle = design.data;
+  }
   // Sanitize domain: strip trailing dots (e.g. "potemk." → "potemk")
   // Trailing dots produce invalid service URLs like "https://control.potemk."
   if (body.domain) {
@@ -203,16 +230,29 @@ export async function POST(request: NextRequest) {
     return new Response('Another browser is currently applying setup changes. Wait for it to finish, then reload.', { status: 409 });
   }
 
+  let connected = true;
   const stream = new ReadableStream({
     async start(controller) {
       function send(data: Record<string, unknown>) {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        if (!connected) return;
+        try { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)); }
+        catch { connected = false; }
+      }
+      function finish() {
+        if (!connected) return;
+        try {
+          controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+          controller.close();
+        } catch { /* A disconnected reader does not cancel retained setup work. */ }
+        connected = false;
       }
 
       function stepUpdate(step: string, status: string, message?: string) {
         send({ step, status, message });
       }
 
+      try {
+      await withSetupMutation(leaseOwnerId, 'setup', `setup:${leaseOwnerId}`, async (settle) => {
       // Load persisted step state to know what's already done
       const completedSteps = await getSetupSteps();
 
@@ -521,13 +561,16 @@ export async function POST(request: NextRequest) {
                   ) {
                     throw new Error('Review and accept the current YouEye Names certificate notice before continuing.');
                   }
-                  if (
+                  const setupSession=body.yen_verified_setup_session;
+                  if (setupSession !== undefined && (typeof setupSession!=='string' || setupSession.length<64 || setupSession.length>8192 || body.yen_human_verification_proof)) throw new Error('Invalid setup verification session.');
+                  if (!setupSession && (
                     typeof body.yen_human_verification_proof !== 'string' ||
                     body.yen_human_verification_proof.length < 20 ||
                     body.yen_human_verification_proof.length > 512
-                  ) {
+                  )) {
                     throw new Error('Complete the final YouEye Names verification before starting setup.');
                   }
+                  if (setupSession) await registerVerifiedSetup(setupSession);
                   // Claim (tolerate a lease we already own from a prior attempt).
                   try {
                     await claimName(
@@ -535,6 +578,7 @@ export async function POST(request: NextRequest) {
                       ip,
                       importedIdentity,
                       body.yen_human_verification_proof,
+                      setupSession,
                     );
                   } catch (claimErr) {
                     if (
@@ -747,7 +791,7 @@ export async function POST(request: NextRequest) {
 
             try {
               const identity = await getIdentityConfig();
-              await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, identity.containerName, identity.port);
+              await caddy.ensureIdentityRoute(new URL(identity.issuer).hostname, identity.containerName, identity.port);
             } catch (err) {
               console.error('Failed to create identity provider route:', err);
               routeErrors.push(`youeye-id: ${err instanceof Error ? err.message : String(err)}`);
@@ -768,9 +812,10 @@ export async function POST(request: NextRequest) {
 
             // Root domain /settings route to Control Panel. This must be separate from
             // generic path routing because UI and CP both serve Next.js /_next assets.
+            // Pointer's /v1 routes belong to the AI step, so a missing or still
+            // starting AI service never fails reverse-proxy setup.
             try {
-              await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
-              await caddy.ensurePointerInferenceRoutes(domain);
+              await caddy.reconcileManagedRoutes(domain, {}, { pointer: false });
             } catch (err) {
               console.error('Failed to create root domain /settings CP route:', err);
               routeErrors.push(`youeye-control (/settings): ${err instanceof Error ? err.message : String(err)}`);
@@ -805,13 +850,12 @@ export async function POST(request: NextRequest) {
               routeErrors.push(`caddy-upstream-migration: ${err instanceof Error ? err.message : String(err)}`);
             }
 
-            if (routeErrors.length > 0) {
-              stepUpdate('caddy', 'done', `Routes created with ${routeErrors.length} error(s): ${routeErrors.join('; ')}`);
-            } else {
-              stepUpdate('caddy', 'done', `Routes created for ${routeMap.length + (!uiSub ? 1 : 0)} services`);
-            }
-            await saveStepState('caddy', 'done');
-            hasError = false;
+            hasError = await recordSetupRouteResult(
+              routeErrors,
+              `Routes created for ${routeMap.length + (!uiSub ? 1 : 0)} services`,
+              (state, message) => stepUpdate('caddy', state, message),
+              (state) => saveStepState('caddy', state),
+            );
           }
         } else {
           stepUpdate('caddy', 'done', 'Already completed');
@@ -826,7 +870,13 @@ export async function POST(request: NextRequest) {
           if (hostIP && domain) {
             try {
               await withRetry(
-                () => setDomainDNS(domain, hostIP),
+                async () => {
+                  await setDomainDNS(domain, hostIP);
+                  const identityHost = new URL((await getIdentityConfig()).issuer).hostname;
+                  if (identityHost !== domain && !identityHost.endsWith(`.${domain}`)) {
+                    await setIdentityHostDNS(identityHost, hostIP);
+                  }
+                },
                 3, [0, 2000, 5000],
                 'Pi-Hole DNS'
               );
@@ -850,19 +900,26 @@ export async function POST(request: NextRequest) {
         // Pointer's issuer is the setup-selected identity URL. It must not be
         // started during pre-Web bootstrap with a placeholder issuer because
         // that would either crash-loop or retain an invalid trust boundary.
+        // Its apex inference routes (/v1/*) are added here, after it is ready;
+        // any failure is reported once, by this step.
         if (shouldRunStep('ai')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('ai', 'running');
+          let stage = 'setup';
           try {
-            const result = await configurePointerForPlatform();
+            // Stable issuer settings were saved above; TLS and proxy routes precede this.
+            const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
+            stage = 'API route setup';
+            await caddy.reconcileManagedRoutes(body.domain, {}, { pointer: true });
             await saveStepState('ai', 'done');
             stepUpdate('ai', 'done', result === 'deployed'
               ? 'YouEye AI service deployed and connected to YouEye ID'
               : 'YouEye AI service identity configuration refreshed');
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            await saveStepState('ai', 'error');
-            stepUpdate('ai', 'error', `YouEye AI service setup failed: ${msg}`);
+            console.error(`[setup] YouEye AI service ${stage} failed:`, err);
+            const reason = setupStepReason(err);
+            await saveStepState('ai', 'error', reason);
+            stepUpdate('ai', 'error', `YouEye AI service ${stage} failed: ${reason}`);
             hasError = true;
           }
         } else {
@@ -914,6 +971,9 @@ export async function POST(request: NextRequest) {
 
                 // Write site_name to UI database (idempotent via ON CONFLICT)
                 try {
+                  if (body.site_name_style?.mytitle) {
+                    await syncSetupBranding(body.site_name, body.site_name_style, body.branding_revision!);
+                  } else {
                   const { execShell } = await import('@/lib/incus/server');
                   const siteName = (body.site_name || 'YouEye').replace(/"/g, '\\"');
                   const sqlCmd = `INSERT INTO system_settings (key, value, updated_at) VALUES ('site_name', '"${siteName}"'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`;
@@ -963,7 +1023,9 @@ export async function POST(request: NextRequest) {
                       { timeout: 10000 }
                     );
                   }
+                  }
                 } catch (e) {
+                  if (body.site_name_style?.mytitle) throw e;
                   console.error('Failed to write site_name to UI database:', e);
                 }
 
@@ -984,26 +1046,27 @@ export async function POST(request: NextRequest) {
         }
 
         // ── Step 6: Finalize ─────────────────────────────────────────
+        // A retry of one failed step must not skip this completion gate.
+        if (hasError) {
+          const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
+          await saveStepState('finalize', 'error');
+          stepUpdate('finalize', 'error', message);
+          send({ error: message, complete: false, hasErrors: true });
+          await releaseSetupOperation(leaseOwnerId, leaseSessionId);
+          finish();
+          return;
+        }
+        assertProvisioningStepsComplete({ ...await getSetupSteps() });
         if (shouldRunStep('finalize')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('finalize', 'running');
-          if (hasError) {
-            const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
-            await saveStepState('finalize', 'error');
-            stepUpdate('finalize', 'error', message);
-            send({ error: message, complete: false, hasErrors: true });
-            await releaseSetupOperation(leaseOwnerId, leaseSessionId);
-            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-            controller.close();
-            return;
-          }
 
           await settingsService.setRaw({
             setup_completed: true,
             tls_choice: body.tls_choice || 'selfsigned',
           });
           // Clear setup_steps on successful completion
-          await spineClient.patchConfig({ setup_steps: {} });
+          await spineClient.patchConfig({ setup_steps: {}, setup_step_errors: null });
           await saveStepState('finalize', 'done');
           stepUpdate('finalize', 'done', 'Setup marked as complete');
         } else {
@@ -1012,9 +1075,9 @@ export async function POST(request: NextRequest) {
 
         await markApplianceSetupComplete(leaseOwnerId, leaseSessionId);
         await spineClient.restartControl(5);
+        settle();
 
         send({ complete: true, hasErrors: hasError });
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         send({ error: message });
@@ -1022,8 +1085,15 @@ export async function POST(request: NextRequest) {
         await releaseSetupOperation(leaseOwnerId, leaseSessionId).catch(() => {});
       }
 
-      controller.close();
+      finish();
+      });
+      } catch {
+        await releaseSetupOperation(leaseOwnerId, leaseSessionId).catch(() => {});
+        send({ error: 'Setup is blocked by retained lifecycle or System state. Reconcile the existing operation and retry.', complete: false, hasErrors: true });
+        finish();
+      }
     },
+    cancel() { connected = false; },
   });
 
   return new Response(stream, {

@@ -62,7 +62,7 @@ test('serialized progress mutations retain invocation order and continue after f
 
 test('container maintenance is durable, exclusive, and always releases after failure', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'youeye-maintenance-'));
-  const options = { stateDirectory: directory, operation: 'test-update' };
+  const options = { stateDirectory: directory, updateJournalDirectory: join(directory, 'journal'), operation: 'test-update' };
   try {
     const lease = beginContainerMaintenance(['app-searxng-main', 'app-searxng-redis'], options);
     assert.equal(isContainerMaintenanceActive('app-searxng-main', options), true);
@@ -135,23 +135,20 @@ test('OCI rollback uses an independent instance copy that can be renamed over th
   assert.deepEqual(buildRollbackRenameRequest('app-searxng-main'), { name: 'app-searxng-main' });
 });
 
-test('Market OCI update retains rollback instance through health and metadata commit', async () => {
+test('Market OCI updater delegates recovery and commit to the durable transaction', async () => {
   const updater = await readFile(join(process.cwd(), 'src/lib/market/updater.ts'), 'utf8');
-  const backup = updater.indexOf('await createRollbackInstanceBackup(name, backupName)');
-  const rebuild = updater.indexOf('await rebuildContainer(name, spec.image)');
+  const transaction = updater.indexOf('runAppUpdateTransaction(appUpdateJournalStore()');
+  const rebuild = updater.indexOf('rebuildContainer(name, artifact.image)');
   const health = updater.indexOf('await waitForAppHealth', rebuild);
-  const metadata = updater.indexOf('await saveInstallMetadata(installMeta)', rebuild);
-  const cleanup = updater.indexOf('await deleteInstance(backup)', metadata);
-  const restore = updater.indexOf('await restoreRollbackInstanceBackup(name, backup)');
+  const metadata = updater.indexOf("transaction.mutate('publish-install-metadata'", rebuild);
 
-  assert.ok(backup >= 0 && rebuild > backup);
+  assert.ok(transaction >= 0 && rebuild > transaction);
   assert.ok(health > rebuild);
   assert.ok(metadata > rebuild);
-  assert.ok(cleanup > metadata);
-  assert.ok(restore > rebuild);
   assert.doesNotMatch(updater.slice(rebuild - 200, rebuild), /deleteSnapshot/);
-  assert.match(updater, /maintenance\.markRollback\(errMsg\)/);
-  assert.match(updater, /maintenance\.markFailed/);
+  assert.match(updater, /withAppLifecycle\(config\.appId/);
+  assert.match(updater, /record\?\.phase === 'recovery_required'/);
+  assert.doesNotMatch(updater, /ociRollbackBackups = new Map/);
 });
 
 test('rollback recovery restores every previously running container and reports failures', async () => {

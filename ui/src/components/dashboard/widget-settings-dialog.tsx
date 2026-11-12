@@ -12,7 +12,8 @@ import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { X, Settings2 } from "lucide-react";
 import { getWidgetMeta, type SettingsField } from "@/components/widgets";
-import { GreetingPresetPicker } from "@/components/widgets/greeting-preset-picker";
+import { TitleStudio, initialDesign } from "@youeye/branding/studio";
+import { designSchema } from "@youeye/branding";
 import { ClockThemePicker } from "@/components/widgets/clock-theme-picker";
 import { BookmarksEditor } from "@/components/widgets/bookmarks-editor";
 import type { BookmarkPage } from "@/components/widgets/bookmarks-widget";
@@ -217,6 +218,7 @@ export function WidgetSettingsDialog({
 }: WidgetSettingsDialogProps) {
   const tc = useTranslations("common");
   const tw = useTranslations("widgetSettings");
+  const translateInterface = useTranslations("interface");
   const meta = getWidgetMeta(widgetType);
   const [localSettings, setLocalSettings] = useState<Record<string, unknown>>({});
 
@@ -248,7 +250,7 @@ export function WidgetSettingsDialog({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={() => onOpenChange(false)} />
-      <div className={cn("relative bg-popover border rounded-xl shadow-xl max-h-[80vh] overflow-y-auto", widgetType === "bookmarks" ? "w-96" : "w-80")}>
+      <div className={cn("relative bg-popover border rounded-xl shadow-xl max-h-[80vh] overflow-y-auto", widgetType === "greeting" ? "w-[min(64rem,calc(100vw-2rem))]" : widgetType === "bookmarks" ? "w-96" : "w-80")}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="flex items-center gap-2">
@@ -280,10 +282,8 @@ export function WidgetSettingsDialog({
         {/* Greeting preset picker — only for greeting widget */}
         {widgetType === "greeting" && (
           <div className="px-4 py-3 border-b">
-            <GreetingPresetPicker
-              selectedPresetId={(localSettings.greetingPreset as string) ?? "default"}
-              onSelect={(presetId) => handleChange("greetingPreset", presetId)}
-            />
+            <p className="mb-3 text-sm text-muted-foreground">{translateInterface("m9dec5144aa15")}</p>
+            <TitleStudio design={designSchema.safeParse(localSettings.mytitle).data || initialDesign(`Hello, ${localSettings.name || "you"}`)} onChange={(design) => handleChange("mytitle", design)} />
           </div>
         )}
 
@@ -317,7 +317,7 @@ export function WidgetSettingsDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 px-4 py-3 border-t">
+        <div className="sticky bottom-0 z-20 flex justify-end gap-2 bg-popover px-4 py-3 border-t">
           <button
             onClick={() => onOpenChange(false)}
             className="px-3 py-1.5 text-sm rounded-md hover:bg-accent transition-colors"

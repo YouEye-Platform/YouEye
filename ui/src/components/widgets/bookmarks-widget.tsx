@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
 
 export interface BookmarkItem {
   id: string;
@@ -42,6 +43,7 @@ function getDomain(url: string): string {
 }
 
 export function BookmarksWidget({ settings }: BookmarksWidgetProps) {
+  const t = useTranslations("bookmarksWidget");
   const pages = settings?.pages ?? [];
   const showLabels = settings?.showLabels ?? true;
 
@@ -59,8 +61,8 @@ export function BookmarksWidget({ settings }: BookmarksWidgetProps) {
       <div className="flex h-full items-center justify-center rounded-xl bg-card/50 backdrop-blur-md border border-border/20 p-3">
         <div className="text-center text-muted-foreground/50">
           <Globe className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          <p className="text-xs">No bookmarks yet</p>
-          <p className="text-[10px] opacity-60 mt-0.5">Open settings to add some</p>
+          <p className="text-xs">{t("empty")}</p>
+          <p className="text-[10px] opacity-60 mt-0.5">{t("emptyHint")}</p>
         </div>
       </div>
     );
@@ -92,7 +94,7 @@ export function BookmarksWidget({ settings }: BookmarksWidgetProps) {
       <div className="flex-1 overflow-auto space-y-0.5">
         {activePage.bookmarks.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground/40 text-xs">
-            No bookmarks on this page
+            {t("emptyPage")}
           </div>
         ) : (
           activePage.bookmarks.map((bookmark) => (

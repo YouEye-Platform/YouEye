@@ -6,13 +6,14 @@ journal="$state_dir/progress.json"
 complete="$state_dir/complete"
 lock="$state_dir/lock"
 setup_gate=${YOUEYE_SETUP_GATE:-/usr/local/libexec/youeye-setup-gate}
-seed_market=${YOUEYE_SEED_MARKET:-/usr/local/libexec/youeye-seed-market}
 bootstrap_network=${YOUEYE_BOOTSTRAP_NETWORK:-/usr/local/libexec/youeye-bootstrap-network}
 release_policy=${YOUEYE_RELEASE_POLICY:-/var/lib/youeye-state/bootstrap/release-policy.json}
+sealed_release=${YOUEYE_FIRST_DEPLOY_SEALED_RELEASE:-/usr/lib/youeye/appliance-release}
 youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
 incus=${INCUS_BIN:-incus}
 curl_bin=${CURL_BIN:-curl}
 control_secret=${YOUEYE_CONTROL_SECRET:-/var/lib/youeye/control/.deploy_secret}
+core_required=${YOUEYE_CORE_SELECTION_REQUIRED:-/usr/share/youeye/core-selection-required}
 max_attempts=${YOUEYE_FIRST_DEPLOY_MAX_ATTEMPTS:-8}
 
 install -d -m 0700 "$state_dir"
@@ -47,7 +48,7 @@ write_progress() {
     [ "$percent" -ge "$previous_percent" ] || percent=$previous_percent
     tmp="${journal}.tmp"
     jq -n \
-        --arg schema youeye.appliance.progress.v2 \
+        --arg schema youeye.installer.progress.v1 \
         --arg stage "$stage" \
         --arg detail "$detail" \
         --arg state "$state" \
@@ -79,22 +80,45 @@ write_progress network "Checking the saved wired network profile" 5
 current_stage=network
 "$bootstrap_network"
 
+core_policy=false
+core_initialized=false
+if [ -e "$core_required" ] && ! jq -e '.core_manifest_sha256 | type == "string" and length == 64' "$release_policy" >/dev/null 2>&1; then
+    current_stage=core_selection
+    printf '%s\n' 'This appliance requires its complete System selection; recover the original v5 installer answer before retrying.' >&2
+    exit 1
+fi
+if jq -e '.core_manifest_sha256 | type == "string" and length > 0' "$release_policy" >/dev/null 2>&1; then
+    core_policy=true
+    current_stage=core_convergence
+    core_convergence="$state_dir/core-convergence.json"
+    "$youeye" update core first-boot --policy "$release_policy" --resume-only > "${core_convergence}.tmp"
+    chmod 0600 "${core_convergence}.tmp"
+    mv -f "${core_convergence}.tmp" "$core_convergence"
+    if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
+        write_progress system_restart "Continuing the frozen System release after restart" 96
+        trap - EXIT
+        exit 0
+    fi
+    if jq -e '.initialized == true' "$core_convergence" >/dev/null; then
+        jq -e '.converged == true' "$core_convergence" >/dev/null
+        core_initialized=true
+    fi
+fi
+
+if [ "$core_initialized" != true ]; then
 current_stage=release_convergence
-write_progress release_convergence "Resolving and verifying one signed platform bundle" 18
+write_progress release_convergence "Verifying the installed System release" 18
 convergence="$state_dir/convergence.json"
 "$youeye" update system converge --policy "$release_policy" --reboot --json > "${convergence}.tmp"
 chmod 0600 "${convergence}.tmp"
 mv -f "${convergence}.tmp" "$convergence"
 if jq -e '.reboot_requested == true' "$convergence" >/dev/null; then
-    write_progress system_restart "A newer signed System was written to the inactive slot; restarting to continue" 28
+    write_progress system_restart "A newer System was written to the inactive slot; restarting to continue" 28
     trap - EXIT
     exit 0
 fi
 
-write_progress preparing "Preparing the exact sealed release set" 30
-current_stage=seeding_market
-write_progress market_seed "Preparing the signed Market source" 32
-"$seed_market"
+write_progress preparing "Preparing the verified installation selection" 30
 control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
 if [ -n "$control_state" ]; then
     if [ "$control_state" != RUNNING ]; then
@@ -104,6 +128,13 @@ if [ -n "$control_state" ]; then
             control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
             [ "$control_state" = RUNNING ] || exit 1
         fi
+    fi
+    sealed_control_version=$(jq -er '.release_set.control_panel.version' "$sealed_release")
+    installed_control_version=$($incus exec youeye-control -- cat /opt/app/package.json 2>/dev/null | jq -r '.version // empty' || true)
+    if [ "$core_policy" != true ] && [ -n "$installed_control_version" ] && [ "$installed_control_version" != "$sealed_control_version" ]; then
+        current_stage=updating_control
+        write_progress server_interface "Converging preserved Server interface on the sealed release" 48
+        "$youeye" update control --yes
     fi
     if "$incus" exec youeye-control -- sh -c \
         'test -e /opt/app/server.js && test -e /etc/systemd/system/youeye-control.service && test -e /etc/systemd/system/youeye-id.service' \
@@ -122,11 +153,31 @@ else
     YOUEYE_FIRST_DEPLOY_PROGRESS_PATH="$journal" YOUEYE_FIRST_DEPLOY_ATTEMPT="$attempt" "$youeye" deploy
 fi
 
+fi # the verified initialized core resumes without redeploying its media baseline
+
 current_stage=verifying
 write_progress verifying "Running durable appliance health checks" 94
 "$youeye" appliance health --profile=operational --json > "$state_dir/health.json.tmp"
 chmod 0600 "$state_dir/health.json.tmp"
 mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
+
+if [ "$core_policy" = true ] && [ "$core_initialized" != true ]; then
+    "$youeye" update core initialize --policy "$release_policy"
+    current_stage=core_convergence
+    write_progress core_convergence "Accepting the frozen complete System release before opening setup" 96
+    "$youeye" update core first-boot --policy "$release_policy" > "${core_convergence}.tmp"
+    chmod 0600 "${core_convergence}.tmp"
+    mv -f "${core_convergence}.tmp" "$core_convergence"
+    if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
+        write_progress system_restart "Restarting to accept the frozen System release" 96
+        trap - EXIT
+        exit 0
+    fi
+    jq -e '.initialized == true and .converged == true' "$core_convergence" >/dev/null
+    "$youeye" appliance health --profile=operational --json > "$state_dir/health.json.tmp"
+    chmod 0600 "$state_dir/health.json.tmp"
+    mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
+fi
 
 write_progress setup "Opening first setup after all health gates passed" 98
 if ! "$setup_gate" open; then

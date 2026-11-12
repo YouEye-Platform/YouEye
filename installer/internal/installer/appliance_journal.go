@@ -142,6 +142,9 @@ func applianceResumeCommandPlan(commands []applianceCommand, completed appliance
 		}
 	}
 	if completedIndex >= applianceStageIndex(stageVerifyInstall) {
+		if assets.Operation == "preserve-reinstall" {
+			resume = append(resume, applianceCommand{Stage: stageVerifyInstall, Name: "sh", Args: []string{"-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", stateMount, assets.TransactionID, assets.ManifestSHA256, assets.ImageVersion}})
+		}
 		resume = append(resume,
 			applianceCommand{Stage: stageVerifyInstall, Name: "sync", Args: []string{}},
 			applianceCommand{Stage: stageVerifyInstall, Name: "umount", Args: []string{stateMount}},

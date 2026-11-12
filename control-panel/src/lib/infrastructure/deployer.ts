@@ -4,6 +4,9 @@
  * emitting progress events for each step.
  */
 
+import { mkdir, lstat, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DeploymentEvent } from './types';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import {
@@ -14,9 +17,15 @@ import {
   uiContainerSpec,
 } from './manifests';
 import { getOrCreateSecret, generatePassword, readSecret } from './secrets';
+import { reapplySavedUIConfiguration, reapplySavedUIBridgeToken, reconcileUIBridgeFile } from './ui-configuration';
+import { spineClient } from '../spine/client';
 import { deployOCIContainer, containerExists } from './oci-deployer';
 import { getSystemStaticIP } from '../incus/static-ips';
-import { deployLXDContainer, redeployLXDContainer } from './lxd-deployer';
+import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer } from './lxd-deployer';
+import { installPointerRelease } from '../pointer/initial-install';
+import { readPointerReleaseState, savePointerReleaseState } from '../pointer/release-metadata';
+import { resolveNativeProduct, stageVerifiedProductArtifact } from '../market/native-artifact';
+import { publishProductProjection, verifyProductProjection } from '../releases/product-projection';
 import {
   repairThenVerify,
   waitForPostgres,
@@ -31,20 +40,22 @@ import {
   ensurePointerInferenceRoutes,
   setDefaultRoute,
 } from '../caddy/client';
-import { execShell } from '../incus/server';
+import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
-import { getReleaseSource } from '../apps/release-source';
 import { repairControlPanelProxy, repairUIEgressAcl } from './security-posture';
 import { sanitizeDeploymentDetail } from './deployment-safety';
 import { getCoreProvenance, recordCoreProvenance } from '@/lib/updates/provenance';
-import { effectiveChannel } from '@/lib/updates/channels';
 import {
   configurePointerService,
   deferPointerServiceUntilSetup,
   waitForPointer,
 } from '../pointer/lifecycle';
 import { settingsService } from '../settings';
+import { preparePointerStorage } from '../pointer/storage';
+import { coreSchemaComponent } from '@/lib/updates/core-schema';
+import { selectedCoreRole } from '@/lib/releases/core-release';
+import { configureFreshUIDatabase, requiresFreshUIDatabase, type FreshUIIdentity } from './fresh-ui-database';
 
 const TOTAL_STEPS = 5;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -98,74 +109,115 @@ function failDeployment(
 }
 
 async function deployUIContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
+  // CP's existing Data mount is the host source of the shifted UI data bind.
+  await mkdir('/var/lib/youeye/ui-data', { recursive: true, mode: 0o700 });
+  if (!(await lstat('/var/lib/youeye/ui-data')).isDirectory()) throw new Error('UI persistent data is not a plain directory');
   const spec = uiContainerSpec();
-  const releaseSource = await getReleaseSource();
-
+  const settings = await settingsService.getRaw();
+  const component = await coreSchemaComponent('cp');
+  const freshDatabase = requiresFreshUIDatabase(component, settings.setup_completed === true);
+  let freshIdentity: FreshUIIdentity | undefined;
+  if (freshDatabase) {
+    const selected = selectedCoreRole('ui');
+    if (selected.manifestSHA256 !== component!.manifestSHA256) throw new Error('Fresh UI selection differs from Control Panel');
+    freshIdentity = { schema: 'youeye.core-component.v1', role: 'ui', requestId: component!.requestId,
+      manifestSHA256: selected.manifestSHA256, artifactSHA256: selected.member.artifact.sha256 };
+    spec.deferStart = true;
+  }
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
-  const resolved = await deploy(spec, {
-    spineSocketPath: '/var/run/youeye/youeye.sock',
-    giteaBaseURL: releaseSource.base_url,
-    giteaOrg: releaseSource.organization,
-    giteaRepo: releaseSource.repository || 'YouEye',
-    releaseChannelKey: 'ui',
-    tagPrefix: 'ui',
-    exposeHostPort: false,
-  });
+  const resolved = await deploy(spec, { exposeHostPort: false });
   if (resolved) {
-    const channel = await effectiveChannel('ui');
     await recordCoreProvenance('ui', {
       version: resolved.version,
       tag: resolved.tag,
-      branch: channel.branch,
-      source: releaseSource.repo_url ?? null,
-      artifactSHA256: resolved.artifactSHA256 ?? null,
+      artifactSHA256: resolved.artifactSHA256,
     });
   }
-}
-
-/**
- * Exact bootstrap channels are immutable release identities. A healthy UI
- * container without the matching durable provenance may be the residue of an
- * interrupted older deployment, so it must be replaced from the configured
- * signed artifact instead of being relabelled as current.
- */
-async function exactUIProvenanceMatchesConfiguredSource(): Promise<boolean | null> {
-  const channel = await effectiveChannel('ui');
-  if (!channel.tag && !channel.artifact_sha256) return null;
-  if (!channel.tag || !channel.artifact_sha256) {
-    throw new Error('Exact UI release requires both a tag and artifact SHA-256');
-  }
-  const provenance = await getCoreProvenance('ui');
-  return (
-    provenance?.tag === channel.tag &&
-    provenance.branch === channel.branch &&
-    provenance.artifact_sha256 === channel.artifact_sha256
+  // Replacing the root filesystem also removes its SSO environment/drop-in.
+  // Spine retains the authoritative configuration outside that filesystem.
+  await restoreUIBridgeAuthority(settings.setup_completed === true);
+  const restored = await reapplySavedUIConfiguration(
+    settings.setup_completed === true,
+    configuration => spineClient.setUISSO(configuration),
   );
+  if (freshIdentity && !restored) await bootstrapFreshUIEnvironment(freshIdentity);
 }
 
-async function deployPointerContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
-  const releaseSource = await getReleaseSource();
-  const pointerRepoURL = `${releaseSource.base_url.replace(/\/$/, '')}/${releaseSource.organization}/Pointer`;
-  const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
-  const resolved = await deploy(pointerContainerSpec(), {
-    spineSocketPath: '/var/run/youeye/youeye.sock',
-    giteaBaseURL: releaseSource.base_url,
-    giteaOrg: releaseSource.organization,
-    giteaRepo: 'Pointer',
-    releaseChannelKey: 'app:pointer',
-    exposeHostPort: false,
+async function bootstrapFreshUIEnvironment(identity: FreshUIIdentity): Promise<void> {
+  const checked = async (container: string, command: string) => {
+    const result = await execShell(container, command, { timeout: 30_000 });
+    if (result.exitCode !== 0) throw new Error('Fresh UI database bootstrap operation failed');
+    return result.stdout.trim();
+  };
+  await configureFreshUIDatabase(identity, {
+    assertIdentity: async () => {
+      await checked('youeye-ui', 'test -f /etc/youeye/core-component.json && test ! -L /etc/youeye/core-component.json && test "$(stat -c %a:%u /etc/youeye/core-component.json)" = 600:0');
+      const marker = JSON.parse((await incusDownloadFile('youeye-ui', '/etc/youeye/core-component.json')).toString('utf8'));
+      if (Object.entries(identity).some(([key, value]) => marker[key] !== value)) throw new Error('Fresh UI component changed before database binding');
+    },
+    credentials: () => spineClient.getPostgresCredentials(),
+    databaseOwner: async () => {
+      const owner = await checked('youeye-postgres', 'psql -X -v ON_ERROR_STOP=1 -U youeye -d postgres -Atc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = \'youeye_ui\'"');
+      return owner || undefined;
+    },
+    createDatabase: async () => { await checked('youeye-postgres', 'psql -X -v ON_ERROR_STOP=1 -U youeye -d postgres -c "CREATE DATABASE youeye_ui OWNER youeye"'); },
+    readEnvironment: async () => {
+      const result = await execShell('youeye-ui', 'p=/etc/youeye-ui.env; if test ! -e "$p" && test ! -L "$p"; then exit 44; fi; test -f "$p" && test ! -L "$p" && test "$(stat -c %a:%u "$p")" = 600:0 && test "$(stat -c %s "$p")" -le 16384', { timeout: 10_000 });
+      if (result.exitCode === 44) return undefined;
+      if (result.exitCode !== 0) throw new Error('Fresh UI environment is not protected');
+      return (await incusDownloadFile('youeye-ui', '/etc/youeye-ui.env')).toString('utf8');
+    },
+    writeEnvironment: async value => {
+      await incusUploadFile('youeye-ui', '/etc/.youeye-ui.bootstrap.env', Buffer.from(value), { mode: '0600' });
+      await checked('youeye-ui', 'set -e; p=/etc/youeye-ui.env; staged=/etc/.youeye-ui.bootstrap.env; if test -e "$p" || test -L "$p"; then test -f "$p" && test ! -L "$p" && test "$(stat -c %a:%u "$p")" = 600:0 && cmp -s "$p" "$staged"; fi; mv "$staged" "$p"; sync -f /etc');
+    },
+    start: async () => {
+      await checked('youeye-ui', 'systemctl enable youeye-ui && systemctl restart youeye-ui');
+    },
   });
-  await configurePointerService();
-  if (resolved) {
-    const channel = await effectiveChannel('app:pointer', { appDefaultSource: pointerRepoURL });
-    await recordCoreProvenance('app:pointer', {
-      version: resolved.version,
-      tag: resolved.tag,
-      branch: channel.branch,
-      source: channel.source,
-      artifactSHA256: resolved.artifactSHA256 ?? null,
+}
+
+async function restoreUIBridgeAuthority(required: boolean): Promise<void> {
+  await reapplySavedUIBridgeToken(required, async token => {
+    const path = '/etc/youeye/ui-bridge-token';
+    return reconcileUIBridgeFile(token, async () => {
+      const mode = await execShell('youeye-ui', `test -f ${path} && stat -c %a ${path}`, { timeout: 10_000 });
+      if (mode.exitCode === 1) return undefined;
+      if (mode.exitCode !== 0) throw new Error('UI bridge authority inspection failed');
+      return { mode: mode.stdout.trim(), token: (await incusDownloadFile('youeye-ui', path)).toString('utf8') };
+    }, () => incusUploadFile('youeye-ui', path, Buffer.from(token), { mode: '0600' }), async () => {
+      const result = await execShell('youeye-ui', 'systemctl try-restart youeye-ui', { timeout: 30_000 });
+      if (result.exitCode !== 0) throw new Error('UI bridge authority activation failed');
+    }, async () => {
+      // The file REST API does not create missing parent directories.
+      const result = await execShell('youeye-ui', 'install -d -m 0755 /etc/youeye', { timeout: 10_000 });
+      if (result.exitCode !== 0) throw new Error('UI bridge authority directory preparation failed');
     });
-  }
+  });
+}
+
+/** Pointer is the `pointer` product of the box's channel index. */
+async function deployPointerContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
+  let stagingDirectory: string | undefined;
+  await installPointerRelease({
+    read: readPointerReleaseState,
+    resolve: () => resolveNativeProduct('pointer'),
+    stage: async selected => {
+      stagingDirectory = await mkdtemp(join(tmpdir(), 'youeye-pointer-install-'));
+      return stageVerifiedProductArtifact(stagingDirectory, 'youeye-pointer', selected);
+    },
+    deploy: async artifact => {
+      await preparePointerStorage();
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), { exposeHostPort: false }, artifact, replaceExisting);
+      if (!installed) throw new Error('Pointer runtime appeared during installation');
+    },
+    configure: () => configurePointerService(),
+    healthy: () => waitForPointer(),
+    publish: receipt => publishProductProjection('youeye-pointer', receipt),
+    verify: (receipt, runtimeUUID) => verifyProductProjection('youeye-pointer', receipt, runtimeUUID),
+    save: savePointerReleaseState,
+    cleanup: async () => { if (stagingDirectory) await rm(stagingDirectory, {recursive:true,force:true}); },
+  });
 }
 
 async function ensurePointerApexRoute(): Promise<void> {
@@ -191,7 +243,10 @@ export function hasPointerIdentitySettings(settings: PointerIdentitySettings): b
  * platform issuer. This is shared by first setup and later domain changes so
  * the managed environment can never retain an obsolete issuer.
  */
-export async function configurePointerForPlatform(): Promise<'deployed' | 'configured'> {
+export async function configurePointerForPlatform(
+  oldIssuer?: string,
+  options: { deferRoutes?: boolean } = {},
+): Promise<'deployed' | 'configured'> {
   const settings = await settingsService.getRaw();
   if (!hasPointerIdentitySettings(settings)) {
     throw new Error('YouEye AI service requires the platform domain and identity subdomain');
@@ -202,11 +257,11 @@ export async function configurePointerForPlatform(): Promise<'deployed' | 'confi
   if (exists && !provenance) {
     // A pre-fix bootstrap may have created the container, then failed before
     // managed configuration and provenance committed. Recreate only that
-    // unproven runtime from the exact signed channel; its database and secrets
+    // unproven runtime from the exact pinned channel; its database and secrets
     // remain in persistent platform storage.
     await deployPointerContainerFromConfiguredSource(true);
   } else if (exists) {
-    await configurePointerService();
+    await configurePointerService(oldIssuer);
   } else {
     await deployPointerContainerFromConfiguredSource();
   }
@@ -214,7 +269,7 @@ export async function configurePointerForPlatform(): Promise<'deployed' | 'confi
     throw new Error('YouEye AI service did not become ready after managed configuration');
   }
   await applyResourcePolicy('youeye-pointer', 'critical');
-  await ensurePointerApexRoute();
+  if (!options.deferRoutes) await ensurePointerApexRoute();
   return exists && provenance ? 'configured' : 'deployed';
 }
 
@@ -344,12 +399,6 @@ async function _deployInfrastructureInner(
   // ─── Step 4: YouEye UI ───────────────────────────────────
   emit(onEvent, 4, 'running', 'Deploying YouEye UI container...');
   try {
-    let provenanceRepaired = false;
-    if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-      emit(onEvent, 4, 'running', 'Replacing YouEye UI to restore exact signed provenance...');
-      await deployUIContainerFromConfiguredSource(true);
-      provenanceRepaired = true;
-    }
     const result = await repairThenVerify(
       'YouEye UI',
       (stage) => waitForYouEyeUI('youeye-ui', stage === 'initial' ? 10_000 : 120_000),
@@ -357,7 +406,7 @@ async function _deployInfrastructureInner(
     );
     await applyResourcePolicy('youeye-ui', 'critical');
     await repairUIEgressAcl();
-    emit(onEvent, 4, 'success', result === 'repaired' || provenanceRepaired
+    emit(onEvent, 4, 'success', result === 'repaired'
       ? 'YouEye UI container repaired, health-checked, and egress ACL verified'
       : 'YouEye UI service health and egress ACL verified');
   } catch (err) {
@@ -630,12 +679,11 @@ export async function reconcileInfrastructure(
   } else {
     remit(5, 'running', 'Verifying YouEye UI service and HTTP health...');
     try {
-      let provenanceRepaired = false;
-      if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-        remit(5, 'running', 'YouEye UI provenance does not match the exact signed bundle; recreating the deployment container...');
-        await deployUIContainerFromConfiguredSource(true);
-        provenanceRepaired = true;
+      if ((await settingsService.getRaw()).setup_completed === true
+        && !(await spineClient.getUISSO()).configured) {
+        await reapplySavedUIConfiguration(true, configuration => spineClient.setUISSO(configuration));
       }
+      await restoreUIBridgeAuthority((await settingsService.getRaw()).setup_completed === true);
       const result = await repairThenVerify(
         'YouEye UI',
         (stage) => waitForYouEyeUI('youeye-ui', stage === 'initial' ? 10_000 : 120_000),
@@ -646,7 +694,7 @@ export async function reconcileInfrastructure(
       );
       await applyResourcePolicy('youeye-ui', 'critical');
       await repairUIEgressAcl();
-      remit(5, 'success', result === 'repaired' || provenanceRepaired
+      remit(5, 'success', result === 'repaired'
         ? 'YouEye UI container repaired and HTTP health verified'
         : 'YouEye UI service and HTTP health verified');
     } catch (err) {
@@ -684,6 +732,9 @@ export async function reconcileInfrastructure(
   } else {
     remit(6, 'running', 'Verifying YouEye AI service health...');
     try {
+      // Readiness alone cannot detect stale issuer, trust or managed runtime
+      // metadata after a Control Panel update. Apply current configuration.
+      await configurePointerService();
       const result = await repairThenVerify(
         'YouEye AI service',
         (stage) => waitForPointer(stage === 'initial' ? 10_000 : 120_000),

@@ -5,7 +5,7 @@
  * active bridges, internet access, and available backends.
  *
  * Auth: Authorization: Bearer <YOUEYE_APP_TOKEN> must match X-YouEye-App.
- * No user context needed — this is app-level, not user-level.
+ * Requires an active acting user, app admission and that user's connection grants.
  *
  * Data source: `apps.connections` JSONB column, pushed by the Control Panel via
  * POST /api/ui-bridge/app-connections whenever bridge state changes.
@@ -18,6 +18,7 @@ import { eq } from "drizzle-orm";
 import { validateAppToken } from "@/lib/auth/app-token";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { checkPermission } from "@/lib/db/queries/permissions";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +31,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Accept "ye-search" or "search" — strip "ye-" prefix
-  const appId = rawAppId.replace(/^ye-/, "");
+  // Service identity uses the exact canonical installed ID.
+  const appId = rawAppId;
 
   const tokenResult = await validateAppToken(request);
   if (!tokenResult) {
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const tokenAppId = tokenResult.appId.replace(/^ye-/, "");
+  const tokenAppId = tokenResult.appId;
   if (tokenAppId !== appId && tokenResult.appId !== rawAppId) {
     return NextResponse.json(
       { error: "App token does not match X-YouEye-App" },
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
   try {
     await ensureSchema();
     const serviceUser = await resolveServiceAuth(request);
+    if (!serviceUser) return NextResponse.json({ error: 'active_app_user_required' }, { status: 403 });
 
     // Look up the app and its connections data
     let rows = await db
@@ -85,6 +87,7 @@ export async function GET(request: NextRequest) {
       for (const candidate of available) {
         const targetAppId = typeof candidate.appId === "string" ? candidate.appId : "";
         if (!targetAppId || candidate.installed !== true) continue;
+        if (!(await evaluateUiUserAdmission(targetAppId.replace(/^app-/, '').replace(/^ye-/, ''), serviceUser.id)).allowed) continue;
         const permission = `connection:${targetAppId.replace(/^app-/, "").replace(/^ye-/, "")}`;
         const granted = await checkPermission(serviceUser.id, appId, permission);
         if (!granted) continue;
@@ -101,6 +104,7 @@ export async function GET(request: NextRequest) {
       for (const bridge of globalBridges) {
         const target = typeof bridge.appId === "string" ? bridge.appId : "";
         if (!target || bridge.active === false) continue;
+        if (!(await evaluateUiUserAdmission(target.replace(/^app-/, '').replace(/^ye-/, ''), serviceUser.id)).allowed) continue;
         const permission = `connection:${target.replace(/^app-/, "").replace(/^ye-/, "")}`;
         const granted = await checkPermission(serviceUser.id, appId, permission);
         if (granted) byTarget.set(target, bridge);
@@ -119,7 +123,7 @@ export async function GET(request: NextRequest) {
         hosts: [],
         blanket: false,
       },
-      available,
+      available: grantedCandidates,
     });
   } catch (err) {
     console.error("[my-connections] Error:", err);

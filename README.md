@@ -1,19 +1,20 @@
 # YouEye
 
-## Repository-owned builds and signed releases
+## Repository-owned builds and digest-bound releases
 
-The executable unsigned entrypoints and strict manifests under `.youeye/build/`
-belong to this repository. The release control plane binds the exact branch,
-commit and version, executes isolated builds with a pinned toolchain, validates
-declared outputs, generates provenance and SPDX metadata, and signs outside the
-builder. Entrypoints never receive credentials or signing material, and Node
-dependency installation is frozen and offline.
+The executable entrypoints and strict manifests under `.youeye/build/` belong to
+this repository. Builds bind the exact branch, commit and version, run isolated
+with a pinned toolchain, validate declared outputs and generate provenance and
+SPDX metadata. Entrypoints never receive credentials, and Node dependency
+installation is frozen and offline.
 
-Development Spine, Control Panel, UI and native-app runtime update paths verify
-the embedded development Ed25519 trust identity, the detached signature over
-the exact checksum document, the artifact digest and any configured channel
-digest before mutation. Stable promotion remains separately keyed and independently authorized;
-development trust is not Stable authority.
+Releases are currently unsigned. Each System release publishes one
+`core-release.json` that lists every artifact by exact URL, SHA-256 and size.
+It is fetched over HTTPS with normal certificate checks; the Installer records
+its digest and source in the machine's protected State, and every install and
+update verifies each artifact against that document before mutation. The
+System update source is owned by the host: the Control Panel can display it but
+not change it. Signing returns before the first public release.
 
 **A self-hosted personal cloud with a polished dashboard, native apps, and one-click installs.**
 
@@ -21,7 +22,7 @@ development trust is not Stable authority.
 
 The YouEye Installer writes one verified appliance image with A/B system slots,
 independent Recovery, persistent State and Data, then performs a health-gated
-first deployment. Run it from the signed ISO on a physical machine or let its
+first deployment. Run it from the ISO on a physical machine or let its
 Proxmox mode create and install the VM.
 
 ## Quick Start
@@ -29,37 +30,41 @@ Proxmox mode create and install the VM.
 ### Proxmox
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
+curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
-This is the canonical public Stable command. It becomes installable when the
-separately keyed Stable appliance release is published to GitHub; development
-builds deliberately fail closed instead of accepting their development key as
-Stable authority. The bootstrap defaults to that official GitHub Stable lane and supports
-explicit Forgejo or custom HTTPS sources without prefilled private endpoints.
-It paginates the selected provider, verifies its signed checksum set and exact
-installer digest, then opens the YouEye Installer TUI. Quick mode creates a
+Run this command from the Proxmox host's root shell; `sudo` is not required.
+The bootstrap reads the stable [channel index](docs/releases.md), downloads that
+release's `core-release.json` over HTTPS, checks it against the index digest and
+checks the installer's SHA-256 and size before running it; any mismatch fails
+closed. It never calls a release-listing API. `--repository <url> --channel
+dev|alpha|beta|stable` selects another repository or channel. The bootstrap then opens the YouEye
+Installer TUI pinned to the exact release it verified (its tag and
+`core-release.json` digest), so the Installer cannot pick another release; the
+machine still follows the selected channel for later updates. Quick mode creates a
 Q35/OVMF VM with 4 vCPU, 8 GiB RAM, and one 128 GiB installation drive. The
 host-side flow provisions the VM and media; the booted ISO owns disk discovery,
 destructive confirmation, imaging, and installed-system setup.
 
-Development and beta releases are selected explicitly and retain Development
-trust. They are not the no-argument GitHub Stable path. Each published release
-page carries the exact source commit, signed checksums, manifests, provenance,
-SBOM, and component release set required for independent verification.
+Development and beta releases are selected explicitly. Each System release
+`youeye-v<version>` carries `core-release.json`, which lists every asset by exact
+URL, SHA-256 and size, plus a `SHA256SUMS` file for manual checks. Releases are
+unsigned for now; integrity comes from SHA-256 over HTTPS. Signing returns
+before the first public release.
 
-### Signed ISO
+### ISO
 
-Download `youeye-appliance-amd64.iso`, `SHA256SUMS`, and `SHA256SUMS.sig` from
-the same appliance release, verify them, write the ISO to removable media, and
+Download `youeye-appliance-amd64.iso` and `SHA256SUMS` from the same System
+release, check the digest, write the ISO to removable media, and
 boot it in UEFI mode. The interactive `youeye-installer install` flow performs
 the same installation used by Proxmox.
 After exact first deployment becomes healthy, open the HTTPS address shown on
 the appliance console and create the single YouEye ID owner. There is no
-default appliance password. Root remains locked and SSH remains key-only unless
-the installer user explicitly enables Development access and chooses a strong
-root password. Local TTY2 login and local-subnet root password SSH are separate
-opt-ins; the password itself is never written to answer media or State.
+default appliance password. The interactive installer requires a root password
+for local console recovery. SSH is key-only unless **Root password SSH** is
+explicitly enabled; that option permits the same password only from the directly
+connected IPv4 subnet. Public-key import is separate. Only a password hash is
+stored in protected answer media and State. See the [SSH troubleshooting guide](docs/getting-started.md#root-ssh-access).
 
 > Proxmox mode requires root access, Q35/OVMF support, an ISO storage pool, and
 > an eligible VM-image storage pool. Direct installation requires x86-64 UEFI
@@ -125,8 +130,8 @@ graph TD
 |-----------|-------|
 | **Spine** | Go 1.21+, Cobra CLI, Bubble Tea TUI, Unix socket API |
 | **Control Panel** | Next.js 16, TypeScript, Incus API, YouEye ID |
-| **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
-| **Native Apps** | Next.js 15 |
+| **UI** | Next.js 16, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
+| **Native Apps** | Next.js 16 |
 | **Infrastructure** | Incus (LXD), PostgreSQL 17, YouEye ID, Caddy, Pi-Hole v6 |
 
 ## Native Apps
@@ -153,20 +158,20 @@ This repository contains the core platform and installer components:
 | `spine/` | [Spine](spine/) | Go CLI that bootstraps and manages the platform |
 | `control-panel/` | [Control Panel](control-panel/) | Next.js orchestration engine for all infrastructure |
 | `ui/` | [UI](ui/) | Next.js user-facing dashboard with widgets and themes |
-| `installer/` | YouEye Installer | Signed-media and Proxmox installation flows |
+| `installer/` | YouEye Installer | ISO and Proxmox installation flows |
 | `appliance/` | Appliance image | A/B/Recovery image construction and boot lifecycle |
 
-Core components are versioned independently. Appliance releases bind their
-exact Spine, Control Panel, and UI source commits, tags, and signed digests.
+Core components are versioned independently. Each System release binds their
+exact Spine, Control Panel, and UI source commits, tags, and SHA-256 digests.
 
 ## Versions and releases
 
 Core components are versioned independently. The Installer is an
 appliance-owned overlay shipped inside the appliance release; it has no
 independent release version or publication lane. See the repository's release
-page for the current signed appliance identity, component source identities,
-checksums, and downloadable assets. Development and Stable are separate signing
-and publication boundaries.
+page for the current System release, its `core-release.json`, component source
+identities, checksums, and downloadable assets. Development and Stable are
+separate publication tracks.
 
 ## Related Repositories
 
@@ -208,38 +213,38 @@ Use the same public bootstrap and explicitly select a credential-free HTTPS
 release source. For example:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
-  sudo sh -s -- --provider forgejo \
-    --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
+curl -fsSL https://releases.youeye.me/install.sh | \
+  sudo sh -s -- --repository https://code.example.test/example/YouEye \
     --channel development
 ```
 
 Quick mode uses six focused pages: VM, resources, storage/network, read-only
 Official GitHub Stable software policy, access, and review. It defaults to 4
 vCPU, 8 GiB RAM, one 128 GiB installation drive and wired DHCP. Advanced mode
-uses eight pages and adds independent storage, network, signed software source,
-SSH, and Development-access controls. It supports Stable, Development, a safe
-branch-associated signed release track, or an immutable exact tag/digest.
-Branches select published signed releases only; raw source and mutable branch
+uses eight pages and adds independent storage, network, software source, SSH,
+and Development-access controls. It offers the Stable, Beta, Alpha and Dev
+channels. See [releases](docs/releases.md) for channels, versions and promotion.
+
+Channels select published releases only; raw source and mutable branch
 archives are never installed, and no missing or invalid selection falls back.
 
 The mutable Debian/Ubuntu host installer and Debian-cloud Proxmox VM/LXC
-providers are retired; they did not implement the signed appliance layout,
-Recovery, A/B updates, or sealed-image guarantees.
+providers are retired; they did not implement the appliance layout, Recovery,
+A/B updates, or sealed-image guarantees.
 
-Create provisions a new Q35/OVMF VM with persistent EFI variables, serial console, one stably identified installation drive, installer ISO, and non-secret answer media. Reinstall accepts only a stopped compatible layout-3 appliance VM, displays its drive identity and discovered GPT contents, and requires the generated phrase naming that target before reuse. The helper never writes guest partitions: the signed ISO verifies the same bundle again and owns all disk mutation, A/B/Recovery installation, first boot, and setup readiness.
+Create provisions a new Q35/OVMF VM with persistent EFI variables, serial console, one stably identified installation drive, installer ISO, and non-secret answer media. Reinstall accepts only a stopped compatible layout-3 appliance VM, displays its drive identity and discovered GPT contents, and requires the generated phrase naming that target before reuse. The helper never writes guest partitions: the ISO verifies the same bundle again and owns all disk mutation, A/B/Recovery installation, first boot, and setup readiness.
 
-Recovery boots from its own read-only image and can inspect the offline appliance, select either System slot once, verify and repair signed boot assets, and export support evidence. Its interactive session remains on the local tty1 display and is mirrored read-only to the serial console for remote observation and acceptance. For support export, prepare a FAT32, ext4, or exFAT filesystem labelled `YOUEYE-SUP`; Recovery mounts it with restrictive options, writes one timestamped evidence file, syncs it, and unmounts it. The earlier `YOUEYE-SUPPORT` ext4 label remains accepted for development compatibility.
+Recovery boots from its own read-only image and can inspect the offline appliance, select either System slot once, verify and repair digest-bound boot assets, and export support evidence. Its interactive session remains on the local tty1 display and is mirrored read-only to the serial console for remote observation and acceptance. For support export, prepare a FAT32, ext4, or exFAT filesystem labelled `YOUEYE-SUP`; Recovery mounts it with restrictive options, writes one timestamped evidence file, syncs it, and unmounts it. The earlier `YOUEYE-SUPPORT` ext4 label remains accepted for development compatibility.
 
-Appliance system updates verify one exact signed `youeye.system-update.v1` manifest, cache artifacts on `YE-DATA`, write and read back only the inactive 8 GiB System slot, and arm a three-attempt systemd-boot trial. Operationally healthy trials are explicitly blessed; failed trials automatically return to the prior known-good slot while State, Recovery, and `YE-DATA` remain unchanged. Settings checks Stable or Development metadata automatically every six hours, but download/preparation and restart always require an administrator action. The CLI exposes the same `status`, `check`, `stage`, and `activate --reboot` transaction.
+System updates install one complete System release from the channel the box follows (`youeye channel get|set`; it never downgrades). Its host part is the exact `youeye.system-update.v1` manifest listed in `core-release.json`; artifacts are cached on `YE-DATA`, only the inactive 8 GiB System slot is written and read back, and a three-attempt systemd-boot trial is armed. Operationally healthy trials are explicitly blessed; failed trials automatically return to the prior known-good slot while State, Recovery, and `YE-DATA` remain unchanged. Settings shows the current release of the box's channel; download/preparation and restart always require an administrator action. The CLI equivalent is `youeye update core check`, `stage`, and `activate`.
 
-Appliance builds also seal one exact official Market commit into the signed
+Appliance builds also seal one exact official Market commit into the
 System root. First deployment seeds that immutable catalog identity before
 Control Panel deployment, without replacing an existing owner-selected Market
 source. Development builders may supply an explicit HTTPS source and exact
 commit without changing distributed defaults.
 
-The signed appliance source commit identifies the complete image/installer build. Its embedded Spine, Control Panel, and UI release set independently pins each consumed component's exact tag, source commit, and artifact digest. Those identities may differ after an appliance-only or single-component repair; every pin remains mandatory and verified, so unrelated unchanged components are not rebuilt merely to make commit strings equal.
+The appliance source commit identifies the complete image/installer build. Its embedded Spine, Control Panel, and UI release set independently pins each consumed component's exact tag, source commit, and artifact digest. Those identities may differ after an appliance-only or single-component repair; every pin remains mandatory and verified, so unrelated unchanged components are not rebuilt merely to make commit strings equal.
 
 Development release identities may use a safe multi-segment source branch such
 as `codex/phase1-repository-builds`. Every segment is validated as a bounded
@@ -257,10 +262,10 @@ profile. This release supports Ethernet DHCP/static IPv4 only; it does not
 pretend to support Wi-Fi hardware without an approved chipset and firmware
 matrix.
 
-The first-boot transaction freezes one signed appliance identity, follows only
-declared signed System bridges when an older bootstrap cannot jump directly,
-writes the inactive A/B slot, resumes after reboot, and installs the exact
-signed Server-interface and UI tags and digests. TTY1 reports bounded real
+The first-boot transaction freezes one System release (by its
+`core-release.json` digest) on the recorded track, writes the inactive A/B slot
+when the host changes, resumes after reboot, and installs the exact
+Server-interface and UI artifacts that release lists. TTY1 reports bounded real
 deployment stages. TTY2 is a normal PAM root login only when locally enabled;
 `youeye-installer network` and `youeye-installer development-access` provide
 the supported on-device repair paths. An administrator may inspect or disable
@@ -293,11 +298,11 @@ cd spine && go build ./cmd/youeye
 # Control Panel (Next.js 16)
 cd control-panel && pnpm install && pnpm dev
 
-# UI (Next.js 15)
+# UI (Next.js 16)
 cd ui && pnpm install && pnpm dev
 ```
 
-Use `pnpm` for the Node.js projects in this repository.
+Use Node 24.22.0 and pnpm 10.6.2 for these projects. Install from the repository root with `pnpm install --frozen-lockfile`; the root `pnpm-lock.yaml` is authoritative for both workspaces. See [Web runtime and dependency policy](docs/web-runtime.md).
 
 ## Contributing
 
@@ -313,3 +318,11 @@ YouEye is in public beta. Contributions are welcome, but expect breaking changes
 YouEye source code is licensed under the [Business Source License 1.1](LICENSE). After four years, each version converts to [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html).
 
 The "YouEye" name and logo are trademarks. See [TRADEMARK.md](TRADEMARK.md) for usage guidelines.
+
+## App service authentication
+
+Developers changing app installation, service APIs, integration or restore should
+read [the app service credential contract](docs/app-service-credentials.md).
+Protected runtime credentials, versioned publication and readiness are one
+lifecycle. Configuration refresh does not issue a new secret. App-origin machine
+requests cannot acquire browser administrator authority.

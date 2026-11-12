@@ -136,18 +136,6 @@ func GetConfigFile() string {
 func setDefaults(v *viper.Viper) {
 	defaults := Default()
 
-	// Releases
-	v.SetDefault("releases.provider", defaults.Releases.Provider)
-	v.SetDefault("releases.base_url", defaults.Releases.BaseURL)
-	v.SetDefault("releases.api_path", defaults.Releases.APIPath)
-	v.SetDefault("releases.organization", defaults.Releases.Organization)
-	v.SetDefault("releases.repositories.spine", defaults.Releases.Repositories.Spine)
-	v.SetDefault("releases.repositories.control_panel", defaults.Releases.Repositories.ControlPanel)
-	v.SetDefault("releases.repositories.ui", defaults.Releases.Repositories.UI)
-	v.SetDefault("releases.repositories.spine_tag_prefix", defaults.Releases.Repositories.SpineTagPrefix)
-	v.SetDefault("releases.repositories.control_panel_tag_prefix", defaults.Releases.Repositories.ControlPanelTagPrefix)
-	v.SetDefault("releases.repositories.ui_tag_prefix", defaults.Releases.Repositories.UITagPrefix)
-
 	// Deployment - Container
 	v.SetDefault("deployment.container.name", defaults.Deployment.Container.Name)
 	v.SetDefault("deployment.container.image", defaults.Deployment.Container.Image)
@@ -204,24 +192,6 @@ func setDefaults(v *viper.Viper) {
 // Validate checks the configuration for errors.
 func (c *Config) Validate() error {
 	// Validate releases configuration
-	if c.Releases.RepoURL != "" {
-		if _, err := ParseReleaseRepoURL(c.Releases.RepoURL); err != nil {
-			return fmt.Errorf("releases.repo_url is invalid: %w", err)
-		}
-	} else {
-		if c.Releases.BaseURL == "" {
-			return fmt.Errorf("releases.base_url cannot be empty")
-		}
-		if c.Releases.Organization == "" {
-			return fmt.Errorf("releases.organization cannot be empty")
-		}
-		if c.Releases.Repositories.Spine == "" {
-			return fmt.Errorf("releases.repositories.spine cannot be empty")
-		}
-		if c.Releases.Repositories.ControlPanel == "" {
-			return fmt.Errorf("releases.repositories.control_panel cannot be empty")
-		}
-	}
 
 	// Validate deployment configuration
 	if c.Deployment.Container.Name == "" {

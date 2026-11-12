@@ -1,0 +1,6685 @@
+/* Adapted from MIT MyTitle 23cb46f; provenance and complete notices: legal/mytitle. */
+.mytitle-scope{
+  font-family: "IBM Plex Sans", sans-serif;
+  color: #30352f;
+  background: #f2f3ee;
+  font-synthesis: none;
+  --bg: #f2f3ee;
+  --panel: #fff;
+  --soft: #f3f4ef;
+  --line: #dfe3da;
+  --ink: #30352f;
+  --muted: #737b6f;
+  --accent: #40533d;
+  --accent-text: #fff;
+  --selection: #e9efdf;
+  --focus: #5479b4;
+}
+.mytitle-scope .dark{
+  color: #e8ece2;
+  background: #1d211e;
+  --bg: #1d211e;
+  --panel: #272d27;
+  --soft: #30372f;
+  --line: #40493d;
+  --ink: #e8ece2;
+  --muted: #abb4a4;
+  --accent: #d4e6ba;
+  --accent-text: #263421;
+  --selection: #414f38;
+  --focus: #adc9ee;
+  color-scheme: dark;
+}
+.mytitle-scope *{
+  box-sizing: border-box;
+}
+.mytitle-scope{
+  margin: 0;
+}
+.mytitle-scope button,
+.mytitle-scope input,
+.mytitle-scope select{
+  font: inherit;
+  color: inherit;
+}
+.mytitle-scope button{
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.mytitle-scope button:disabled{
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.mytitle-scope button,
+.mytitle-scope a,
+.mytitle-scope input,
+.mytitle-scope select{
+  outline-offset: 3px;
+}
+.mytitle-scope button:focus-visible,
+.mytitle-scope a:focus-visible,
+.mytitle-scope input:focus-visible,
+.mytitle-scope select:focus-visible{
+  outline: 2px solid var(--focus);
+}
+.mytitle-scope a{
+  color: inherit;
+}
+.mytitle-scope h1,
+.mytitle-scope h2,
+.mytitle-scope p{
+  margin: 0;
+}
+.mytitle-scope button,
+.mytitle-scope select,
+.mytitle-scope input[type="range"]{
+  -webkit-tap-highlight-color: transparent;
+}
+.mytitle-scope button,
+.mytitle-scope select{
+  touch-action: manipulation;
+}
+.mytitle-scope input[type="range"],
+.mytitle-scope input[type="checkbox"]{
+  accent-color: var(--accent);
+}
+.mytitle-scope .app-header{
+  height: 68px;
+  padding: 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  gap: 20px;
+}
+.mytitle-scope .brand{
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.mytitle-scope .brand > span{
+  position: relative;
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  border-radius: 9px;
+  font-size: 21px;
+}
+.mytitle-scope .brand > span > span{
+  position: absolute;
+  right: -7px;
+  top: -11px;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--accent);
+}
+.mytitle-scope nav{
+  display: flex;
+  gap: 5px;
+}
+.mytitle-scope nav button{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  padding: 10px 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mytitle-scope nav button[aria-current]{
+  background: var(--selection);
+  color: var(--ink);
+  font-weight: 500;
+}
+.mytitle-scope nav small{
+  font-size: 9px;
+}
+.mytitle-scope .header-actions,
+.mytitle-scope .history-controls{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mytitle-scope .icon-button{
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+.mytitle-scope .icon-button:hover{
+  background: var(--soft);
+}
+.mytitle-scope .theme-toggle{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 11px;
+}
+.mytitle-scope .primary,
+.mytitle-scope .secondary{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 8px 13px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.mytitle-scope .primary{
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1px solid transparent;
+}
+.mytitle-scope .secondary{
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.mytitle-scope .secondary:hover{
+  background: var(--soft);
+}
+.mytitle-scope .text-button{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mytitle-scope .text-button:hover{
+  color: var(--ink);
+}
+.mytitle-scope .picker-page{
+  max-width: 764px;
+  margin: 26px auto 16px;
+  padding: 0 16px;
+}
+.mytitle-scope .page-caption,
+.mytitle-scope .page-footnote{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.mytitle-scope .page-caption{
+  margin-bottom: 10px;
+}
+.mytitle-scope .page-caption span:last-child{
+  font-size: 8px;
+  letter-spacing: 1.5px;
+}
+.mytitle-scope .picker-card{
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  box-shadow: 0 9px 35px #26351e07;
+  overflow: hidden;
+}
+.mytitle-scope .picker-heading{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 19px 24px 14px;
+}
+.mytitle-scope .picker-heading h1{
+  font-size: 20px;
+  letter-spacing: -0.6px;
+  font-weight: 500;
+}
+.mytitle-scope .picker-heading p{
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.mytitle-scope .title-picker{
+  padding: 0 24px;
+}
+.mytitle-scope .title-carousel{
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  align-items: center;
+  height: 150px;
+  border-radius: 11px;
+  padding: 0 13px;
+  gap: 8px;
+}
+.mytitle-scope .cycle-arrow{
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 40px;
+  border-radius: 9px;
+  opacity: 0.75;
+}
+.mytitle-scope .cycle-arrow:hover{
+  background: #8882;
+  opacity: 1;
+}
+.mytitle-scope .cycle-arrow svg{
+  width: 21px;
+}
+.mytitle-scope .editable-title{
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}
+.mytitle-scope .artwork{
+  position: relative;
+  line-height: 0;
+  min-width: 0;
+}
+.mytitle-scope .artwork > div > svg{
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.mytitle-scope .editable-title .artwork{
+  height: 100%;
+  display: grid;
+  align-items: center;
+}
+.mytitle-scope .editable-title .artwork > div{
+  height: 100%;
+}
+.mytitle-scope .editable-title .artwork svg{
+  height: 100%;
+  width: 100%;
+  overflow: visible;
+}
+.mytitle-scope .editable-title > span{
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  font-size: 9px;
+  opacity: 0.65;
+}
+.mytitle-scope .inline-title{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: center;
+}
+.mytitle-scope .inline-title input{
+  background: transparent;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  text-align: center;
+  font-size: 28px;
+  letter-spacing: -1px;
+  outline-offset: 7px;
+  padding: 8px 0;
+}
+.mytitle-scope .inline-title small{
+  font-size: 9px;
+  opacity: 0.7;
+}
+.mytitle-scope .font-error{
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1.5;
+  font-size: 12px;
+  text-align: center;
+  padding: 10px;
+}
+.mytitle-scope .type-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 43px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+}
+.mytitle-scope .type-row > label{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.mytitle-scope .type-row select{
+  border: 0;
+  background: transparent;
+  max-width: 175px;
+  font-size: 11px;
+  padding: 5px 3px;
+}
+.mytitle-scope .type-row > span{
+  color: var(--muted);
+  font-size: 9px;
+  margin-right: auto;
+}
+.mytitle-scope .small-button{
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 4px 7px;
+}
+.mytitle-scope .small-button[aria-pressed="true"]{
+  background: var(--selection);
+}
+.mytitle-scope .picker-section{
+  padding-top: 13px;
+}
+.mytitle-scope .section-label{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.mytitle-scope .section-label h2{
+  font-size: 11px;
+  font-weight: 500;
+}
+.mytitle-scope .section-label > span{
+  font-size: 9px;
+  color: var(--muted);
+}
+.mytitle-scope .colour-dots{
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 5px;
+}
+.mytitle-scope .colour-dots button{
+  aspect-ratio: 1;
+  border-radius: 50%;
+  width: 25px;
+  max-width: 100%;
+  justify-self: center;
+  position: relative;
+  border: 2px solid var(--panel);
+}
+.mytitle-scope .colour-dots button:hover{
+  transform: scale(1.12);
+}
+.mytitle-scope .colour-dots button[aria-pressed="true"]{
+  outline: 1.5px solid var(--ink);
+  outline-offset: 1px;
+}
+.mytitle-scope .colour-extras{
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 9px;
+  min-height: 27px;
+}
+.mytitle-scope .mini-colour{
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mytitle-scope .mini-colour input{
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: transparent;
+  cursor: pointer;
+}
+.mytitle-scope .mini-colour input::-webkit-color-swatch-wrapper{
+  padding: 0;
+}
+.mytitle-scope .mini-colour input::-webkit-color-swatch{
+  border: 0;
+}
+.mytitle-scope .check{
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mytitle-scope .check input{
+  margin: 0;
+}
+.mytitle-scope .colour-extras > .text-button{
+  margin-left: auto;
+}
+.mytitle-scope .finish-options{
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 5px;
+}
+.mytitle-scope .finish-options button{
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 10px;
+  height: 30px;
+  padding: 0 4px;
+}
+.mytitle-scope .finish-options button[aria-pressed="true"],
+.mytitle-scope .shape-row button[aria-pressed="true"],
+.mytitle-scope .source-row button[aria-pressed="true"],
+.mytitle-scope .category-row button[aria-pressed="true"]{
+  background: var(--selection);
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.mytitle-scope .shape-row{
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 13px 0 8px;
+  font-size: 10px;
+}
+.mytitle-scope .shape-row > span{
+  font-weight: 500;
+}
+.mytitle-scope .shape-row > div{
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  justify-content: space-between;
+}
+.mytitle-scope .shape-row button{
+  text-transform: capitalize;
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.mytitle-scope .adjustments{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  padding: 4px 0 13px;
+}
+.mytitle-scope .range-field{
+  display: block;
+  font-size: 10px;
+  min-width: 0;
+}
+.mytitle-scope .range-field > span{
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mytitle-scope .range-field output{
+  font-size: 9px;
+  color: var(--muted);
+}
+.mytitle-scope .range-field input{
+  width: 100%;
+  height: 16px;
+  margin: 4px 0 0;
+  display: block;
+}
+.mytitle-scope .picker-footer{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+  gap: 12px;
+}
+.mytitle-scope .picker-footer > div{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mytitle-scope .persist{
+  font-size: 9px;
+  color: var(--muted);
+}
+.mytitle-scope .page-footnote{
+  margin-top: 13px;
+  font-size: 9px;
+}
+.mytitle-scope .page-footnote a{
+  text-decoration: none;
+}
+.mytitle-scope .page-footnote a:hover{
+  text-decoration: underline;
+}
+.mytitle-scope .icon-picker{
+  padding: 0 24px;
+}
+.mytitle-scope .icon-showcase{
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 36px;
+  align-items: center;
+  padding: 4px 35px 16px;
+}
+.mytitle-scope .hero-icon{
+  padding: 13px;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 29px;
+  width: 164px;
+  height: 164px;
+}
+.mytitle-scope .hero-icon > .artwork{
+  width: 136px;
+}
+.mytitle-scope .icon-story h2{
+  font-size: 20px;
+  line-height: 1.18;
+  font-weight: 500;
+  letter-spacing: -0.6px;
+}
+.mytitle-scope .micro-sizes{
+  display: flex;
+  align-items: flex-end;
+  gap: 17px;
+  margin: 12px 0 8px;
+}
+.mytitle-scope .micro-sizes > span{
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+}
+.mytitle-scope .micro-sizes > span > span{
+  display: block;
+}
+.mytitle-scope .micro-sizes small{
+  font-size: 8px;
+  color: var(--muted);
+}
+.mytitle-scope .icon-roll{
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.mytitle-scope .icon-roll .secondary{
+  min-height: 29px;
+  padding: 5px 10px;
+  font-size: 10px;
+}
+.mytitle-scope .icon-tabs{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--line);
+  gap: 8px;
+}
+.mytitle-scope .icon-tabs button{
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 0;
+  border-bottom: 2px solid transparent;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mytitle-scope .icon-tabs small{
+  font-size: 8px;
+}
+.mytitle-scope .icon-tabs button[aria-pressed="true"]{
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 500;
+}
+.mytitle-scope .icon-controls{
+  height: 268px;
+  padding: 12px 0 10px;
+}
+.mytitle-scope .source-row{
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.mytitle-scope .source-row button{
+  border-radius: 6px;
+  font-size: 10px;
+  padding: 6px 13px;
+  color: var(--muted);
+}
+.mytitle-scope .symbol-search{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--muted);
+}
+.mytitle-scope .symbol-search input{
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  outline-offset: 5px;
+  color: var(--ink);
+}
+.mytitle-scope .category-row{
+  display: flex;
+  gap: 6px;
+  margin: 7px 0;
+}
+.mytitle-scope .category-row button{
+  font-size: 9px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  color: var(--muted);
+}
+.mytitle-scope .symbol-grid{
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 5px;
+}
+.mytitle-scope .symbol-grid button{
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.mytitle-scope .symbol-grid svg{
+  width: 24px;
+  height: 24px;
+}
+.mytitle-scope .symbol-grid button[aria-pressed="true"]{
+  background: var(--selection);
+  border-color: var(--accent);
+}
+.mytitle-scope .symbol-grid button:hover{
+  background: var(--soft);
+  transform: translateY(-1px);
+}
+.mytitle-scope .pager{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.mytitle-scope .pager span{
+  margin-right: auto;
+}
+.mytitle-scope .pager button{
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .empty-results{
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mytitle-scope .icon-recipes{
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+}
+.mytitle-scope .icon-recipes button{
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 7px 6px;
+}
+.mytitle-scope .icon-recipes button:hover{
+  background: var(--soft);
+  transform: translateY(-2px);
+}
+.mytitle-scope .icon-recipes .artwork{
+  max-width: 52px;
+  margin: auto;
+}
+.mytitle-scope .icon-recipes span{
+  font-size: 8px;
+  display: block;
+  margin-top: 6px;
+  white-space: nowrap;
+}
+.mytitle-scope .icon-selects{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 16px 0 13px;
+}
+.mytitle-scope .icon-selects label,
+.mytitle-scope .export-controls > label:first-child{
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.mytitle-scope select{
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 7px;
+  font-size: 11px;
+  color: var(--ink);
+  min-width: 0;
+}
+.mytitle-scope .icon-custom-colours{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 22px 0;
+}
+.mytitle-scope .icon-custom-colours .mini-colour{
+  font-size: 11px;
+}
+.mytitle-scope .icon-custom-colours input{
+  width: 26px;
+  height: 26px;
+}
+.mytitle-scope .icon-checks{
+  display: flex;
+  gap: 25px;
+  margin: 18px 0;
+}
+.mytitle-scope .source-detail{
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  height: 190px;
+}
+.mytitle-scope .source-detail > label{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  text-align: center;
+}
+.mytitle-scope .source-detail input{
+  width: 180px;
+  text-align: center;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 28px;
+}
+.mytitle-scope .source-detail p,
+.mytitle-scope .hint{
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.mytitle-scope .upload-area{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 25px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.mytitle-scope .upload-area small{
+  font-size: 10px;
+  color: var(--muted);
+}
+.mytitle-scope .emoji-grid{
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 5px;
+}
+.mytitle-scope .emoji-grid button{
+  font-size: 24px;
+  height: 39px;
+  border-radius: 7px;
+}
+.mytitle-scope .emoji-grid button[aria-pressed="true"]{
+  background: var(--selection);
+}
+.mytitle-scope .emoji-input{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  margin: 12px 0;
+}
+.mytitle-scope .emoji-input input{
+  width: 110px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  font-size: 18px;
+}
+.mytitle-scope .saved-page{
+  max-width: 1000px;
+  margin: 35px auto;
+  padding: 0 24px;
+}
+.mytitle-scope .collection-heading{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+.mytitle-scope .collection-heading h1{
+  font-size: 24px;
+  font-weight: 500;
+}
+.mytitle-scope .saved-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.mytitle-scope .saved-grid article{
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+}
+.mytitle-scope .saved-grid article > button:first-child{
+  width: 100%;
+  padding: 15px;
+}
+.mytitle-scope .saved-grid .artwork{
+  height: 130px;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .saved-grid .artwork svg{
+  height: 130px;
+  max-width: 100%;
+}
+.mytitle-scope .saved-grid b,
+.mytitle-scope .saved-grid small{
+  display: block;
+  font-size: 12px;
+}
+.mytitle-scope .saved-grid small{
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.mytitle-scope .remove-saved{
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+}
+.mytitle-scope dialog{
+  width: 660px;
+  max-width: calc(100vw - 28px);
+  max-height: 90vh;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 22px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 25px 100px #0004;
+}
+.mytitle-scope dialog::backdrop{
+  background: #15201866;
+  backdrop-filter: blur(4px);
+}
+.mytitle-scope .dialog-heading{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.mytitle-scope .dialog-heading h2{
+  font-weight: 500;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+}
+.mytitle-scope .look-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 18px;
+}
+.mytitle-scope .look-grid button{
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  padding: 0;
+}
+.mytitle-scope .look-grid span{
+  font-size: 9px;
+  padding: 8px;
+  display: block;
+}
+.mytitle-scope .export-preview{
+  height: 150px;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  border-radius: 10px;
+}
+.mytitle-scope .export-preview .artwork{
+  width: 100%;
+}
+.mytitle-scope .export-preview svg{
+  max-height: 150px;
+}
+.mytitle-scope .export-preview.is-icon .artwork{
+  width: 115px;
+}
+.mytitle-scope .export-controls{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0;
+}
+.mytitle-scope .export-buttons{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 18px 0;
+}
+.mytitle-scope .export-buttons button:nth-child(3),
+.mytitle-scope .export-buttons button:nth-child(4){
+  grid-column: span 2;
+}
+.mytitle-scope .toast{
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--panel);
+  box-shadow: 0 5px 30px #0002;
+  max-width: calc(100vw - 24px);
+  font-size: 11px;
+}
+.mytitle-scope .toast button{
+  display: grid;
+  place-items: center;
+  padding: 3px;
+}
+@media (max-width: 760px){.mytitle-scope .app-header{
+    padding: 0 16px;
+    gap: 10px;
+    height: 60px;
+  }
+.mytitle-scope .brand{
+    font-size: 17px;
+  }
+.mytitle-scope nav button{
+    padding: 9px 11px;
+    gap: 5px;
+  }
+.mytitle-scope .theme-toggle{
+    padding: 8px;
+  }
+.mytitle-scope .theme-toggle span{
+    display: none;
+  }
+.mytitle-scope .header-actions{
+    gap: 3px;
+  }
+.mytitle-scope .picker-page{
+    margin-top: 18px;
+  }
+.mytitle-scope .picker-heading{
+    padding: 16px 18px 12px;
+  }
+.mytitle-scope .title-picker,
+.mytitle-scope .icon-picker{
+    padding: 0 18px;
+  }
+.mytitle-scope .picker-footer{
+    padding: 11px 18px;
+  }
+.mytitle-scope .persist{
+    display: none;
+  }
+.mytitle-scope .icon-showcase{
+    gap: 20px;
+    padding: 5px 20px 16px;
+  }
+.mytitle-scope .finish-options{
+    gap: 4px;
+  }
+.mytitle-scope .finish-options button{
+    font-size: 9px;
+  }
+.mytitle-scope .colour-extras{
+    gap: 12px;
+  }
+}
+@media (max-width: 520px){.mytitle-scope .app-header{
+    padding: 0 12px;
+    gap: 4px;
+  }
+.mytitle-scope .brand{
+    font-size: 0;
+    gap: 0;
+  }
+.mytitle-scope .brand > span{
+    font-size: 20px;
+  }
+.mytitle-scope nav{
+    gap: 0;
+  }
+.mytitle-scope nav button{
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+.mytitle-scope nav small{
+    display: none;
+  }
+.mytitle-scope .header-actions .icon-button{
+    width: 28px;
+  }
+.mytitle-scope .picker-page{
+    padding: 0 10px;
+    margin-top: 12px;
+  }
+.mytitle-scope .page-caption{
+    font-size: 9px;
+  }
+.mytitle-scope .page-caption span:last-child{
+    font-size: 7px;
+  }
+.mytitle-scope .picker-card{
+    border-radius: 13px;
+  }
+.mytitle-scope .picker-heading{
+    padding: 14px 14px 10px;
+  }
+.mytitle-scope .picker-heading h1{
+    font-size: 18px;
+  }
+.mytitle-scope .picker-heading p{
+    font-size: 9px;
+  }
+.mytitle-scope .title-picker,
+.mytitle-scope .icon-picker{
+    padding: 0 14px;
+  }
+.mytitle-scope .title-carousel{
+    height: 124px;
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    gap: 1px;
+    padding: 0 4px;
+  }
+.mytitle-scope .cycle-arrow{
+    width: 28px;
+    height: 40px;
+  }
+.mytitle-scope .editable-title > span{
+    font-size: 8px;
+    bottom: 9px;
+  }
+.mytitle-scope .inline-title input{
+    font-size: 22px;
+  }
+.mytitle-scope .type-row{
+    gap: 6px;
+    height: 39px;
+  }
+.mytitle-scope .type-row select{
+    max-width: 138px;
+    font-size: 10px;
+  }
+.mytitle-scope .type-row > span{
+    display: none;
+  }
+.mytitle-scope .type-row > label{
+    margin-right: auto;
+  }
+.mytitle-scope .type-row .text-button{
+    font-size: 9px;
+  }
+.mytitle-scope .colour-dots{
+    grid-template-columns: repeat(16, 1fr);
+    gap: 5px 1px;
+  }
+.mytitle-scope .colour-dots button{
+    width: 18px;
+    border-width: 1px;
+  }
+.mytitle-scope .colour-extras{
+    gap: 9px;
+    flex-wrap: wrap;
+    min-height: 25px;
+  }
+.mytitle-scope .mini-colour{
+    font-size: 9px;
+    gap: 3px;
+  }
+.mytitle-scope .mini-colour input{
+    width: 18px;
+    height: 18px;
+  }
+.mytitle-scope .check{
+    font-size: 9px;
+  }
+.mytitle-scope .colour-extras .text-button{
+    font-size: 9px;
+  }
+.mytitle-scope .colour-extras .text-button span{
+    display: none;
+  }
+.mytitle-scope .picker-section{
+    padding-top: 12px;
+  }
+.mytitle-scope .section-label{
+    margin-bottom: 7px;
+  }
+.mytitle-scope .finish-options{
+    grid-template-columns: repeat(5, 1fr);
+    gap: 5px;
+  }
+.mytitle-scope .finish-options button{
+    height: 28px;
+    font-size: 10px;
+  }
+.mytitle-scope .shape-row{
+    gap: 7px;
+    margin: 12px 0 7px;
+    font-size: 9px;
+  }
+.mytitle-scope .shape-row > div{
+    gap: 2px;
+  }
+.mytitle-scope .shape-row button{
+    padding: 5px 4px;
+    font-size: 9px;
+  }
+.mytitle-scope .adjustments{
+    gap: 14px;
+    padding-bottom: 11px;
+  }
+.mytitle-scope .range-field{
+    font-size: 9px;
+  }
+.mytitle-scope .picker-footer{
+    padding: 10px 14px;
+    gap: 5px;
+  }
+.mytitle-scope .picker-footer > div{
+    gap: 7px;
+  }
+.mytitle-scope .picker-footer .text-button{
+    font-size: 10px;
+  }
+.mytitle-scope .picker-footer .primary,
+.mytitle-scope .picker-footer .secondary{
+    min-height: 32px;
+    padding: 7px 10px;
+    font-size: 10px;
+  }
+.mytitle-scope .page-footnote{
+    font-size: 8px;
+    margin-top: 10px;
+    gap: 10px;
+  }
+.mytitle-scope .icon-showcase{
+    grid-template-columns: 118px 1fr;
+    gap: 18px;
+    padding: 4px 4px 13px;
+  }
+.mytitle-scope .hero-icon{
+    width: 118px;
+    height: 118px;
+    padding: 10px;
+    border-radius: 23px;
+  }
+.mytitle-scope .hero-icon > .artwork{
+    width: 96px;
+  }
+.mytitle-scope .icon-story h2{
+    font-size: 16px;
+  }
+.mytitle-scope .micro-sizes{
+    margin: 7px 0 6px;
+    gap: 13px;
+  }
+.mytitle-scope .micro-sizes > span:last-child{
+    display: none;
+  }
+.mytitle-scope .icon-roll .secondary{
+    font-size: 9px;
+    padding: 5px 8px;
+    gap: 4px;
+  }
+.mytitle-scope .icon-tabs{
+    gap: 2px;
+  }
+.mytitle-scope .icon-tabs button{
+    font-size: 10px;
+    gap: 6px;
+    padding: 9px 0;
+  }
+.mytitle-scope .icon-tabs small{
+    font-size: 7px;
+  }
+.mytitle-scope .icon-controls{
+    height: 328px;
+    padding-top: 9px;
+  }
+.mytitle-scope .source-row{
+    gap: 3px;
+    margin-bottom: 8px;
+  }
+.mytitle-scope .source-row button{
+    font-size: 9px;
+    padding: 6px 10px;
+  }
+.mytitle-scope .symbol-search{
+    padding: 7px 8px;
+  }
+.mytitle-scope .symbol-search input{
+    font-size: 10px;
+  }
+.mytitle-scope .category-row{
+    gap: 2px;
+    margin: 7px 0;
+  }
+.mytitle-scope .category-row button{
+    font-size: 9px;
+    padding: 5px 7px;
+  }
+.mytitle-scope .symbol-grid{
+    grid-template-columns: repeat(6, 1fr);
+    gap: 5px;
+  }
+.mytitle-scope .symbol-grid button{
+    height: 36px;
+  }
+.mytitle-scope .symbol-grid svg{
+    width: 23px;
+    height: 23px;
+  }
+.mytitle-scope .pager{
+    margin-top: 7px;
+  }
+.mytitle-scope .icon-recipes{
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+.mytitle-scope .icon-recipes button{
+    padding: 6px;
+  }
+.mytitle-scope .icon-recipes .artwork{
+    width: 35px;
+  }
+.mytitle-scope .icon-recipes span{
+    font-size: 8px;
+    margin-top: 5px;
+  }
+.mytitle-scope .icon-selects{
+    margin: 11px 0;
+    gap: 8px;
+  }
+.mytitle-scope .icon-selects select{
+    padding: 6px 4px;
+    font-size: 10px;
+  }
+.mytitle-scope .icon-selects label{
+    font-size: 9px;
+  }
+.mytitle-scope .icon-custom-colours{
+    gap: 7px;
+    margin: 22px 0;
+  }
+.mytitle-scope .icon-custom-colours .mini-colour{
+    font-size: 9px;
+  }
+.mytitle-scope .icon-checks{
+    gap: 16px;
+  }
+.mytitle-scope .emoji-grid{
+    grid-template-columns: repeat(6, 1fr);
+    gap: 5px;
+  }
+.mytitle-scope .emoji-grid button{
+    height: 35px;
+    font-size: 23px;
+  }
+.mytitle-scope .source-detail{
+    height: 220px;
+  }
+.mytitle-scope .saved-grid{
+    grid-template-columns: 1fr 1fr;
+  }
+.mytitle-scope .collection-heading{
+    align-items: flex-start;
+  }
+.mytitle-scope .collection-heading h1{
+    font-size: 20px;
+  }
+.mytitle-scope .collection-heading .secondary{
+    font-size: 10px;
+  }
+.mytitle-scope .look-grid{
+    grid-template-columns: 1fr 1fr;
+  }
+.mytitle-scope dialog{
+    padding: 17px;
+  }
+.mytitle-scope .export-controls{
+    gap: 12px;
+  }
+.mytitle-scope .export-controls .check{
+    white-space: normal;
+  }
+}
+@media (prefers-reduced-motion: no-preference){.mytitle-scope button{
+    transition:
+      background 0.12s,
+      transform 0.12s;
+  }
+.mytitle-scope .hero-icon .artwork{
+    animation: icon-pop 0.2s ease-out;
+  }
+@keyframes icon-pop{
+    from {
+      transform: scale(0.92);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+}
+.mytitle-scope .editable-title{
+  min-height: 0;
+}
+.mytitle-scope .editable-title > .artwork{
+  position: absolute;
+  inset: 0;
+  height: auto;
+  display: block;
+}
+.mytitle-scope .editable-title .artwork > div{
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+.mytitle-scope .title-carousel{
+  grid-template-rows: minmax(0, 1fr);
+}
+@media (min-width: 761px){.mytitle-scope .picker-page{
+    margin-top: 18px;
+  }
+.mytitle-scope .title-carousel{
+    height: 132px;
+  }
+.mytitle-scope .icon-controls{
+    height: 244px;
+  }
+}
+@media (max-width: 520px){.mytitle-scope .colour-dots{
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+  }
+.mytitle-scope .colour-dots button{
+    width: 24px;
+  }
+.mytitle-scope .icon-controls:has(.icon-custom-colours){
+    min-height: 328px;
+  }
+}
+@media (max-width: 360px){.mytitle-scope .app-header{
+    padding: 0 10px;
+  }
+.mytitle-scope nav button{
+    padding: 9px 7px;
+    gap: 4px;
+  }
+.mytitle-scope nav button svg{
+    width: 14px;
+  }
+.mytitle-scope .theme-toggle{
+    padding: 7px;
+  }
+}
+.mytitle-scope .icon-recipes button[aria-pressed="true"]{
+  background: var(--selection);
+  border-color: var(--accent);
+}
+@media (max-width: 360px){.mytitle-scope .icon-controls,
+.mytitle-scope .icon-controls:has(.icon-custom-colours){
+    height: 312px;
+    min-height: 312px;
+  }
+}
+.mytitle-scope .cx-page{
+  max-width: 936px;
+  margin: 30px auto 20px;
+  padding: 0 24px;
+}
+.mytitle-scope .cx-intro{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+.mytitle-scope .cx-eyebrow{
+  font-size: 10px;
+  letter-spacing: 1.8px;
+  color: var(--muted);
+}
+.mytitle-scope .cx-intro h1{
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: -0.7px;
+  margin-top: 5px;
+}
+.mytitle-scope .cx-intro > .secondary{
+  white-space: nowrap;
+}
+.mytitle-scope .cx-layout-nav{
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.mytitle-scope .cx-layout-nav > button{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: left;
+  min-height: 67px;
+  background: var(--panel);
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.mytitle-scope .cx-layout-nav > button:hover{
+  background: var(--soft);
+}
+.mytitle-scope .cx-layout-nav > button[aria-current]{
+  background: var(--selection);
+  border-color: var(--accent);
+}
+.mytitle-scope .cx-layout-nav > button > span:last-child{
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.mytitle-scope .cx-layout-nav small{
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.mytitle-scope .cx-layout-glyph{
+  width: 30px;
+  height: 27px;
+  flex-shrink: 0;
+  display: grid;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.65;
+}
+.mytitle-scope .cx-layout-glyph i{
+  display: block;
+  background: currentColor;
+  border-radius: 1px;
+  opacity: 0.5;
+}
+.mytitle-scope .cx-glyph-pocket{
+  grid-template-rows: 10px 3px 3px;
+}
+.mytitle-scope .cx-glyph-lookbook{
+  grid-template-columns: repeat(3, 1fr);
+}
+.mytitle-scope .cx-glyph-steps{
+  border-top: 4px solid currentColor;
+  grid-template-rows: 9px 3px 0;
+}
+.mytitle-scope .cx-glyph-split{
+  grid-template-columns: 2fr 1fr;
+}
+.mytitle-scope .cx-glyph-split i:first-child{
+  grid-row: span 2;
+}
+.mytitle-scope .cx-glyph-spotlight{
+  border-color: transparent;
+  grid-template-rows: 12px 3px 0;
+}
+.mytitle-scope .cx-glyph-spotlight i:nth-child(2){
+  width: 70%;
+  margin: auto;
+  height: 3px;
+}
+.mytitle-scope .cx-active-heading{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 720px;
+  margin: 26px auto 0;
+  gap: 12px;
+}
+.mytitle-scope .cx-active-heading h2{
+  font-size: 13px;
+  font-weight: 500;
+}
+.mytitle-scope .cx-active-heading p{
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 5px;
+}
+.mytitle-scope .cx-workspace{
+  min-height: 378px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 0;
+}
+.mytitle-scope .cx-editor{
+  width: 100%;
+  color: var(--ink);
+}
+.mytitle-scope .cx-editor label,
+.mytitle-scope .cx-detail-panel label,
+.mytitle-scope .cx-dock-panel label{
+  display: grid;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.mytitle-scope .cx-editor select,
+.mytitle-scope .cx-detail-panel select,
+.mytitle-scope .cx-select-button{
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 8px 10px;
+  height: 36px;
+  font-size: 12px;
+  min-width: 0;
+  width: 100%;
+}
+.mytitle-scope .cx-select-button{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  text-transform: capitalize;
+}
+.mytitle-scope .cx-select-button > span{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mytitle-scope .cx-stage{
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  align-items: center;
+  height: 150px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mytitle-scope .cx-arrow{
+  width: 34px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  padding: 0;
+  color: inherit;
+}
+.mytitle-scope .cx-arrow:hover{
+  background: #8882;
+}
+.mytitle-scope .cx-art-button{
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  position: relative;
+  border-radius: 8px;
+}
+.mytitle-scope .cx-art-button > .artwork{
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .cx-art-button .artwork > div{
+  width: 100%;
+  height: 100%;
+}
+.mytitle-scope .cx-art-button .artwork svg{
+  width: 100%;
+  height: 100%;
+}
+.mytitle-scope .cx-stage-icon .cx-art-button .artwork > div{
+  width: 118px;
+  max-width: 100%;
+  height: 118px;
+}
+.mytitle-scope .cx-hint{
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
+.mytitle-scope .cx-stage + .cx-hint{
+  margin-top: 9px;
+}
+.mytitle-scope .cx-inline-edit{
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+.mytitle-scope .cx-inline-edit input{
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  padding: 10px 5px;
+  background: #8881;
+  min-width: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 21px;
+  color: inherit;
+}
+.mytitle-scope .cx-inline-edit small{
+  font-size: 10px;
+}
+.mytitle-scope .cx-control-pair{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.mytitle-scope .cx-swatches{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.mytitle-scope .cx-swatches > button{
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  border: 3px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+  padding: 0;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.mytitle-scope .cx-swatches > button:hover{
+  transform: translateY(-2px);
+}
+.mytitle-scope .cx-swatches > button[aria-pressed="true"]{
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.mytitle-scope .cx-swatches > .cx-more-colours{
+  display: grid;
+  place-items: center;
+  border: 0;
+  box-shadow: none;
+  background: var(--soft);
+}
+.mytitle-scope .cx-details{
+  font-size: 11px;
+  justify-content: center;
+}
+.mytitle-scope .cx-pocket{
+  max-width: 460px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  padding: 13px;
+  box-shadow: 0 6px 20px #00000004;
+}
+.mytitle-scope .cx-pocket .cx-stage{
+  height: 126px;
+}
+.mytitle-scope .cx-pocket .cx-stage-icon .artwork > div{
+  width: 100px;
+  height: 100px;
+}
+.mytitle-scope .cx-pocket-controls{
+  padding: 16px 16px 0;
+  display: grid;
+  gap: 16px;
+}
+.mytitle-scope .cx-pocket-controls .cx-details{
+  justify-self: center;
+  padding: 0;
+  min-height: 25px;
+}
+.mytitle-scope .cx-lookbook{
+  max-width: 650px;
+}
+.mytitle-scope .cx-lookbook-heading{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 14px;
+}
+.mytitle-scope .cx-lookbook-heading .cx-stage{
+  height: 66px;
+  width: 330px;
+  border: 1px solid var(--line);
+  padding: 4px;
+}
+.mytitle-scope .cx-lookbook-heading .cx-stage-icon .artwork > div{
+  width: 54px;
+  height: 54px;
+}
+.mytitle-scope .cx-lookbook-heading .cx-hint{
+  text-align: right;
+}
+.mytitle-scope .cx-lookbook-heading .cx-inline-edit input{
+  font-size: 15px;
+  padding: 5px;
+}
+.mytitle-scope .cx-lookbook-heading .cx-inline-edit small{
+  display: none;
+}
+.mytitle-scope .cx-looks{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.mytitle-scope .cx-look{
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px;
+  text-align: left;
+  min-width: 0;
+}
+.mytitle-scope .cx-look:hover{
+  border-color: var(--muted);
+}
+.mytitle-scope .cx-look[aria-pressed="true"]{
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.mytitle-scope .cx-look-art{
+  height: 80px;
+  display: grid;
+  align-items: center;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.mytitle-scope .cx-look-art > .artwork{
+  height: 100%;
+}
+.mytitle-scope .cx-look-art > .artwork > div{
+  height: 100%;
+}
+.mytitle-scope .cx-look-art svg{
+  height: 100% !important;
+  width: 100%;
+}
+.mytitle-scope .cx-look > span{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  padding: 7px 5px 3px;
+  gap: 4px;
+}
+.mytitle-scope .cx-lookbook-footer{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 16px;
+  gap: 15px;
+}
+.mytitle-scope .cx-lookbook-footer .cx-details{
+  white-space: nowrap;
+}
+.mytitle-scope .cx-steps{
+  max-width: 490px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+}
+.mytitle-scope .cx-stepper{
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding-bottom: 16px;
+}
+.mytitle-scope .cx-stepper button{
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.mytitle-scope .cx-stepper button > span{
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .cx-stepper button[aria-current]{
+  color: var(--ink);
+}
+.mytitle-scope .cx-stepper button[aria-current] > span{
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.mytitle-scope .cx-steps .cx-stage{
+  height: 140px;
+}
+.mytitle-scope .cx-step-content{
+  height: 103px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+.mytitle-scope .cx-step-font{
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+.mytitle-scope .cx-step-font select,
+.mytitle-scope .cx-step-font .cx-select-button{
+  width: 200px;
+}
+.mytitle-scope .cx-step-footer{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.mytitle-scope .cx-step-footer > span{
+  color: var(--muted);
+  font-size: 10px;
+}
+.mytitle-scope .cx-step-footer > .secondary{
+  font-size: 11px;
+  min-width: 83px;
+}
+.mytitle-scope .cx-step-footer > .text-button{
+  font-size: 11px;
+}
+.mytitle-scope .cx-split{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 218px;
+  max-width: 720px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.mytitle-scope .cx-split-preview{
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--soft);
+  min-width: 0;
+}
+.mytitle-scope .cx-split .cx-stage{
+  height: 208px;
+  padding: 0;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+}
+.mytitle-scope .cx-split .cx-arrow{
+  width: 27px;
+}
+.mytitle-scope .cx-split .cx-stage-icon .artwork > div{
+  width: 156px;
+  height: 156px;
+}
+.mytitle-scope .cx-inspector{
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-left: 1px solid var(--line);
+}
+.mytitle-scope .cx-inspector .cx-swatches{
+  gap: 9px;
+  justify-content: flex-start;
+}
+.mytitle-scope .cx-label{
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+.mytitle-scope .cx-inspector .cx-details{
+  justify-content: flex-start;
+  padding: 0;
+}
+.mytitle-scope .cx-spotlight{
+  max-width: 620px;
+  position: relative;
+  padding-bottom: 10px;
+}
+.mytitle-scope .cx-spotlight .cx-stage{
+  height: 185px;
+  border-radius: 12px;
+}
+.mytitle-scope .cx-spotlight .cx-stage-icon .artwork > div{
+  width: 145px;
+  height: 145px;
+}
+.mytitle-scope .cx-dock{
+  width: max-content;
+  max-width: 100%;
+  margin: 22px auto 0;
+  position: relative;
+}
+.mytitle-scope .cx-dock-buttons{
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 7px 24px #00000009;
+}
+.mytitle-scope .cx-dock-buttons > button{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 13px;
+  font-size: 12px;
+  border-radius: 9px;
+}
+.mytitle-scope .cx-dock-buttons > button:last-child{
+  border-left: 1px solid var(--line);
+  border-radius: 0 9px 9px 0;
+  padding: 10px;
+}
+.mytitle-scope .cx-dock-buttons > button:hover,
+.mytitle-scope .cx-dock-buttons > button[aria-expanded="true"]{
+  background: var(--selection);
+}
+.mytitle-scope .cx-dock-panel{
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 330px;
+  max-width: calc(100vw - 48px);
+  z-index: 2;
+  padding: 12px 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px #0001;
+}
+.mytitle-scope .cx-dock-panel-heading{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mytitle-scope .cx-dock-panel-heading .icon-button{
+  width: 25px;
+  height: 25px;
+}
+.mytitle-scope .cx-dock-panel .cx-swatches{
+  gap: 8px;
+}
+.mytitle-scope .cx-workspace-spotlight{
+  padding-bottom: 115px;
+  min-height: 455px;
+}
+.mytitle-scope .cx-actions{
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  gap: 12px;
+}
+.mytitle-scope .cx-actions > div{
+  display: flex;
+  gap: 8px;
+}
+.mytitle-scope .cx-actions .persist{
+  font-size: 10px;
+}
+.mytitle-scope .cx-footnote{
+  max-width: 720px;
+  margin: 7px auto 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.mytitle-scope .cx-footnote a{
+  text-underline-offset: 3px;
+}
+.mytitle-scope .cx-footnote > span{
+  margin-right: auto;
+}
+.mytitle-scope .cx-overview-note{
+  font-size: 12px;
+  color: var(--muted);
+  margin: 24px 0 18px;
+}
+.mytitle-scope .cx-overview-grid{
+  display: grid;
+  gap: 20px;
+}
+.mytitle-scope .cx-overview-card{
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  background: var(--panel);
+}
+.mytitle-scope .cx-overview-card > header{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+}
+.mytitle-scope .cx-overview-card h2{
+  font-size: 14px;
+  font-weight: 500;
+}
+.mytitle-scope .cx-overview-card h2 span{
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 5px;
+}
+.mytitle-scope .cx-overview-card header p{
+  font-size: 11px;
+  color: var(--muted);
+}
+.mytitle-scope .cx-overview-pair{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.mytitle-scope .cx-mini-wrap > span{
+  font-size: 10px;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 6px;
+}
+.mytitle-scope .cx-mini-viewport{
+  height: 222px;
+  overflow: hidden;
+  position: relative;
+  border-radius: 8px;
+  background: var(--bg);
+  --mini-scale: 0.55;
+}
+.mytitle-scope .cx-mini-content{
+  width: 720px;
+  height: 395px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(var(--mini-scale));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mytitle-scope .cx-mini-viewport > button{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 8px;
+}
+.mytitle-scope .cx-mini-viewport > button > span{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 10px;
+  opacity: 0;
+}
+.mytitle-scope .cx-mini-viewport > button:hover > span,
+.mytitle-scope .cx-mini-viewport > button:focus-visible > span{
+  opacity: 1;
+}
+.mytitle-scope .cx-mini-viewport:has(> button:hover){
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mytitle-scope .cx-source-tabs{
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.mytitle-scope .cx-source-tabs button{
+  padding: 8px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.mytitle-scope .cx-source-tabs button[aria-pressed="true"]{
+  background: var(--selection);
+}
+.mytitle-scope .cx-library .symbol-search{
+  margin-bottom: 12px;
+}
+.mytitle-scope .cx-symbols{
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+}
+.mytitle-scope .cx-symbols button{
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.mytitle-scope .cx-symbols button:hover,
+.mytitle-scope .cx-symbols button[aria-pressed="true"]{
+  background: var(--selection);
+}
+.mytitle-scope .cx-symbols svg{
+  width: 26px;
+  height: 26px;
+}
+.mytitle-scope .cx-library-paging{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.mytitle-scope .cx-source-entry{
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+.mytitle-scope .cx-source-entry label{
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.mytitle-scope .cx-source-entry input{
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  padding: 10px;
+  border-radius: 7px;
+}
+.mytitle-scope .cx-source-entry button{
+  flex-shrink: 0;
+}
+.mytitle-scope .cx-emoji-grid{
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.mytitle-scope .cx-emoji-grid button{
+  font-size: 27px;
+  padding: 9px;
+  border-radius: 7px;
+}
+.mytitle-scope .cx-emoji-grid button:hover{
+  background: var(--selection);
+}
+.mytitle-scope .cx-upload{
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 40px 0;
+}
+.mytitle-scope .cx-upload small{
+  font-size: 11px;
+  color: var(--muted);
+}
+.mytitle-scope .cx-empty{
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 10px;
+}
+.mytitle-scope .cx-colour-library .colour-dots{
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 14px;
+  margin: 10px 0 24px;
+}
+.mytitle-scope .cx-colour-library .colour-dots button{
+  width: 30px;
+  height: 30px;
+  margin: auto;
+}
+.mytitle-scope .cx-custom-colours{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 10px 0 20px;
+}
+.mytitle-scope .cx-custom-colours .check,
+.mytitle-scope .cx-detail-panel .check{
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+.mytitle-scope .cx-detail-panel > .cx-control-pair{
+  margin-bottom: 24px;
+}
+@media (min-width: 1400px){.mytitle-scope .cx-page{
+    margin-top: 40px;
+  }
+.mytitle-scope .cx-workspace{
+    min-height: 400px;
+  }
+.mytitle-scope .cx-workspace-spotlight{
+    min-height: 455px;
+  }
+}
+@media (max-width: 900px){.mytitle-scope .cx-layout-nav > button{
+    gap: 7px;
+    padding: 10px;
+  }
+.mytitle-scope .cx-layout-glyph{
+    width: 25px;
+  }
+.mytitle-scope .cx-mini-viewport{
+    --mini-scale: 0.47;
+    height: 200px;
+  }
+}
+@media (max-width: 720px){.mytitle-scope .cx-page{
+    margin-top: 22px;
+    padding: 0 18px;
+  }
+.mytitle-scope .cx-intro h1{
+    font-size: 21px;
+  }
+.mytitle-scope .cx-eyebrow{
+    font-size: 9px;
+    letter-spacing: 1.2px;
+  }
+.mytitle-scope .cx-layout-nav{
+    gap: 5px;
+  }
+.mytitle-scope .cx-layout-nav > button{
+    display: grid;
+    justify-items: start;
+    padding: 9px;
+    gap: 7px;
+  }
+.mytitle-scope .cx-layout-nav > button > span:last-child{
+    font-size: 10px;
+  }
+.mytitle-scope .cx-layout-nav small{
+    display: none;
+  }
+.mytitle-scope .cx-layout-glyph{
+    height: 24px;
+  }
+.mytitle-scope .cx-active-heading{
+    margin-top: 20px;
+  }
+.mytitle-scope .cx-mini-viewport{
+    --mini-scale: 0.36;
+    height: 155px;
+  }
+.mytitle-scope .cx-overview-card{
+    padding: 12px;
+  }
+.mytitle-scope .cx-overview-card > header{
+    display: block;
+  }
+.mytitle-scope .cx-overview-card header p{
+    margin-top: 4px;
+  }
+.mytitle-scope .cx-overview-pair{
+    gap: 8px;
+  }
+}
+@media (max-width: 520px){.mytitle-scope .cx-intro{
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+.mytitle-scope .cx-intro h1{
+    font-size: 19px;
+    max-width: 220px;
+    line-height: 1.25;
+  }
+.mytitle-scope .cx-intro > .secondary{
+    font-size: 10px;
+    padding: 9px;
+    gap: 5px;
+  }
+.mytitle-scope .cx-intro > .secondary svg{
+    width: 13px;
+  }
+.mytitle-scope .cx-page{
+    padding: 0 14px;
+    margin-top: 18px;
+  }
+.mytitle-scope .cx-layout-nav > button{
+    border-radius: 7px;
+    padding: 8px 6px;
+    min-height: 63px;
+  }
+.mytitle-scope .cx-layout-nav > button > span:last-child{
+    font-size: 9px;
+    line-height: 1.2;
+  }
+.mytitle-scope .cx-layout-glyph{
+    width: 24px;
+  }
+.mytitle-scope .cx-active-heading p{
+    font-size: 11px;
+    max-width: 265px;
+  }
+.mytitle-scope .cx-active-heading h2{
+    font-size: 12px;
+  }
+.mytitle-scope .cx-workspace{
+    min-height: 365px;
+    padding: 20px 0;
+  }
+.mytitle-scope .cx-stage{
+    grid-template-columns: 29px minmax(0, 1fr) 29px;
+    padding: 6px;
+  }
+.mytitle-scope .cx-arrow{
+    width: 28px;
+  }
+.mytitle-scope .cx-pocket{
+    padding: 10px;
+  }
+.mytitle-scope .cx-pocket-controls{
+    padding: 16px 8px 0;
+  }
+.mytitle-scope .cx-swatches{
+    gap: 8px;
+  }
+.mytitle-scope .cx-swatches > button{
+    width: 23px;
+    height: 23px;
+  }
+.mytitle-scope .cx-hint{
+    font-size: 9px;
+  }
+.mytitle-scope .cx-lookbook-heading{
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+.mytitle-scope .cx-lookbook-heading .cx-stage{
+    width: 100%;
+  }
+.mytitle-scope .cx-lookbook-heading > .cx-hint{
+    display: none;
+  }
+.mytitle-scope .cx-looks{
+    gap: 7px;
+  }
+.mytitle-scope .cx-look-art{
+    height: 70px;
+  }
+.mytitle-scope .cx-look > span{
+    font-size: 9px;
+    padding: 6px 1px 2px;
+    min-height: 21px;
+  }
+.mytitle-scope .cx-lookbook-footer{
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    padding-top: 15px;
+  }
+.mytitle-scope .cx-lookbook-footer .cx-details{
+    font-size: 10px;
+    padding: 5px;
+  }
+.mytitle-scope .cx-steps{
+    padding: 13px;
+  }
+.mytitle-scope .cx-stepper{
+    padding-bottom: 13px;
+  }
+.mytitle-scope .cx-stepper button{
+    font-size: 10px;
+    gap: 4px;
+  }
+.mytitle-scope .cx-stepper button > span{
+    width: 20px;
+    height: 20px;
+  }
+.mytitle-scope .cx-steps .cx-stage{
+    height: 133px;
+  }
+.mytitle-scope .cx-split{
+    grid-template-columns: minmax(0, 1fr) 145px;
+  }
+.mytitle-scope .cx-split-preview{
+    padding: 8px;
+  }
+.mytitle-scope .cx-split .cx-stage{
+    height: 176px;
+    grid-template-columns: 20px minmax(0, 1fr) 20px;
+  }
+.mytitle-scope .cx-split .cx-arrow{
+    width: 20px;
+  }
+.mytitle-scope .cx-split .cx-arrow svg{
+    width: 16px;
+  }
+.mytitle-scope .cx-split .cx-stage-icon .artwork > div{
+    width: 95px;
+    height: 95px;
+  }
+.mytitle-scope .cx-split .cx-hint{
+    max-width: 135px;
+    margin: 8px auto 0;
+  }
+.mytitle-scope .cx-inspector{
+    padding: 12px;
+    gap: 12px;
+  }
+.mytitle-scope .cx-inspector .cx-swatches{
+    gap: 8px;
+  }
+.mytitle-scope .cx-inspector .cx-swatches > button{
+    width: 22px;
+    height: 22px;
+  }
+.mytitle-scope .cx-inspector select,
+.mytitle-scope .cx-inspector .cx-select-button{
+    font-size: 10px;
+    padding: 7px;
+  }
+.mytitle-scope .cx-inline-edit input{
+    font-size: 16px;
+  }
+.mytitle-scope .cx-split .cx-inline-edit input{
+    font-size: 12px;
+  }
+.mytitle-scope .cx-split .cx-inline-edit small{
+    font-size: 8px;
+  }
+.mytitle-scope .cx-workspace-spotlight{
+    min-height: 415px;
+    padding-bottom: 120px;
+  }
+.mytitle-scope .cx-spotlight .cx-stage{
+    height: 150px;
+  }
+.mytitle-scope .cx-dock-buttons > button{
+    font-size: 11px;
+    padding: 10px;
+  }
+.mytitle-scope .cx-dock-buttons > button svg{
+    width: 15px;
+  }
+.mytitle-scope .cx-actions{
+    padding: 12px 0;
+  }
+.mytitle-scope .cx-actions .persist{
+    max-width: 125px;
+    line-height: 1.4;
+  }
+.mytitle-scope .cx-actions .primary,
+.mytitle-scope .cx-actions .secondary{
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+.mytitle-scope .cx-footnote{
+    font-size: 9px;
+    gap: 10px;
+  }
+.mytitle-scope .cx-footnote > span{
+    width: 100%;
+  }
+.mytitle-scope .cx-mini-viewport{
+    --mini-scale: 0.22;
+    height: 115px;
+  }
+.mytitle-scope .cx-mini-viewport > button{
+    padding: 4px;
+  }
+.mytitle-scope .cx-mini-viewport > button > span{
+    opacity: 1;
+    font-size: 8px;
+    padding: 3px 5px;
+  }
+.mytitle-scope .cx-mini-content .cx-split{
+    grid-template-columns: minmax(0, 1fr) 218px;
+  }
+.mytitle-scope .cx-mini-content .cx-stage{
+    height: 150px;
+  }
+.mytitle-scope .cx-mini-content .cx-inspector{
+    padding: 20px;
+  }
+.mytitle-scope .cx-mini-content .cx-lookbook-heading .cx-stage{
+    height: 66px;
+  }
+.mytitle-scope .cx-symbols{
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+.mytitle-scope .cx-symbols svg{
+    width: 22px;
+    height: 22px;
+  }
+.mytitle-scope .cx-source-tabs button{
+    font-size: 11px;
+    padding: 8px 10px;
+  }
+.mytitle-scope .cx-colour-library .colour-dots{
+    gap: 10px;
+  }
+.mytitle-scope .cx-colour-library .colour-dots button{
+    width: 25px;
+    height: 25px;
+  }
+.mytitle-scope .cx-custom-colours{
+    gap: 12px;
+  }
+.mytitle-scope .cx-emoji-grid button{
+    font-size: 23px;
+    padding: 6px;
+  }
+}
+@media (max-width: 360px){.mytitle-scope .cx-page{
+    padding: 0 10px;
+  }
+.mytitle-scope .cx-intro h1{
+    font-size: 17px;
+  }
+.mytitle-scope .cx-eyebrow{
+    font-size: 8px;
+    letter-spacing: 0.8px;
+  }
+.mytitle-scope .cx-layout-nav{
+    gap: 4px;
+  }
+.mytitle-scope .cx-layout-nav > button{
+    padding: 7px 5px;
+  }
+.mytitle-scope .cx-layout-nav > button > span:last-child{
+    font-size: 8px;
+  }
+.mytitle-scope .cx-workspace{
+    min-height: 345px;
+    padding: 15px 0;
+  }
+.mytitle-scope .cx-workspace-spotlight{
+    min-height: 410px;
+    padding-bottom: 120px;
+  }
+.mytitle-scope .cx-pocket-controls{
+    padding: 14px 3px 0;
+  }
+.mytitle-scope .cx-swatches{
+    gap: 7px;
+  }
+.mytitle-scope .cx-swatches > button{
+    width: 21px;
+    height: 21px;
+  }
+.mytitle-scope .cx-split{
+    grid-template-columns: minmax(0, 1fr) 132px;
+  }
+.mytitle-scope .cx-inspector{
+    padding: 10px;
+  }
+.mytitle-scope .cx-inspector .cx-swatches{
+    gap: 7px;
+  }
+.mytitle-scope .cx-stepper button{
+    font-size: 9px;
+    gap: 3px;
+  }
+.mytitle-scope .cx-mini-viewport{
+    --mini-scale: 0.185;
+    height: 100px;
+  }
+.mytitle-scope .cx-dock-buttons > button{
+    padding: 9px;
+    gap: 5px;
+  }
+.mytitle-scope .cx-active-heading p{
+    max-width: 210px;
+  }
+}
+@media (prefers-reduced-motion: reduce){.mytitle-scope .cx-page *{
+    transition: none !important;
+  }
+}
+.mytitle-scope .cx-stage{
+  grid-template-rows: minmax(0, 1fr);
+}
+.mytitle-scope .cx-art-button{
+  min-height: 0;
+}
+.mytitle-scope .cx-look-art{
+  position: relative;
+}
+.mytitle-scope .cx-look-art > .artwork{
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+.mytitle-scope .cx-look-art > .artwork > div{
+  position: absolute;
+  inset: 0;
+}
+.mytitle-scope .cx-page{
+  margin-top: 20px;
+}
+.mytitle-scope .cx-intro{
+  margin-bottom: 16px;
+}
+.mytitle-scope .cx-eyebrow{
+  display: block;
+  line-height: 1.3;
+}
+.mytitle-scope .cx-intro h1{
+  font-size: 22px;
+  line-height: 1.3;
+  margin-top: 4px;
+}
+.mytitle-scope .cx-layout-nav > button{
+  min-height: 61px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.mytitle-scope .cx-active-heading{
+  margin-top: 18px;
+}
+.mytitle-scope .cx-workspace{
+  min-height: 365px;
+  padding: 16px 0;
+}
+.mytitle-scope .cx-steps .cx-stage{
+  height: 125px;
+}
+.mytitle-scope .cx-spotlight .cx-stage{
+  height: 160px;
+}
+.mytitle-scope .cx-workspace-spotlight{
+  min-height: 400px;
+  padding-bottom: 110px;
+}
+@media (max-width: 520px){.mytitle-scope .cx-page{
+    margin-top: 16px;
+  }
+.mytitle-scope .cx-intro h1{
+    font-size: 19px;
+  }
+.mytitle-scope .cx-layout-nav > button{
+    min-height: 63px;
+    padding: 8px 6px;
+  }
+.mytitle-scope .cx-workspace{
+    min-height: 345px;
+    padding: 14px 0;
+  }
+.mytitle-scope .cx-workspace-spotlight{
+    min-height: 405px;
+    padding-bottom: 118px;
+  }
+.mytitle-scope .cx-spotlight .cx-stage{
+    height: 150px;
+  }
+}
+@media (max-width: 360px){.mytitle-scope .cx-intro h1{
+    font-size: 17px;
+  }
+}
+.mytitle-scope .cx-stage-title .cx-art-button > .artwork{
+  display: block;
+}
+.mytitle-scope .cx-stage-title .cx-art-button .artwork > div{
+  position: absolute;
+  inset: 0;
+}
+.mytitle-scope .cx-stage-title .cx-art-button .artwork svg{
+  height: 100%;
+}
+.mytitle-scope .cx-actions > div{
+  margin-left: auto;
+}
+@media (max-width: 520px){.mytitle-scope .cx-swatches > button{
+    width: 25px;
+    height: 25px;
+  }
+.mytitle-scope .cx-inspector .cx-swatches > button{
+    width: 24px;
+    height: 24px;
+  }
+}
+@media (max-width: 360px){.mytitle-scope .cx-swatches{
+    gap: 6px;
+  }
+.mytitle-scope .cx-swatches > button{
+    width: 24px;
+    height: 24px;
+  }
+}
+.mytitle-scope .wild-studio{
+  --w-ink: #292333;
+  --w-muted: #746a7c;
+  --w-paper: #fffefa;
+  --w-soft: #f1ede8;
+  --w-line: #ded7df;
+  --w-accent: #ae3f27;
+  --w-accent-bg: #fce2d7;
+  --w-purple: #725294;
+  max-width: 1200px;
+  padding: 0 30px 22px;
+  margin: auto;
+  color: var(--w-ink);
+}
+.dark .mytitle-scope .wild-studio{
+  --w-ink: #f4eff8;
+  --w-muted: #b8a9c2;
+  --w-paper: #282130;
+  --w-soft: #342a3d;
+  --w-line: #514259;
+  --w-accent: #ffb696;
+  --w-accent-bg: #4f302f;
+  --w-purple: #c6ace6;
+}
+.mytitle-scope .wild-studio button,
+.mytitle-scope .wild-studio input,
+.mytitle-scope .wild-studio select{
+  font-family: inherit;
+}
+.mytitle-scope .wild-studio button{
+  transition:
+    background 0.15s,
+    transform 0.15s,
+    box-shadow 0.15s;
+}
+.mytitle-scope .wild-studio button:focus-visible{
+  outline: 3px solid #5085cf;
+  outline-offset: 4px;
+}
+.mytitle-scope .wild-studio button:hover:not(:disabled){
+  filter: brightness(0.97);
+}
+.mytitle-scope .wild-studio h2{
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: -1.8px;
+  line-height: 1.06;
+}
+.mytitle-scope .wild-studio h2 em,
+.mytitle-scope .w-showroom-intro h1 em{
+  font-family: Georgia, serif;
+  font-weight: 400;
+}
+.mytitle-scope .wild-studio p{
+  color: var(--w-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.mytitle-scope .w-kicker{
+  display: block;
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.mytitle-scope .w-round-bar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 0 24px;
+  font-size: 11px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-round-bar > a,
+.mytitle-scope .w-round-bar > span,
+.mytitle-scope .w-round-bar > button{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mytitle-scope .w-round-bar > a{
+  text-decoration: none;
+}
+.mytitle-scope .w-round-bar > span{
+  letter-spacing: 1px;
+  font-size: 10px;
+}
+.mytitle-scope .w-round-bar > button{
+  padding: 0;
+}
+.mytitle-scope .w-showroom-intro{
+  padding: 34px 0 45px;
+  position: relative;
+}
+.mytitle-scope .w-showroom-intro .w-kicker{
+  color: var(--w-accent);
+}
+.mytitle-scope .w-showroom-intro h1{
+  font-size: clamp(36px, 5.1vw, 65px);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -2.8px;
+  max-width: 800px;
+}
+.mytitle-scope .w-showroom-intro h1 em{
+  color: var(--w-accent);
+}
+.mytitle-scope .w-showroom-intro p{
+  margin-top: 22px;
+  font-size: 16px;
+}
+.mytitle-scope .w-showroom-bubble{
+  position: absolute;
+  right: 45px;
+  top: 32px;
+  font-size: 198px;
+  line-height: 1;
+  color: #efafc7;
+  transform: rotate(12deg);
+}
+.mytitle-scope .w-showroom-bubble > span{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: #442c3b;
+  background: #efafc7;
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  margin: auto;
+  transform: rotate(-12deg);
+}
+.mytitle-scope .w-showroom-section{
+  margin-bottom: 42px;
+}
+.mytitle-scope .w-showroom-section > header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0 18px;
+}
+.mytitle-scope .w-showroom-section > header h2{
+  font-size: 24px;
+  letter-spacing: -0.6px;
+}
+.mytitle-scope .w-showroom-section > header > span{
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-experiment-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.mytitle-scope .w-experiment-card{
+  padding: 0;
+  text-align: left;
+  border: 1px solid var(--w-line);
+  border-radius: 18px;
+  background: var(--w-paper);
+  overflow: hidden;
+}
+.mytitle-scope .w-experiment-card:hover{
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px #20152610;
+}
+.mytitle-scope .w-experiment-preview{
+  position: relative;
+  height: 205px;
+  padding: 30px 22px 24px;
+  overflow: hidden;
+  color: #3c3042;
+}
+.mytitle-scope .w-preview-number{
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.mytitle-scope .w-experiment-preview > .w-art{
+  height: 108px;
+  border-radius: 12px;
+  background: var(--art-surface);
+  box-shadow: 3px 4px 0 #30223812;
+}
+.mytitle-scope .w-experiment-preview > .w-art-icon{
+  width: 115px;
+  margin: auto;
+  background: transparent;
+  box-shadow: none;
+}
+.mytitle-scope .w-preview-glyph{
+  position: absolute;
+  right: -6px;
+  top: -25px;
+  font-size: 130px;
+  line-height: 1;
+  opacity: 0.14;
+  pointer-events: none;
+}
+.mytitle-scope .w-preview-controls{
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 9px;
+}
+.mytitle-scope .w-preview-controls > span{
+  background: #fff9;
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+.mytitle-scope .w-teaser-workshop .w-experiment-preview > .w-art{
+  transform: rotate(-5deg);
+  border-radius: 0;
+  box-shadow: 7px 8px 0 #30223820;
+}
+.mytitle-scope .w-teaser-remix .w-experiment-preview{
+  background: #40364e !important;
+  color: #eee3fe;
+}
+.mytitle-scope .w-teaser-remix .w-experiment-preview > .w-art{
+  background: var(--art-surface);
+  border: 7px solid #1c1926;
+  border-radius: 17px;
+}
+.mytitle-scope .w-teaser-remix .w-preview-controls > span{
+  background: #ffffff20;
+}
+.mytitle-scope .w-preview-duel{
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  height: 108px;
+}
+.mytitle-scope .w-preview-duel > .w-art{
+  height: 100%;
+  width: 50%;
+  background: var(--art-surface);
+  border-radius: 10px;
+}
+.mytitle-scope .w-preview-duel > span{
+  font-size: 12px;
+  font-family: Georgia, serif;
+  font-style: italic;
+}
+.mytitle-scope .w-teaser-world .w-experiment-preview > .w-art{
+  border-top: 18px solid #fff9;
+  border-radius: 8px;
+}
+.mytitle-scope .w-experiment-description{
+  padding: 18px;
+}
+.mytitle-scope .w-experiment-description h3{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 19px;
+  font-weight: 500;
+  margin: 0 0 8px;
+  letter-spacing: -0.5px;
+}
+.mytitle-scope .w-experiment-description p{
+  font-size: 12px;
+  min-height: 38px;
+}
+.mytitle-scope .w-experiment-description small{
+  display: block;
+  margin-top: 14px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-showroom-end{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 15px 0 32px;
+}
+.mytitle-scope .w-showroom-end svg{
+  color: var(--w-accent);
+}
+.mytitle-scope .w-showroom-end p{
+  font-size: 13px;
+}
+.mytitle-scope .w-experiment-nav{
+  display: flex;
+  gap: 5px;
+  padding: 6px;
+  background: var(--w-paper);
+  border: 1px solid var(--w-line);
+  border-radius: 13px;
+}
+.mytitle-scope .w-experiment-nav > button{
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  padding: 12px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  justify-content: center;
+}
+.mytitle-scope .w-experiment-nav > button > span{
+  font-size: 9px;
+  opacity: 0.65;
+}
+.mytitle-scope .w-experiment-nav > button[aria-current]{
+  background: var(--w-ink);
+  color: var(--w-paper);
+}
+.mytitle-scope .w-experiment-nav > .w-overview-button{
+  flex: 0 0 85px;
+  border-right: 1px solid var(--w-line);
+  border-radius: 8px 0 0 8px;
+}
+.mytitle-scope .w-experiment-nav > .w-overview-button span{
+  font-size: 11px;
+  opacity: 1;
+}
+.mytitle-scope .w-current-toolbar{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 1px;
+  font-size: 10px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-current-toolbar > span{
+  letter-spacing: 0.6px;
+}
+.mytitle-scope .w-current-toolbar b{
+  margin: 0 8px;
+  font-weight: 400;
+}
+.mytitle-scope .w-current-toolbar > div{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mytitle-scope .w-current-toolbar button{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 32px;
+  padding: 5px;
+}
+.mytitle-scope .w-current-toolbar .w-settings-button{
+  font-size: 11px;
+  padding: 5px 8px;
+  border: 1px solid var(--w-line);
+  border-radius: 7px;
+}
+.mytitle-scope .w-builder{
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+}
+.mytitle-scope .w-art{
+  position: relative;
+  height: 180px;
+  min-width: 0;
+}
+.mytitle-scope .w-art > .artwork,
+.mytitle-scope .w-art > .artwork > div{
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+.mytitle-scope .w-art > .artwork > div > svg{
+  height: 100%;
+  width: 100%;
+}
+.mytitle-scope .w-art-icon > .artwork{
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, var(--icon-size, 180px));
+}
+.mytitle-scope .w-name{
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.mytitle-scope .w-name > span{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+}
+.mytitle-scope .w-name input{
+  background: var(--w-paper);
+  border: 1px solid var(--w-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 19px;
+  letter-spacing: -0.5px;
+  width: 100%;
+  min-width: 0;
+  color: var(--w-ink);
+}
+.mytitle-scope .w-field{
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-field select{
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--w-line);
+  border-radius: 8px;
+  background: var(--w-paper);
+  color: var(--w-ink);
+  font-size: 13px;
+}
+.mytitle-scope .w-field-label{
+  font-size: 11px;
+  display: block;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-swatches{
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.mytitle-scope .w-swatches > button{
+  width: 29px;
+  height: 29px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--w-paper);
+  box-shadow: 0 0 0 1px var(--w-line);
+  color: white;
+  position: relative;
+}
+.mytitle-scope .w-swatches > button svg{
+  filter: drop-shadow(0 1px 1px #0009);
+}
+.mytitle-scope .w-swatches > button[aria-pressed="true"]{
+  box-shadow: 0 0 0 2px var(--w-ink);
+}
+.mytitle-scope .w-swatches > button:hover{
+  transform: translateY(-3px);
+}
+.mytitle-scope .w-swatches > .w-all-colours{
+  color: var(--w-ink);
+  background: var(--w-soft);
+  border: none;
+  box-shadow: none;
+}
+.mytitle-scope .w-all-colours svg{
+  filter: none !important;
+}
+.mytitle-scope .w-text-button{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 8px 0;
+  color: inherit;
+}
+.mytitle-scope .w-action{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 13px 20px;
+  border-radius: 10px;
+  background: var(--w-ink);
+  color: var(--w-paper);
+  font-size: 13px;
+  font-weight: 500;
+}
+.mytitle-scope .w-badge{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  padding: 7px 10px;
+  border-radius: 20px;
+  background: var(--w-paper);
+  color: var(--w-ink);
+}
+.mytitle-scope .w-section-label{
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0 0 15px;
+}
+.mytitle-scope .w-section-label > span{
+  font-size: 9px;
+  letter-spacing: 0.7px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-range{
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+}
+.mytitle-scope .w-range > span{
+  display: flex;
+  justify-content: space-between;
+}
+.mytitle-scope .w-range output{
+  opacity: 0.6;
+}
+.mytitle-scope .w-range input{
+  width: 100%;
+  margin: 0;
+  accent-color: var(--w-purple);
+}
+.mytitle-scope .w-range > small{
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-choice{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--w-soft);
+  border: 1px solid var(--w-line);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.mytitle-scope .w-choice[aria-pressed="true"]{
+  border-color: var(--w-purple);
+}
+.mytitle-scope .w-check{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.mytitle-scope .w-lock{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px;
+  border-radius: 7px;
+  font-size: 11px;
+  width: 100%;
+}
+.mytitle-scope .w-lock[aria-pressed="true"]{
+  background: #cce58c;
+  color: #29351e;
+}
+.mytitle-scope .w-save-bar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 20px 0;
+}
+.mytitle-scope .w-save-bar > span{
+  font-size: 11px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-save-bar small{
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+}
+.mytitle-scope .w-save-bar > div{
+  display: flex;
+  gap: 10px;
+}
+.mytitle-scope .w-save-button,
+.mytitle-scope .w-export-button{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 11px;
+  padding: 13px 18px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.mytitle-scope .w-save-button{
+  background: var(--w-paper);
+  border: 1px solid var(--w-line);
+}
+.mytitle-scope .w-export-button{
+  background: var(--w-ink);
+  color: var(--w-paper);
+}
+.mytitle-scope .w-footer{
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 0;
+  border-top: 1px solid var(--w-line);
+  font-size: 10px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-footer > span{
+  margin-right: auto;
+}
+.mytitle-scope .w-footer > button{
+  padding: 0;
+}
+.mytitle-scope .w-footer a{
+  text-decoration: none;
+}
+.mytitle-scope .w-research p{
+  font-size: 13px;
+  line-height: 1.7;
+}
+.mytitle-scope .w-research ul{
+  padding-left: 18px;
+}
+.mytitle-scope .w-research li{
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 12px 0;
+}
+.mytitle-scope .w-research a{
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mytitle-scope .w-vibe{
+  padding: 30px;
+}
+.mytitle-scope .w-vibe-intro{
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 25px;
+  margin-bottom: 28px;
+}
+.mytitle-scope .w-vibe-intro p{
+  margin-top: 13px;
+  font-size: 13px;
+}
+.mytitle-scope .w-vibe-intro > .w-name{
+  width: 300px;
+}
+.mytitle-scope .w-vibe-body{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.mytitle-scope .w-mood-grid{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.mytitle-scope .w-mood{
+  display: flex;
+  position: relative;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  min-height: 92px;
+  border: 2px solid transparent;
+  border-radius: 13px;
+  text-align: left;
+  color: #382b37;
+}
+.mytitle-scope .w-mood-0{
+  background: #fff0c9;
+}
+.mytitle-scope .w-mood-1{
+  background: #e2dbfc;
+}
+.mytitle-scope .w-mood-2{
+  background: #f8d4c5;
+}
+.mytitle-scope .w-mood-3{
+  background: #f6cfdf;
+}
+.mytitle-scope .w-mood-4{
+  background: #dce6c1;
+}
+.mytitle-scope .w-mood-5{
+  background: #e1ece9;
+}
+.mytitle-scope .w-mood[aria-pressed="true"]{
+  border-color: #443440;
+  box-shadow: 3px 3px 0 #443440;
+}
+.mytitle-scope .w-mood > b{
+  font-size: 29px;
+  font-weight: 400;
+}
+.mytitle-scope .w-mood > span{
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.mytitle-scope .w-mood small{
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.75;
+  margin-top: 5px;
+}
+.mytitle-scope .w-mood > svg{
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  width: 12px;
+}
+.mytitle-scope .w-vibe-result{
+  border-radius: 18px;
+  background: var(--w-soft);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.mytitle-scope .w-vibe-result > .w-art{
+  width: 100%;
+  height: 170px;
+}
+.mytitle-scope .w-vibe-colours{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-size: 10px;
+}
+.mytitle-scope .w-font-auditions{
+  margin-top: 27px;
+}
+.mytitle-scope .w-font-auditions > div{
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 9px;
+}
+.mytitle-scope .w-font-auditions button{
+  border: 1px solid var(--w-line);
+  border-radius: 10px;
+  padding: 6px;
+  background: var(--w-paper);
+  min-width: 0;
+}
+.mytitle-scope .w-font-auditions button[aria-pressed="true"]{
+  border-color: var(--w-purple);
+  box-shadow: 0 0 0 1px var(--w-purple);
+}
+.mytitle-scope .w-font-auditions .w-art{
+  height: 60px;
+  background: var(--art-surface);
+  border-radius: 6px;
+}
+.mytitle-scope .w-font-auditions button > span{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+  font-size: 9px;
+  padding: 8px 2px 3px;
+}
+.mytitle-scope .w-creatures{
+  padding: 30px;
+  background: var(--w-paper);
+}
+.mytitle-scope .w-creatures > header{
+  text-align: center;
+  margin-bottom: 26px;
+}
+.mytitle-scope .w-creatures > header p{
+  margin-top: 12px;
+}
+.mytitle-scope .w-creature-layout{
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 25px;
+}
+.mytitle-scope .w-pet-grid{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 6px;
+}
+.mytitle-scope .w-pet-grid > button{
+  padding: 0;
+  font-size: 9px;
+  text-transform: capitalize;
+}
+.mytitle-scope .w-pet-cell{
+  display: grid;
+  place-items: center;
+  height: 57px;
+  border-radius: 13px;
+  color: #4e3b46;
+  border: 2px solid transparent;
+}
+.mytitle-scope .w-pet-cell svg{
+  width: 34px;
+  height: 34px;
+}
+.mytitle-scope .w-pet-0{
+  background: #f0d6e4;
+}
+.mytitle-scope .w-pet-1{
+  background: #d6e7dc;
+}
+.mytitle-scope .w-pet-2{
+  background: #f7e1bb;
+}
+.mytitle-scope .w-pet-3{
+  background: #e0ddf2;
+}
+.mytitle-scope .w-pet-grid > button[aria-pressed="true"] .w-pet-cell{
+  border-color: #4e3b46;
+  transform: rotate(-4deg);
+}
+.mytitle-scope .w-pet-grid > button > span:last-child{
+  display: block;
+  margin-top: 5px;
+}
+.mytitle-scope .w-creature-selection > .w-text-button{
+  margin-top: 14px;
+  font-size: 11px;
+}
+.mytitle-scope .w-character-card{
+  position: relative;
+  text-align: center;
+  background: #f9dbb2;
+  color: #4b342d;
+  border: 1px solid #dfb585;
+  border-radius: 28px 28px 13px 13px;
+  padding: 23px 15px;
+  box-shadow: 4px 5px 0 #e6c7a1;
+  transform: rotate(2deg);
+  align-self: center;
+}
+.mytitle-scope .w-character-stamp{
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+.mytitle-scope .w-character-card .w-art{
+  height: 175px;
+  --icon-size: 175px;
+  margin: 12px auto;
+}
+.mytitle-scope .w-character-card h3{
+  font-family: Georgia, serif;
+  font-size: 25px;
+  font-weight: 400;
+  margin: 0 0 5px;
+  text-transform: capitalize;
+}
+.mytitle-scope .w-character-card > span:not(:first-child){
+  font-size: 11px;
+}
+.mytitle-scope .w-character-stars{
+  margin-top: 15px;
+  font-size: 19px;
+  letter-spacing: 6px;
+}
+.mytitle-scope .w-outfit-list{
+  display: grid;
+  gap: 7px;
+  margin-bottom: 22px;
+}
+.mytitle-scope .w-outfit-list > button{
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--w-soft);
+  border-radius: 10px;
+  padding: 7px 10px;
+  text-align: left;
+}
+.mytitle-scope .w-outfit-list .w-art{
+  height: 44px;
+  width: 44px;
+  flex-shrink: 0;
+  --icon-size: 44px;
+}
+.mytitle-scope .w-outfit-list > button > span{
+  font-size: 12px;
+  flex: 1;
+}
+.mytitle-scope .w-outfit-list small{
+  display: block;
+  color: var(--w-muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.mytitle-scope .w-radio{
+  background: #393244;
+  color: #fff4da;
+  border: 1px solid #231c2b;
+  padding: 26px 30px;
+  box-shadow: 0 6px 0 #241c2c;
+}
+.mytitle-scope .w-radio > header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 22px;
+}
+.mytitle-scope .w-radio h2{
+  font-size: 35px;
+}
+.mytitle-scope .w-radio .w-name{
+  max-width: 400px;
+  margin-bottom: 18px;
+}
+.mytitle-scope .w-radio .w-name input{
+  border: 1px solid #75677f;
+  background: #51465e;
+  color: #fff4da;
+}
+.mytitle-scope .w-radio-display{
+  background: #24212b;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid #65576e;
+  box-shadow: inset 0 3px 5px #0008;
+}
+.mytitle-scope .w-frequency{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 8px;
+  letter-spacing: 1.7px;
+  padding: 3px 5px 13px;
+  color: #dddfad;
+}
+.mytitle-scope .w-frequency > div{
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  height: 34px;
+}
+.mytitle-scope .w-frequency i{
+  width: 1px;
+  background: #a7a88e;
+}
+.mytitle-scope .w-radio-display > .w-art{
+  height: 143px;
+  border-radius: 9px;
+  background: var(--art-surface);
+}
+.mytitle-scope .w-live-label{
+  display: block;
+  margin-top: 11px;
+  font-size: 8px;
+  letter-spacing: 2px;
+  text-align: center;
+  color: #c2b5ca;
+}
+.mytitle-scope .w-remix-tracks{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+.mytitle-scope .w-remix-tracks > div{
+  position: relative;
+  padding: 10px;
+  border: 1px solid #6a5d75;
+  border-radius: 11px;
+  background: #4a4055;
+}
+.mytitle-scope .w-track-no{
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  font-size: 9px;
+  color: #bdaccb;
+}
+.mytitle-scope .w-track-choice{
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: center;
+  justify-content: center;
+  min-height: 105px;
+  width: 100%;
+}
+.mytitle-scope .w-track-choice b{
+  text-transform: capitalize;
+  font-size: 14px;
+  font-weight: 500;
+}
+.mytitle-scope .w-track-choice small{
+  font-size: 9px;
+  opacity: 0.65;
+}
+.mytitle-scope .w-colour-stack{
+  display: flex;
+  justify-content: center;
+}
+.mytitle-scope .w-colour-stack i{
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #ffffff90;
+  margin-left: -4px;
+}
+.mytitle-scope .w-radio > footer{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 23px;
+}
+.mytitle-scope .w-radio footer > div small{
+  display: block;
+  font-size: 10px;
+  color: #cbbfd3;
+  margin-top: 10px;
+}
+.mytitle-scope .w-big-remix{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  background: #d3e795;
+  color: #293323;
+  border-radius: 9px;
+  border: 1px solid #efffbf;
+  box-shadow: 0 4px 0 #19221b;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.mytitle-scope .w-big-remix:active{
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #19221b;
+}
+.mytitle-scope .w-radio footer > .w-text-button{
+  font-size: 11px;
+}
+.mytitle-scope .w-machine{
+  background: #ffce90;
+  color: #57382b;
+  border: 2px solid #794e3a;
+  padding: 28px;
+  border-radius: 30px;
+  box-shadow: 0 6px 0 #794e3a;
+}
+.mytitle-scope .w-machine-top{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 28px;
+}
+.mytitle-scope .w-machine-top h2{
+  font-size: 50px;
+}
+.mytitle-scope .w-machine-top p{
+  color: #79523a;
+  margin-top: 14px;
+}
+.mytitle-scope .w-machine-window{
+  border: 8px solid #efb87d;
+  box-shadow:
+    0 0 0 2px #a4714c,
+    inset 0 3px 8px #47322416;
+  border-radius: 55px 55px 18px 18px;
+  background: #fff0d7;
+  text-align: center;
+  padding: 18px;
+}
+.mytitle-scope .w-machine-window > span,
+.mytitle-scope .w-machine-window > small{
+  display: block;
+  font-size: 8px;
+  letter-spacing: 1.4px;
+}
+.mytitle-scope .w-machine-window .w-art{
+  height: 150px;
+  --icon-size: 150px;
+  margin: 10px 0;
+}
+.mytitle-scope .w-machine-reels{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 25px;
+}
+.mytitle-scope .w-reel{
+  background: #ffe9cb;
+  border: 1px solid #b98a62;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 3px 0 #bd8b5e;
+}
+.mytitle-scope .w-reel-label{
+  display: block;
+  font-size: 8px;
+  letter-spacing: 1.3px;
+}
+.mytitle-scope .w-reel-choice{
+  width: 100%;
+  min-height: 145px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 10px 0;
+}
+.mytitle-scope .w-reel-choice b{
+  font-size: 12px;
+  text-transform: capitalize;
+  font-weight: 500;
+}
+.mytitle-scope .w-reel-symbol{
+  height: 57px;
+  width: 57px;
+  display: block;
+}
+.mytitle-scope .w-reel-symbol > svg{
+  height: 100%;
+  width: 100%;
+}
+.mytitle-scope .w-reel-choice .w-art{
+  height: 57px;
+  width: 100%;
+  --icon-size: 57px;
+}
+.mytitle-scope .w-reel-choice .w-colour-stack i{
+  height: 42px;
+  width: 42px;
+  border-color: #ffe9cb;
+}
+.mytitle-scope .w-reel-next{
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  opacity: 0.7;
+}
+.mytitle-scope .w-machine footer{
+  text-align: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 13px 22px;
+  margin-top: 26px;
+}
+.mytitle-scope .w-match-title{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  min-height: 44px;
+  margin-top: 18px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.mytitle-scope .w-match-title input{
+  width: 18px;
+  height: 18px;
+  accent-color: currentColor;
+}
+.mytitle-scope .w-match-title small{
+  display: block;
+  font-size: 11px;
+}
+.mytitle-scope .w-machine-button{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding: 16px 28px;
+  border-radius: 13px;
+  background: #9f392d;
+  color: #fff4e2;
+  border: 1px solid #7c2b24;
+  box-shadow: 0 5px 0 #6d2b21;
+  font-size: 16px;
+  font-weight: 600;
+}
+.mytitle-scope .w-machine-button:active{
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 #6d2b21;
+}
+.mytitle-scope .w-machine footer > span{
+  font-size: 10px;
+}
+.mytitle-scope .w-machine footer > .w-text-button{
+  width: 100%;
+  padding: 0;
+}
+.dark .mytitle-scope .w-machine{
+  background: #49334b;
+  color: #ffdfc5;
+  border-color: #8e697e;
+  box-shadow: 0 6px 0 #6d4f68;
+}
+.dark .mytitle-scope .w-machine-top p{
+  color: #d1b4cb;
+}
+.dark .mytitle-scope .w-machine-window{
+  background: #292231;
+  border-color: #725367;
+  box-shadow: 0 0 0 2px #a57d83;
+}
+.dark .mytitle-scope .w-reel{
+  background: #60435c;
+  border-color: #9e768f;
+  box-shadow: 0 3px 0 #2f2232;
+}
+.dark .mytitle-scope .w-machine-button{
+  background: #f4b58f;
+  color: #39232d;
+  border-color: #ffcfaf;
+  box-shadow: 0 5px 0 #a06469;
+}
+.mytitle-scope .w-press{
+  border-radius: 3px;
+}
+.mytitle-scope .w-press-masthead{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 17px 24px;
+  border-bottom: 2px solid var(--w-ink);
+}
+.mytitle-scope .w-press-masthead .w-kicker{
+  margin: 0;
+}
+.mytitle-scope .w-press-masthead > span:last-child{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+.mytitle-scope .w-press-layout{
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+}
+.mytitle-scope .w-press-layout > aside{
+  padding: 26px;
+  border-right: 1px solid var(--w-line);
+}
+.mytitle-scope .w-press h2{
+  font-size: 34px;
+  letter-spacing: -1.3px;
+  margin-bottom: 23px;
+}
+.mytitle-scope .w-tool-tabs{
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  background: var(--w-soft);
+  margin: 20px 0;
+  border-radius: 7px;
+}
+.mytitle-scope .w-tool-tabs > button{
+  flex: 1;
+  padding: 8px 4px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.mytitle-scope .w-tool-tabs > button[aria-pressed="true"]{
+  background: var(--w-ink);
+  color: var(--w-paper);
+}
+.mytitle-scope .w-press-tools{
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 285px;
+}
+.mytitle-scope .w-press-tools p{
+  font-size: 11px;
+}
+.mytitle-scope .w-ink-options{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.mytitle-scope .w-ink-options > button{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  text-align: left;
+  border: 1px solid var(--w-line);
+  padding: 8px;
+  font-size: 10px;
+  border-radius: 5px;
+}
+.mytitle-scope .w-ink-options > button[aria-pressed="true"]{
+  background: var(--w-accent-bg);
+  color: var(--w-accent);
+  border-color: var(--w-accent);
+}
+.mytitle-scope .w-print-bed{
+  background: var(--w-soft);
+  background-image: radial-gradient(var(--w-line) 1px, transparent 1px);
+  background-size: 13px 13px;
+  padding: 38px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.mytitle-scope .w-paper{
+  position: relative;
+  box-shadow:
+    2px 3px 0 #30282f16,
+    8px 12px 25px #30282f12;
+  padding: 30px 16px;
+  transform: rotate(-3deg);
+}
+.mytitle-scope .w-paper > .w-art{
+  height: 265px;
+}
+.mytitle-scope .w-registration{
+  position: absolute;
+  color: #7778;
+  font-size: 19px;
+  line-height: 1;
+}
+.mytitle-scope .w-registration-top{
+  top: 6px;
+  left: 8px;
+}
+.mytitle-scope .w-registration-bottom{
+  bottom: 7px;
+  right: 8px;
+}
+.mytitle-scope .w-print-caption{
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 30px;
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-press > footer{
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--w-line);
+  padding: 17px 24px;
+  font-size: 11px;
+}
+.mytitle-scope .w-press footer > .w-text-button{
+  margin-left: auto;
+  font-size: 10px;
+}
+.mytitle-scope .w-shape-choices{
+  display: grid;
+  gap: 7px;
+}
+.mytitle-scope .w-shape-choices button{
+  border: 1px solid var(--w-line);
+  padding: 9px;
+  font-size: 11px;
+  border-radius: 7px;
+  text-align: left;
+}
+.mytitle-scope .w-shape-choices button[aria-pressed="true"]{
+  background: var(--w-accent-bg);
+  color: var(--w-accent);
+}
+.mytitle-scope .w-paper-swatches{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.mytitle-scope .w-paper-swatches button{
+  height: 53px;
+  border: 1px solid var(--w-line);
+  border-radius: 3px;
+}
+.mytitle-scope .w-paper-swatches button[aria-pressed="true"]{
+  outline: 2px solid var(--w-ink);
+  outline-offset: 2px;
+}
+.mytitle-scope .w-workshop{
+  padding: 28px;
+}
+.mytitle-scope .w-workshop > header{
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+.mytitle-scope .w-workshop > header p{
+  font-size: 13px;
+}
+.mytitle-scope .w-workshop-layout{
+  display: grid;
+  grid-template-columns: 1fr 200px 280px;
+  gap: 22px;
+  align-items: center;
+}
+.mytitle-scope .w-assembly{
+  background: var(--w-soft);
+  border-radius: 20px;
+  padding: 20px 16px;
+  text-align: center;
+  min-width: 0;
+}
+.mytitle-scope .w-assembly > .w-art{
+  height: 208px;
+  --icon-size: 208px;
+  margin: 13px auto 21px;
+}
+.mytitle-scope .w-mini-proof{
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 22px;
+}
+.mytitle-scope .w-mini-proof > div{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+.mytitle-scope .w-mini-proof small{
+  font-size: 9px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-layer-stack{
+  display: grid;
+  gap: 13px;
+}
+.mytitle-scope .w-layer-stack > button{
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+  padding: 13px 10px;
+  border: 1px solid var(--w-line);
+  border-radius: 10px;
+  background: var(--w-paper);
+  box-shadow: 0 4px 0 var(--w-soft);
+}
+.mytitle-scope .w-layer-stack > button[aria-pressed="true"]{
+  border-color: var(--w-purple);
+  background: var(--w-soft);
+  box-shadow: 0 4px 0 var(--w-purple);
+}
+.mytitle-scope .w-layer-stack > button > span:nth-child(2){
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+.mytitle-scope .w-layer-stack small{
+  font-size: 8px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-layer-stack b{
+  font-size: 12px;
+  font-weight: 500;
+}
+.mytitle-scope .w-layer-sample{
+  height: 40px;
+  width: 40px;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .w-layer-sample > svg{
+  width: 31px;
+  height: 31px;
+}
+.mytitle-scope .w-layer-sample-texture > span{
+  font-size: 35px;
+  letter-spacing: 3px;
+  line-height: 1;
+  color: var(--w-purple);
+}
+.mytitle-scope .w-layer-sample-base > span{
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  border: 1px solid var(--w-line);
+  transform: rotate(-9deg);
+}
+.mytitle-scope .w-layer-controls{
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+  border-left: 1px solid var(--w-line);
+  padding-left: 22px;
+}
+.mytitle-scope .w-layer-controls h3{
+  font-size: 16px;
+  margin: 0;
+  font-weight: 500;
+}
+.mytitle-scope .w-symbol-quick{
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.mytitle-scope .w-symbol-quick button{
+  height: 43px;
+  border: 1px solid var(--w-line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+.mytitle-scope .w-symbol-quick svg{
+  width: 27px;
+  height: 27px;
+}
+.mytitle-scope .w-symbol-quick button[aria-pressed="true"]{
+  background: var(--w-accent-bg);
+  border-color: var(--w-accent);
+}
+.mytitle-scope .w-pattern-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.mytitle-scope .w-pattern-grid button{
+  border: 1px solid var(--w-line);
+  padding: 6px;
+  border-radius: 9px;
+  font-size: 9px;
+  text-transform: capitalize;
+}
+.mytitle-scope .w-pattern-grid button[aria-pressed="true"]{
+  border-color: var(--w-purple);
+}
+.mytitle-scope .w-pattern-grid .w-art{
+  height: 51px;
+  --icon-size: 51px;
+  margin-bottom: 6px;
+}
+.mytitle-scope .w-base-shapes{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.mytitle-scope .w-base-shapes button{
+  display: grid;
+  place-items: center;
+  gap: 9px;
+  padding: 10px 5px;
+  border: 1px solid var(--w-line);
+  border-radius: 8px;
+  font-size: 9px;
+}
+.mytitle-scope .w-base-shapes button[aria-pressed="true"]{
+  border-color: var(--w-purple);
+  background: var(--w-soft);
+}
+.mytitle-scope .w-base-shapes i{
+  display: block;
+  width: 29px;
+  height: 29px;
+  background: var(--w-purple);
+}
+.mytitle-scope .w-base-rounded{
+  border-radius: 5px;
+}
+.mytitle-scope .w-base-circle{
+  border-radius: 50%;
+}
+.mytitle-scope .w-base-squircle{
+  border-radius: 35%;
+}
+.mytitle-scope .w-base-hexagon{
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.mytitle-scope .w-base-diamond{
+  transform: rotate(45deg) scale(0.75);
+}
+.mytitle-scope .w-versus{
+  padding: 30px;
+  background: var(--w-soft);
+}
+.mytitle-scope .w-versus > header{
+  text-align: center;
+}
+.mytitle-scope .w-versus h2{
+  font-size: 48px;
+}
+.mytitle-scope .w-versus header p{
+  max-width: 430px;
+  margin: 16px auto 21px;
+  font-size: 13px;
+}
+.mytitle-scope .w-versus .w-name{
+  max-width: 330px;
+  margin: auto;
+  text-align: left;
+}
+.mytitle-scope .w-matchup{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
+  align-items: center;
+  margin: 25px 0;
+}
+.mytitle-scope .w-contender{
+  padding: 16px;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+  border-radius: 18px;
+  text-align: left;
+}
+.mytitle-scope .w-contender > span{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  margin: 0 0 13px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-contender .w-art{
+  height: 183px;
+  background: var(--art-surface);
+  border-radius: 11px;
+}
+.mytitle-scope .w-contender > b{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.mytitle-scope .w-contender:hover{
+  transform: translateY(-4px);
+  box-shadow: 0 6px 0 var(--w-line);
+}
+.mytitle-scope .w-or{
+  font-family: Georgia, serif;
+  font-size: 17px;
+  font-style: italic;
+  text-align: center;
+}
+.mytitle-scope .w-versus > footer{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+.mytitle-scope .w-versus > footer > span{
+  font-size: 9px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-versus > footer > span:first-child{
+  letter-spacing: 1.5px;
+}
+.mytitle-scope .w-safari{
+  padding: 28px;
+}
+.mytitle-scope .w-safari > header{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 8px 30px;
+}
+.mytitle-scope .w-safari > header .w-kicker{
+  grid-column: 1/-1;
+  margin-bottom: 6px;
+}
+.mytitle-scope .w-search{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  background: var(--w-soft);
+  border: 1px solid var(--w-line);
+  border-radius: 13px;
+}
+.mytitle-scope .w-search input{
+  border: 0;
+  background: transparent;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: 12px;
+}
+.mytitle-scope .w-search > button{
+  font-size: 22px;
+  padding: 0;
+}
+.mytitle-scope .w-world-chips{
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin: 24px 0;
+}
+.mytitle-scope .w-world-chips button{
+  padding: 9px 13px;
+  border: 1px solid var(--w-line);
+  border-radius: 30px;
+  font-size: 11px;
+}
+.mytitle-scope .w-world-chips button[aria-pressed="true"]{
+  background: var(--w-ink);
+  color: var(--w-paper);
+  border-color: var(--w-ink);
+}
+.mytitle-scope .w-safari-layout{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 25px;
+}
+.mytitle-scope .w-safari-grid{
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.mytitle-scope .w-safari-tile{
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 97px;
+  border: 2px solid transparent;
+  border-radius: 13px;
+  color: #4c394d;
+}
+.mytitle-scope .w-safari-tile > svg{
+  width: 34px;
+  height: 34px;
+}
+.mytitle-scope .w-safari-tile > span{
+  font-size: 9px;
+  max-width: 100%;
+  padding: 0 4px;
+  line-height: 1.2;
+}
+.mytitle-scope .w-safari-tile:hover{
+  transform: rotate(-3deg);
+}
+.mytitle-scope .w-safari-tone-0{
+  background: #e8d9ed;
+}
+.mytitle-scope .w-safari-tone-1{
+  background: #e0e8cd;
+}
+.mytitle-scope .w-safari-tone-2{
+  background: #f7dfca;
+}
+.mytitle-scope .w-safari-tone-3{
+  background: #d3e8e5;
+}
+.mytitle-scope .w-safari-tone-4{
+  background: #f1d7de;
+}
+.mytitle-scope .w-safari-tile[aria-pressed="true"]{
+  border-color: #694471;
+}
+.mytitle-scope .w-safari-tile .w-found-check{
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 14px;
+  height: 14px;
+}
+.mytitle-scope .w-safari-layout > aside{
+  text-align: center;
+  padding: 18px;
+  border: 1px solid var(--w-line);
+  border-radius: 15px;
+  background: var(--w-soft);
+  align-self: start;
+}
+.mytitle-scope .w-safari-layout > aside > .w-art{
+  height: 139px;
+  --icon-size: 139px;
+  margin: 12px 0;
+}
+.mytitle-scope .w-safari-layout > aside h3{
+  font-family: Georgia, serif;
+  font-size: 22px;
+  font-weight: 400;
+  margin: 0 0 11px;
+  text-transform: capitalize;
+}
+.mytitle-scope .w-safari-layout > aside > span:not(.w-badge){
+  font-size: 10px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-safari-outfits{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+.mytitle-scope .w-safari-outfits button{
+  background: var(--w-paper);
+  border-radius: 9px;
+  padding: 5px;
+  border: 1px solid var(--w-line);
+}
+.mytitle-scope .w-safari-outfits .w-art{
+  height: 46px;
+  --icon-size: 46px;
+}
+.mytitle-scope .w-safari-layout > aside > .w-text-button{
+  font-size: 9px;
+  line-height: 1.5;
+}
+.mytitle-scope .w-safari-paging{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--w-muted);
+  padding-top: 15px;
+}
+.mytitle-scope .w-safari-paging button{
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--w-line);
+  border-radius: 8px;
+}
+.mytitle-scope .w-no-results{
+  min-height: 305px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 13px;
+  padding: 20px;
+}
+.mytitle-scope .w-no-results h3{
+  margin: 0;
+  font-size: 20px;
+}
+.mytitle-scope .w-no-results p{
+  font-size: 12px;
+}
+.mytitle-scope .w-world{
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+}
+.mytitle-scope .w-world > aside{
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.mytitle-scope .w-world aside .w-kicker{
+  margin: 0;
+}
+.mytitle-scope .w-world aside h2{
+  font-size: 40px;
+}
+.mytitle-scope .w-world aside p{
+  font-size: 12px;
+}
+.mytitle-scope .w-mini-moods{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: -8px;
+}
+.mytitle-scope .w-mini-moods button{
+  text-align: left;
+  padding: 9px;
+  border: 1px solid var(--w-line);
+  border-radius: 7px;
+  font-size: 9px;
+}
+.mytitle-scope .w-mini-moods button:hover{
+  background: var(--w-accent-bg);
+}
+.mytitle-scope .w-world-stage{
+  background: var(--w-soft);
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  min-width: 0;
+}
+.mytitle-scope .w-context-tabs{
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+}
+.mytitle-scope .w-context-tabs button{
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.mytitle-scope .w-context-tabs button[aria-pressed="true"]{
+  background: var(--w-paper);
+  box-shadow: 0 1px 3px #0001;
+}
+.mytitle-scope .w-server-mock{
+  background: var(--w-paper);
+  border: 1px solid var(--w-line);
+  border-radius: 13px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px #3024330c;
+  min-height: 372px;
+}
+.mytitle-scope .w-browser-bar{
+  height: 33px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--w-soft);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--w-line);
+}
+.mytitle-scope .w-browser-bar > i{
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--w-line);
+}
+.mytitle-scope .w-browser-bar > span{
+  flex: 1;
+  text-align: center;
+  font-size: 8px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-server-welcome{
+  padding: 35px 20px 27px;
+  text-align: center;
+}
+.mytitle-scope .w-server-icon{
+  width: 43px;
+  height: 43px;
+  margin: 0 auto 18px;
+}
+.mytitle-scope .w-server-welcome > small{
+  font-size: 7px;
+  letter-spacing: 2px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-server-welcome > .w-art{
+  height: 92px;
+}
+.mytitle-scope .w-server-welcome > p{
+  font-size: 11px;
+}
+.mytitle-scope .w-demo-button{
+  display: inline-flex;
+  gap: 16px;
+  align-items: center;
+  background: var(--w-ink);
+  color: var(--w-paper);
+  border-radius: 7px;
+  padding: 10px 15px;
+  font-size: 10px;
+  margin-top: 20px;
+}
+.mytitle-scope .w-server-nav{
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 8px 15px;
+  border-bottom: 1px solid var(--w-line);
+  font-size: 9px;
+}
+.mytitle-scope .w-server-nav .w-art{
+  width: 150px;
+  margin-right: auto;
+  height: 50px;
+}
+.mytitle-scope .w-mock-content{
+  padding: 28px 20px;
+}
+.mytitle-scope .w-mock-content h3{
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0 0 22px;
+}
+.mytitle-scope .w-mock-content > div{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 11px;
+}
+.mytitle-scope .w-mock-content article{
+  background: var(--w-soft);
+  padding: 20px 12px;
+  border-radius: 9px;
+}
+.mytitle-scope .w-mock-content article > span{
+  font-size: 24px;
+  display: block;
+}
+.mytitle-scope .w-mock-content article > b{
+  font-size: 10px;
+  font-weight: 400;
+  display: block;
+  margin-top: 15px;
+}
+.mytitle-scope .w-mock-content > p{
+  font-size: 10px;
+  margin-top: 20px;
+}
+.mytitle-scope .w-context-note{
+  font-size: 9px !important;
+  color: var(--w-muted);
+  text-align: center;
+  display: block;
+}
+.mytitle-scope .w-app-context{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 25px;
+  padding: 45px 25px;
+}
+.mytitle-scope .w-app-tile{
+  width: 200px;
+  padding: 22px;
+  border: 1px solid var(--w-line);
+  border-radius: 17px;
+  background: var(--w-soft);
+}
+.mytitle-scope .w-app-tile > .artwork{
+  width: 80px;
+  height: 80px;
+  margin: auto;
+}
+.mytitle-scope .w-app-tile > .w-art{
+  height: 58px;
+  margin-top: 16px;
+}
+.mytitle-scope .w-app-context > span{
+  font-size: 11px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-tiny{
+  padding: 30px;
+}
+.mytitle-scope .w-tiny > header{
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+.mytitle-scope .w-tiny > header p{
+  font-size: 13px;
+}
+.mytitle-scope .w-tiny-layout{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 35px;
+}
+.mytitle-scope .w-tiny-main{
+  background: var(--w-soft);
+  padding: 25px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.mytitle-scope .w-tiny-hero{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.mytitle-scope .w-tiny-hero > .w-art{
+  width: 100%;
+  height: 190px;
+  --icon-size: 190px;
+}
+.mytitle-scope .w-tiny-hero > .w-text-button{
+  font-size: 11px;
+  margin-top: 12px;
+}
+.mytitle-scope .w-size-line{
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 22px;
+  margin: 25px 0 15px;
+}
+.mytitle-scope .w-size-line > div{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.mytitle-scope .w-size-line > div > span{
+  font-size: 9px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-tiny-contexts{
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.mytitle-scope .w-icon-mock{
+  min-height: 220px;
+  border: 1px solid var(--w-line);
+  border-radius: 12px;
+  background: var(--w-soft);
+  overflow: hidden;
+}
+.mytitle-scope .w-tab-strip{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 10px 0;
+  font-size: 10px;
+}
+.mytitle-scope .w-tab-strip > span{
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  background: var(--w-paper);
+  border-radius: 8px 8px 0 0;
+  width: 190px;
+  overflow: hidden;
+}
+.mytitle-scope .w-tab-strip > span > small{
+  margin-left: auto;
+}
+.mytitle-scope .w-actual-icon{
+  flex-shrink: 0;
+  display: block;
+}
+.mytitle-scope .w-size-16{
+  width: 16px;
+  height: 16px;
+}
+.mytitle-scope .w-size-32{
+  width: 32px;
+  height: 32px;
+}
+.mytitle-scope .w-size-64{
+  width: 64px;
+  height: 64px;
+}
+.mytitle-scope .w-address-bar{
+  padding: 9px 15px;
+  display: flex;
+  gap: 15px;
+  background: var(--w-paper);
+  font-size: 11px;
+}
+.mytitle-scope .w-address-bar > span{
+  font-size: 9px;
+  background: var(--w-soft);
+  border-radius: 20px;
+  padding: 3px 10px;
+  flex: 1;
+}
+.mytitle-scope .w-tab-page{
+  padding: 24px;
+  background: var(--w-paper);
+}
+.mytitle-scope .w-tab-page h3{
+  font-size: 20px;
+  margin: 0 0 9px;
+  font-family: Georgia, serif;
+  font-weight: 400;
+}
+.mytitle-scope .w-tab-page p{
+  font-size: 11px;
+}
+.mytitle-scope .w-launcher{
+  text-align: center;
+  padding: 20px;
+  background: linear-gradient(130deg, #687c7c, #b8b492);
+  color: white;
+  min-height: 220px;
+}
+.mytitle-scope .w-launcher-clock{
+  font-size: 36px;
+  font-weight: 300;
+}
+.mytitle-scope .w-launcher > div{
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 23px;
+}
+.mytitle-scope .w-launcher > div > div{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 95px;
+}
+.mytitle-scope .w-launcher b{
+  margin-top: 7px;
+  font-size: 9px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.mytitle-scope .w-placeholder-app{
+  height: 56px;
+  width: 56px;
+  display: grid;
+  place-items: center;
+  background: #ffffff40;
+  border: 1px solid #ffffff20;
+  border-radius: 15px;
+  font-size: 24px;
+}
+.mytitle-scope .w-bookmark{
+  padding: 30px 22px;
+}
+.mytitle-scope .w-bookmark > small{
+  font-size: 8px;
+  letter-spacing: 1.4px;
+}
+.mytitle-scope .w-bookmark > div{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+  border-radius: 10px;
+  padding: 15px;
+  margin-top: 17px;
+}
+.mytitle-scope .w-bookmark > div > span:nth-child(2){
+  flex: 1;
+  min-width: 0;
+}
+.mytitle-scope .w-bookmark b{
+  font-size: 12px;
+  display: block;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.mytitle-scope .w-bookmark small{
+  display: block;
+  font-size: 9px;
+  color: var(--w-muted);
+}
+.mytitle-scope .w-bookmark p{
+  font-size: 11px;
+  margin-top: 20px;
+}
+.mytitle-scope .w-tiny-tweaks{
+  display: grid;
+  gap: 19px;
+}
+.mytitle-scope .w-tiny-tweaks > .w-choice{
+  justify-content: center;
+}
+@media (max-width: 1000px){.mytitle-scope .wild-studio{
+    padding: 0 20px 20px;
+  }
+.mytitle-scope .w-showroom-bubble{
+    right: 15px;
+    font-size: 150px;
+    top: 55px;
+  }
+.mytitle-scope .w-experiment-nav > button{
+    font-size: 10px;
+    gap: 5px;
+    padding: 10px 5px;
+  }
+.mytitle-scope .w-experiment-nav > .w-overview-button{
+    flex-basis: 65px;
+  }
+.mytitle-scope .w-vibe,
+.mytitle-scope .w-creatures,
+.mytitle-scope .w-workshop,
+.mytitle-scope .w-tiny,
+.mytitle-scope .w-safari,
+.mytitle-scope .w-versus{
+    padding: 24px;
+  }
+.mytitle-scope .w-creature-layout{
+    grid-template-columns: 1fr 1fr;
+    gap: 25px;
+  }
+.mytitle-scope .w-character-outfits{
+    grid-column: 1/-1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 25px;
+  }
+.mytitle-scope .w-character-outfits > .w-section-label:nth-of-type(2){
+    grid-column: 2;
+    grid-row: 1;
+  }
+.mytitle-scope .w-character-outfits .w-outfit-list{
+    grid-row: 2;
+    grid-template-columns: 1fr 1fr;
+    margin: 0;
+  }
+.mytitle-scope .w-character-outfits .w-swatches{
+    grid-column: 2;
+    grid-row: 2;
+    align-content: center;
+    justify-content: center;
+  }
+.mytitle-scope .w-workshop-layout{
+    grid-template-columns: 1fr 170px 240px;
+    gap: 15px;
+  }
+.mytitle-scope .w-layer-controls{
+    padding-left: 15px;
+  }
+.mytitle-scope .w-assembly > .w-art{
+    height: 165px;
+    --icon-size: 165px;
+  }
+.mytitle-scope .w-safari-layout{
+    grid-template-columns: minmax(0, 1fr) 200px;
+    gap: 18px;
+  }
+.mytitle-scope .w-safari-grid{
+    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+.mytitle-scope .w-world{
+    grid-template-columns: 270px minmax(0, 1fr);
+  }
+.mytitle-scope .w-world > aside{
+    padding: 24px;
+  }
+.mytitle-scope .w-world-stage{
+    padding: 20px;
+  }
+.mytitle-scope .w-size-line{
+    gap: 15px;
+  }
+}
+@media (max-width: 760px){.mytitle-scope .w-round-bar > span{
+    display: none;
+  }
+.mytitle-scope .w-round-bar{
+    padding: 17px 0;
+  }
+.mytitle-scope .w-showroom-intro{
+    padding: 22px 0 30px;
+  }
+.mytitle-scope .w-showroom-intro h1{
+    font-size: 43px;
+  }
+.mytitle-scope .w-showroom-bubble{
+    display: none;
+  }
+.mytitle-scope .w-showroom-intro p{
+    font-size: 14px;
+  }
+.mytitle-scope .w-experiment-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+.mytitle-scope .w-experiment-preview{
+    height: 190px;
+  }
+.mytitle-scope .w-experiment-description{
+    padding: 15px;
+  }
+.mytitle-scope .w-experiment-description h3{
+    font-size: 17px;
+  }
+.mytitle-scope .w-experiment-nav{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+.mytitle-scope .w-experiment-nav > button{
+    font-size: 11px;
+    justify-content: flex-start;
+    padding: 10px;
+  }
+.mytitle-scope .w-experiment-nav > .w-overview-button{
+    border-right: 0;
+  }
+.mytitle-scope .wild-studio h2{
+    font-size: 35px;
+  }
+.mytitle-scope .w-current-toolbar > span{
+    font-size: 9px;
+  }
+.mytitle-scope .w-vibe-intro{
+    align-items: flex-start;
+  }
+.mytitle-scope .w-vibe-intro > .w-name{
+    width: 220px;
+  }
+.mytitle-scope .w-vibe-body{
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+.mytitle-scope .w-mood-grid{
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+.mytitle-scope .w-mood{
+    padding: 12px;
+    min-height: 90px;
+    gap: 8px;
+  }
+.mytitle-scope .w-mood > b{
+    font-size: 24px;
+  }
+.mytitle-scope .w-mood small{
+    display: none;
+  }
+.mytitle-scope .w-mood > span{
+    font-size: 11px;
+  }
+.mytitle-scope .w-vibe-result{
+    padding: 15px;
+  }
+.mytitle-scope .w-vibe-result > .w-art{
+    height: 140px;
+  }
+.mytitle-scope .w-font-auditions > div{
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+.mytitle-scope .w-press-layout{
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+.mytitle-scope .w-press-layout > aside{
+    padding: 20px;
+  }
+.mytitle-scope .w-print-bed{
+    padding: 25px;
+  }
+.mytitle-scope .w-paper{
+    padding: 20px 8px;
+  }
+.mytitle-scope .w-paper > .w-art{
+    height: 230px;
+  }
+.mytitle-scope .w-press > footer{
+    gap: 13px;
+  }
+.mytitle-scope .w-press footer > .w-swatches{
+    flex: 1;
+  }
+.mytitle-scope .w-workshop-layout{
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+.mytitle-scope .w-layer-stack{
+    grid-column: 1/-1;
+    grid-row: 1;
+    display: flex;
+    gap: 10px;
+  }
+.mytitle-scope .w-layer-stack > button{
+    flex: 1;
+  }
+.mytitle-scope .w-layer-controls{
+    border: 0;
+    padding: 0 0 0 10px;
+  }
+.mytitle-scope .w-assembly > .w-art{
+    height: 190px;
+    --icon-size: 190px;
+  }
+.mytitle-scope .w-safari > header{
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+.mytitle-scope .w-safari-layout{
+    grid-template-columns: minmax(0, 1fr) 170px;
+    gap: 15px;
+  }
+.mytitle-scope .w-safari-grid{
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+.mytitle-scope .w-safari-layout > aside{
+    padding: 13px;
+  }
+.mytitle-scope .w-safari-layout > aside > .w-art{
+    height: 110px;
+    --icon-size: 110px;
+  }
+.mytitle-scope .w-safari-outfits{
+    gap: 5px;
+  }
+.mytitle-scope .w-safari-outfits .w-art{
+    height: 35px;
+    --icon-size: 35px;
+  }
+.mytitle-scope .w-world{
+    grid-template-columns: 1fr;
+  }
+.mytitle-scope .w-world > aside{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+.mytitle-scope .w-world aside .w-kicker,
+.mytitle-scope .w-world aside h2,
+.mytitle-scope .w-world aside > p{
+    grid-column: 1;
+  }
+.mytitle-scope .w-world aside .w-name{
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    align-self: center;
+  }
+.mytitle-scope .w-world aside > .w-field{
+    grid-column: 2;
+    grid-row: 3;
+  }
+.mytitle-scope .w-world aside > .w-field-label{
+    display: none;
+  }
+.mytitle-scope .w-world aside > .w-mini-moods{
+    grid-column: 1;
+    grid-row: 4;
+    margin: 0;
+  }
+.mytitle-scope .w-world aside > .w-swatches{
+    grid-column: 2;
+    grid-row: 4;
+  }
+.mytitle-scope .w-world-stage{
+    padding: 24px;
+  }
+.mytitle-scope .w-tiny-layout{
+    gap: 20px;
+  }
+.mytitle-scope .w-tiny-main{
+    padding: 15px;
+  }
+.mytitle-scope .w-size-line{
+    gap: 12px;
+  }
+.mytitle-scope .w-size-line > div:last-child{
+    display: none;
+  }
+.mytitle-scope .w-tiny-hero > .w-art{
+    height: 155px;
+    --icon-size: 155px;
+  }
+.mytitle-scope .w-launcher > div{
+    gap: 10px;
+  }
+.mytitle-scope .w-placeholder-app{
+    height: 40px;
+    width: 40px;
+  }
+.mytitle-scope .w-save-bar > span{
+    max-width: 170px;
+  }
+.mytitle-scope .w-save-button,
+.mytitle-scope .w-export-button{
+    padding: 12px 15px;
+    font-size: 11px;
+  }
+}
+@media (max-width: 520px){.mytitle-scope .wild-studio{
+    padding: 0 12px 16px;
+  }
+.mytitle-scope .w-round-bar{
+    font-size: 10px;
+    padding: 15px 2px;
+  }
+.mytitle-scope .w-showroom-intro{
+    padding: 24px 5px 30px;
+  }
+.mytitle-scope .w-showroom-intro h1{
+    font-size: 38px;
+    letter-spacing: -1.7px;
+  }
+.mytitle-scope .w-showroom-intro p{
+    font-size: 13px;
+  }
+.mytitle-scope .w-showroom-intro .w-kicker{
+    font-size: 8px;
+  }
+.mytitle-scope .w-experiment-grid{
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+.mytitle-scope .w-experiment-preview{
+    height: 194px;
+    padding: 30px 25px 24px;
+  }
+.mytitle-scope .w-experiment-description h3{
+    font-size: 22px;
+  }
+.mytitle-scope .w-experiment-description p{
+    min-height: 0;
+    font-size: 13px;
+  }
+.mytitle-scope .w-experiment-description small{
+    font-size: 10px;
+  }
+.mytitle-scope .w-showroom-section > header h2{
+    font-size: 22px;
+  }
+.mytitle-scope .w-showroom-section > header > span{
+    font-size: 8px;
+  }
+.mytitle-scope .w-showroom-end{
+    padding: 5px 10px 25px;
+  }
+.mytitle-scope .w-experiment-nav{
+    gap: 3px;
+    padding: 4px;
+  }
+.mytitle-scope .w-experiment-nav > button{
+    font-size: 10px;
+    gap: 6px;
+    padding: 10px 6px;
+  }
+.mytitle-scope .w-experiment-nav > button > span{
+    font-size: 8px;
+  }
+.mytitle-scope .w-experiment-nav > .w-overview-button span{
+    font-size: 10px;
+  }
+.mytitle-scope .w-current-toolbar{
+    padding: 14px 1px;
+    gap: 6px;
+  }
+.mytitle-scope .w-current-toolbar > span{
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+.mytitle-scope .w-current-toolbar b{
+    margin: 0 4px;
+  }
+.mytitle-scope .w-current-toolbar > div{
+    gap: 2px;
+  }
+.mytitle-scope .w-current-toolbar .w-settings-button{
+    font-size: 9px;
+    padding: 5px;
+  }
+.mytitle-scope .w-current-toolbar button{
+    min-width: 28px;
+  }
+.mytitle-scope .w-settings-button svg{
+    width: 12px;
+  }
+.mytitle-scope .w-builder{
+    border-radius: 17px;
+  }
+.mytitle-scope .wild-studio h2{
+    font-size: 34px;
+    letter-spacing: -1.2px;
+  }
+.mytitle-scope .w-kicker{
+    font-size: 8px;
+    margin-bottom: 11px;
+  }
+.mytitle-scope .w-name input{
+    font-size: 17px;
+    padding: 10px 12px;
+  }
+.mytitle-scope .w-name > span{
+    font-size: 10px;
+  }
+.mytitle-scope .w-swatches{
+    gap: 8px;
+  }
+.mytitle-scope .w-swatches > button{
+    width: 28px;
+    height: 28px;
+  }
+.mytitle-scope .w-vibe,
+.mytitle-scope .w-creatures,
+.mytitle-scope .w-workshop,
+.mytitle-scope .w-tiny,
+.mytitle-scope .w-safari,
+.mytitle-scope .w-versus{
+    padding: 18px;
+  }
+.mytitle-scope .w-vibe-intro{
+    display: block;
+    margin-bottom: 20px;
+  }
+.mytitle-scope .w-vibe-intro p{
+    font-size: 12px;
+  }
+.mytitle-scope .w-vibe-intro > .w-name{
+    width: 100%;
+    margin-top: 20px;
+  }
+.mytitle-scope .w-mood-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+.mytitle-scope .w-mood{
+    min-height: 68px;
+    padding: 10px;
+  }
+.mytitle-scope .w-mood > span{
+    font-size: 11px;
+  }
+.mytitle-scope .w-mood > b{
+    font-size: 24px;
+  }
+.mytitle-scope .w-vibe-body{
+    gap: 18px;
+  }
+.mytitle-scope .w-vibe-result{
+    padding: 14px 10px;
+  }
+.mytitle-scope .w-vibe-result > .w-art{
+    height: 126px;
+  }
+.mytitle-scope .w-font-auditions{
+    margin-top: 20px;
+  }
+.mytitle-scope .w-font-auditions > div{
+    gap: 7px;
+  }
+.mytitle-scope .w-font-auditions .w-art{
+    height: 48px;
+  }
+.mytitle-scope .w-font-auditions button > span{
+    font-size: 8px;
+  }
+.mytitle-scope .w-section-label{
+    font-size: 11px;
+  }
+.mytitle-scope .w-creatures > header{
+    text-align: left;
+  }
+.mytitle-scope .w-creature-layout{
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+.mytitle-scope .w-character-card{
+    order: -1;
+    width: 85%;
+    padding: 15px;
+  }
+.mytitle-scope .w-character-card .w-art{
+    height: 142px;
+    --icon-size: 142px;
+    margin: 8px auto;
+  }
+.mytitle-scope .w-character-card h3{
+    font-size: 22px;
+  }
+.mytitle-scope .w-character-stars{
+    position: absolute;
+    left: 12px;
+    bottom: 23px;
+    font-size: 12px;
+    writing-mode: vertical-rl;
+    letter-spacing: 5px;
+  }
+.mytitle-scope .w-character-card > span:not(:first-child){
+    font-size: 10px;
+  }
+.mytitle-scope .w-character-outfits{
+    display: block;
+  }
+.mytitle-scope .w-character-outfits .w-outfit-list{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: 22px;
+  }
+.mytitle-scope .w-outfit-list > button{
+    padding: 6px;
+    gap: 6px;
+  }
+.mytitle-scope .w-outfit-list .w-art{
+    width: 33px;
+    height: 33px;
+    --icon-size: 33px;
+  }
+.mytitle-scope .w-outfit-list > button > span{
+    font-size: 10px;
+  }
+.mytitle-scope .w-outfit-list small{
+    font-size: 8px;
+  }
+.mytitle-scope .w-outfit-list > button > svg{
+    display: none;
+  }
+.mytitle-scope .w-character-outfits .w-swatches{
+    justify-content: flex-start;
+  }
+.mytitle-scope .w-radio{
+    padding: 19px 15px;
+  }
+.mytitle-scope .w-radio > header{
+    margin-bottom: 20px;
+  }
+.mytitle-scope .w-radio h2{
+    font-size: 28px;
+  }
+.mytitle-scope .w-radio > header > svg{
+    width: 26px;
+  }
+.mytitle-scope .w-radio .w-name{
+    max-width: none;
+  }
+.mytitle-scope .w-radio-display{
+    padding: 10px;
+  }
+.mytitle-scope .w-frequency > div{
+    gap: 4px;
+  }
+.mytitle-scope .w-frequency > span{
+    font-size: 6px;
+    letter-spacing: 1px;
+  }
+.mytitle-scope .w-frequency > span:last-child{
+    display: none;
+  }
+.mytitle-scope .w-radio-display > .w-art{
+    height: 130px;
+  }
+.mytitle-scope .w-remix-tracks{
+    gap: 7px;
+  }
+.mytitle-scope .w-remix-tracks > div{
+    padding: 7px 4px;
+  }
+.mytitle-scope .w-track-no{
+    left: 7px;
+    top: 7px;
+    font-size: 7px;
+  }
+.mytitle-scope .w-track-choice{
+    min-height: 117px;
+    gap: 8px;
+    padding-top: 12px;
+  }
+.mytitle-scope .w-track-choice b{
+    font-size: 10px;
+    overflow-wrap: anywhere;
+  }
+.mytitle-scope .w-track-choice small{
+    font-size: 8px;
+  }
+.mytitle-scope .w-colour-stack i{
+    width: 22px;
+    height: 22px;
+  }
+.mytitle-scope .w-lock{
+    font-size: 9px;
+    padding: 8px 3px;
+    gap: 4px;
+  }
+.mytitle-scope .w-lock svg{
+    width: 11px;
+    flex-shrink: 0;
+  }
+.mytitle-scope .w-radio > footer{
+    display: block;
+    text-align: center;
+  }
+.mytitle-scope .w-radio footer > div small{
+    font-size: 9px;
+  }
+.mytitle-scope .w-big-remix{
+    width: 100%;
+    font-size: 13px;
+  }
+.mytitle-scope .w-radio footer > .w-text-button{
+    margin-top: 10px;
+  }
+.mytitle-scope .w-machine{
+    padding: 20px 15px;
+  }
+.mytitle-scope .w-machine-top{
+    grid-template-columns: 1fr;
+    gap: 23px;
+  }
+.mytitle-scope .w-machine-top h2{
+    font-size: 38px;
+  }
+.mytitle-scope .w-machine-top p{
+    font-size: 12px;
+  }
+.mytitle-scope .w-machine-window{
+    padding: 14px;
+    width: 80%;
+    margin: auto;
+    border-width: 6px;
+  }
+.mytitle-scope .w-machine-window .w-art{
+    height: 132px;
+    --icon-size: 132px;
+  }
+.mytitle-scope .w-machine-window > span,
+.mytitle-scope .w-machine-window > small{
+    font-size: 7px;
+    letter-spacing: 1px;
+  }
+.mytitle-scope .w-machine-reels{
+    gap: 7px;
+  }
+.mytitle-scope .w-reel{
+    padding: 9px 5px;
+  }
+.mytitle-scope .w-reel-label{
+    font-size: 7px;
+    letter-spacing: 0.4px;
+  }
+.mytitle-scope .w-reel-choice b{
+    font-size: 9px;
+  }
+.mytitle-scope .w-reel-choice{
+    min-height: 136px;
+  }
+.mytitle-scope .w-reel-symbol{
+    height: 43px;
+    width: 43px;
+  }
+.mytitle-scope .w-reel-choice .w-art{
+    height: 43px;
+    --icon-size: 43px;
+  }
+.mytitle-scope .w-reel-choice .w-colour-stack i{
+    height: 28px;
+    width: 28px;
+  }
+.mytitle-scope .w-reel-next{
+    font-size: 8px;
+    gap: 4px;
+  }
+.mytitle-scope .w-reel-next svg{
+    width: 11px;
+  }
+.mytitle-scope .w-machine-button{
+    padding: 14px 18px;
+    font-size: 14px;
+    width: 100%;
+  }
+.mytitle-scope .w-machine footer > span{
+    font-size: 9px;
+  }
+.mytitle-scope .w-machine footer > .w-text-button{
+    font-size: 10px;
+  }
+.mytitle-scope .w-press{
+    border-radius: 3px;
+  }
+.mytitle-scope .w-press-masthead{
+    padding: 14px;
+  }
+.mytitle-scope .w-press-masthead > span:last-child{
+    font-size: 6px;
+    letter-spacing: 0.5px;
+  }
+.mytitle-scope .w-press-layout{
+    display: flex;
+    flex-direction: column;
+  }
+.mytitle-scope .w-press-layout > aside{
+    padding: 20px;
+    border: 0;
+  }
+.mytitle-scope .w-press h2{
+    font-size: 33px;
+  }
+.mytitle-scope .w-press-tools{
+    min-height: 0;
+    gap: 16px;
+  }
+.mytitle-scope .w-ink-options{
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+.mytitle-scope .w-ink-options button{
+    font-size: 9px;
+    padding: 8px 6px;
+  }
+.mytitle-scope .w-ink-options svg{
+    width: 11px;
+    flex-shrink: 0;
+  }
+.mytitle-scope .w-print-bed{
+    padding: 25px 27px;
+  }
+.mytitle-scope .w-paper > .w-art{
+    height: 170px;
+  }
+.mytitle-scope .w-print-caption{
+    margin-top: 25px;
+    font-size: 7px;
+  }
+.mytitle-scope .w-press > footer{
+    padding: 17px;
+    gap: 12px;
+  }
+.mytitle-scope .w-press footer > .w-swatches{
+    flex-basis: 100%;
+  }
+.mytitle-scope .w-press footer > .w-text-button{
+    margin-left: 0;
+  }
+.mytitle-scope .w-workshop > header{
+    display: block;
+    margin-bottom: 22px;
+  }
+.mytitle-scope .w-workshop > header p{
+    margin-top: 14px;
+    font-size: 12px;
+  }
+.mytitle-scope .w-workshop-layout{
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+.mytitle-scope .w-layer-stack{
+    grid-column: 1;
+    grid-row: 2;
+    gap: 7px;
+  }
+.mytitle-scope .w-layer-stack > button{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px;
+  }
+.mytitle-scope .w-layer-stack > button > span:nth-child(2){
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+.mytitle-scope .w-layer-stack b{
+    font-size: 10px;
+  }
+.mytitle-scope .w-layer-stack > button > svg{
+    display: none;
+  }
+.mytitle-scope .w-layer-sample{
+    height: 30px;
+    width: 30px;
+  }
+.mytitle-scope .w-layer-sample > svg{
+    height: 25px;
+    width: 25px;
+  }
+.mytitle-scope .w-layer-sample-base > span{
+    width: 26px;
+    height: 26px;
+  }
+.mytitle-scope .w-assembly{
+    padding: 15px;
+  }
+.mytitle-scope .w-assembly > .w-art{
+    height: 160px;
+    --icon-size: 160px;
+    margin: 10px auto 15px;
+  }
+.mytitle-scope .w-mini-proof{
+    gap: 24px;
+  }
+.mytitle-scope .w-layer-controls{
+    padding: 0;
+    gap: 18px;
+  }
+.mytitle-scope .w-layer-controls h3{
+    font-size: 16px;
+  }
+.mytitle-scope .w-pattern-grid .w-art{
+    height: 64px;
+    --icon-size: 64px;
+  }
+.mytitle-scope .w-versus > header{
+    text-align: left;
+  }
+.mytitle-scope .w-versus h2{
+    font-size: 39px;
+  }
+.mytitle-scope .w-versus header p{
+    font-size: 12px;
+    margin: 15px 0 18px;
+  }
+.mytitle-scope .w-versus .w-name{
+    max-width: none;
+  }
+.mytitle-scope .w-matchup{
+    grid-template-columns: 1fr;
+    margin: 22px 0;
+    gap: 12px;
+  }
+.mytitle-scope .w-contender{
+    padding: 12px;
+    border-radius: 13px;
+  }
+.mytitle-scope .w-contender .w-art{
+    height: 130px;
+  }
+.mytitle-scope .w-contender > span{
+    font-size: 9px;
+    margin-bottom: 9px;
+  }
+.mytitle-scope .w-contender > b{
+    font-size: 12px;
+    margin-top: 11px;
+  }
+.mytitle-scope .w-or{
+    font-size: 15px;
+  }
+.mytitle-scope .w-versus > footer{
+    gap: 9px;
+  }
+.mytitle-scope .w-versus > footer > span:last-child{
+    width: 100%;
+  }
+.mytitle-scope .w-versus > footer > .w-text-button{
+    font-size: 10px;
+  }
+.mytitle-scope .w-safari > header h2{
+    font-size: 36px;
+  }
+.mytitle-scope .w-search{
+    padding: 11px;
+    gap: 8px;
+  }
+.mytitle-scope .w-search input{
+    font-size: 11px;
+  }
+.mytitle-scope .w-world-chips{
+    gap: 6px;
+    margin: 18px 0;
+  }
+.mytitle-scope .w-world-chips button{
+    font-size: 10px;
+    padding: 8px 10px;
+  }
+.mytitle-scope .w-safari-layout{
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 19px;
+  }
+.mytitle-scope .w-safari-layout > aside{
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 5px 15px;
+    padding: 13px;
+    width: 100%;
+    text-align: left;
+  }
+.mytitle-scope .w-safari-layout > aside > .w-art{
+    grid-row: 1 / span 4;
+    grid-column: 1;
+    width: 80px;
+    height: 80px;
+    --icon-size: 80px;
+    margin: 6px 0;
+  }
+.mytitle-scope .w-safari-layout > aside > .w-badge{
+    padding: 0;
+    background: none;
+    font-size: 9px;
+  }
+.mytitle-scope .w-safari-layout > aside h3{
+    font-size: 19px;
+    margin: 0;
+    grid-column: 2;
+  }
+.mytitle-scope .w-safari-layout > aside > span:not(.w-badge){
+    display: none;
+  }
+.mytitle-scope .w-safari-outfits{
+    grid-column: 2;
+    margin: 4px 0;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+  }
+.mytitle-scope .w-safari-outfits button{
+    padding: 3px;
+    border-radius: 6px;
+  }
+.mytitle-scope .w-safari-outfits .w-art{
+    height: 23px;
+    --icon-size: 23px;
+  }
+.mytitle-scope .w-safari-layout > aside > .w-text-button{
+    grid-column: 1/-1;
+    justify-content: center;
+    font-size: 9px;
+    padding: 5px;
+  }
+.mytitle-scope .w-safari-grid{
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+.mytitle-scope .w-safari-tile{
+    height: 85px;
+    gap: 7px;
+  }
+.mytitle-scope .w-safari-tile > svg{
+    width: 30px;
+    height: 30px;
+  }
+.mytitle-scope .w-world > aside{
+    padding: 20px;
+    display: flex;
+    gap: 18px;
+  }
+.mytitle-scope .w-world aside h2{
+    font-size: 36px;
+  }
+.mytitle-scope .w-world aside > .w-mini-moods{
+    display: grid;
+    gap: 7px;
+  }
+.mytitle-scope .w-world aside > .w-field-label{
+    display: block;
+  }
+.mytitle-scope .w-world aside > .w-swatches{
+    margin-top: 3px;
+  }
+.mytitle-scope .w-world-stage{
+    padding: 18px 12px;
+  }
+.mytitle-scope .w-context-tabs button{
+    font-size: 10px;
+    padding: 8px 10px;
+  }
+.mytitle-scope .w-server-mock{
+    min-height: 350px;
+  }
+.mytitle-scope .w-server-welcome{
+    padding: 27px 15px;
+  }
+.mytitle-scope .w-server-nav{
+    gap: 10px;
+    padding: 8px 10px;
+    font-size: 8px;
+  }
+.mytitle-scope .w-server-nav > .w-art{
+    width: 105px;
+    height: 38px;
+  }
+.mytitle-scope .w-mock-content{
+    padding: 25px 15px;
+  }
+.mytitle-scope .w-mock-content > div{
+    gap: 8px;
+  }
+.mytitle-scope .w-mock-content article{
+    padding: 15px 10px;
+  }
+.mytitle-scope .w-mock-content h3{
+    font-size: 15px;
+  }
+.mytitle-scope .w-context-note{
+    font-size: 8px !important;
+  }
+.mytitle-scope .w-app-context{
+    padding: 35px 15px;
+  }
+.mytitle-scope .w-tiny > header{
+    display: block;
+    margin-bottom: 23px;
+  }
+.mytitle-scope .w-tiny > header p{
+    margin-top: 15px;
+    font-size: 12px;
+  }
+.mytitle-scope .w-tiny-layout{
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+.mytitle-scope .w-tiny-main{
+    padding: 18px 13px;
+  }
+.mytitle-scope .w-tiny-hero > .w-art{
+    height: 150px;
+    --icon-size: 150px;
+  }
+.mytitle-scope .w-size-line{
+    gap: 16px;
+    margin: 23px 0 13px;
+  }
+.mytitle-scope .w-size-line > div:last-child{
+    display: flex;
+  }
+.mytitle-scope .w-tiny-contexts{
+    gap: 15px;
+  }
+.mytitle-scope .w-launcher > div{
+    gap: 25px;
+  }
+.mytitle-scope .w-save-bar{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 19px 2px;
+  }
+.mytitle-scope .w-save-bar > span{
+    max-width: none;
+    text-align: center;
+    font-size: 10px;
+  }
+.mytitle-scope .w-save-bar small{
+    font-size: 9px;
+  }
+.mytitle-scope .w-save-bar > div{
+    justify-content: center;
+    gap: 8px;
+  }
+.mytitle-scope .w-save-button,
+.mytitle-scope .w-export-button{
+    flex: 1;
+    padding: 12px 10px;
+    font-size: 11px;
+    gap: 7px;
+  }
+.mytitle-scope .w-footer{
+    flex-wrap: wrap;
+    gap: 14px;
+    justify-content: center;
+    font-size: 9px;
+    padding: 17px 2px;
+  }
+.mytitle-scope .w-footer > span{
+    width: 100%;
+    text-align: center;
+    margin: 0;
+  }
+}
+@media (max-width: 360px){.mytitle-scope .wild-studio{
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+.mytitle-scope .w-experiment-nav > button{
+    font-size: 9px;
+    gap: 4px;
+  }
+.mytitle-scope .w-current-toolbar > span{
+    max-width: 140px;
+    line-height: 1.5;
+  }
+.mytitle-scope .w-vibe,
+.mytitle-scope .w-creatures,
+.mytitle-scope .w-workshop,
+.mytitle-scope .w-tiny,
+.mytitle-scope .w-safari,
+.mytitle-scope .w-versus{
+    padding: 15px;
+  }
+.mytitle-scope .w-showroom-intro h1{
+    font-size: 33px;
+  }
+.mytitle-scope .w-mood > span{
+    font-size: 10px;
+  }
+.mytitle-scope .w-mood{
+    padding: 9px;
+    gap: 6px;
+  }
+.mytitle-scope .w-vibe-result .w-swatches{
+    gap: 7px;
+  }
+.mytitle-scope .w-reel-choice b{
+    font-size: 8px;
+  }
+.mytitle-scope .w-lock{
+    font-size: 8px;
+    gap: 3px;
+  }
+.mytitle-scope .w-frequency > div{
+    gap: 3px;
+  }
+.mytitle-scope .w-machine-reels{
+    gap: 5px;
+  }
+.mytitle-scope .w-reel-choice .w-colour-stack i{
+    width: 25px;
+    height: 25px;
+  }
+.mytitle-scope .w-machine-button{
+    font-size: 13px;
+    padding: 14px;
+  }
+.mytitle-scope .w-press-masthead > span:last-child{
+    max-width: 120px;
+  }
+.mytitle-scope .w-ink-options{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+.mytitle-scope .w-safari-outfits{
+    grid-template-columns: repeat(3, 1fr);
+  }
+.mytitle-scope .w-safari-outfits .w-art{
+    height: 25px;
+    --icon-size: 25px;
+  }
+.mytitle-scope .w-safari-layout > aside > .w-art{
+    align-self: center;
+  }
+.mytitle-scope .w-size-line{
+    gap: 12px;
+  }
+.mytitle-scope .w-size-line > div:last-child{
+    display: none;
+  }
+.mytitle-scope .w-save-button,
+.mytitle-scope .w-export-button{
+    font-size: 10px;
+    padding: 12px 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce){.mytitle-scope .wild-studio *{
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.mytitle-scope .t-builder{
+  max-width: 920px;
+  margin: auto;
+  padding: 28px;
+  border: 1px solid var(--w-line);
+  border-radius: 24px;
+  background: var(--w-paper);
+}
+.mytitle-scope .t-heading{
+  margin-bottom: 24px;
+}
+.mytitle-scope .t-heading h2{
+  font-size: clamp(24px, 3vw, 34px);
+  letter-spacing: -1px;
+  margin: 6px 0 0;
+}
+.mytitle-scope .t-name-row{
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.mytitle-scope .t-name-row .w-name{
+  flex: 1;
+  max-width: none;
+}
+.mytitle-scope .t-name-row .w-name input{
+  width: 100%;
+  font-size: 18px;
+}
+.mytitle-scope .t-icon,
+.mytitle-scope .t-cycle,
+.mytitle-scope .t-done,
+.mytitle-scope .t-theme{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mytitle-scope .t-name-row > .t-icon{
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--w-line);
+  border-radius: 12px;
+  background: var(--w-soft);
+}
+.mytitle-scope .t-reassurance{
+  margin: 9px 0 20px;
+  font-size: 13px;
+  color: var(--w-muted);
+}
+.mytitle-scope .t-screen{
+  position: relative;
+  border: 1px solid var(--w-line);
+  border-radius: 17px;
+  padding: 36px 26px 18px;
+}
+.mytitle-scope .t-screen > .w-art{
+  height: 190px;
+}
+.mytitle-scope .t-theme{
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+  color: var(--w-ink);
+}
+.mytitle-scope .t-ingredients{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+.mytitle-scope .t-ingredient{
+  min-width: 0;
+  border: 1px solid var(--w-line);
+  border-radius: 16px;
+  padding: 10px;
+  background: var(--w-soft);
+}
+.mytitle-scope .t-ingredient > header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.mytitle-scope .t-random{
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.mytitle-scope .t-random:hover:not(:disabled),
+.mytitle-scope .t-cycle:hover:not(:disabled){
+  background: var(--w-paper);
+}
+.mytitle-scope .t-choice-row{
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 2px;
+}
+.mytitle-scope .t-cycle{
+  height: 60px;
+  border-radius: 8px;
+  padding: 0;
+}
+.mytitle-scope .t-choice{
+  min-width: 0;
+  padding: 8px 2px 14px;
+  border-radius: 10px;
+  text-align: center;
+}
+.mytitle-scope .t-choice:hover{
+  background: var(--w-paper);
+}
+.mytitle-scope .t-choice > .w-art{
+  height: 55px;
+  margin-bottom: 8px;
+}
+.mytitle-scope .t-choice strong,
+.mytitle-scope .t-choice small{
+  display: block;
+  overflow-wrap: anywhere;
+}
+.mytitle-scope .t-choice strong{
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.mytitle-scope .t-choice small{
+  font-size: 10px;
+  color: var(--w-muted);
+  margin-top: 5px;
+}
+.mytitle-scope .t-swatch-stack{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 55px;
+  margin-bottom: 8px;
+}
+.mytitle-scope .t-swatch-stack i{
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  border: 2px solid var(--w-paper);
+  margin-left: -5px;
+}
+.mytitle-scope .t-done{
+  width: 100%;
+  height: 33px;
+  border-radius: 9px;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+  color: var(--w-muted);
+}
+.mytitle-scope .t-done[aria-pressed="true"]{
+  background: var(--w-ink);
+  color: var(--w-paper);
+  border-color: var(--w-ink);
+}
+.mytitle-scope .t-actions{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mytitle-scope .t-actions small{
+  display: block;
+  font-size: 11px;
+  color: var(--w-muted);
+  margin-top: 8px;
+}
+.mytitle-scope .t-surprise,
+.mytitle-scope .t-next{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 12px 18px;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.mytitle-scope .t-surprise{
+  border: 1px solid var(--w-line);
+  background: var(--w-soft);
+}
+.mytitle-scope .t-next{
+  background: var(--w-ink);
+  color: var(--w-paper);
+}
+.mytitle-scope .t-menu{
+  --w-ink: #292333;
+  --w-muted: #746a7c;
+  --w-paper: #fffefa;
+  --w-soft: #f1ede8;
+  --w-line: #ded7df;
+}
+.dark .mytitle-scope .t-menu{
+  --w-ink: #f4eff8;
+  --w-muted: #b8a9c2;
+  --w-paper: #282130;
+  --w-soft: #342a3d;
+  --w-line: #514259;
+}
+.mytitle-scope .t-search{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--w-line);
+  background: var(--w-soft);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.mytitle-scope .t-search input{
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  outline-offset: 4px;
+}
+.mytitle-scope .t-option-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.mytitle-scope .t-option{
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--w-line);
+  background: var(--w-paper);
+  border-radius: 12px;
+}
+.mytitle-scope .t-option[aria-pressed="true"]{
+  border-color: var(--w-ink);
+  box-shadow: 0 0 0 1px var(--w-ink);
+}
+.mytitle-scope .t-option .w-art{
+  height: 80px;
+  background: var(--art-surface);
+  border-radius: 7px;
+}
+.mytitle-scope .t-option > span{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 3px 2px;
+  font-size: 12px;
+  gap: 4px;
+}
+.mytitle-scope .t-menu-footer{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.mytitle-scope .t-pages{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.mytitle-scope .t-pages button{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 38px;
+  border: 1px solid var(--w-line);
+  border-radius: 9px;
+}
+.mytitle-scope .t-empty{
+  padding: 35px 8px;
+  text-align: center;
+}
+@media (max-width: 600px){.mytitle-scope .t-builder{
+    padding: 18px 12px;
+    border-radius: 18px;
+  }
+.mytitle-scope .t-heading{
+    margin-bottom: 20px;
+  }
+.mytitle-scope .t-heading h2{
+    font-size: 26px;
+  }
+.mytitle-scope .t-screen{
+    padding: 36px 8px 14px;
+  }
+.mytitle-scope .t-screen > .w-art{
+    height: 135px;
+  }
+.mytitle-scope .t-ingredients{
+    gap: 7px;
+  }
+.mytitle-scope .t-ingredient{
+    padding: 5px;
+    border-radius: 12px;
+  }
+.mytitle-scope .t-choice-row{
+    grid-template-columns: 17px minmax(0, 1fr) 17px;
+    gap: 0;
+  }
+.mytitle-scope .t-cycle svg{
+    width: 15px;
+  }
+.mytitle-scope .t-choice strong{
+    font-size: 11px;
+  }
+.mytitle-scope .t-choice small{
+    display: none;
+  }
+.mytitle-scope .t-choice > .w-art,
+.mytitle-scope .t-swatch-stack{
+    height: 45px;
+  }
+.mytitle-scope .t-swatch-stack i{
+    width: 19px;
+    height: 25px;
+  }
+.mytitle-scope .t-ingredient > header{
+    padding-left: 4px;
+    font-size: 11px;
+  }
+.mytitle-scope .t-random{
+    width: 28px;
+  }
+.mytitle-scope .t-actions{
+    align-items: flex-start;
+  }
+.mytitle-scope .t-next,
+.mytitle-scope .t-surprise{
+    font-size: 12px;
+    padding: 12px;
+  }
+.mytitle-scope .t-actions small{
+    max-width: 150px;
+  }
+.mytitle-scope .t-option-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+.mytitle-scope .t-option .w-art{
+    height: 65px;
+  }
+.mytitle-scope .t-menu-footer{
+    gap: 6px;
+  }
+.mytitle-scope .t-pages{
+    gap: 5px;
+  }
+}
+.mytitle-scope dialog[open]:has(> .t-menu){
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mytitle-scope dialog:has(> .t-menu) > .dialog-heading{
+  flex-shrink: 0;
+}
+.mytitle-scope .t-menu{
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.mytitle-scope .t-search,
+.mytitle-scope .t-menu-footer{
+  flex-shrink: 0;
+}
+.mytitle-scope .t-option-grid{
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px;
+}
+@media (max-width: 380px){.mytitle-scope .t-ingredients{
+    grid-template-columns: 1fr;
+  }
+.mytitle-scope .t-ingredient{
+    padding: 8px;
+  }
+.mytitle-scope .t-ingredient > header{
+    font-size: 12px;
+  }
+.mytitle-scope .t-choice-row{
+    grid-template-columns: 32px minmax(0, 1fr) 32px;
+  }
+.mytitle-scope .t-choice{
+    display: grid;
+    grid-template-columns: 66px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: center;
+    text-align: left;
+    padding: 5px;
+  }
+.mytitle-scope .t-choice > .w-art,
+.mytitle-scope .t-swatch-stack{
+    grid-row: 1 / span 2;
+    height: 48px;
+    margin: 0;
+  }
+.mytitle-scope .t-choice strong{
+    font-size: 13px;
+    overflow-wrap: normal;
+  }
+.mytitle-scope .t-choice small{
+    display: block;
+    grid-column: 2;
+    margin: 0;
+  }
+}
+
+.mytitle-scope { background: transparent; font-family: "IBM Plex Sans", sans-serif; min-width: 0; }
+.mytitle-scope [hidden] { display: none !important; }
+.mytitle-scope .wild-studio { padding: 0; max-width: 960px; }
+.mytitle-scope .studio-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding-block:16px; }
+.mytitle-scope .studio-actions button { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; }
+.mytitle-scope .studio-sizes { display:flex; align-items:end; gap:24px; justify-content:center; padding:20px; }
+.mytitle-scope .studio-sizes > div { display:grid; justify-items:center; gap:8px; }
+.mytitle-scope .studio-sizes svg { width:100%; height:100%; }
+.mytitle-scope .studio-match { display:flex; align-items:center; gap:10px; min-height:44px; }
+.mytitle-scope .studio-match input { width:20px; height:20px; }
+.mytitle-scope .studio-colours { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-block:16px; }
+.mytitle-scope .studio-colours label { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.mytitle-scope .studio-colours input { width:44px; height:44px; padding:2px; }
+.mytitle-scope dialog { max-width:min(840px, calc(100vw - 24px)); max-height:85dvh; overflow:auto; color:var(--ink); background:var(--panel); }
+@media (prefers-reduced-motion: reduce) { .mytitle-scope *, .mytitle-scope *::before, .mytitle-scope *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+
+.mytitle-scope .w-randomize { width: 44px; height: 44px; padding: 10px; border: 1px solid currentColor; border-radius: 12px; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center; }

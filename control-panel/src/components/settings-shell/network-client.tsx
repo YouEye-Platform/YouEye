@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "./page-header";
+
+import { useLocale } from "next-intl";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Shield, ShieldOff, Globe, Route as RouteIcon, Plus, Trash2, Loader2, RefreshCw,
@@ -104,6 +108,8 @@ function tabFromSearch(): NetworkTab {
 }
 
 export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   // Initial tab derived synchronously (server passes it from searchParams) —
   // no default-then-sync flash (pitfall #21).
   const [active, setActive] = useState<NetworkTab>(() => initialTab ?? tabFromSearch());
@@ -119,14 +125,13 @@ export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) 
 
   const tabs: { id: NetworkTab; label: string; icon: typeof Shield }[] = [
     { id: "dns", label: "DNS", icon: Shield },
-    { id: "routes", label: "Routes", icon: RouteIcon },
-    { id: "domain", label: "Domain & HTTPS", icon: Globe },
+    { id: "routes", label: translateInterface("m2c5b669bcdeb"), icon: RouteIcon },
+    { id: "domain", label: translateInterface("mf54c56a2bb3a"), icon: Globe },
   ];
 
   return (
     <div>
-      <h1 className="text-2xl font-bold tracking-tight">Network</h1>
-      <p className="mt-1 text-muted-foreground">DNS, routes, and how your server is reached</p>
+      <PageHeader title={translateInterface("m1744b96470b5")} description={translateInterface("m064ef230fb7a")} />
 
       <div className="mb-6 mt-6 flex items-center gap-1 overflow-x-auto border-b">
         {tabs.map(({ id, label, icon: Icon }) => (
@@ -146,6 +151,10 @@ export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) 
 /* ─────────────────────────── DNS ─────────────────────────── */
 
 function DnsPanel() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [stats, setStats] = useState<DnsStats | null>(null);
   const [lists, setLists] = useState<Adlist[]>([]);
   const [aRecords, setARecords] = useState<ARecord[]>([]);
@@ -165,7 +174,7 @@ function DnsPanel() {
     setError("");
     const statsRes = await fetch("/api/apps/pihole/stats");
     if (!statsRes.ok) {
-      setError((await statsRes.json().catch(() => ({}))).error || "Failed to load DNS statistics");
+      setError((await statsRes.json().catch(() => ({}))).error || translateInterface("me08e6a96705b"));
       setLoading(false);
       return;
     }
@@ -179,7 +188,7 @@ function DnsPanel() {
     if (aR.ok) setARecords((await aR.json()).records || []);
     if (cR.ok) setCnames((await cR.json()).records || []);
     setLoading(false);
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadQueries(queryLimit); }, [queryLimit, loadQueries]);
@@ -193,9 +202,9 @@ function DnsPanel() {
         method: "POST", headers: await csrfHeaders(),
         body: JSON.stringify({ action: enabling ? "enable" : "disable" }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("m031a8f0f659d"));
       setStats({ ...stats, status: enabling ? "enabled" : "disabled" });
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to change blocking"); }
+    } catch (e) { setError(translateInterface("m76a924ac4068")); }
     finally { setBusy(null); }
   }
 
@@ -206,9 +215,9 @@ function DnsPanel() {
         method: "PATCH", headers: await csrfHeaders(),
         body: JSON.stringify({ address: list.address, enabled: !list.enabled, comment: list.comment, type: list.type }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("m031a8f0f659d"));
       setLists((prev) => prev.map((l) => (l.address === list.address ? { ...l, enabled: !l.enabled } : l)));
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to update blocklist"); }
+    } catch (e) { setError(translateInterface("m7f6d50a1796d")); }
     finally { setBusy(null); }
   }
 
@@ -223,16 +232,16 @@ function DnsPanel() {
 
       {/* Stat row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard k="Queries today" v={(stats?.queriesToday ?? 0).toLocaleString()} d="DNS lookups" />
-        <StatCard k="Blocked" v={`${Number(stats?.adsPercentage ?? 0).toFixed(0)}%`} d={`${(stats?.adsBlockedToday ?? 0).toLocaleString()} ads & trackers`} />
-        <StatCard k="Blocklists" v={(stats?.domainsBlocked ?? 0).toLocaleString()} d={`${lists.length} list${lists.length === 1 ? "" : "s"}`} />
+        <StatCard k={translateInterface("mbafd50b65999")} v={(stats?.queriesToday ?? 0).toLocaleString(locale)} d={translateInterface("mdfbd3085a1d4")} />
+        <StatCard k={translateInterface("m18f2a0947f9d")} v={`${Number(stats?.adsPercentage ?? 0).toLocaleString(locale, {maximumFractionDigits: 0})}%`} d={translateInterface("mfaee534bf5d9", {count: stats?.adsBlockedToday ?? 0})} />
+        <StatCard k={translateInterface("mdec55eff52c6")} v={(stats?.domainsBlocked ?? 0).toLocaleString(locale)} d={translateInterface("m25946dbb077a", {count: lists.length})} />
         <div className="rounded-xl border bg-card p-4">
-          <div className="text-xs text-muted-foreground">Blocking</div>
+          <div className="text-xs text-muted-foreground">{translateInterface("mf778a33133e5")}</div>
           <div className="mt-1 flex items-center gap-3">
-            <span className="text-xl font-bold">{blocking ? "On" : "Off"}</span>
-            <Switch checked={!!blocking} disabled={busy === "blocking"} onCheckedChange={toggleBlocking} aria-label="Toggle DNS blocking" />
+            <span className="text-xl font-bold">{blocking ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</span>
+            <Switch checked={!!blocking} disabled={busy === "blocking"} onCheckedChange={toggleBlocking} aria-label={translateInterface("mb7c8e60164f1")} />
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">protects the whole network</div>
+          <div className="mt-1 text-xs text-muted-foreground">{translateInterface("m621200920682")}</div>
         </div>
       </div>
 
@@ -244,9 +253,9 @@ function DnsPanel() {
       />
 
       {/* Blocklists */}
-      <ListCard title="Blocklists" headerRight={<span className="text-xs text-muted-foreground">updated nightly</span>}>
+      <ListCard title={translateInterface("mdec55eff52c6")} headerRight={<span className="text-xs text-muted-foreground">{translateInterface("m74c92d1f4ffd")}</span>}>
         {lists.length === 0 ? (
-          <Empty>No blocklists configured.</Empty>
+          <Empty>{translateInterface("mcb13f911b67e")}</Empty>
         ) : lists.map((list) => (
           <div key={list.address} className="flex items-center gap-3 border-t px-[18px] py-3 first:border-t-0">
             <div className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -255,29 +264,29 @@ function DnsPanel() {
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{list.comment || list.address}</div>
               <div className="truncate text-xs text-muted-foreground">
-                {(list.number ?? 0).toLocaleString()} domains{list.enabled ? "" : " · off"}
+                {(list.number ?? 0).toLocaleString(locale)} {translateInterface("m1b0ec1954eec")}{list.enabled ? "" : translateInterface("m62a5b50f644f")}
               </div>
             </div>
             <div className="ml-auto">
-              <Switch checked={list.enabled} disabled={busy === list.address} onCheckedChange={() => toggleList(list)} aria-label={`Toggle ${list.comment || list.address}`} />
+              <Switch checked={list.enabled} disabled={busy === list.address} onCheckedChange={() => toggleList(list)} aria-label={translateInterface("ma388de157cab", { value0: String(list.comment || list.address) })} />
             </div>
           </div>
         ))}
       </ListCard>
 
       {/* Recent queries */}
-      <ListCard title="Recent queries" headerRight={
+      <ListCard title={translateInterface("m164ca8d051af")} headerRight={
         <button className="text-sm text-primary hover:underline" onClick={() => { const n = queryLimit >= 100 ? 12 : 100; setQueryLimit(n); loadQueries(n); }}>
-          {queryLimit >= 100 ? "Show less" : "View all"}
+          {queryLimit >= 100 ? translateInterface("m94ea9b1d33a0") : translateInterface("m30a64216eaea")}
         </button>
       }>
-        {queries.length === 0 ? <Empty>No recent queries.</Empty> : (
+        {queries.length === 0 ? <Empty>{translateInterface("m74924c38d7e4")}</Empty> : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-[18px] py-2.5 font-semibold">Domain</th>
-                <th className="px-[18px] py-2.5 font-semibold">Device</th>
-                <th className="px-[18px] py-2.5 font-semibold">Result</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m79fa33618d8e")}</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6ba0bdeccb42")}</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6e7d50e84f47")}</th>
               </tr>
             </thead>
             <tbody>
@@ -290,7 +299,7 @@ function DnsPanel() {
                     <td className="px-[18px] py-2.5">
                       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                         <span className={cn("h-2 w-2 rounded-full", blocked ? "bg-destructive" : "bg-green-500")} />
-                        {blocked ? "Blocked" : "Allowed"}
+                        {blocked ? translateInterface("m18f2a0947f9d") : translateInterface("m1bb201d18835")}
                       </span>
                     </td>
                   </tr>
@@ -305,6 +314,8 @@ function DnsPanel() {
 }
 
 function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: ARecord[]; cnames: CnameRecord[]; onChanged: () => void; setError: (s: string) => void; }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [points, setPoints] = useState("");
@@ -325,9 +336,9 @@ function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: A
         method: "POST", headers,
         body: JSON.stringify(ip ? { domain: name.trim(), ip: points.trim() } : { domain: name.trim(), target: points.trim() }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to add name");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("m03dc729b8bac"));
       setName(""); setPoints(""); setAdding(false); onChanged();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to add name"); }
+    } catch (e) { setError(translateInterface("m03dc729b8bac")); }
     finally { setBusy(false); }
   }
 
@@ -339,45 +350,43 @@ function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: A
         method: "DELETE", headers,
         body: JSON.stringify(row.kind === "A" ? { domain: row.name, ip: row.points } : { domain: row.name, target: row.points }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to remove name");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("mf4e0d91d1afe"));
       onChanged();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to remove name"); }
+    } catch (e) { setError(translateInterface("mf4e0d91d1afe")); }
     finally { setBusy(false); }
   }
 
   return (
-    <ListCard title="Local names" headerRight={
+    <ListCard title={translateInterface("m30d2231aa939")} headerRight={
       <Button variant="outline" size="sm" className="h-[30px]" onClick={() => setAdding((v) => !v)}>
-        <Plus className="h-3.5 w-3.5" />Add name
-      </Button>
+        <Plus className="h-3.5 w-3.5" />{translateInterface("m98fbfd0278d9")}</Button>
     }>
       {adding && (
         <div className="flex flex-wrap items-center gap-2 border-t bg-muted/30 px-[18px] py-3">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="name (e.g. nas.home)" className="h-9 w-48" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={translateInterface("m2bc675e44996")} className="h-9 w-48" />
           <span className="text-muted-foreground">→</span>
-          <Input value={points} onChange={(e) => setPoints(e.target.value)} placeholder="192.168.x.x or target.domain" className="h-9 w-56" />
+          <Input value={points} onChange={(e) => setPoints(e.target.value)} placeholder={translateInterface("mf4b4164b1c1b")} className="h-9 w-56" />
           <Button size="sm" className="h-9" disabled={busy || !name.trim() || !points.trim()} onClick={add}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Add
-          </Button>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{translateInterface("m9fd728c66c9a")}</Button>
           <Button size="sm" variant="ghost" className="h-9" onClick={() => { setAdding(false); setName(""); setPoints(""); }}><X className="h-4 w-4" /></Button>
         </div>
       )}
-      {rows.length === 0 && !adding ? <Empty>No local names yet.</Empty> : (
+      {rows.length === 0 && !adding ? <Empty>{translateInterface("maa576e18e487")}</Empty> : (
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <th className="px-[18px] py-2.5 font-semibold">Name</th>
-              <th className="px-[18px] py-2.5 font-semibold">Points to</th>
+              <th className="px-[18px] py-2.5 font-semibold">{translateInterface("mdcd1d5223f73")}</th>
+              <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6dca1c151c38")}</th>
               <th className="px-[18px] py-2.5"></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={`${row.kind}-${row.name}-${row.points}`} className="border-t">
-                <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{row.name} {row.kind === "CNAME" && <Badge variant="secondary" className="ml-1 text-[10px]">alias</Badge>}</td>
+                <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{row.name} {row.kind === "CNAME" && <Badge variant="secondary" className="ml-1 text-[10px]">{translateInterface("m1a0a6a36ca0a")}</Badge>}</td>
                 <td className="px-[18px] py-2.5 font-mono text-[12.5px] text-muted-foreground">{row.points}</td>
                 <td className="px-[18px] py-2.5 text-right">
-                  <button className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => remove(row)} aria-label="Remove"><Trash2 className="h-4 w-4" /></button>
+                  <button className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => remove(row)} aria-label={translateInterface("mc3812fc4acb8")}><Trash2 className="h-4 w-4" /></button>
                 </td>
               </tr>
             ))}
@@ -391,6 +400,8 @@ function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: A
 /* ─────────────────────────── Routes ─────────────────────────── */
 
 function RoutesPanel() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [routes, setRoutes] = useState<ProxyRoute[]>([]);
   const [config, setConfig] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -400,28 +411,28 @@ function RoutesPanel() {
     setLoading(true); setError("");
     const res = await fetch("/settings/api/caddy/routes");
     if (res.ok) setRoutes((await res.json()).routes || []);
-    else setError((await res.json().catch(() => ({}))).error || "The web gateway is unavailable.");
+    else setError((await res.json().catch(() => ({}))).error || translateInterface("m3a4f4b4a0103"));
     const cfg = await fetch("/settings/api/caddy/config");
     if (cfg.ok) setConfig((await cfg.json()).config ?? null);
     setLoading(false);
-  }, []);
+  }, [translateInterface]);
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">How requests reach your apps. Routes are managed automatically as you install apps and set your domain.</p>
+      <p className="text-sm text-muted-foreground">{translateInterface("md345018f60c7")}</p>
       {error && <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
 
-      <ListCard title="Proxy routes" headerRight={<Button variant="outline" size="sm" className="h-[30px]" onClick={load}><RefreshCw className="h-3.5 w-3.5" />Refresh</Button>}>
-        {routes.length === 0 ? <Empty>No proxy routes.</Empty> : (
+      <ListCard title={translateInterface("m0a1321f8d829")} headerRight={<Button variant="outline" size="sm" className="h-[30px]" onClick={load}><RefreshCw className="h-3.5 w-3.5" />{translateInterface("m0e9161011702")}</Button>}>
+        {routes.length === 0 ? <Empty>{translateInterface("mdc16ccc1d689")}</Empty> : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-[18px] py-2.5 font-semibold">Incoming</th>
-                <th className="px-[18px] py-2.5 font-semibold">Forwards to</th>
-                <th className="px-[18px] py-2.5 font-semibold">Status</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("me301820ac839")}</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m34780568209b")}</th>
+                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m920e413c7d41")}</th>
               </tr>
             </thead>
             <tbody>
@@ -432,7 +443,7 @@ function RoutesPanel() {
                   <td className="px-[18px] py-2.5">
                     <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                       <span className={cn("h-2 w-2 rounded-full", r.enabled ? "bg-green-500" : "bg-muted-foreground")} />
-                      {r.enabled ? "Active" : "Disabled"}
+                      {r.enabled ? translateInterface("m92340695899b") : translateInterface("m75081b593d15")}
                     </span>
                   </td>
                 </tr>
@@ -445,8 +456,7 @@ function RoutesPanel() {
       {config != null && (
         <details className="rounded-xl border bg-card">
           <summary className="flex cursor-pointer items-center gap-2 px-[18px] py-3 text-sm font-medium text-muted-foreground">
-            <ChevronRight className="h-4 w-4" />Advanced — raw gateway config
-          </summary>
+            <ChevronRight className="h-4 w-4" />{translateInterface("m7c25236d700d")}</summary>
           <pre className="max-h-96 overflow-auto border-t bg-muted/40 p-4 text-[11.5px] leading-relaxed">{JSON.stringify(config, null, 2)}</pre>
         </details>
       )}
@@ -457,6 +467,31 @@ function RoutesPanel() {
 /* ─────────────────────── Domain & HTTPS ─────────────────────── */
 
 function DomainPanel() {
+  const translateInterface = useInterfaceTranslations("interface");
+function stepLabel(step: string): string {
+  const labels: Record<string, string> = {
+    config: translateInterface("m3acf25773311"),
+    preflight: translateInterface("mb22a4c6caece"),
+    apps: translateInterface("m1e8ab1971227"),
+    yaml: translateInterface("me910c6ca6a63"),
+    caddy: translateInterface("md30c5983e3ce"),
+    ai: translateInterface("m14fc15c70dd6"),
+    dns: translateInterface("m10e2ffbf07f7"),
+    dns_provider: translateInterface("mc36f66f44922"),
+    tls: translateInterface("m46743144dbd6"),
+    sso_cp: "Control Panel sign-in",
+    sso_ui: "Dashboard sign-in",
+    ui_db: translateInterface("m1ccded1d1f50"),
+    identity: "YouEye ID",
+    identity_import: translateInterface("m3a1f32ecad45"),
+    cp_env: translateInterface("m1687f61e9b04"),
+  };
+  if (labels[step]) return labels[step];
+  if (step.startsWith("app_")) return translateInterface("m6b7f4e994075", {app: step.slice(4)});
+  return step;
+}
+
+
   const [domain, setDomain] = useState<string | null>(null);
   const [caddyRunning, setCaddyRunning] = useState(true);
   const [tls, setTls] = useState<TlsStatus | null>(null);
@@ -512,7 +547,7 @@ function DomainPanel() {
       const res = await fetch(url, { method: "POST", headers: await csrfHeaders(), body: JSON.stringify(body) });
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error || "Request failed");
+        throw new Error((data as { error?: string }).error || translateInterface("mcfce761befa8"));
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -547,10 +582,10 @@ function DomainPanel() {
         }
         if (done) break;
       }
-      if (!sawComplete) throw new Error("The change did not complete — check the server and try again.");
+      if (!sawComplete) throw new Error(translateInterface("md545fe2b210b"));
       setChangeDone(sawComplete);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Server URL change failed");
+      setError(translateInterface("mbe8b39c9424a"));
     } finally {
       setChangeRunning(false);
     }
@@ -568,7 +603,7 @@ function DomainPanel() {
     try {
       parsed = JSON.parse(await file.text());
     } catch {
-      setError("That file is not a valid bundle (expected JSON).");
+      setError(translateInterface("made0703356c1"));
       return;
     }
     let url: string;
@@ -577,7 +612,7 @@ function DomainPanel() {
     } else if (parsed?.name && parsed?.identity && parsed?.tls) {
       url = "/api/tls/youeye-names/apply";
     } else {
-      setError("Unrecognized bundle — expected a YouEye Names bundle or a youeye-byo-domain export.");
+      setError(translateInterface("mce597c6b7515"));
       return;
     }
     await runSse(url, parsed);
@@ -594,7 +629,7 @@ function DomainPanel() {
       const requestedDomain = hostOnly(providerDomain);
       const currentDomain = domain ? hostOnly(domain) : "";
       if (currentDomain && requestedDomain !== currentDomain) {
-        throw new Error("Change the platform domain first, then connect its DNS provider.");
+        throw new Error(translateInterface("m83748e06044a"));
       }
       const headers = await csrfHeaders();
       const res = await fetch("/api/dns-providers/connect", {
@@ -602,15 +637,15 @@ function DomainPanel() {
         body: JSON.stringify({ provider: "cloudflare", domain: requestedDomain, token: providerToken }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || data.sync?.error || "Failed to connect DNS provider");
+      if (!res.ok) throw new Error(data.error || data.sync?.error || translateInterface("me93571d55373"));
       const certRes = await fetch("/api/tls/acme/provider", { method: "POST", headers });
       const certData = await certRes.json().catch(() => ({}));
-      if (!certRes.ok) throw new Error(certData.error || "DNS connected, but certificate issuance failed");
+      if (!certRes.ok) throw new Error(certData.error || translateInterface("m666d66856a6a"));
       setProviderToken("");
       setReplacingToken(false);
-      setSaved("DNS provider connected and certificate issued");
+      setSaved(translateInterface("m60ca94e7a6d8"));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect DNS provider"); }
+    } catch (e) { setError(translateInterface("me93571d55373")); }
     finally { setProviderBusy(null); }
   }
 
@@ -619,10 +654,10 @@ function DomainPanel() {
     try {
       const res = await fetch("/api/dns-providers/sync", { method: "POST", headers: await csrfHeaders() });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "DNS sync failed");
-      setSaved("DNS records synced");
+      if (!res.ok) throw new Error(data.error || translateInterface("mfbca25633ba7"));
+      setSaved(translateInterface("mdf139ead1d95"));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "DNS sync failed"); }
+    } catch (e) { setError(translateInterface("mfbca25633ba7")); }
     finally { setProviderBusy(null); }
   }
 
@@ -633,10 +668,10 @@ function DomainPanel() {
         method: "POST", headers: await csrfHeaders(), body: JSON.stringify({ force: true }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Certificate renewal failed");
-      setSaved(data.renewed ? "Certificate renewed" : data.reason || "Certificate checked");
+      if (!res.ok) throw new Error(data.error || translateInterface("mcc4b0d214485"));
+      setSaved(data.renewed ? translateInterface("m76cc7840c194") : data.reason || translateInterface("mc1276dfd1746"));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Certificate renewal failed"); }
+    } catch (e) { setError(translateInterface("mcc4b0d214485")); }
     finally { setProviderBusy(null); }
   }
 
@@ -645,16 +680,16 @@ function DomainPanel() {
     try {
       const res = await fetch("/api/dns-providers/connection", { method: "DELETE", headers: await csrfHeaders() });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to disconnect DNS provider");
+      if (!res.ok) throw new Error(data.error || translateInterface("m6467ba48b3f0"));
       setReplacingToken(false);
-      setSaved("DNS provider disconnected");
+      setSaved(translateInterface("m5ca19839baeb"));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to disconnect DNS provider"); }
+    } catch (e) { setError(translateInterface("m6467ba48b3f0")); }
     finally { setProviderBusy(null); }
   }
 
   async function downloadDomainBundle(includeToken = false) {
-    if (includeToken && !window.confirm("Exporting with the DNS token creates a bundle that can edit DNS for this zone. Keep it private.")) {
+    if (includeToken && !window.confirm(translateInterface("m5bca949782e0"))) {
       return;
     }
     setProviderBusy(includeToken ? "export-token" : "export"); setError(""); setSaved("");
@@ -664,7 +699,7 @@ function DomainPanel() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Domain export failed");
+        throw new Error(data.error || translateInterface("m8cecf69e926d"));
       }
       const blob = await res.blob();
       const disposition = res.headers.get("content-disposition") || "";
@@ -677,8 +712,8 @@ function DomainPanel() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setSaved(includeToken ? "Domain bundle exported with DNS token" : "Domain bundle exported");
-    } catch (e) { setError(e instanceof Error ? e.message : "Domain export failed"); }
+      setSaved(includeToken ? translateInterface("mf2efcf1170fb") : translateInterface("m8c8b62ca8971"));
+    } catch (e) { setError(translateInterface("m8cecf69e926d")); }
     finally { setProviderBusy(null); }
   }
 
@@ -691,11 +726,11 @@ function DomainPanel() {
         body: JSON.stringify({ action }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "YouEye Names check failed");
-      setSaved(action === "accept-current-terms" ? "Current certificate notice accepted" : "YouEye Names checked");
+      if (!response.ok) throw new Error(data.error || translateInterface("m765d6fc9f925"));
+      setSaved(action === "accept-current-terms" ? translateInterface("m5d36b97d8404") : translateInterface("mffe734c20ccb"));
       if (action === "accept-current-terms") setNamesNoticeAccepted(false);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "YouEye Names check failed"); }
+    } catch (e) { setError(translateInterface("m765d6fc9f925")); }
     finally { setNamesBusy(null); }
   }
 
@@ -705,7 +740,7 @@ function DomainPanel() {
       const response = await fetch(`/api/tls/youeye-names/${path}`, { cache: "no-store" });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "YouEye Names export failed");
+        throw new Error(data.error || translateInterface("m0c5c4f5c64f8"));
       }
       const blob = await response.blob();
       const disposition = response.headers.get("content-disposition") || "";
@@ -714,8 +749,8 @@ function DomainPanel() {
       const link = document.createElement("a");
       link.href = url; link.download = filename;
       document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-      setSaved(path === "export" ? "Recovery bundle exported" : "Service data exported");
-    } catch (e) { setError(e instanceof Error ? e.message : "YouEye Names export failed"); }
+      setSaved(path === "export" ? translateInterface("mef3756fee6bf") : translateInterface("mc676b040a0a5"));
+    } catch (e) { setError(translateInterface("m0c5c4f5c64f8")); }
     finally { setNamesBusy(null); }
   }
 
@@ -728,11 +763,11 @@ function DomainPanel() {
         body: JSON.stringify({ confirmation: releaseConfirmation }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Could not release the name");
+      if (!response.ok) throw new Error(data.error || translateInterface("mcf7691629b67"));
       setReleaseConfirmation("");
-      setSaved("YouEye Name released and certificate revocation queued");
+      setSaved(translateInterface("m1f3236060325"));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not release the name"); }
+    } catch (e) { setError(translateInterface("mcf7691629b67")); }
     finally { setNamesBusy(null); }
   }
 
@@ -747,9 +782,9 @@ function DomainPanel() {
 
       {/* Server URL */}
       <div className="rounded-xl border bg-card p-[22px]">
-        <h2 className="text-[15px] font-semibold">Server URL</h2>
-        <p className="mt-1 text-sm text-muted-foreground">The address people use to reach this server. Changing it moves YouEye ID, the dashboard, and every installed app to the new name.</p>
-        {!caddyRunning && <p className="mt-3 text-sm text-destructive">The web gateway is not running, so the server URL cannot be changed right now.</p>}
+        <h2 className="text-[15px] font-semibold">{translateInterface("m22f5ebc3ad3f")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{translateInterface("mffd4ce83bfb4")}</p>
+        {!caddyRunning && <p className="mt-3 text-sm text-destructive">{translateInterface("m62d3ab221aa0")}</p>}
 
         {(changeRunning || changeDone || progress.length > 0) ? (
           <div className="mt-4 space-y-3">
@@ -767,67 +802,67 @@ function DomainPanel() {
                   </li>
                 ))}
                 {progress.length === 0 && changeRunning && (
-                  <li className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Starting…</li>
+                  <li className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />{translateInterface("mbbe5fc3b9ef3")}</li>
                 )}
               </ul>
             </div>
             {changeDone && (
               <div className="rounded-lg border border-green-600/30 bg-green-500/5 p-3 text-sm">
-                <p className="font-medium text-green-700 dark:text-green-500">Server URL changed.</p>
-                <p className="mt-1 text-muted-foreground">The server is restarting on its new address. Everyone must sign in again{tlsChoice === "selfsigned" ? ", and browsers must trust the new certificate" : ""}.</p>
+                <p className="font-medium text-green-700 dark:text-green-500">{translateInterface("m4536d2daa994")}</p>
+                <p className="mt-1 text-muted-foreground">{tlsChoice === "selfsigned" ? translateInterface("m2c9fdb03193f") : translateInterface("m346a93aa6f57")}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button size="sm" className="h-8" onClick={() => { window.location.href = changeDone.newUrl; }}>Continue to {changeDone.newUrl.replace(/^https:\/\//, "")}</Button>
-                  <Button size="sm" variant="ghost" className="h-8" onClick={resetChangeFlow}>Stay here</Button>
+                  <Button size="sm" className="h-8" onClick={() => { window.location.href = changeDone.newUrl; }}>{translateInterface("m99b73eab1688", {address: changeDone.newUrl.replace(/^https:\/\//, "")})}</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={resetChangeFlow}>{translateInterface("mef8d633e03c4")}</Button>
                 </div>
               </div>
             )}
             {!changeRunning && !changeDone && (
-              <Button size="sm" variant="outline" className="h-8" onClick={resetChangeFlow}>Back</Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={resetChangeFlow}>{translateInterface("m76900f1bfd16")}</Button>
             )}
           </div>
         ) : editing ? (
           <div className="mt-4 space-y-4">
             <div className="space-y-1.5">
-              <LabelText>New server URL</LabelText>
+              <LabelText>{translateInterface("me84a0a9b3def")}</LabelText>
               <Input value={edit} onChange={(e) => setEdit(e.target.value)} placeholder="my-server.example.com" className="h-9 w-72 font-mono" />
             </div>
             <div className="space-y-2">
-              <LabelText>Certificate for the new name</LabelText>
+              <LabelText>{translateInterface("mfa7d2d5339ae")}</LabelText>
               <label className="flex cursor-pointer items-start gap-2 text-sm">
                 <input type="radio" className="mt-1" checked={tlsChoice === "selfsigned"} onChange={() => setTlsChoice("selfsigned")} />
-                <span><span className="font-medium">Self-signed</span> <span className="text-muted-foreground">— works for any name; browsers warn until the new certificate is trusted.</span></span>
+                <span><span className="font-medium">{translateInterface("meb5c27968740")}</span> <span className="text-muted-foreground">{translateInterface("m126137dad040")}</span></span>
               </label>
               <label className={cn("flex items-start gap-2 text-sm", connection ? "cursor-pointer" : "cursor-not-allowed opacity-50")}>
                 <input type="radio" className="mt-1" disabled={!connection} checked={tlsChoice === "provider"} onChange={() => setTlsChoice("provider")} />
-                <span><span className="font-medium">Let&apos;s Encrypt via {connection ? `Cloudflare (${connection.zoneName})` : "a DNS provider"}</span> <span className="text-muted-foreground">— trusted certificate; the new name must live in the connected zone.</span></span>
+                <span><span className="font-medium">{translateInterface("mb15dcb54ce90", {provider: connection ? `Cloudflare (${connection.zoneName})` : translateInterface("m5266d11b75e6")})}</span> <span className="text-muted-foreground">{translateInterface("m8ee385eb318f")}</span></span>
               </label>
-              <p className="text-xs text-muted-foreground">For a saved YouEye Name or exported domain, use “Import saved name” instead. Let&apos;s Encrypt for a new public domain: connect its DNS provider below after (or before) the change.</p>
+              <p className="text-xs text-muted-foreground">{translateInterface("ma83ca15c998e")}</p>
             </div>
             {confirming ? (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                <p className="font-medium">Change the server URL to <span className="font-mono">{hostOnly(edit)}</span>?</p>
+                <p className="font-medium">{translateInterface("md65b176609d0", {host: hostOnly(edit)})}</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                  <li>Everyone is signed out and must sign in again at the new address.</li>
-                  <li>Installed apps restart briefly while they move to the new name.</li>
-                  <li>Other devices need your DNS to point <span className="font-mono">{hostOnly(edit)}</span> and <span className="font-mono">*.{hostOnly(edit)}</span> at this server.</li>
-                  {tlsChoice === "selfsigned" && <li>Browsers will warn until the new self-signed certificate is trusted.</li>}
+                  <li>{translateInterface("md29ecaec5ae1")}</li>
+                  <li>{translateInterface("m35313207ea4a")}</li>
+                  <li>{translateInterface("m040b1e5eb939", {host: hostOnly(edit)})}</li>
+                  {tlsChoice === "selfsigned" && <li>{translateInterface("mb9a9cf04d148")}</li>}
                 </ul>
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" className="h-8" onClick={startUrlChange}>Yes, change the server URL</Button>
-                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setConfirming(false)}>Back</Button>
+                  <Button size="sm" className="h-8" onClick={startUrlChange}>{translateInterface("m8de17fb35366")}</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setConfirming(false)}>{translateInterface("m76900f1bfd16")}</Button>
                 </div>
               </div>
             ) : (
               <div className="flex gap-2">
-                <Button size="sm" className="h-9" disabled={!edit.trim() || hostOnly(edit) === (domain || "")} onClick={() => setConfirming(true)}>Continue</Button>
-                <Button size="sm" variant="ghost" className="h-9" onClick={() => { setEditing(false); setConfirming(false); setEdit(domain ?? ""); }}>Cancel</Button>
+                <Button size="sm" className="h-9" disabled={!edit.trim() || hostOnly(edit) === (domain || "")} onClick={() => setConfirming(true)}>{translateInterface("m31fbef162594")}</Button>
+                <Button size="sm" variant="ghost" className="h-9" onClick={() => { setEditing(false); setConfirming(false); setEdit(domain ?? ""); }}>{translateInterface("m19766ed6ccb2")}</Button>
               </div>
             )}
           </div>
         ) : (
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm">{domain || <span className="text-muted-foreground">Not set</span>}</span>
-            {caddyRunning && <Button size="sm" variant="outline" className="h-8" onClick={() => { setEditing(true); setConfirming(false); }}>Change</Button>}
+            <span className="font-mono text-sm">{domain || <span className="text-muted-foreground">{translateInterface("m4895f73177ab")}</span>}</span>
+            {caddyRunning && <Button size="sm" variant="outline" className="h-8" onClick={() => { setEditing(true); setConfirming(false); }}>{translateInterface("mc0bf75bd78bf")}</Button>}
             {caddyRunning && (
               <label className="inline-flex">
                 <input
@@ -841,8 +876,7 @@ function DomainPanel() {
                   }}
                 />
                 <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground">
-                  <Download className="h-3.5 w-3.5" />Import saved name
-                </span>
+                  <Download className="h-3.5 w-3.5" />{translateInterface("m70c53e39ff16")}</span>
               </label>
             )}
           </div>
@@ -856,7 +890,7 @@ function DomainPanel() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold">YouEye Names</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Lease, DNS and certificate lifecycle for your managed address.</p>
+              <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m62c7b29e5345")}</p>
             </div>
             <span className="inline-flex items-center gap-1.5 text-sm font-medium capitalize">
               <span className={cn("h-2 w-2 rounded-full", names.state.status === "healthy" ? "bg-green-500" : names.state.status === "renewing" ? "bg-blue-500" : names.state.status === "released" ? "bg-muted-foreground" : "bg-amber-500")} />
@@ -864,81 +898,75 @@ function DomainPanel() {
             </span>
           </div>
           <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-            <Field label="Managed address" value={names.state.fqdn} />
-            <Field label="Certificate expires" value={names.state.certificate ? fmtDate(names.state.certificate.expiresAt) : "Provisioning"} />
-            <Field label="Last service contact" value={fmtDateTime(names.state.lastBrokerContactAt)} />
-            <Field label="Next automatic check" value={fmtDateTime(names.state.nextCheckAt)} />
+            <Field label={translateInterface("me072e717efb8")} value={names.state.fqdn} />
+            <Field label={translateInterface("m1e73119d93c5")} value={names.state.certificate ? fmtDate(names.state.certificate.expiresAt) : "Provisioning"} />
+            <Field label={translateInterface("m13df778140fb")} value={fmtDateTime(names.state.lastBrokerContactAt)} />
+            <Field label={translateInterface("md8e50ce1593d")} value={fmtDateTime(names.state.nextCheckAt)} />
           </div>
           <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
             <div className="flex items-center gap-2">
               <span className={cn("h-2 w-2 rounded-full", !names.serviceReachable || !names.readiness?.installation.canProceedNow ? "bg-red-500" : names.readiness.installation.state === "degraded" ? "bg-amber-500" : "bg-green-500")} />
               <span className="font-medium">
-                {!names.serviceReachable ? "Service offline" : names.readiness?.installation.state === "degraded" ? "Service available with reduced redundancy" : names.readiness?.installation.canProceedNow ? "Service available" : "New addresses paused"}
+                {!names.serviceReachable ? translateInterface("mdee1af211578") : names.readiness?.installation.state === "degraded" ? translateInterface("m5cb6457d9f3d") : names.readiness?.installation.canProceedNow ? translateInterface("m707cc0142dae") : translateInterface("m7d5f7ef23605")}
               </span>
             </div>
             {names.readiness && (
               <p className="mt-1 text-xs text-muted-foreground">
-                DNS {names.readiness.dns.state}; {names.readiness.initialCertificate.primary.provider === "google-public-ca" ? "Google Public CA" : "Let's Encrypt"} {names.readiness.initialCertificate.primary.state}; fallback {names.readiness.initialCertificate.fallback.state}. Availability is not an issuance promise.
+                DNS {names.readiness.dns.state}; {translateInterface("mbd2ae1d640e9", {provider: names.readiness.initialCertificate.primary.provider === "google-public-ca" ? "Google Public CA" : "Let's Encrypt", state: names.readiness.initialCertificate.primary.state, fallback: names.readiness.initialCertificate.fallback.state})}
               </p>
             )}
             {names.readiness?.installation.reasonCodes?.length ? (
               <details className="mt-2 text-xs text-muted-foreground">
-                <summary className="cursor-pointer">Technical details</summary>
+                <summary className="cursor-pointer">{translateInterface("m890ab358a55d")}</summary>
                 <p className="mt-1 font-mono">{names.readiness.installation.reasonCodes.join(", ")}</p>
               </details>
             ) : null}
           </div>
           {!names.certificateMatches && names.state.status !== "released" && (
             <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-              The active certificate does not match this managed address. Your existing certificate was left unchanged.
-            </div>
+              {translateInterface("m60f901f6a0db")}</div>
           )}
           {names.state.lastError && (
             <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
               {names.state.lastError.code === "certificate_terms_version_required"
-                ? "The certificate notice changed and needs your review before renewal."
-                : "The latest lifecycle check needs attention."}
-              {names.state.lastError.requestId ? ` Reference: ${names.state.lastError.requestId}` : ""}
+                ? translateInterface("m5a95b2a9bc4e")
+                : translateInterface("m3b546dc70b11")}
+              {names.state.lastError.requestId ? translateInterface("m6c205d570cce", {reference: names.state.lastError.requestId}) : ""}
             </div>
           )}
           {names.currentTerms && (
             <div className="mt-3 rounded-lg border bg-muted/30 p-3">
-              <p className="text-sm font-medium">Certificate and privacy notice</p>
+              <p className="text-sm font-medium">{translateInterface("m5cdb07c69226")}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{names.currentTerms.summary}</p>
               <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm">
                 <input type="checkbox" checked={namesNoticeAccepted} onChange={(event) => setNamesNoticeAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-input accent-primary" />
-                <span>I understand that this address and its certificates appear in public Certificate Transparency logs.</span>
+                <span>{translateInterface("m5a9d2532161c")}</span>
               </label>
-              <p className="mt-2 text-xs text-muted-foreground">Certificate terms {names.currentTerms.version}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{translateInterface("mc6ed61c15986")}{names.currentTerms.version}</p>
             </div>
           )}
           {names.state.status !== "released" && (
             <div className="mt-4 flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy} onClick={() => namesAction("check-now")}>
-                {namesBusy === "check-now" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Check now
-              </Button>
+                {namesBusy === "check-now" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{translateInterface("m2937cffb37ab")}</Button>
               {(!names.state.termsVersion || names.state.lastError?.code === "certificate_terms_version_required") && (
                 <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy || !namesNoticeAccepted || !names.currentTerms} onClick={() => namesAction("accept-current-terms")}>
-                  <Shield className="h-3.5 w-3.5" />Review and accept current notice
-                </Button>
+                  <Shield className="h-3.5 w-3.5" />{translateInterface("m8839f06e85b7")}</Button>
               )}
               <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy} onClick={() => downloadNamesFile("export")}>
-                <Download className="h-3.5 w-3.5" />Recovery bundle
-              </Button>
+                <Download className="h-3.5 w-3.5" />{translateInterface("m3af396c523a5")}</Button>
               <Button size="sm" variant="ghost" className="h-8" disabled={!!namesBusy} onClick={() => downloadNamesFile("service-data")}>
-                <Download className="h-3.5 w-3.5" />Service data
-              </Button>
+                <Download className="h-3.5 w-3.5" />{translateInterface("m128e4d5fada6")}</Button>
             </div>
           )}
           {names.state.status !== "released" && (
             <details className="mt-4 border-t pt-3">
-              <summary className="cursor-pointer text-sm font-medium text-destructive">Release this name</summary>
-              <p className="mt-2 text-xs text-muted-foreground">First change the server URL above. Releasing removes DNS and queues certificate revocation; it does not change this server’s URL for you.</p>
+              <summary className="cursor-pointer text-sm font-medium text-destructive">{translateInterface("me1b42a6ea639")}</summary>
+              <p className="mt-2 text-xs text-muted-foreground">{translateInterface("m149948b72bd2")}</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Input value={releaseConfirmation} onChange={(event) => setReleaseConfirmation(event.target.value)} placeholder={`Type ${names.state.fqdn}`} className="h-8 max-w-xs font-mono text-xs" />
+                <Input value={releaseConfirmation} onChange={(event) => setReleaseConfirmation(event.target.value)} placeholder={translateInterface("m22cb95ffdcc8", { value0: String(names.state.fqdn) })} className="h-8 max-w-xs font-mono text-xs" />
                 <Button size="sm" variant="destructive" className="h-8" disabled={!!namesBusy || releaseConfirmation !== names.state.fqdn} onClick={releaseNamesAddress}>
-                  {namesBusy === "release" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Release name
-                </Button>
+                  {namesBusy === "release" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{translateInterface("m85f01282f316")}</Button>
               </div>
             </details>
           )}
@@ -949,18 +977,18 @@ function DomainPanel() {
       <div className="rounded-xl border bg-card p-[22px]">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-[15px] font-semibold">DNS provider</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Keep your domain and app subdomains pointed at this server.</p>
+            <h2 className="text-[15px] font-semibold">{translateInterface("mc36f66f44922")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("meae33134a906")}</p>
           </div>
           <Cloud className="h-5 w-5 text-muted-foreground" />
         </div>
         {connection ? (
           <div className="mt-4 space-y-4">
             <div className="grid gap-4 text-sm sm:grid-cols-2">
-              <Field label="Provider" value={connection.provider === "cloudflare" ? "Cloudflare" : connection.provider} />
-              <Field label="Zone" value={connection.zoneName} />
-              <Field label="Target IP" value={connection.targetIp || "—"} />
-              <Field label="Last sync" value={fmtDateTime(connection.lastDnsSyncAt)} />
+              <Field label={translateInterface("m472590ae974d")} value={connection.provider === "cloudflare" ? "Cloudflare" : connection.provider} />
+              <Field label={translateInterface("ma8a06e4a5695")} value={connection.zoneName} />
+              <Field label={translateInterface("md35e1d8c6c2b")} value={connection.targetIp || "—"} />
+              <Field label={translateInterface("m71967fca4d2e")} value={fmtDateTime(connection.lastDnsSyncAt)} />
             </div>
             {connection.lastDnsSyncError && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -969,29 +997,24 @@ function DomainPanel() {
             )}
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={syncProvider}>
-                {providerBusy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Sync DNS now
-              </Button>
+                {providerBusy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{translateInterface("m84f85e88cfac")}</Button>
               <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={() => { setProviderDomain(connection.domain); setProviderToken(""); setReplacingToken(true); }}>
-                <KeyRound className="h-3.5 w-3.5" />Replace token
-              </Button>
+                <KeyRound className="h-3.5 w-3.5" />{translateInterface("m82f2449b3fb3")}</Button>
               <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" disabled={!!providerBusy} onClick={disconnectProvider}>
-                {providerBusy === "disconnect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}Disconnect
-              </Button>
+                {providerBusy === "disconnect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}{translateInterface("macfc5be785a9")}</Button>
             </div>
             {!internalCert && (
               <div className="border-t pt-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="text-sm font-medium">Domain export</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Save the certificate, private key, provider zone, and optional DNS token for reinstall reuse.</p>
+                    <p className="text-sm font-medium">{translateInterface("m270fd702de9c")}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{translateInterface("m7b40002d627c")}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={() => downloadDomainBundle(false)}>
-                      {providerBusy === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}Export bundle
-                    </Button>
+                      {providerBusy === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{translateInterface("mfab020adbc1e")}</Button>
                     <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy || !connection.hasToken} onClick={() => downloadDomainBundle(true)}>
-                      {providerBusy === "export-token" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}With token
-                    </Button>
+                      {providerBusy === "export-token" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}{translateInterface("m75e3cbf3fb94")}</Button>
                   </div>
                 </div>
               </div>
@@ -999,14 +1022,13 @@ function DomainPanel() {
             {replacingToken && (
               <div className="rounded-lg border bg-muted/30 p-3">
                 <div className="space-y-1.5">
-                  <LabelText>New Cloudflare token</LabelText>
-                  <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder="Paste token" className="h-9" />
+                  <LabelText>{translateInterface("m9d77525b9c6b")}</LabelText>
+                  <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder={translateInterface("m67fa416afa64")} className="h-9" />
                 </div>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" className="h-8" disabled={!providerToken.trim() || !!providerBusy} onClick={connectProvider}>
-                    {providerBusy === "connect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Save token
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-8" onClick={() => { setReplacingToken(false); setProviderToken(""); }}>Cancel</Button>
+                    {providerBusy === "connect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{translateInterface("m2991503a0ae4")}</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => { setReplacingToken(false); setProviderToken(""); }}>{translateInterface("m19766ed6ccb2")}</Button>
                 </div>
               </div>
             )}
@@ -1015,26 +1037,24 @@ function DomainPanel() {
           <div className="mt-4 space-y-3">
             <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
               <div className="space-y-1.5">
-                <LabelText>Domain</LabelText>
+                <LabelText>{translateInterface("m79fa33618d8e")}</LabelText>
                 <Input value={providerDomain} onChange={(e) => setProviderDomain(e.target.value)} placeholder="home.example.com" className="h-9 font-mono" />
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5">
-                  <LabelText>Cloudflare token</LabelText>
+                  <LabelText>{translateInterface("m79644cb9aff4")}</LabelText>
                   <span className="group relative inline-flex">
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="pointer-events-none absolute right-0 z-10 mt-5 hidden w-72 rounded-xl border bg-popover p-3 text-xs text-popover-foreground shadow-lg group-hover:block">
-                      Create a Cloudflare API token from the Edit zone DNS template. Scope it to this domain&apos;s zone and grant Zone - Zone - Read plus Zone - DNS - Edit.
-                    </span>
+                      {translateInterface("m7b3d43e16861")}</span>
                   </span>
                 </div>
-                <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder="Paste token" className="h-9" />
+                <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder={translateInterface("m67fa416afa64")} className="h-9" />
               </div>
             </div>
             <Button size="sm" className="h-9" disabled={!providerDomain.trim() || !providerToken.trim() || !!providerBusy} onClick={connectProvider}>
               {providerBusy === "connect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
-              Connect and secure domain
-            </Button>
+              {translateInterface("mdb69a1caf8b4")}</Button>
           </div>
         )}
       </div>
@@ -1042,39 +1062,36 @@ function DomainPanel() {
       {/* HTTPS / certificate */}
       <div className="rounded-xl border bg-card p-[22px]">
         <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold">HTTPS certificate</h2>
-          <Button variant="outline" size="sm" className="h-8" onClick={load}><RefreshCw className="h-3.5 w-3.5" />Refresh</Button>
+          <h2 className="text-[15px] font-semibold">{translateInterface("m46743144dbd6")}</h2>
+          <Button variant="outline" size="sm" className="h-8" onClick={load}><RefreshCw className="h-3.5 w-3.5" />{translateInterface("m0e9161011702")}</Button>
         </div>
         {tls?.expiryWarning && (
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600 dark:text-amber-500">
-            <AlertTriangle className="h-4 w-4" />This certificate expires soon.
-          </div>
+            <AlertTriangle className="h-4 w-4" />{translateInterface("mf13ecb7b4f12")}</div>
         )}
         {internalCert ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Private/local certificate.</span> Browsers may warn unless you connect YouEye Names, a DNS provider, or upload a trusted certificate.
-          </p>
+            <span className="font-medium text-foreground">{translateInterface("md5859dc61619")}</span> {translateInterface("m30c4faa696f0")}</p>
         ) : (
           <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-            <Field label="Mode" value={tls?.mode} />
-            <Field label="Issuer" value={tls?.cert?.issuer || "—"} />
-            <Field label="Issued" value={fmtDate(tls?.cert?.issuedAt)} />
-            <Field label="Expires" value={fmtDate(tls?.cert?.expiresAt)} />
-            <Field label="Next renewal" value={fmtDateTime(connection?.nextCertRenewalDueAt)} />
+            <Field label={translateInterface("m5e23ec6a300d")} value={tls?.mode} />
+            <Field label={translateInterface("m39e02c46a083")} value={tls?.cert?.issuer || "—"} />
+            <Field label={translateInterface("m0221e4875188")} value={fmtDate(tls?.cert?.issuedAt)} />
+            <Field label={translateInterface("mf6725f3af08a")} value={fmtDate(tls?.cert?.expiresAt)} />
+            <Field label={translateInterface("mc9b6b4f84e1b")} value={fmtDateTime(connection?.nextCertRenewalDueAt)} />
           </div>
         )}
         {connection && !internalCert && (
           <div className="mt-4">
             <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={renewProvider}>
-              {providerBusy === "renew" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Renew now
-            </Button>
+              {providerBusy === "renew" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{translateInterface("m905758c33c19")}</Button>
           </div>
         )}
         <div className="mt-4">
-          <p className="mb-2 text-sm font-medium">Secured names</p>
+          <p className="mb-2 text-sm font-medium">{translateInterface("mf5ead1dc7b5e")}</p>
           <div className="flex flex-wrap gap-2">
             {(tls?.subjects?.length ?? 0) > 0 ? tls!.subjects.map((s) => <Badge key={s} variant="secondary" className="font-mono text-[11px]">{s}</Badge>)
-              : <span className="text-sm text-muted-foreground">{domain ? `${domain} (on demand)` : "No explicit names configured."}</span>}
+              : <span className="text-sm text-muted-foreground">{domain ? translateInterface("me540c1d7d757", { value0: String(domain) }) : translateInterface("m09102598e995")}</span>}
           </div>
         </div>
       </div>
@@ -1085,28 +1102,7 @@ function DomainPanel() {
 /* ─────────────────────────── shared bits ─────────────────────────── */
 
 /** Friendly labels for reconfigure SSE step keys (app_* → "App: <id>"). */
-function stepLabel(step: string): string {
-  const labels: Record<string, string> = {
-    config: "Reading configuration",
-    preflight: "DNS preflight",
-    apps: "Finding installed apps",
-    yaml: "Site configuration",
-    caddy: "Web gateway routes",
-    ai: "YouEye AI identity",
-    dns: "Local DNS",
-    dns_provider: "DNS provider",
-    tls: "HTTPS certificate",
-    sso_cp: "Control Panel sign-in",
-    sso_ui: "Dashboard sign-in",
-    ui_db: "Dashboard branding",
-    identity: "YouEye ID",
-    identity_import: "Name identity",
-    cp_env: "Control Panel restart",
-  };
-  if (labels[step]) return labels[step];
-  if (step.startsWith("app_")) return `App: ${step.slice(4)}`;
-  return step;
-}
+
 
 function StatCard({ k, v, d }: { k: string; v: string; d: string }) {
   return (

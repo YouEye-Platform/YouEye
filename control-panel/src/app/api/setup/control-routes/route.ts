@@ -7,11 +7,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { withPlatformLifecycle } from '@/lib/market/update-admission';
 import { settingsService } from '@/lib/settings';
 import {
   checkHealth,
-  ensureControlSettingsRoute,
-  ensurePointerInferenceRoutes,
+  reconcileManagedRoutes,
   ensureScopedAppGrantDenyRoute,
   getConfiguredDomain,
 } from '@/lib/caddy/client';
@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    return await withPlatformLifecycle(async () => {
     const healthy = await checkHealth();
     if (!healthy) {
       return NextResponse.json(
@@ -51,14 +52,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await ensureControlSettingsRoute(domain, 'youeye-control', 3000);
-    await ensurePointerInferenceRoutes(domain);
+    await reconcileManagedRoutes(domain);
     await ensureScopedAppGrantDenyRoute();
 
     return NextResponse.json({
       success: true,
       domain,
       routes: ['/settings', '/market', '/v1', '/v1beta', 'app-grant-token-deny'],
+    });
     });
   } catch (error) {
     console.error('[Setup/ControlRoutes] Failed to repair root control routes:', error);

@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
     resetRateLimit(rateLimitKey);
     const sessionToken = await createSetupSession({ ownerId: user.id, username: user.username });
     const csrfToken = generateCSRFToken();
-    await setSessionCookies(sessionToken, csrfToken, { request });
+    await setSessionCookies(sessionToken, csrfToken, { request, maxAge: 7200 });
     return NextResponse.json({ success: true, next: '/setup' });
   } catch (error) {
     console.error('[appliance-claim] Request failed:', error instanceof Error ? error.message : 'unknown error');

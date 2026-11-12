@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * NotificationStandardRow — Plan 1 Workstream E3.
  *
@@ -7,7 +10,7 @@
  * <UnifiedEmbed kind="notification"> timeout fallback (never silent).
  */
 
-"use client";
+
 
 import type { LucideIcon } from "lucide-react";
 
@@ -29,6 +32,8 @@ export function NotificationStandardRow({
   onAction,
   actionLabel,
 }: NotificationStandardRowProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div className="flex items-start gap-[11px] rounded-xl border bg-card px-3.5 py-3">
       <div className="grid h-[30px] w-[30px] flex-shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
@@ -43,7 +48,7 @@ export function NotificationStandardRow({
             onClick={onAction}
             className="mt-0.5 text-[12.5px] text-primary hover:underline"
           >
-            {action.label ?? actionLabel ?? "Open"}
+            {action.label ?? actionLabel ?? translateInterface("med077f3d8125")}
           </a>
         )}
       </div>

@@ -1,486 +1,335 @@
 #!/bin/sh
 # YouEye Installer bootstrap for Proxmox VE.
 #
-# Stable:
-#   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
-# Development from an explicit Forgejo-compatible source:
-#   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh |
-#     sudo sh -s -- --provider forgejo --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases --channel development
+# Latest Stable release from the official repository:
+#   curl -fsSL https://releases.youeye.me/install.sh | sh
+# Latest dev release of another repository:
+#   curl -fsSL https://releases.youeye.me/install.sh |
+#     sh -s -- --repository https://code.example.test/example/YouEye --channel dev
+#
+# The bootstrap reads the channel index of the repository (a small file, never
+# a release-listing API), downloads that release's core-release.json and checks
+# it against the index digest, checks the Installer binary against the sha256
+# and size listed there and runs it with that exact release tag and
+# core-release.json digest. Release signing is not used; integrity comes from
+# HTTPS and SHA-256. The Installer then verifies every image artifact the same
+# way.
+#
+# Channels: dev, alpha, beta, stable (default). The box keeps following the
+# channel after installation. --release-tag with --core-manifest-sha256 installs
+# one exact release of the channel instead of its current one.
 #
 # The booted YouEye ISO runs the same binary as `youeye-installer install`.
 set -eu
 
-provider="${INSTALLER_PROVIDER:-github}"
-releases_api="${INSTALLER_RELEASES_API:-}"
+repository="${INSTALLER_REPOSITORY:-https://github.com/YouEye-Platform/YouEye}"
 channel="${INSTALLER_CHANNEL:-stable}"
-release_branch="${INSTALLER_RELEASE_BRANCH:-}"
 exact_tag="${INSTALLER_TAG:-}"
-installer_sha256="${INSTALLER_SHA256:-}"
-iso_sha256="${INSTALLER_ISO_SHA256:-}"
+core_manifest_sha256="${INSTALLER_CORE_MANIFEST_SHA256:-}"
 cache_root="${YOUEYE_INSTALLER_CACHE:-/var/cache/youeye-installer/bootstrap}"
-asset=youeye-installer-linux-amd64
-max_pages=200
 
+option_value() {
+    [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
+}
 parse_bootstrap_options() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --provider)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                provider=$2; shift 2 ;;
-            --provider=*) provider=${1#*=}; shift ;;
-            --releases-api)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                releases_api=$2; shift 2 ;;
-            --releases-api=*) releases_api=${1#*=}; shift ;;
-            --channel)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                channel=$2; shift 2 ;;
+            --repository) option_value "$@"; repository=$2; shift 2 ;;
+            --repository=*) repository=${1#*=}; shift ;;
+            --channel) option_value "$@"; channel=$2; shift 2 ;;
             --channel=*) channel=${1#*=}; shift ;;
-            --release-branch)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                release_branch=$2; shift 2 ;;
-            --release-branch=*) release_branch=${1#*=}; shift ;;
-            --release-tag)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                exact_tag=$2; shift 2 ;;
+            --release-tag) option_value "$@"; exact_tag=$2; shift 2 ;;
             --release-tag=*) exact_tag=${1#*=}; shift ;;
-            --installer-sha256)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                installer_sha256=$2; shift 2 ;;
-            --installer-sha256=*) installer_sha256=${1#*=}; shift ;;
-            --iso-sha256)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                iso_sha256=$2; shift 2 ;;
-            --iso-sha256=*) iso_sha256=${1#*=}; shift ;;
+            --core-manifest-sha256) option_value "$@"; core_manifest_sha256=$2; shift 2 ;;
+            --core-manifest-sha256=*) core_manifest_sha256=${1#*=}; shift ;;
             *) shift ;;
         esac
     done
 }
 parse_bootstrap_options "$@"
 
-provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
 channel="$(printf '%s' "$channel" | tr '[:upper:]' '[:lower:]')"
-if [ -z "$releases_api" ] && [ "$provider" = github ]; then
-    releases_api=https://api.github.com/repos/YouEye-Platform/YouEye/releases
+case "$channel" in
+    dev|alpha|beta|stable) ;;
+    *) printf 'Installer channel must be dev, alpha, beta or stable, got %s\n' "$channel" >&2; exit 1 ;;
+esac
+if { [ -n "$exact_tag" ] && [ -z "$core_manifest_sha256" ]; } || { [ -z "$exact_tag" ] && [ -n "$core_manifest_sha256" ]; }; then
+    printf '%s\n' '--release-tag and --core-manifest-sha256 go together.' >&2
+    exit 1
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
     printf '%s\n' 'Run the YouEye Installer as root on a Proxmox VE host.' >&2
     exit 1
 fi
-for command in curl openssl sha256sum python3 qm pvesm pvesh sgdisk; do
+for command in python3 qm pvesm pvesh sgdisk; do
     if ! command -v "$command" >/dev/null 2>&1; then
         printf 'Required Proxmox installer command is missing: %s\n' "$command" >&2
         exit 1
     fi
 done
 
-case "$channel" in
-    stable) ;;
-    development|dev) channel=development ;;
-    branch) ;;
-    exact) ;;
-    *) printf 'Installer channel must be stable, development, branch, or exact, got %s\n' "$channel" >&2; exit 1 ;;
-esac
-case "$provider" in
-    github) page_size=100; page_size_key=per_page ;;
-    forgejo|custom) page_size=50; page_size_key=limit ;;
-    *) printf 'Installer provider must be github, forgejo, or custom, got %s\n' "$provider" >&2; exit 1 ;;
-esac
-if [ -z "$releases_api" ]; then
-    printf '%s\n' 'Forgejo and custom providers require an explicit --releases-api HTTPS URL.' >&2
-    exit 1
-fi
-python3 - "$provider" "$releases_api" <<'PY'
-import sys
-from urllib.parse import parse_qs, urlparse
-
-provider, raw = sys.argv[1:]
-parsed = urlparse(raw)
-if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.fragment:
-    raise SystemExit("Releases API must use HTTPS without credentials or a fragment")
-unsupported = set(parse_qs(parsed.query)) - {"limit", "per_page", "page"}
-if unsupported:
-    raise SystemExit(f"Releases API contains unsupported query parameter: {sorted(unsupported)[0]}")
-if provider == "github":
-    parts = [part for part in parsed.path.split("/") if part]
-    if (parsed.hostname or "").lower() != "api.github.com" or len(parts) != 4 or parts[0] != "repos" or parts[3] != "releases":
-        raise SystemExit("GitHub provider requires one api.github.com repository releases URL")
-PY
-if [ "$channel" = exact ]; then
-    [ -n "$exact_tag" ] || { printf '%s\n' 'Exact selection requires --release-tag.' >&2; exit 1; }
-    [ -n "$iso_sha256" ] || { printf '%s\n' 'Exact selection requires --iso-sha256.' >&2; exit 1; }
-    [ -n "$installer_sha256" ] || { printf '%s\n' 'Exact selection requires --installer-sha256.' >&2; exit 1; }
-elif [ -n "$exact_tag" ] || [ -n "$iso_sha256" ] || [ -n "$installer_sha256" ]; then
-    printf '%s\n' 'Release tag and exact digests require --channel exact.' >&2
-    exit 1
-fi
-if [ "$channel" = branch ]; then
-    python3 - "$release_branch" <<'PY'
-import re
-import sys
-
-branch = sys.argv[1]
-if not branch or len(branch) > 96 or any(part in {"", ".", ".."} or part.startswith(".") or part.endswith(".") or part.endswith(".lock") or not re.fullmatch(r"[a-z0-9._-]+", part) for part in branch.split("/")):
-    raise SystemExit("Branch selection requires a safe signed release branch")
-PY
-elif [ -n "$release_branch" ]; then
-    printf '%s\n' 'Release branch requires --channel branch.' >&2
-    exit 1
-fi
-validate_digest() {
-    digest_name=$1
-    digest_value=$2
-    if [ -n "$digest_value" ] && { [ "${#digest_value}" -ne 64 ] || printf '%s' "$digest_value" | grep -q '[^0-9a-f]'; }; then
-        printf '%s must be exactly 64 lowercase hexadecimal characters.\n' "$digest_name" >&2
-        exit 1
-    fi
-}
-validate_digest installer_sha256 "$installer_sha256"
-validate_digest iso_sha256 "$iso_sha256"
-
 umask 077
 install -d -m 0700 "$cache_root"
-pages_dir="$(mktemp -d "$cache_root/.release-pages.XXXXXX")"
-cleanup() {
-    rm -rf "$pages_dir"
-}
-trap cleanup EXIT HUP INT TERM
+selection="$(mktemp "$cache_root/.selection.XXXXXX")"
+trap 'rm -f "$selection"' EXIT HUP INT TERM
 
-download_https() {
-    source_url=$1
-    destination=$2
-    current_url=$source_url
-    redirect_count=0
-    headers_path="$destination.headers.$$"
-    body_path="$destination.body.$$"
-    rm -f "$headers_path" "$body_path"
-    while :; do
-        python3 - "$source_url" "$current_url" <<'PY'
-import sys
-from urllib.parse import urlparse
-
-origin = urlparse(sys.argv[1])
-current = urlparse(sys.argv[2])
-if current.scheme != "https" or not current.netloc or current.username or current.password or current.fragment:
-    raise SystemExit("Installer download redirects must use HTTPS without credentials or a fragment")
-if (origin.hostname or "").lower() == "github.com":
-    allowed = {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
-    if (current.hostname or "").lower() not in allowed:
-        raise SystemExit(f"GitHub Installer download redirected to an untrusted host {current.hostname!r}")
-elif current.netloc.lower() != origin.netloc.lower():
-    raise SystemExit("Installer download redirected across origins")
-PY
-        if ! status="$(curl -sS --proto '=https' --max-redirs 0 --retry 3 --connect-timeout 15 \
-            -H 'Accept: application/json' -H 'User-Agent: youeye-installer-bootstrap' \
-            -D "$headers_path" -o "$body_path" -w '%{http_code}' "$current_url")"; then
-            rm -f "$headers_path" "$body_path"
-            return 1
-        fi
-        case "$status" in
-            200)
-                mv "$body_path" "$destination"
-                rm -f "$headers_path"
-                return 0
-                ;;
-            301|302|303|307|308)
-                if [ "$redirect_count" -ge 5 ]; then
-                    printf '%s\n' 'Installer download exceeded five redirects.' >&2
-                    rm -f "$headers_path" "$body_path"
-                    return 1
-                fi
-                current_url="$(python3 - "$source_url" "$current_url" "$headers_path" <<'PY'
-import sys
-from urllib.parse import urljoin, urlparse
-
-origin = urlparse(sys.argv[1])
-with open(sys.argv[3], "r", encoding="iso-8859-1", newline="") as source:
-    locations = [line.split(":", 1)[1].strip() for line in source.read().splitlines() if line.lower().startswith("location:")]
-if len(locations) != 1:
-    raise SystemExit("Installer redirect must contain exactly one Location header")
-target = urlparse(urljoin(sys.argv[2], locations[0]))
-if target.scheme != "https" or not target.netloc or target.username or target.password or target.fragment:
-    raise SystemExit("Installer download redirects must use HTTPS without credentials or a fragment")
-if (origin.hostname or "").lower() == "github.com":
-    allowed = {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
-    if (target.hostname or "").lower() not in allowed:
-        raise SystemExit(f"GitHub Installer download redirected to an untrusted host {target.hostname!r}")
-elif target.netloc.lower() != origin.netloc.lower():
-    raise SystemExit("Installer download redirected across origins")
-print(target.geturl())
-PY
-)" || {
-                    rm -f "$headers_path" "$body_path"
-                    return 1
-                }
-                redirect_count=$((redirect_count + 1))
-                rm -f "$headers_path" "$body_path"
-                ;;
-            *)
-                printf 'Installer download returned HTTP %s for %s\n' "$status" "$current_url" >&2
-                rm -f "$headers_path" "$body_path"
-                return 1
-                ;;
-        esac
-    done
-}
-
-case "$releases_api" in
-    *\?*) query_separator='&' ;;
-    *) query_separator='?' ;;
-esac
-page=1
-while [ "$page" -le "$max_pages" ]; do
-    page_path="$pages_dir/page-$page.json"
-	download_https "${releases_api}${query_separator}${page_size_key}=${page_size}&page=${page}" "$page_path"
-    count="$(python3 - "$page_path" <<'PY'
+python3 - "$repository" "$channel" "$exact_tag" "$core_manifest_sha256" "$cache_root" > "$selection" <<'YOUEYE_BOOTSTRAP_PY'
+import hashlib
 import json
-import sys
-
-with open(sys.argv[1], "rb") as source:
-    releases = json.load(source)
-if not isinstance(releases, list):
-    raise SystemExit("Releases response is not an array")
-print(len(releases))
-PY
-)"
-	if [ "$count" -eq 0 ]; then
-        break
-    fi
-    if [ "$page" -eq "$max_pages" ]; then
-        printf 'Release discovery exceeded %s pages; use INSTALLER_TAG for an exact release.\n' "$max_pages" >&2
-        exit 1
-    fi
-    page=$((page + 1))
-done
-
-selection="$pages_dir/selection"
-python3 - "$provider" "$releases_api" "$channel" "$release_branch" "$exact_tag" "$selection" "$pages_dir"/page-*.json <<'PY'
-import json
+import os
 import re
 import sys
-from datetime import datetime
-from urllib.parse import unquote, urlparse
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
-provider, releases_api, channel, release_branch, exact_tag, destination, *page_paths = sys.argv[1:]
-source_url = urlparse(releases_api)
-releases = []
-seen_tags = set()
-for path in page_paths:
-    with open(path, "rb") as source:
-        page = json.load(source)
-    if not isinstance(page, list):
-        raise SystemExit("Releases response is not an array")
-    for release in page:
-        tag = release.get("tag_name", "")
-        if tag in seen_tags:
-            raise SystemExit(f"Releases response contains duplicate tag {tag!r}")
-        seen_tags.add(tag)
-        releases.append(release)
+repository, channel, exact_tag, pinned, cache_root = sys.argv[1:]
+OFFICIAL = "https://github.com/YouEye-Platform/YouEye"
+INDEX_HOST = "https://releases.youeye.me"
+ROLES = {"installer", "media", "appliance", "system-update", "spine", "cp", "ui", "system-root", "system-a-uki",
+         "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap"}
+TAG = re.compile(r"youeye-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?")
+HASH = re.compile(r"[0-9a-f]{64}")
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
+GITHUB_ASSET_HOSTS = {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
+INSTALLER_LIMIT = 512 << 20
+RETRY_SECONDS = [int(x) for x in os.environ.get("YOUEYE_BOOTSTRAP_RETRY_SECONDS", "30,60,120").split(",") if x]
 
-stable_pattern = re.compile(r"appliance-v(\d+(?:\.\d+)+)")
-development_pattern = re.compile(r"appliance-dev-v(\d+(?:\.\d+)+)")
-branch_pattern = re.compile(rf"appliance-{re.escape(release_branch)}-v(\d+(?:\.\d+)+)") if release_branch else None
-any_branch_pattern = re.compile(r"appliance-([a-z0-9._/-]+)-v(\d+(?:\.\d+)+)")
 
-def release_identity(release):
-    tag = release.get("tag_name", "")
-    if channel == "exact":
-        if tag != exact_tag:
-            return None
-        match = stable_pattern.fullmatch(tag) or development_pattern.fullmatch(tag)
-        if not match:
-            generic = any_branch_pattern.fullmatch(tag)
-            if generic:
-                parts = generic.group(1).split("/")
-                if all(part not in {"", ".", ".."} and not part.startswith(".") and not part.endswith(".") and not part.endswith(".lock") and re.fullmatch(r"[a-z0-9._-]+", part) for part in parts):
-                    match = re.fullmatch(r"(\d+(?:\.\d+)+)", generic.group(2))
-    elif channel == "stable":
-        match = stable_pattern.fullmatch(tag)
-    elif channel == "branch":
-        match = branch_pattern.fullmatch(tag) if branch_pattern else None
-    else:
-        match = development_pattern.fullmatch(tag)
-    if not match or release.get("draft"):
-        return None
-    is_stable = stable_pattern.fullmatch(tag) is not None
-    if is_stable and release.get("prerelease"):
-        return None
-    published = release.get("published_at")
-    if not isinstance(published, str) or not published:
-        return None
+def fail(message):
+    print("YouEye Installer bootstrap: " + message, file=sys.stderr)
+    sys.exit(1)
+
+
+if pinned and not HASH.fullmatch(pinned):
+    fail("--core-manifest-sha256 must be 64 lowercase hexadecimal characters")
+if exact_tag and not TAG.fullmatch(exact_tag):
+    fail("--release-tag must be a youeye-vX.Y.Z-rc.N release tag")
+
+parsed = urllib.parse.urlparse(repository.strip())
+path = parsed.path.rstrip("/")
+if path.endswith(".git"):
+    path = path[:-4]
+parts = path.split("/")
+if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query
+        or parsed.fragment or len(parts) != 3 or parts[0] != ""
+        or any(not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", p) or p.endswith(".") for p in parts[1:])):
+    fail("--repository must be an HTTPS repository URL with owner and repository, without credentials, query or fragment")
+host = parsed.netloc.lower()
+repository = "https://" + host + path
+github = host == "github.com"
+
+
+def allowed(url):
+    target = urllib.parse.urlparse(url)
+    if target.scheme != "https" or not target.netloc or target.username or target.password or target.fragment:
+        return False
+    name = (target.hostname or "").lower()
+    if url.startswith(INDEX_HOST + "/"):
+        return True
+    if github:
+        return name in GITHUB_ASSET_HOSTS
+    return target.netloc.lower() == host
+
+
+class Redirects(urllib.request.HTTPRedirectHandler):
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed(newurl):
+            raise urllib.error.URLError("redirect to an untrusted location refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# The default HTTPS handler verifies certificates and host names.
+opener = urllib.request.build_opener(Redirects)
+
+
+class NotFound(Exception):
+    pass
+
+
+class Unavailable(Exception):
+    pass
+
+
+def open_url(url):
+    """Open url. Retries when the host refuses or rate-limits (HTTP 403/429) or the network fails; raises
+    NotFound for HTTP 404 and Unavailable when the retries are used up."""
+    if not allowed(url):
+        fail("refusing a URL outside the selected repository: " + url)
+    request = urllib.request.Request(url, headers={"User-Agent": "youeye-installer-bootstrap"})
+    for attempt in range(len(RETRY_SECONDS) + 1):
+        try:
+            return opener.open(request, timeout=60)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise NotFound(url)
+            if error.code in (403, 429):
+                message = "the release host refused or rate-limited the request (HTTP %d) for %s" % (error.code, url)
+            elif error.code >= 500:
+                message = "the release host returned HTTP %d for %s" % (error.code, url)
+            else:
+                raise Unavailable("download returned HTTP %d for %s" % (error.code, url))
+        except urllib.error.URLError as error:
+            if "untrusted location" in str(getattr(error, "reason", "")):
+                fail("download refused for %s: %s" % (url, error.reason))
+            message = "download failed for %s: %s" % (url, getattr(error, "reason", error))
+        except OSError as error:
+            message = "download failed for %s: %s" % (url, error)
+        if attempt < len(RETRY_SECONDS):
+            print("YouEye Installer bootstrap: %s; retrying in %d s..." % (message, RETRY_SECONDS[attempt]), file=sys.stderr)
+            time.sleep(RETRY_SECONDS[attempt])
+    raise Unavailable(message + "; try again later")
+
+
+def fetch(url, limit):
     try:
-        published_at = datetime.fromisoformat(published.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return published_at, tuple(int(part) for part in match.group(1).split("."))
+        response = open_url(url)
+    except Unavailable as error:
+        fail(str(error))
+    with response:
+        raw = response.read(limit + 1)
+    if len(raw) > limit:
+        fail("response exceeds %d bytes: %s" % (limit, url))
+    return raw
 
-candidates = [(release_identity(release), release) for release in releases]
-candidates = [(identity, release) for identity, release in candidates if identity is not None]
-if not candidates:
-    requested = exact_tag or channel
-    raise SystemExit(f"No exact signed appliance release was found for {requested}; refusing channel fallback")
-candidates.sort(key=lambda item: item[0], reverse=True)
-release = candidates[0][1]
-if stable_pattern.fullmatch(release["tag_name"]):
-    raise SystemExit("Stable appliance trust is not provisioned in this development Installer")
 
-checksum_assets = {
-    "appliance-development.pub",
-    "appliance-manifest.json",
-    "appliance-manifest.json.sig",
-    "internal-recovery.img.zst",
-    "provenance.json",
-    "recovery.efi",
-    "sbom.spdx.json",
-    "system-a.efi",
-    "system-b.efi",
-    "system-root.img.zst",
-    "system-update-manifest.json",
-    "system-update-manifest.json.sig",
-    "youeye-appliance-amd64.iso",
-    "youeye-installer-linux-amd64",
-    "youeye-system-update-bootstrap",
-    "youeye-system-updater-linux-amd64",
-}
-required = checksum_assets | {"SHA256SUMS", "SHA256SUMS.sig"}
-assets = {}
-for entry in release.get("assets", []):
-    name = entry.get("name", "")
-    if name in assets:
-        raise SystemExit(f"Release {release['tag_name']} contains duplicate {name}")
-    raw_url = entry.get("browser_download_url", "")
-    parsed = urlparse(raw_url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or any(character in raw_url for character in "\r\n\t"):
-        raise SystemExit(f"Release {release['tag_name']} contains an invalid HTTPS URL for {name}")
-    if provider == "github":
-        if (parsed.hostname or "").lower() != "github.com":
-            raise SystemExit(f"Release {release['tag_name']} contains a non-GitHub URL for {name}")
-        source_parts = [part for part in source_url.path.split("/") if part]
-        if len(source_parts) < 4 or parsed.path.split("/")[1:3] != source_parts[1:3]:
-            raise SystemExit(f"Release {release['tag_name']} asset {name} does not match the configured GitHub repository")
-    elif parsed.netloc.lower() != source_url.netloc.lower():
-        raise SystemExit(f"Release {release['tag_name']} contains a cross-origin URL for {name}")
-    expected_suffix = f"/releases/download/{release['tag_name']}/{name}"
-    if not parsed.path.endswith(expected_suffix):
-        raise SystemExit(f"Release {release['tag_name']} asset {name} is not release-scoped")
-    final_name = unquote(parsed.path.rsplit("/", 1)[-1])
-    if final_name != name or "/" in final_name or "\\" in final_name or "%2f" in parsed.path.lower() or "%5c" in parsed.path.lower():
-        raise SystemExit(f"Release {release['tag_name']} contains an invalid asset identity for {name}")
-    assets[name] = raw_url
-if set(assets) != required:
-    missing = sorted(required - assets.keys())
-    unexpected = sorted(assets.keys() - required)
-    detail = []
-    if missing:
-        detail.append(f"missing {', '.join(missing)}")
-    if unexpected:
-        detail.append(f"unexpected {', '.join(unexpected)}")
-    raise SystemExit(f"Release {release['tag_name']} is not the exact 18-asset appliance set: {'; '.join(detail)}")
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key " + key)
+        result[key] = value
+    return result
 
-with open(destination, "w", encoding="utf-8", newline="\n") as output:
-    output.write(release["tag_name"] + "\n")
-    output.write(assets["SHA256SUMS"] + "\n")
-    output.write(assets["SHA256SUMS.sig"] + "\n")
-    output.write(assets["youeye-installer-linux-amd64"] + "\n")
-PY
+
+def download_url(tag, name):
+    return repository + "/releases/download/" + urllib.parse.quote(tag, safe="") + "/" + urllib.parse.quote(name, safe="")
+
+
+if exact_tag:
+    tag, expected = exact_tag, pinned
+else:
+    locations = []
+    if repository == OFFICIAL and channel in ("beta", "stable"):
+        locations.append(INDEX_HOST + "/v1/channels/" + channel + ".json")
+    locations.append(download_url("channel-" + channel, "index.json"))
+    index, problems = None, []
+    for location in locations:
+        # Any failure of one location (missing, refused, unreachable, malformed) moves on to the next one.
+        try:
+            with open_url(location) as response:
+                raw = response.read((256 << 10) + 1)
+            if len(raw) > 256 << 10:
+                raise ValueError("index is too large")
+            index = json.loads(raw, object_pairs_hook=unique_object)
+            if not isinstance(index, dict) or index.get("channel") != channel:
+                raise ValueError("not the %s channel index" % channel)
+            break
+        except NotFound:
+            problems.append("no index at " + location)
+        except (Unavailable, ValueError) as error:
+            problems.append("%s: %s" % (location, error))
+        index = None
+    if not isinstance(index, dict):
+        if all(p.startswith("no index at ") for p in problems):
+            fail("the %s channel of %s has no channel index yet" % (channel, repository))
+        fail("could not read the %s channel index: %s" % (channel, "; ".join(problems)))
+    entry = (index.get("products") or {}).get("youeye")
+    if (index.get("schema") != "youeye.channel.v1" or index.get("channel") != channel or not isinstance(entry, dict)
+            or entry.get("repository") != repository or entry.get("document") != "core-release.json"
+            or not TAG.fullmatch(str(entry.get("tag", ""))) or not HASH.fullmatch(str(entry.get("sha256", "")))):
+        fail("the %s channel index of %s does not name a YouEye release of this repository" % (channel, repository))
+    tag, expected = entry["tag"], entry["sha256"]
+
+try:
+    raw = fetch(download_url(tag, "core-release.json"), 1 << 20)
+except NotFound:
+    fail("release %s of %s has no core-release.json" % (tag, repository))
+digest = hashlib.sha256(raw).hexdigest()
+if digest != expected:
+    fail("core-release.json of %s has sha256 %s, expected %s" % (tag, digest, expected))
+try:
+    document = json.loads(raw, object_pairs_hook=unique_object)
+except ValueError as error:
+    fail("core-release.json of %s is malformed: %s" % (tag, error))
+if (not isinstance(document, dict) or document.get("schema") != "youeye.core-release.v1"
+        or document.get("authority") != "digest" or document.get("tag") != tag):
+    fail("core-release.json of %s does not describe this release" % tag)
+members = document.get("members")
+if (not isinstance(members, list) or not all(isinstance(m, dict) for m in members)
+        or sorted(str(m.get("role")) for m in members) != sorted(ROLES)):
+    fail("core-release.json of %s does not list every System role exactly once" % tag)
+blob = next(m for m in members if m.get("role") == "installer").get("artifact")
+if (not isinstance(blob, dict) or not NAME.fullmatch(str(blob.get("name", ""))) or not HASH.fullmatch(str(blob.get("sha256", "")))
+        or type(blob.get("size_bytes")) is not int or not 0 < blob["size_bytes"] <= INSTALLER_LIMIT
+        or ("release" in blob and not TAG.fullmatch(str(blob["release"])))):
+    fail("core-release.json of %s has an invalid installer artifact" % tag)
+directory = os.path.join(cache_root, tag)
+os.makedirs(directory, mode=0o700, exist_ok=True)
+target = os.path.join(directory, "youeye-installer-linux-amd64")
+handle, temporary = tempfile.mkstemp(dir=directory, prefix=".installer.")
+hasher, size = hashlib.sha256(), 0
+try:
+    try:
+        source = open_url(download_url(blob.get("release", tag), blob["name"]))
+    except Unavailable as error:
+        fail(str(error))
+    with os.fdopen(handle, "wb") as output, source as response:
+        while True:
+            chunk = response.read(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > blob["size_bytes"]:
+                fail("installer download is larger than core-release.json lists")
+            hasher.update(chunk)
+            output.write(chunk)
+    if size != blob["size_bytes"] or hasher.hexdigest() != blob["sha256"]:
+        fail("installer checksum mismatch: got sha256 %s (%d bytes), core-release.json lists %s (%d bytes)"
+             % (hasher.hexdigest(), size, blob["sha256"], blob["size_bytes"]))
+    os.chmod(temporary, 0o700)
+    os.replace(temporary, target)
+except NotFound:
+    fail("release %s has no installer asset %s" % (tag, blob["name"]))
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+with open(os.path.join(directory, "core-release.json"), "wb") as output:
+    output.write(raw)
+print(tag)
+print(digest)
+print(target)
+print(repository)
+YOUEYE_BOOTSTRAP_PY
 
 selected_tag="$(sed -n '1p' "$selection")"
-checksums_url="$(sed -n '2p' "$selection")"
-signature_url="$(sed -n '3p' "$selection")"
-installer_url="$(sed -n '4p' "$selection")"
-release_cache="$cache_root/$selected_tag"
-install -d -m 0700 "$release_cache"
-
-trust_key="$release_cache/appliance-development.pub"
-cat > "$trust_key" <<'EOF'
------BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAha3Qt2DxI8tDarUb24mmRRekCa1acvk/ttqyJ14y1OE=
------END PUBLIC KEY-----
-EOF
-
-checksums_tmp="$release_cache/.SHA256SUMS.$$"
-signature_tmp="$release_cache/.SHA256SUMS.sig.$$"
-installer_tmp="$release_cache/.$asset.$$"
-download_https "$checksums_url" "$checksums_tmp"
-download_https "$signature_url" "$signature_tmp"
-download_https "$installer_url" "$installer_tmp"
-
-openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
-    -in "$checksums_tmp" -sigfile "$signature_tmp" >/dev/null
-
-signed_digests="$(python3 - "$checksums_tmp" "$asset" <<'PY'
-import re
-import sys
-
-path, required = sys.argv[1:]
-expected = {
-    "appliance-development.pub",
-    "appliance-manifest.json",
-    "appliance-manifest.json.sig",
-    "internal-recovery.img.zst",
-    "provenance.json",
-    "recovery.efi",
-    "sbom.spdx.json",
-    "system-a.efi",
-    "system-b.efi",
-    "system-root.img.zst",
-    "system-update-manifest.json",
-    "system-update-manifest.json.sig",
-    "youeye-appliance-amd64.iso",
-    "youeye-installer-linux-amd64",
-    "youeye-system-update-bootstrap",
-    "youeye-system-updater-linux-amd64",
-}
-entries = {}
-with open(path, "r", encoding="ascii", newline="") as source:
-    lines = source.read().splitlines()
-if len(lines) != len(expected):
-    raise SystemExit("Signed checksum entry count does not match the appliance contract")
-for line in lines:
-    match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)", line)
-    if not match:
-        raise SystemExit("Signed checksum set contains an invalid entry")
-    digest, name = match.groups()
-    if name in entries:
-        raise SystemExit(f"Signed checksum set contains duplicate {name}")
-    entries[name] = digest
-if set(entries) != expected:
-    raise SystemExit("Signed checksum asset identities do not match the appliance contract")
-print(entries[required])
-print(entries["appliance-development.pub"])
-PY
-)"
-signed_digest="$(printf '%s\n' "$signed_digests" | sed -n '1p')"
-signed_trust_digest="$(printf '%s\n' "$signed_digests" | sed -n '2p')"
-embedded_trust_digest="$(sha256sum "$trust_key" | awk '{print $1}')"
-if [ "$signed_trust_digest" != "$embedded_trust_digest" ]; then
-    printf '%s\n' 'Signed appliance trust anchor does not match the embedded installer authority.' >&2
-    exit 1
-fi
-if [ -n "$installer_sha256" ] && [ "$signed_digest" != "$installer_sha256" ]; then
-    printf '%s\n' 'INSTALLER_SHA256 does not match the signed release digest.' >&2
-    exit 1
-fi
-printf '%s  %s\n' "$signed_digest" "$installer_tmp" | sha256sum -c - >/dev/null
-
-mv "$checksums_tmp" "$release_cache/SHA256SUMS"
-mv "$signature_tmp" "$release_cache/SHA256SUMS.sig"
-mv "$installer_tmp" "$release_cache/$asset"
-chmod 0700 "$release_cache/$asset"
-
-printf 'Launching signed YouEye Installer %s...\n' "$selected_tag"
-rm -rf "$pages_dir"
+selected_digest="$(sed -n '2p' "$selection")"
+installer="$(sed -n '3p' "$selection")"
+repository="$(sed -n '4p' "$selection")"
+rm -f "$selection"
 trap - EXIT HUP INT TERM
-if [ "$channel" = exact ]; then
-    exec "$release_cache/$asset" proxmox \
-        --provider "$provider" --releases-api "$releases_api" --channel exact \
-        --release-tag "$exact_tag" --installer-sha256 "$installer_sha256" --iso-sha256 "$iso_sha256" "$@"
-fi
-if [ "$channel" = branch ]; then
-    exec "$release_cache/$asset" proxmox \
-        --provider "$provider" --releases-api "$releases_api" --channel branch \
-        --release-branch "$release_branch" "$@"
-fi
-exec "$release_cache/$asset" proxmox \
-    --provider "$provider" --releases-api "$releases_api" --channel "$channel" "$@"
+
+# Pass through only the options the bootstrap does not own. The Installer
+# receives the exact release verified above (tag and core-release.json digest)
+# and records the repository and channel the box follows afterwards.
+skip_next=
+for argument do
+    shift
+    if [ -n "$skip_next" ]; then
+        skip_next=
+        continue
+    fi
+    case "$argument" in
+        --repository|--channel|--release-tag|--core-manifest-sha256) skip_next=1; continue ;;
+        --repository=*|--channel=*|--release-tag=*|--core-manifest-sha256=*) continue ;;
+    esac
+    set -- "$@" "$argument"
+done
+
+printf 'Launching YouEye Installer from %s (core-release.json sha256 %s)...\n' "$selected_tag" "$selected_digest"
+exec "$installer" proxmox "$@" --repository "$repository" --channel "$channel" --release-tag "$selected_tag" --core-manifest-sha256 "$selected_digest"

@@ -13,6 +13,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
 import { isNextProductionBuild } from "@/lib/runtime-phase";
+import { runCoreSchemaOnce, runFreshCoreSchemaOnce } from "@/lib/core-schema";
 
 const connectionString = process.env.DATABASE_URL!;
 
@@ -35,24 +36,44 @@ let schemaInitInFlight: Promise<void> | null = null;
  * Ensure all required tables exist. Safe to call multiple times and safe
  * under concurrency — the guard is single-flight, so parallel first requests
  * await the same init run instead of each running the full DDL sequence
- * (which double-ran the whole init on boot). A failed run clears the memo so
- * the next request retries.
+ * (which double-ran the whole init on boot). Readiness failures can retry.
+ * New-format durable receipts prevent retrying uncertain schema effects.
  */
-export async function ensureSchema() {
+export async function ensureSchema(freshOnly = false) {
   if (schemaReady) return;
   if (isNextProductionBuild()) return;
 
   if (!schemaInitInFlight) {
-    schemaInitInFlight = initSchema().catch((e) => {
+    schemaInitInFlight = (async () => {
+      // Connectivity is a read-only preflight, before durable migration intent.
+      if (freshOnly) {
+        if (!await runFreshCoreSchemaOnce(initSchema, undefined, () => queryClient`SELECT 1`)) return;
+      } else {
+        await queryClient`SELECT 1`;
+        await runCoreSchemaOnce('ui', initSchema);
+      }
+      schemaReady = true;
+    })().finally(() => {
       schemaInitInFlight = null;
-      throw e;
     });
   }
-  return schemaInitInFlight;
+  await schemaInitInFlight;
+  // A normal caller may have joined a fresh-only probe that skipped a legacy
+  // or update marker. It still owes its ordinary explicit initialization.
+  if (!schemaReady && !freshOnly) await ensureSchema();
+}
+
+export async function ensureFreshSchema() {
+  await ensureSchema(true);
 }
 
 async function initSchema() {
   try {
+    await queryClient`CREATE TABLE IF NOT EXISTS admission_projections (
+      app_id text PRIMARY KEY, installation_id uuid NOT NULL,
+      revision text NOT NULL, snapshot jsonb NOT NULL
+    )`;
+    await queryClient`CREATE TABLE IF NOT EXISTS identity_deletions (identity_id uuid PRIMARY KEY)`;
     await queryClient`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -121,6 +142,17 @@ async function initSchema() {
 
     // C1: App gateway migration — token hash for app-to-UI auth
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS token_hash TEXT`;
+
+    // Independent of app data so unregister cannot erase revocation watermarks.
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS app_service_credentials (
+        app_id TEXT PRIMARY KEY,
+        projection JSONB NOT NULL,
+        verifier_hash TEXT NOT NULL UNIQUE,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`;
+
+    await queryClient`ALTER TABLE app_service_credentials ADD COLUMN IF NOT EXISTS ready BOOLEAN NOT NULL DEFAULT FALSE`;
 
     // C6: SSO entry URL — apps with SSO can specify a direct login path
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS sso_entry_url TEXT`;
@@ -366,7 +398,6 @@ async function initSchema() {
     // Seed preset themes if the themes table is empty
     await seedPresetThemes();
 
-    schemaReady = true;
     console.log("Database schema verified");
   } catch (e) {
     console.error("Schema initialization failed:", e);

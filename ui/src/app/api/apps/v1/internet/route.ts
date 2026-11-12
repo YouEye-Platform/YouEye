@@ -25,7 +25,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 function normalizeAppId(appId: string): string {
-  return appId.replace(/^ye-/, "").replace(/^app-/, "");
+  return appId;
 }
 
 function parseTargetUrl(request: NextRequest): URL | null {
@@ -130,7 +130,7 @@ async function proxy(request: NextRequest) {
   }
 
   const serviceUser = await resolveServiceAuth(request);
-  if (scope.scope === "user") {
+  {
     if (!serviceUser) {
       return NextResponse.json({ error: "Internet proxy requires current user identity" }, { status: 401 });
     }

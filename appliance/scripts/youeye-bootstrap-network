@@ -122,17 +122,28 @@ mv -f "$candidate" "$network_file"
 $networkctl_bin reload
 $networkctl_bin reconfigure "$interface"
 
-source_api=$(jq -r '
-  if .provider == "github" and ((.releases_api // "") == "") then
-    "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
-  else (.releases_api // "") end
+# One GET of the box's channel index proves the release source is reachable.
+# It is a small file, never a release-listing API. The official public
+# channels are served from releases.youeye.me.
+source_url=$(jq -r '
+  if .repository == "https://github.com/YouEye-Platform/YouEye" and (.channel == "beta" or .channel == "stable") then
+    "https://releases.youeye.me/v1/channels/" + .channel + ".json"
+  else
+    (.repository // "") + "/releases/download/channel-" + (.channel // "") + "/index.json"
+  end
 ' "$release_policy")
-case "$source_api" in
+case "$source_url" in
     https://*/*) ;;
-    *) write_status needs_attention invalid_source "The selected release source is not a safe HTTPS API" 1 0; exit 1 ;;
+    *) write_status needs_attention invalid_source "The selected release source is not a safe HTTPS repository" 1 0; exit 1 ;;
 esac
-source_host=$(printf '%s' "$source_api" | sed -E 's#^https://([^/:]+).*$#\1#')
+source_host=$(printf '%s' "$source_url" | sed -E 's#^https://([^/:]+).*$#\1#')
 source_index="${status_dir}/release-index.json"
+
+# Prints the HTTP status, or 000 when no HTTP response arrived.
+fetch_source_index() {
+    $curl_bin --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
+        --write-out '%{http_code}' --output "${source_index}.tmp" "$source_url" 2>/dev/null || true
+}
 
 last_code=unavailable
 last_detail="Wired connectivity is not ready"
@@ -155,14 +166,19 @@ while [ "$attempt" -le "$max_attempts" ]; do
     elif [ "$($date_bin +%s)" -lt 1704067200 ]; then
         last_code=clock_unusable
         last_detail="The system clock is too old for HTTPS verification"
-    elif ! $curl_bin --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --max-time 30 --output "${source_index}.tmp" "$source_api"; then
+    elif http_status=$(fetch_source_index); [ "$http_status" = 000 ]; then
         last_code=source_unavailable
         last_detail="The selected HTTPS release source is unavailable"
-    elif ! jq -e 'type == "array"' "${source_index}.tmp" >/dev/null; then
+    elif [ "$http_status" != 200 ] && [ "$http_status" != 403 ] && [ "$http_status" != 429 ]; then
         last_code=source_invalid
-        last_detail="The selected release source returned an invalid index"
+        last_detail="The selected release source has no channel index (HTTP $http_status)"
+    elif [ "$http_status" = 200 ] && ! jq -e '.schema == "youeye.channel.v1"' "${source_index}.tmp" >/dev/null 2>&1; then
+        last_code=source_invalid
+        last_detail="The selected release source returned an invalid channel index"
     else
+        # HTTP 403/429 means the release host answered but refused or
+        # rate-limited the request: the network itself works.
+        [ -s "${source_index}.tmp" ] || printf '{}\n' > "${source_index}.tmp"
         chmod 0600 "${source_index}.tmp"
         mv -f "${source_index}.tmp" "$source_index"
         cp -p "$network_file" "${last_good}.tmp"

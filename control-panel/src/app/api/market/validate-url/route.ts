@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
       if (repository.protocol === 'https:' && !repository.username && !repository.password &&
           !repository.search && !repository.hash && parts.length === 2 && parts.every(Boolean) &&
           !isPrivateHostname(repository.hostname)) {
-        forgejoManifestUrl = `${repository.origin}/api/v1/repos/${parts.map(encodeURIComponent).join('/')}/raw/youeye-app.yaml?ref=main`;
+        forgejoManifestUrl = `${repository.origin}/${parts.map(encodeURIComponent).join('/')}/raw/branch/main/youeye-app.yaml`;
       }
     } catch {
       forgejoManifestUrl = null;

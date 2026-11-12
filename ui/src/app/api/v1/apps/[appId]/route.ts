@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
 import {
   getApp,
   unregisterApp,
@@ -28,6 +29,9 @@ export async function GET(
   }
 
   const { appId } = await params;
+  if (!evaluateLocalAdmission(appId, session.identityId).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   const app = await getApp(appId);
 
   if (!app) {

@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * App Permissions API
  *
@@ -24,12 +25,13 @@ export async function GET(
 
   const { appId } = await params;
   const permissions = await getAppPermissions(session.userId, appId);
+  const { t } = await getUserTranslator(session.userId);
 
   return NextResponse.json({
     app_id: appId,
     permissions: permissions.map((permission) => ({
       ...permission,
-      descriptor: describePermission(permission.permission),
+      descriptor: describePermission(permission.permission, t),
     })),
   });
 }

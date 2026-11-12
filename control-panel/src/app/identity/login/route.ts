@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { join } from 'node:path';
+import { prepareDesign, renderSvg } from '@youeye/branding/server';
 import { readFileSync } from 'fs';
 import { getIdentityConfig } from '@/lib/identity/config';
-import { getClient, verifyUser } from '@/lib/identity/store';
+import { createIdentitySession, getClient, verifyUser } from '@/lib/identity/store';
+import { checkRateLimit, resetRateLimit } from '@/lib/auth/session';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
+import { selectLoginReturnTo } from '@/lib/identity/login-return';
+import type { IdentityConfig } from '@/lib/identity/config';
+import { identitySearchParams } from '@/lib/identity/authorize-query';
+import { listInstalledApps } from '@/lib/market/metadata';
 import { identityFaviconLinks } from '@/lib/identity/favicon';
 import { settingsService } from '@/lib/settings';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
@@ -192,7 +199,16 @@ function renderWordmark(name: string, style: SiteNameStyle): string {
   return `<span class="wordmark wordmark-shaped" style="${escapeHtml(css)}">${chars}</span>`;
 }
 
-function wordmarkMarkup(siteName: string, style: SiteNameStyle): { fontLink: string; html: string } {
+async function wordmarkMarkup(siteName: string, style: SiteNameStyle): Promise<{ fontLink: string; html: string }> {
+  if (style.mytitle) {
+    try {
+      const design = await prepareDesign({ ...style.mytitle, name: siteName }, join(process.cwd(), 'public/mytitle/fonts'));
+      return { fontLink: '', html: `<span class="wordmark" style="display:block;width:min(22rem,100%);margin-inline:auto">${renderSvg(design, 'light', 'title', 'login-brand', false, true)}</span>` };
+    } catch {
+      // Corrupt or unavailable artwork must not prevent authentication.
+      return { fontLink: '', html: `<span class="wordmark">${escapeHtml(siteName)}</span>` };
+    }
+  }
   const fontHref = FONT_CSS_MAP[style.fontFamily];
   return {
     fontLink: fontHref ? `<link rel="stylesheet" href="${escapeHtml(fontHref)}" />` : '',
@@ -248,7 +264,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
     getIdentityProviderConfig(),
     identityBranding(),
   ]);
-  const wordmark = wordmarkMarkup(branding.siteName, branding.siteNameStyle);
+  const wordmark = await wordmarkMarkup(branding.siteName, branding.siteNameStyle);
   const appName = await resolveLoginContext(returnTo, branding.siteName);
   const contextTitle = appName ? `Continue to ${appName}` : `Continue with ${provider.name}`;
   const contextDescription = appName
@@ -322,6 +338,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       overflow-wrap: normal;
       filter: drop-shadow(0 3px 8px rgba(16, 42, 67, .12));
     }
+    .wordmark svg { display: block; width: 100%; height: auto; }
     .wordmark-shaped {
       display: inline-flex !important;
       align-items: baseline;
@@ -404,40 +421,60 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   </script>
 </body>
 </html>`, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
 }
 
-function safeReturnTo(value: string | null, fallback: string): string {
-  if (!value) return fallback;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : fallback;
-  } catch {
-    return fallback;
+async function safeReturnTo(formValue: string | null, queryValue: string | null, config: IdentityConfig): Promise<string> {
+  const { domain } = config;
+  const allowedOrigins = new Set([config.externalUrl, new URL(config.dashboardUrl).origin, `https://${domain}`]);
+  const raw = await settingsService.getRaw();
+  for (const key of ['ui', 'control']) {
+    const label = raw.subdomains?.[key];
+    if (typeof label === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) {
+      allowedOrigins.add(`https://${label}.${domain}`);
+    }
   }
+  // Caddy forward-auth can return to an installed app, but a caller cannot
+  // introduce an arbitrary host by changing the login form or forwarded headers.
+  const apps = await listInstalledApps().catch(() => []);
+  for (const app of apps) {
+    if (app.forwardAuthEnabled && app.domain === domain
+      && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(app.subdomain)) {
+      allowedOrigins.add(`https://${app.subdomain}.${domain}`);
+    }
+  }
+  return selectLoginReturnTo(formValue, queryValue, config.dashboardUrl, allowedOrigins);
 }
 
 export async function GET(request: NextRequest) {
   const config = await getIdentityConfig();
-  const returnTo = safeReturnTo(request.nextUrl.searchParams.get('return_to'), `${config.externalUrl}/`);
+  const returnTo = await safeReturnTo(null, identitySearchParams(request).get('return_to'), config);
   return html(returnTo);
 }
 
 export async function POST(request: NextRequest) {
   const config = await getIdentityConfig();
   const form = await request.formData();
-  const returnTo = safeReturnTo(String(form.get('return_to') || ''), `${config.externalUrl}/`);
+  const returnTo = await safeReturnTo(String(form.get('return_to') || ''), identitySearchParams(request).get('return_to'), config);
   const username = String(form.get('username') || '');
   const password = String(form.get('password') || '');
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
+  const limitKey = `id-login:${ip}:${username.toLowerCase()}`;
+  if (!checkRateLimit(limitKey, 10, 15 * 60).allowed) {
+    return html(returnTo, 'Too many sign-in attempts. Try again later.');
+  }
   const user = await verifyUser(username, password);
 
   if (!user) {
     return html(returnTo, 'Invalid username or password.');
   }
+  resetRateLimit(limitKey);
 
-  const token = await createIdentityToken(user);
+  const session = await createIdentitySession(user.id);
+  const token = await createIdentityToken(user, session.id);
   const response = NextResponse.redirect(returnTo, { status: 303 });
+  response.headers.set('Cache-Control', 'no-store');
   setIdentityCookie(response, token, config.cookieDomain);
   return response;
 }

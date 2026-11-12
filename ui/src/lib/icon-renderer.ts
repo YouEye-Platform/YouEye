@@ -16,11 +16,7 @@ import { existsSync, readFileSync, readdirSync } from "fs";
 import type { IconConfig, IconSize } from "./icon-config";
 import { ICON_SIZES } from "./icon-config";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
-
-// Persistent data dir outside the app code so icons survive deploys.
-// Falls back to public/branding only if DATA_DIR env is not set.
-const BRANDING_DIR = process.env.BRANDING_DATA_DIR
-  || join(process.env.DATA_DIR || "/opt/youeye-ui-data", "branding");
+import { BRANDING_DIR } from './persistent-assets';
 
 /** Build an SVG for letter-mode icon */
 function buildLetterSVG(
@@ -159,6 +155,12 @@ export async function renderIconPNGs(
 export async function getRenderedIcon(
   size: IconSize
 ): Promise<Buffer | null> {
+  const { getBranding } = await import("@/lib/db/queries/branding");
+  const revision = (await getBranding()).site_name_style?.mytitleRevision;
+  if (revision && /^[a-f0-9]{64}$/.test(revision)) {
+    try { return await readFile(join(BRANDING_DIR, `mytitle-${revision}-${size}.png`)); }
+    catch { return null; }
+  }
   const filepath = join(BRANDING_DIR, `icon-${size}.png`);
   try {
     return await readFile(filepath);

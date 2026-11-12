@@ -1,100 +1,63 @@
-/**
- * Service Worker - YouEye UI PWA
- *
- * Uses Serwist for Next.js precache/runtime handling. The activate handler only
- * removes stale caches created by the previous hand-rolled worker lineage.
- */
-
-import { defaultCache } from "@serwist/next/worker";
+/// <reference lib="webworker" />
+/** Public assets work offline; authenticated data and pages always require the server. */
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
-import { CacheFirst, ExpirationPlugin, NetworkFirst, Serwist, StaleWhileRevalidate } from "serwist";
+import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
+import { isPublicAsset, isPublicPrecache, privateNetworkRequest } from "../lib/pwa-cache-policy";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
     __SW_MANIFEST: (PrecacheEntry | string)[] | undefined;
   }
 }
+declare const self: ServiceWorkerGlobalScope & typeof globalThis;
 
-declare const self: WorkerGlobalScope & typeof globalThis;
-
-const CACHE_PREFIX = "youeye-ui";
-const LEGACY_CACHE_PREFIXES = ["youeye-ui-", "ui-"];
-const ACTIVE_RUNTIME_CACHES = new Set([
-  `${CACHE_PREFIX}-static-assets`,
-  `${CACHE_PREFIX}-fonts`,
-  `${CACHE_PREFIX}-branding-icons`,
-  `${CACHE_PREFIX}-pwa-icons`,
-  `${CACHE_PREFIX}-api-cache`,
+const CACHE_PREFIX = "youeye-ui-public-v2";
+const STATIC_CACHE = `${CACHE_PREFIX}-assets`;
+const legacyPrefixes = ["youeye-ui-", "ui-"];
+// Names used by the former Serwist defaultCache, including private RSC/HTML/API data.
+const legacyNames = new Set([
+  "start-url", "apis", "pages", "pages-rsc", "pages-rsc-prefetch", "pages-rsc-prefetches", "pages-html",
+  "next-data", "static-data-assets", "others", "cross-origin", "next-image",
+  "static-font-assets", "static-image-assets", "next-static-js-assets",
+  "static-audio-assets", "static-video-assets", "static-js-assets", "static-style-assets",
+  "google-fonts-webfonts", "google-fonts-stylesheets",
 ]);
 
 const serwist = new Serwist({
-  precacheEntries: self.__SW_MANIFEST ?? [],
+  cacheId: CACHE_PREFIX,
+  precacheOptions: { cacheName: `${CACHE_PREFIX}-precache` },
+  precacheEntries: (self.__SW_MANIFEST ?? []).filter((entry) =>
+    isPublicPrecache(new URL(typeof entry === "string" ? entry : entry.url, self.location.origin), self.location.origin)),
   skipWaiting: true,
   clientsClaim: true,
-  navigationPreload: true,
+  navigationPreload: false,
   runtimeCaching: [
     {
-      matcher: /\/_next\/static\/.*/i,
+      matcher: ({ url, request }) => isPublicAsset(url, self.location.origin) && !request.headers.has("RSC"),
       handler: new CacheFirst({
-        cacheName: `${CACHE_PREFIX}-static-assets`,
-        plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+        cacheName: STATIC_CACHE,
+        plugins: [new ExpirationPlugin({ maxEntries: 250, maxAgeSeconds: 60 * 60 * 24 * 30 })],
       }),
     },
     {
-      matcher: /\/fonts\/.*/i,
-      handler: new CacheFirst({
-        cacheName: `${CACHE_PREFIX}-fonts`,
-        plugins: [new ExpirationPlugin({ maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 })],
+      matcher: () => true,
+      // Also bypass the HTTP cache: revocation must not resurrect a previously successful response.
+      handler: new NetworkOnly({
+        plugins: [{ requestWillFetch: ({ request }) => privateNetworkRequest(request) }],
       }),
     },
-    {
-      matcher: /\/api\/v1\/branding\/icon.*/i,
-      handler: new StaleWhileRevalidate({
-        cacheName: `${CACHE_PREFIX}-branding-icons`,
-        plugins: [new ExpirationPlugin({ maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 })],
-      }),
-    },
-    {
-      matcher: /\/api\/pwa\/icon.*/i,
-      handler: new StaleWhileRevalidate({
-        cacheName: `${CACHE_PREFIX}-pwa-icons`,
-        plugins: [new ExpirationPlugin({ maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 7 })],
-      }),
-    },
-    {
-      matcher: /\/api\/.*/i,
-      handler: new NetworkFirst({
-        cacheName: `${CACHE_PREFIX}-api-cache`,
-        networkTimeoutSeconds: 5,
-        plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 60 * 60 })],
-      }),
-    },
-    ...defaultCache,
   ],
   fallbacks: {
-    entries: [
-      {
-        url: "/offline",
-        matcher({ request }) {
-          return request.destination === "document";
-        },
-      },
-    ],
+    entries: [{ url: "/offline.html", matcher: ({ request }) => request.destination === "document" }],
   },
 });
 
-type WorkerLifecycleEvent = Event & { waitUntil: (promise: Promise<unknown>) => void };
-
 self.addEventListener("activate", (event) => {
-  const activateEvent = event as WorkerLifecycleEvent;
-  activateEvent.waitUntil(
-    caches.keys().then((cacheNames) => Promise.all(
-      cacheNames
-        .filter((cacheName) => LEGACY_CACHE_PREFIXES.some((prefix) => cacheName.startsWith(prefix)))
-        .filter((cacheName) => !ACTIVE_RUNTIME_CACHES.has(cacheName))
-        .map((cacheName) => caches.delete(cacheName)),
-    )),
-  );
+  const activate = event as Event & { waitUntil(promise: Promise<unknown>): void };
+  activate.waitUntil(caches.keys().then((names) => Promise.all(names
+    .filter((name) => name !== STATIC_CACHE && name !== serwist.precacheStrategy.cacheName)
+    .filter((name) => legacyPrefixes.some((prefix) => name.startsWith(prefix)) || legacyNames.has(name) ||
+      (name.startsWith("serwist-precache-") && name.endsWith(self.registration.scope)))
+    .map((name) => caches.delete(name)))));
 });
-
 serwist.addEventListeners();

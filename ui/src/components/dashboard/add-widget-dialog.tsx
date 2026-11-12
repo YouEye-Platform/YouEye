@@ -1,3 +1,9 @@
+"use client";
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Add Widget Dialog — Tabbed view with live widget previews
  *
@@ -6,7 +12,7 @@
  * renders of the actual widget, name, and description.
  */
 
-"use client";
+
 
 import { useState, useEffect, useRef, type ComponentType } from "react";
 import { X, ChevronLeft, ChevronRight, Plus, Package, Languages, CloudSun, Film, StickyNote, BookOpen, Search, Home } from "lucide-react";
@@ -59,6 +65,8 @@ export function AddWidgetDialog({
   onAddBuiltIn,
   onAddAppWidget,
 }: AddWidgetDialogProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [activeTab, setActiveTab] = useState("built-in");
 
   useEffect(() => {
@@ -84,7 +92,7 @@ export function AddWidgetDialog({
   });
   tabs.push({
     id: "built-in",
-    label: "Built-in",
+    label: translateInterface("m1f43948106d1"),
     icon: Home,
     items: builtInItems,
   });
@@ -134,7 +142,7 @@ export function AddWidgetDialog({
       <div className="relative w-full max-w-3xl max-h-[85vh] bg-popover border rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* Header with close */}
         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
-          <h2 className="text-lg font-semibold">Add Widget</h2>
+          <h2 className="text-lg font-semibold">{translateInterface("m94a893fb8243")}</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors">
             <X className="h-5 w-5" />
           </button>
@@ -172,6 +180,8 @@ export function AddWidgetDialog({
 }
 
 function WidgetCarousel({ items, onAdd }: { items: WidgetItem[]; onAdd: (item: WidgetItem) => void }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -206,8 +216,7 @@ function WidgetCarousel({ items, onAdd }: { items: WidgetItem[]; onAdd: (item: W
   if (items.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
-        No widgets available in this category.
-      </div>
+        {translateInterface("m8581f6b1dd27")}</div>
     );
   }
 
@@ -325,6 +334,8 @@ function AppWidgetPreview({
   appUrl: string | null;
   embedPath: string;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   let embedSrc: string | null = null;
   try {
     if (appUrl) embedSrc = new URL(embedPath, appUrl).toString();
@@ -347,7 +358,7 @@ function AppWidgetPreview({
       style={{ background: "transparent", colorScheme: "normal" }}
       loading="lazy"
       tabIndex={-1}
-      title={`${appId} ${widgetId} preview`}
+      title={translateInterface("m86e1f20cef1e", { value0: String(appId), value1: String(widgetId) })}
     />
   );
 }

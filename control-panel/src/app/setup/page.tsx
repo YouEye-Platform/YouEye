@@ -1,6 +1,8 @@
 'use client';
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -11,17 +13,20 @@ import {
 } from '@/lib/wordart-presets';
 
 import SetupLanguage from '@/components/setup/SetupLanguage';
-import SetupApplianceUpdate from '@/components/setup/SetupApplianceUpdate';
+import SetupReadiness from '@/components/setup/SetupReadiness';
 import SetupChoice from '@/components/setup/SetupChoice';
 import SetupRestore from '@/components/setup/SetupRestore';
 import SetupServerName, { type TlsChoice } from '@/components/setup/SetupServerName';
-import SetupWordArt from '@/components/setup/SetupWordArt';
-import SetupIcon from '@/components/setup/SetupIcon';
+import { designSchema } from '@youeye/branding';
+import { TitleStudio, initialDesign } from '@youeye/branding/studio';
+import { Brand } from '@youeye/branding/brand';
 import SetupNamesVerification from '@/components/setup/SetupNamesVerification';
 import SetupProvisioning from '@/components/setup/SetupProvisioning';
 import SetupTls from '@/components/setup/SetupTls';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
 import { type IconConfig, DEFAULT_ICON_CONFIG } from '@/lib/icon-config';
+import { followSetupProgress, readSetupProgress, SetupProgressError } from '@/lib/setup/progress.mjs';
+import { useRef as useInterfaceTranslationRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -53,17 +58,24 @@ function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Steps: -3=appliance update, -2=language, -1=new/restore, 0=serverName(+LE inline), 1=wordart, 2=icon,
+// Steps: -3=automatic readiness, -2=language, -1=new/restore, 0=serverName(+LE inline), 1=wordart, 2=icon,
 //        4=provisioning, 5=tls(upload only), 6=dns
 type WizardStep = -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
 
 export default function SetupPage() {
+  const translateInterface = useInterfaceTranslations("interface");
+  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
+  interfaceTranslationRef.current = translateInterface;
+
   const t = useTranslations('setup');
   const router = useRouter();
   const [step, setStep] = useState<WizardStep>(-2);
   const [loading, setLoading] = useState(true);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { const heading = contentRef.current?.querySelector('h1'); if (heading) { heading.tabIndex = -1; heading.focus(); } }, [step, loading]);
+  const [configError, setConfigError] = useState(false);
   const [languageChecked, setLanguageChecked] = useState(false);
 
   // Step 0: Server name
@@ -84,21 +96,29 @@ export default function SetupPage() {
   const [yenTermsVersion, setYenTermsVersion] = useState('');
   const [yenCtAccepted, setYenCtAccepted] = useState(false);
   const [yenClaimProof, setYenClaimProof] = useState('');
+  const [yenVerifiedSetup,setYenVerifiedSetup]=useState(false);
+  const [yenSetupSession,setYenSetupSession]=useState('');
+  useEffect(()=>{setYenClaimProof('');setYenSetupSession('');},[yenName,tlsChoice]);
   const [yenReusing, setYenReusing] = useState(false);
   const [byoDomain, setByoDomain] = useState('');
   const [byoProviderToken, setByoProviderToken] = useState('');
 
   // Step 1: WordArt
-  const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
+  const [brandingRevision, setBrandingRevision] = useState<string | null>(null);
+  const [titleDesign, setTitleDesign] = useState(() => initialDesign('YouEye'));
+  const nameStyle: SiteNameStyle = useMemo(() => ({ ...DEFAULT_STYLE, mytitle: { ...titleDesign, name: siteName } }), [titleDesign, siteName]);
 
   // Step 2: Icon
-  const [iconConfig, setIconConfig] = useState<IconConfig>(DEFAULT_ICON_CONFIG);
+  const iconConfig: IconConfig = DEFAULT_ICON_CONFIG;
 
   // Step 4: Provisioning
   const [setupSteps, setSetupSteps] = useState<SetupStep[]>([]);
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [setupRestarting, setSetupRestarting] = useState(false);
+  const [setupChecking, setSetupChecking] = useState(false);
+  const [setupStatusOnlyRetry, setSetupStatusOnlyRetry] = useState(false);
+  const setupRequestInFlight = useRef(false);
 
   // Selected language
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
@@ -118,20 +138,24 @@ export default function SetupPage() {
     setLanguageChecked(true);
   }, []);
 
-  useEffect(() => {
-    if (languageChecked) checkSetupStatus();
-  }, [languageChecked]);
-
   async function checkSetupStatus() {
     try {
-      const res = await fetch('/api/setup/config');
+      const [res, appearance] = await Promise.all([fetch('/api/setup/config', { cache: 'no-store' }), fetch('/api/setup/branding', { cache: 'no-store' })]);
+      if (!res.ok) throw new Error(translateInterface("m46a341535604"));
+      if (!appearance.ok) throw new Error(translateInterface("ma5bec319c728"));
+      const saved = await appearance.json();
+      const design = designSchema.safeParse(saved.site_name_style?.mytitle);
+      if (saved.site_name_style?.mytitle !== undefined && !design.success) throw new Error(translateInterface("m6e8198402ff4"));
+      setBrandingRevision(saved.site_name_style?.mytitleRevision ?? null);
+      if (design.success) { setTitleDesign(design.data); setSiteName(design.data.name); }
+      setConfigError(false);
       if (res.ok) {
         const config: SetupConfig = await res.json();
         if (config.setup_completed) {
           router.replace(SETUP_COMPLETE_PATH);
           return;
         }
-        if (config.site_name && config.site_name !== 'YouEye') setSiteName(config.site_name);
+        if (!design.success && config.site_name) setSiteName(config.site_name);
         if (config.domain) {
           const lastDot = config.domain.lastIndexOf('.');
           if (lastDot > 0) {
@@ -153,20 +177,32 @@ export default function SetupPage() {
         }
       }
     } catch {
-      // Config not available yet, use defaults
+      setConfigError(true);
     }
     setLoading(false);
   }
 
+  useEffect(() => {
+    if (languageChecked) checkSetupStatus();
+  }, [languageChecked]);
+
+  const navigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (navigationTimer.current) clearTimeout(navigationTimer.current); }, []);
+
   // Step navigation with animation
   const goToStep = useCallback((nextStep: WizardStep, dir: 'forward' | 'back' = 'forward') => {
+    if (navigationTimer.current) clearTimeout(navigationTimer.current);
     setDirection(dir);
     setTransitioning(true);
-    setTimeout(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    navigationTimer.current = setTimeout(() => {
       setStep(nextStep);
       setTransitioning(false);
-    }, 200);
+      navigationTimer.current = null;
+    }, reduced ? 0 : 200);
   }, []);
+
+  const handleReady = useCallback(() => goToStep(-1), [goToStep]);
 
   // Language selection
   const handleLanguageSelect = useCallback(async (code: string) => {
@@ -222,25 +258,76 @@ export default function SetupPage() {
 
       await delay(SETUP_READY_POLL_MS);
     }
+    throw new Error(interfaceTranslationRef.current("mc71c1a0619bb"));
   }, []);
 
   // After provisioning completes:
   // - LE/self-signed/YouEye Names: wait for CP's SSO restart, then show DNS explainer
   // - Upload: show upload flow in step 5
   const handleProvisioningComplete = useCallback(() => {
+    setSetupError('');
     if (tlsChoice === 'upload') {
       goToStep(5); // show upload flow
     } else {
       setSetupRestarting(true);
-      void waitForControlPanelReady().finally(() => {
+      void waitForControlPanelReady().then(() => {
         router.replace(SETUP_COMPLETE_PATH);
+      }).catch((cause) => {
+        setSetupRestarting(false);
+        setSetupStatusOnlyRetry(true);
+        setSetupError(cause instanceof Error ? cause.message : interfaceTranslationRef.current("mc71c1a0619bb"));
       });
     }
   }, [tlsChoice, goToStep, router, waitForControlPanelReady]);
 
-  // Run setup provisioning
-  const handleRunSetup = useCallback(async () => {
+  const setupProgressOptions = useCallback(() => ({
+    messages: {
+      failed: interfaceTranslationRef.current("m386238bd5b5a"),
+      unknown: t('setupStatusUnknown'),
+    },
+    onChecking: setSetupChecking,
+    onEvent: (event: { step?: string; status?: StepStatus; message?: string }) => {
+      const { step, status, message } = event;
+      if (step && status) {
+        setSetupSteps(prev => prev.map(item => item.id === step
+          ? { ...item, status, ...(message ? { message } : {}) } : item));
+      }
+    },
+  }), [t]);
+
+  const recordSetupFailure = useCallback((error: unknown) => {
+    setSetupComplete(false);
+    setSetupStatusOnlyRetry(error instanceof SetupProgressError && error.readOnly);
+    setSetupError(error instanceof Error ? error.message : interfaceTranslationRef.current("m54d466a16d84"));
+  }, []);
+
+  const recordSetupCompletion = useCallback(() => {
+    setSetupStatusOnlyRetry(false);
+    setSetupSteps(prev => prev.map(item => ({ ...item, status: 'done' })));
+    setSetupComplete(true);
+  }, []);
+
+  const handleCheckSetupStatus = useCallback(async () => {
+    if (setupRequestInFlight.current) return;
+    setupRequestInFlight.current = true;
     setSetupError('');
+    try {
+      await readSetupProgress(setupProgressOptions());
+      recordSetupCompletion();
+    } catch (error) {
+      recordSetupFailure(error);
+    } finally {
+      setupRequestInFlight.current = false;
+    }
+  }, [setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
+
+  // Submit once. A lost response is reconciled through retained status reads.
+  const handleRunSetup = useCallback(async () => {
+    if (setupRequestInFlight.current) return;
+    setupRequestInFlight.current = true;
+    setSetupError('');
+    setSetupComplete(false);
+    setSetupStatusOnlyRetry(false);
     const steps: SetupStep[] = [
       { id: 'config', label: t('savingConfig'), status: 'pending' },
       { id: 'caddy', label: t('settingUpProxy'), status: 'pending' },
@@ -251,12 +338,10 @@ export default function SetupPage() {
       { id: 'finalize', label: t('finalizingSetup'), status: 'pending' },
     ];
     setSetupSteps(steps);
-
-    const csrfRes = await fetch('/api/auth/csrf');
-    const { csrfToken } = await csrfRes.json();
-
     try {
-      const res = await fetch('/api/setup/run', {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+      await followSetupProgress(() => fetch('/api/setup/run', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -267,6 +352,7 @@ export default function SetupPage() {
           domain,
           subdomains: { ...subdomains, ui: '' },
           site_name_style: nameStyle,
+          branding_revision: brandingRevision,
           icon_config: iconConfig,
           identity_name: identityName || `${siteName} ID`,
           language: selectedLanguage || 'en',
@@ -274,75 +360,20 @@ export default function SetupPage() {
           yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
           yen_terms_version: tlsChoice === 'youeye-names' ? yenTermsVersion : undefined,
           yen_ct_accepted: tlsChoice === 'youeye-names' ? yenCtAccepted : undefined,
-          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing ? yenClaimProof : undefined,
+          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing && !yenVerifiedSetup ? yenClaimProof : undefined,
+          yen_verified_setup_session: tlsChoice === 'youeye-names' && !yenReusing && yenVerifiedSetup ? yenSetupSession : undefined,
           byo_dns_provider: tlsChoice === 'byo-provider'
             ? { provider: 'cloudflare', token: byoProviderToken }
             : undefined,
         }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Setup request failed (${res.status}): ${text || 'Unknown error'}`);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let streamHasError = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
-          if (data === '[DONE]') {
-            continue;
-          }
-          try {
-            const event = JSON.parse(data);
-            if (event.step && event.status) {
-              setSetupSteps(prev =>
-                prev.map(s =>
-                  s.id === event.step
-                    ? { ...s, status: event.status, message: event.message }
-                    : s
-                )
-              );
-              if (event.status === 'error') {
-                streamHasError = true;
-              }
-            }
-            if (event.error) {
-              streamHasError = true;
-              setSetupError(event.error);
-            }
-            if (event.complete === true) {
-              if (event.hasErrors || streamHasError) {
-                streamHasError = true;
-                setSetupComplete(false);
-                setSetupError(prev => prev || 'Setup needs attention before finishing. Fix the failed step and try again.');
-              } else {
-                setSetupComplete(true);
-              }
-            }
-          } catch {
-            // Ignore malformed lines
-          }
-        }
-      }
-    } catch (err) {
-      setSetupError(err instanceof Error ? err.message : 'Setup failed');
+      }), setupProgressOptions());
+      recordSetupCompletion();
+    } catch (error) {
+      recordSetupFailure(error);
+    } finally {
+      setupRequestInFlight.current = false;
     }
-  }, [siteName, domain, subdomains, nameStyle, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenReusing, byoProviderToken, t]);
+  }, [siteName, domain, subdomains, nameStyle, brandingRevision, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenSetupSession, yenVerifiedSetup, yenReusing, byoProviderToken, t, setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
@@ -361,54 +392,33 @@ export default function SetupPage() {
     );
   }
 
+  if (configError) return <div className="mx-auto max-w-lg space-y-4"><h1 className="text-2xl font-semibold">{translateInterface("m522b1511b2bd")}</h1><p role="alert">{translateInterface("mf739af21ccc8")}</p><button type="button" onClick={() => void checkSetupStatus()} className="rounded-md border px-4 py-2">{translateInterface("m942087cc2d41")}</button></div>;
+
   // Transition wrapper classes
   const getContentClass = () => {
     if (transitioning) {
       return direction === 'forward'
-        ? 'opacity-0 -translate-x-4 transition-all duration-200'
-        : 'opacity-0 translate-x-4 transition-all duration-200';
+        ? 'opacity-0 -translate-x-4 transition-all duration-200 motion-reduce:transition-none motion-reduce:transform-none'
+        : 'opacity-0 translate-x-4 transition-all duration-200 motion-reduce:transition-none motion-reduce:transform-none';
     }
-    return 'opacity-100 translate-x-0 transition-all duration-300';
+    return 'opacity-100 translate-x-0 transition-all duration-300 motion-reduce:transition-none motion-reduce:transform-none';
   };
 
-  // Step indicator dots (only for the three server identity steps)
-  const showDots = typeof step === 'number' && step >= 0 && step <= 2;
-  const stepLabels = [t('serverSetup'), t('style'), 'Icon'];
-
   return (
-    <div className="w-full max-w-2xl px-4">
-      {/* Step dots */}
-      {showDots && (
-        <div className="flex items-center justify-center gap-2 mb-8 animate-in fade-in duration-300">
-          {stepLabels.map((label, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <div className={`flex items-center gap-1.5 ${i === step ? 'opacity-100' : 'opacity-40'}`}>
-                <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                  i < step ? 'bg-green-500' : i === step ? 'bg-primary scale-110' : 'bg-muted-foreground/40'
-                }`} />
-                <span className="text-xs font-medium hidden sm:inline">{label}</span>
-              </div>
-              {i < stepLabels.length - 1 && (
-                <div className={`w-8 h-px ${i < step ? 'bg-green-300' : 'bg-border'}`} />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
+      <div className="onboarding-card my-6 w-full max-w-5xl p-5 sm:p-8">
       {/* Step content */}
-      <div className={getContentClass()}>
+      <div ref={contentRef} className={getContentClass()} inert={transitioning}>
         {step === -2 && (
           <SetupLanguage onSelect={handleLanguageSelect} />
         )}
 
         {step === -3 && (
-          <SetupApplianceUpdate onContinue={() => goToStep(-1)} />
+          <SetupReadiness onReady={handleReady} />
         )}
 
         {step === -1 && (
           <SetupChoice
-            onNewSetup={() => goToStep(0)}
+            onNewSetup={() => goToStep(1)}
             onRestore={() => goToStep('restore')}
           />
         )}
@@ -453,41 +463,45 @@ export default function SetupPage() {
             yenCtAccepted={yenCtAccepted}
             setYenCtAccepted={setYenCtAccepted}
             setYenReusing={setYenReusing}
+            setYenVerifiedSetup={setYenVerifiedSetup}
             byoDomain={byoDomain}
             setByoDomain={setByoDomain}
             byoProviderToken={byoProviderToken}
             setByoProviderToken={setByoProviderToken}
-            onNext={() => goToStep(1)}
-            onBack={() => goToStep(-1, 'back')}
+            onNext={() => goToStep(2)}
+            onBack={() => goToStep(1, 'back')}
           />
         )}
 
         {step === 1 && (
-          <SetupWordArt
-            siteName={siteName}
-            style={nameStyle}
-            setStyle={setNameStyle}
-            onNext={() => goToStep(2)}
-            onBack={() => goToStep(0, 'back')}
+          <TitleStudio
+            design={{ ...titleDesign, name: siteName }}
+            onChange={(design) => { setTitleDesign(design); setSiteName(design.name); }}
+            onContinue={() => goToStep(0)}
+            onBack={() => goToStep(-1, 'back')}
           />
         )}
 
         {step === 2 && (
-          <SetupIcon
-            siteName={siteName}
-            siteNameStyle={nameStyle}
-            iconConfig={iconConfig}
-            setIconConfig={setIconConfig}
-            onNext={() => goToStep(tlsChoice === 'youeye-names' && !yenReusing ? 3 : 4)}
-            onBack={() => goToStep(1, 'back')}
-          />
+          <section className="mx-auto max-w-xl space-y-6 text-center">
+            <Brand design={nameStyle.mytitle} view="icon" />
+            <h1 className="text-2xl font-semibold">{translateInterface("mba865ad5a8d4")}{siteName}?</h1>
+            <Brand design={nameStyle.mytitle} />
+            <p className="font-mono text-sm break-all">{domain}</p>
+            <p className="text-sm text-muted-foreground">{translateInterface("mbbc34c1751ef")}</p>
+            <div className="flex flex-wrap justify-between gap-3">
+              <button type="button" className="rounded-lg border px-4 py-3" onClick={() => goToStep(0, 'back')}>{translateInterface("m1a38fb5df490")}</button>
+              <button type="button" className="rounded-lg bg-primary px-4 py-3 text-primary-foreground" onClick={() => goToStep(tlsChoice === 'youeye-names' && !yenReusing ? 3 : 4)}>{translateInterface("m4da10f1fbb17")}{siteName}</button>
+            </div>
+          </section>
         )}
 
         {step === 3 && (
           <SetupNamesVerification
             name={yenName}
             fqdn={yenFqdn}
-            onVerified={(proof) => { setYenClaimProof(proof); goToStep(4); }}
+            useVerifiedSetup={yenVerifiedSetup}
+            onVerified={(proof,kind) => { if(kind==='verified_setup')setYenSetupSession(proof);else setYenClaimProof(proof); goToStep(4); }}
             onBack={() => goToStep(2, 'back')}
           />
         )}
@@ -497,14 +511,18 @@ export default function SetupPage() {
             steps={setupSteps}
             isComplete={setupComplete}
             isRestarting={setupRestarting}
+            isChecking={setupChecking}
+            statusOnlyRetry={setupStatusOnlyRetry}
             error={setupError}
             onRetry={() => {
-              provisioningStarted.current = false;
+              if (setupComplete) { handleProvisioningComplete(); return; }
+              if (setupStatusOnlyRetry) { void handleCheckSetupStatus(); return; }
+              provisioningStarted.current = true;
               setSetupComplete(false);
               setSetupRestarting(false);
               setSetupError('');
               setSetupSteps([]);
-              handleRunSetup();
+              void handleRunSetup();
             }}
             onComplete={handleProvisioningComplete}
           />

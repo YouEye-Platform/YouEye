@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { settingsService } from '@/lib/settings';
 import * as caddy from '@/lib/caddy/client';
 import { getIdentityConfig } from '@/lib/identity/config';
+import { reconfigure } from '@/lib/reconfigure';
 
 function validSubdomain(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -26,11 +27,14 @@ export async function POST(request: NextRequest) {
   if (!raw.domain || typeof raw.domain !== 'string') {
     return NextResponse.json({ error: 'Platform domain is not configured' }, { status: 400 });
   }
-
   const subdomains = {
     ...(raw.subdomains || {}),
     identity,
   };
+  if (raw.setup_completed) {
+    await reconfigure({ subdomains }, () => undefined);
+    return NextResponse.json({ ok: true, host: `${identity}.${raw.domain}`, subdomains, restartScheduled: true });
+  }
   await settingsService.setRaw({ subdomains });
   const identityConfig = await getIdentityConfig();
   await caddy.ensureIdentityRoute(`${identity}.${raw.domain}`, identityConfig.containerName, identityConfig.port);

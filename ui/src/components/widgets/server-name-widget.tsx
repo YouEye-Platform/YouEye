@@ -12,6 +12,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { SiteName } from "@/components/layout/site-name";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
+import { subscribeAppearanceChanges } from "@youeye/branding/appearance-events";
 
 interface ServerNameWidgetProps {
   settings?: Record<string, unknown>;
@@ -31,8 +32,7 @@ const DEFAULT_WIDGET_STYLE: SiteNameStyle = {
 
 export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps) {
   const [siteName, setSiteName] = useState<string>("");
-  const [adminStyle, setAdminStyle] = useState<SiteNameStyle | null>(null);
-  const [userOverride, setUserOverride] = useState<SiteNameStyle | null>(null);
+  const [titleStyle, setTitleStyle] = useState<SiteNameStyle | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [fitSize, setFitSize] = useState(48);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,20 +40,27 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
   onAutoSizeRef.current = onAutoSize;
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/v1/branding").then((r) => r.json()),
-      fetch("/api/v1/user/wordart").then((r) => r.json()),
-    ])
-      .then(([branding, wordart]) => {
-        setSiteName(branding.site_name || "YouEye");
-        setAdminStyle(branding.site_name_style ?? null);
-        setUserOverride(wordart.wordart ?? null);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
+    let active = true;
+    let request = 0;
+    async function refresh() {
+      const current = ++request;
+      try {
+        const res = await fetch("/api/v1/header/config", { cache: "no-store" });
+        if (!res.ok) return;
+        const { branding } = await res.json();
+        if (active && current === request) {
+          setSiteName(branding.site_name);
+          setTitleStyle(branding.site_name_style);
+          setLoaded(true);
+        }
+      } catch { /* A failed refresh must not replace a confirmed title. */ }
+    }
+    void refresh();
+    const unsubscribe = subscribeAppearanceChanges(() => { void refresh(); });
+    return () => { active = false; unsubscribe(); };
   }, []);
 
-  const baseStyle = userOverride ?? adminStyle ?? DEFAULT_WIDGET_STYLE;
+  const baseStyle = titleStyle ?? DEFAULT_WIDGET_STYLE;
 
   // Fit text to container width and report ideal height
   const fitText = useCallback(() => {
@@ -61,6 +68,10 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
     if (!container || !loaded || !siteName) return;
 
     const h1 = container.querySelector("h1");
+    if (baseStyle.mytitle && h1) {
+      onAutoSizeRef.current?.({ height: Math.ceil(h1.getBoundingClientRect().height) + 4 });
+      return;
+    }
     if (!h1) return;
 
     const cw = container.clientWidth;
@@ -83,7 +94,7 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
         onAutoSizeRef.current?.({ height: Math.ceil(textH) + 4 });
       }
     });
-  }, [loaded, siteName]);
+  }, [loaded, siteName, baseStyle.mytitle]);
 
   // Observe container for resize (user drags width)
   useEffect(() => {
@@ -92,6 +103,8 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
 
     const observer = new ResizeObserver(fitText);
     observer.observe(container);
+    const title = container.querySelector("h1");
+    if (title) observer.observe(title); // Outline font loading can change height after mount.
     document.fonts.ready.then(fitText);
     fitText();
 
@@ -111,7 +124,7 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
         name={siteName}
         style={displayStyle}
         as="h1"
-        className="whitespace-nowrap leading-none"
+        className={baseStyle.mytitle ? "title-studio-widget w-full leading-none" : "whitespace-nowrap leading-none"}
       />
     </div>
   );

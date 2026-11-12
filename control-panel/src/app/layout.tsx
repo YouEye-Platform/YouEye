@@ -1,8 +1,11 @@
+import { LocaleRefresh } from "@/components/locale-refresh";
+import { localeDirection } from "@/i18n/config";
 import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
-import { getLocale, getMessages } from "next-intl/server";
+import { getLocale, getMessages, getTranslations as getInterfaceTranslations } from "next-intl/server";
 import "./globals.css";
 import { getSiteConfig } from "@/lib/site-config";
+import { BrandingLocaleProvider } from "@youeye/branding/locale";
 
 export const viewport: Viewport = {
   themeColor: "#2563eb",
@@ -12,9 +15,10 @@ export const viewport: Viewport = {
 
 export async function generateMetadata(): Promise<Metadata> {
   const config = await getSiteConfig();
+  const translateInterface = await getInterfaceTranslations("interface");
   return {
     title: config.site_name,
-    description: `Manage your ${config.site_name} infrastructure`,
+    description: translateInterface("me650b9f859f9", {site: config.site_name}),
     icons: {
       icon: [
         { url: '/api/branding/favicon?size=32', sizes: '32x32', type: 'image/png' },
@@ -41,7 +45,7 @@ export default async function RootLayout({
   const messages = await getMessages();
 
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={locale} dir={localeDirection(locale)} suppressHydrationWarning>
       <body className="antialiased min-h-screen bg-background">
         {/* Apply the saved light/dark/system mode before first paint to avoid a
             flash. Reads the same localStorage("theme") key the dashboard's
@@ -54,8 +58,9 @@ export default async function RootLayout({
               "(function(){try{var m=localStorage.getItem('theme');var s=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;if(m==='dark'||((m==='system'||!m)&&s)){document.documentElement.classList.add('dark');}}catch(e){}})();",
           }}
         />
-        <NextIntlClientProvider messages={messages}>
-          {children}
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          <LocaleRefresh locale={locale} />
+          <BrandingLocaleProvider locale={locale}>{children}</BrandingLocaleProvider>
         </NextIntlClientProvider>
       </body>
     </html>

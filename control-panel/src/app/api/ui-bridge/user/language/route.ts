@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { propagateLanguageToAll, getLanguageSupportedAppCount } from '@/lib/language/service';
 
-const SUPPORTED_LOCALES = ['en', 'ru', 'es', 'de', 'fr'];
+import { locales as SUPPORTED_LOCALES } from "@/i18n/config";
 
 export async function PATCH(request: NextRequest) {
   const authError = await validateBridgeToken(request);

@@ -1,5 +1,7 @@
 "use client";
 
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Embed Auth Error Component
  *
@@ -27,6 +29,8 @@ interface EmbedAuthErrorProps {
 }
 
 export function EmbedAuthError({ reason, showSignIn = true }: EmbedAuthErrorProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [controlUrl, setControlUrl] = useState("");
   const [autoRedirectFailed, setAutoRedirectFailed] = useState(false);
   const redirectAttempted = useRef(false);
@@ -76,7 +80,7 @@ export function EmbedAuthError({ reason, showSignIn = true }: EmbedAuthErrorProp
     return (
       <div className="embed-auth-error">
         <div className="embed-auth-spinner" />
-        <div className="embed-auth-message">Connecting...</div>
+        <div className="embed-auth-message">{translateInterface("m5f04ae9ed6a8")}</div>
         <style jsx>{`
           .embed-auth-error {
             display: flex;
@@ -127,8 +131,7 @@ export function EmbedAuthError({ reason, showSignIn = true }: EmbedAuthErrorProp
       <div className="embed-auth-message">{reason}</div>
       {(showSignIn || autoRedirectFailed) && (
         <button className="embed-auth-btn" onClick={handleSignIn}>
-          Sign In
-        </button>
+          {translateInterface("mbcc0bcc9140b")}</button>
       )}
       <style jsx>{`
         .embed-auth-error {

@@ -27,7 +27,7 @@ for fixture in AGENTS.md private-url.txt worker-email.txt allocation.txt; do
     init_repo
     case "$fixture" in
         AGENTS.md) printf 'private journal\n' > "$work/repo/$fixture" ;;
-        private-url.txt) printf 'https://github.com/example/repo\n' > "$work/repo/$fixture" ;;
+        private-url.txt) printf 'https://git.potemk.in/example/repo\n' > "$work/repo/$fixture" ;;
         worker-email.txt) printf 'worker@workers.anyagent.local\n' > "$work/repo/$fixture" ;;
         allocation.txt) printf 'alloc-app-network-isolation-ipam-1234567890\n' > "$work/repo/$fixture" ;;
     esac

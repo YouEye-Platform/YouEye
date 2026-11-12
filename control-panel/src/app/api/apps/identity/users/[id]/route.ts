@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteUser, getUser, updateUser } from '@/lib/identity/provider';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { reconcileAdmissionProjections, admissionReconciliationState } from '@/lib/admission/projection';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -51,7 +52,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       isAdmin: typeof body.isAdmin === 'boolean' ? body.isAdmin : typeof body.is_superuser === 'boolean' ? body.is_superuser : undefined,
       is_active: typeof body.is_active === 'boolean' ? body.is_active : undefined,
     });
-    return NextResponse.json(user);
+    await reconcileAdmissionProjections().catch(() => undefined);
+    const admissionReconciliation = await admissionReconciliationState();
+    return NextResponse.json({ ...user, admissionReconciliation }, { status: admissionReconciliation === 'pending' ? 202 : 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -69,7 +72,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     await deleteUser(id);
-    return NextResponse.json({ status: 'deleted' });
+    await reconcileAdmissionProjections().catch(() => undefined);
+    const admissionReconciliation = await admissionReconciliationState();
+    return NextResponse.json({ status: 'deleted', admissionReconciliation }, { status: admissionReconciliation === 'pending' ? 202 : 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,10 +1,12 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
 async function source(path: string) {
-  return readFile(join(process.cwd(), path), 'utf8');
+  const text = await readFile(join(process.cwd(), path), 'utf8');
+  return path.endsWith('.tsx') ? englishInterfaceSource(text) : text;
 }
 
 test('direct manifests become instance-local Market entries and open the normal detail page', async () => {
@@ -15,7 +17,8 @@ test('direct manifests become instance-local Market entries and open the normal 
   const marketPage = await source('src/app/market/page.tsx');
 
   assert.match(validator, /requireAdmin\(\)/);
-  assert.match(validator, /repository\.origin.*api\/v1\/repos/);
+  assert.match(validator, /repository\.origin.*raw\/branch\/main\/youeye-app\.yaml/);
+  assert.doesNotMatch(validator, /api\/v1\/repos/);
   assert.doesNotMatch(validator, /git\.potemk\.in/);
   assert.match(validator, /saveDirectMarketApp/);
   assert.match(dialog, /router\.push\(data\.href\)/);
@@ -40,13 +43,13 @@ test('direct entries install through the normal engine and remain removable only
   assert.doesNotMatch(detailPage, /app\.integration === 'native' \? 'YouEye \(official\)'/);
 });
 
-test('Market preflight precedes app-network mutation and core LXD keeps mandatory signatures', async () => {
+test('Market preflight precedes app-network mutation and core LXD keeps mandatory digest checks', async () => {
   const engine = await source('src/lib/market/engine.ts');
   const deployer = await source('src/lib/infrastructure/lxd-deployer.ts');
   const stage = engine.indexOf('stageMarketNativeArtifacts(manifest, config,');
   const mutate = engine.indexOf('createAppNetwork(appId');
   assert.ok(stage >= 0 && mutate > stage, 'native artifact staging must happen before app network creation');
   assert.match(deployer, /export async function deployMarketLXDContainer/);
-  assert.match(deployer, /signedReleaseVerificationShell\(releaseURL/);
+  assert.match(deployer, /releaseArtifactVerificationShell\('\/tmp\/app\.tar', expected\)/);
   assert.doesNotMatch(deployer, /skipVerification/);
 });

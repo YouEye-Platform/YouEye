@@ -38,7 +38,7 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /\/api\/ui-bridge\/app-launch-permissions/);
   assert.match(authorize, /name="runtime_permission"/);
   assert.match(authorize, /class="switch"/);
-  assert.match(authorize, /also wants to:/);
+  assert.match(authorize, /t\("mc6d74d241c4d", \{ app: appName \}\)/);
   assert.match(authorize, /form\.getAll\('runtime_permission'\)/);
   assert.match(authorize, /grantPermissions: selectedRuntimePermissions/);
   assert.match(authorize, /denyUnselected: Array\.isArray\(input\.grantPermissions\)/);
@@ -52,7 +52,7 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
 test('OAuth consent presents a simple account handoff without technical scope UI', () => {
   const authorize = read('src/app/application/o/authorize/route.ts');
 
-  assert.match(authorize, /<h1>Sign in to \$\{escapeHtml\(appName\)\}<\/h1>/);
+  assert.match(authorize, /<h1>\$\{escapeHtml\(t\(/);
   assert.match(authorize, /identityFaviconLinks\(\)/);
   assert.match(authorize, /class="app-brand"/);
   assert.match(authorize, /appBrand\(params\.display\?\.app, appName, params\.uiExternalUrl \?\? null\)/);
@@ -64,10 +64,6 @@ test('OAuth consent presents a simple account handoff without technical scope UI
   assert.match(authorize, /uiExternalUrl: externalUiUrl/);
   assert.match(authorize, /accountAvatar\(params\.display\?\.user, accountLabel, params\.uiExternalUrl \?\? null\)/);
   assert.match(authorize, /avatar_path/);
-  assert.match(authorize, /will share your/);
-  assert.match(authorize, /You can revoke access later in app settings/);
-  assert.match(authorize, />Cancel<\/button>/);
-  assert.match(authorize, />Continue<\/button>/);
   assert.match(authorize, /display: runtime\?\.display/);
   assert.doesNotMatch(authorize, /appMark/);
   assert.doesNotMatch(authorize, /app-mark/);

@@ -8,6 +8,7 @@ const eslintConfig = defineConfig([
   {
     // Preserve visibility of inherited migration debt while making this a real
     // release gate. New and touched code is also typechecked and built.
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-require-imports": "warn",
@@ -20,7 +21,7 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["scripts/**/*.js"],
+    files: ["scripts/**/*.{js,cjs}"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },

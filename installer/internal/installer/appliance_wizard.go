@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/youeye-platform/YouEye/releasecache"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -69,7 +71,6 @@ type applianceWizardModel struct {
 	releaseInputs     map[string]textinput.Model
 	releaseFocus      int
 	releaseProvider   string
-	releaseFreshness  string
 	developmentInputs []textinput.Model
 	developmentSSH    bool
 	developmentPolicy developmentAccessPolicy
@@ -92,7 +93,7 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 	sshKey.Placeholder = "ssh-ed25519 AAAA..."
 	sshKey.Width = 64
 	releaseInputs := make(map[string]textinput.Model)
-	for _, key := range []string{"api", "branch", "tag", "digest"} {
+	for _, key := range []string{"api"} {
 		input := textinput.New()
 		input.Width = 52
 		input.CharLimit = 256
@@ -111,7 +112,7 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 		config: cfg, runner: runner, answerPath: defaultInteractiveApplianceAnswerPath,
 		stage: applianceWizardLoading, networkInputs: []textinput.Model{address, gateway, dns},
 		sshInput: sshKey, releaseInputs: releaseInputs, releaseProvider: defaultApplianceProvider,
-		releaseFreshness: "require-current", developmentInputs: []textinput.Model{password, confirm},
+		developmentInputs: []textinput.Model{password, confirm},
 		developmentPolicy: defaultDevelopmentAccessPolicy(),
 		developmentCur:    4,
 	}
@@ -119,7 +120,7 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 
 func (w applianceWizardModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		bundle, err := verifyApplianceBundle(w.config.ApplianceManifestPath, w.config.ApplianceSignaturePath, w.config.ApplianceTrustKeyPath)
+		bundle, err := verifyApplianceBundle(w.config.ApplianceManifestPath)
 		if err != nil {
 			return applianceWizardLoadedMsg{err: err}
 		}
@@ -145,9 +146,9 @@ func (w applianceWizardModel) Init() tea.Cmd {
 			if len(nonBlankSignatures(disk.Signatures)) == 0 {
 				continue
 			}
-			identity, identityErr := inspectInstalledApplianceIdentity(w.runner, disk, w.config.ApplianceTrustKeyPath)
+			identity, identityErr := inspectInstalledApplianceIdentity(w.runner, disk)
 			if identityErr != nil {
-				warnings[disk.Path] = "Existing YouEye metadata is unreadable or untrusted; full erase remains available."
+				warnings[disk.Path] = "Existing YouEye metadata is unreadable; full erase remains available."
 				continue
 			}
 			if identity != nil {
@@ -351,12 +352,6 @@ func (w applianceWizardModel) releaseInputKeys() []string {
 	if w.releaseProvider != defaultApplianceProvider {
 		keys = append(keys, "api")
 	}
-	switch w.releaseCur {
-	case 2:
-		keys = append(keys, "branch")
-	case 3:
-		keys = append(keys, "tag", "digest")
-	}
 	return keys
 }
 
@@ -373,7 +368,7 @@ func (w applianceWizardModel) handleReleaseKey(msg tea.KeyMsg) (applianceWizardM
 		w.blurReleaseInputs()
 		w.inputErr = ""
 	case "left", "right":
-		providers := []string{"github", "forgejo", "custom"}
+		providers := []string{"github", "custom"}
 		index := 0
 		for candidate, provider := range providers {
 			if provider == w.releaseProvider {
@@ -388,12 +383,6 @@ func (w applianceWizardModel) handleReleaseKey(msg tea.KeyMsg) (applianceWizardM
 		w.releaseProvider = providers[index]
 		w.blurReleaseInputs()
 		w.inputErr = ""
-	case "f":
-		if w.releaseFreshness == "require-current" {
-			w.releaseFreshness = "prefer-current"
-		} else {
-			w.releaseFreshness = "require-current"
-		}
 	case "tab":
 		if len(inputKeys) > 0 {
 			w.releaseFocus = (w.releaseFocus + 1) % len(inputKeys)
@@ -637,26 +626,17 @@ func (w applianceWizardModel) networkAnswer() applianceAnswerNetwork {
 	}
 }
 
+// wizardChannels are the release channels in the order the wizard lists them.
+var wizardChannels = []string{"stable", "beta", "alpha", "dev"}
+
 func (w applianceWizardModel) releasePolicyAnswer() applianceReleasePolicy {
-	policy := applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: w.releaseProvider,
-		Mode: "track", Freshness: w.releaseFreshness,
-	}
+	policy := applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: wizardChannels[w.releaseCur]}
 	if w.releaseProvider != defaultApplianceProvider {
-		policy.ReleasesAPI = strings.TrimSpace(w.releaseInputs["api"].Value())
-	}
-	switch w.releaseCur {
-	case 0:
-		policy.Track = "stable"
-	case 1:
-		policy.Track = "development"
-	case 2:
-		policy.Track = "branch"
-		policy.Branch = strings.TrimSpace(w.releaseInputs["branch"].Value())
-	case 3:
-		policy.Mode = "exact"
-		policy.ExactTag = strings.TrimSpace(w.releaseInputs["tag"].Value())
-		policy.ManifestSHA256 = strings.ToLower(strings.TrimSpace(w.releaseInputs["digest"].Value()))
+		repository, err := releasecache.CanonicalRepository(w.releaseInputs["api"].Value())
+		if err != nil {
+			repository = "invalid-repository-url"
+		}
+		policy.Repository = repository
 	}
 	return policy
 }
@@ -695,7 +675,7 @@ func (w applianceWizardModel) preserveEligibility() error {
 	}
 	installed, ok := w.installed[target.Path]
 	if !ok {
-		return fmt.Errorf("preserve reinstall requires a trusted existing YouEye installation")
+		return fmt.Errorf("preserve reinstall requires a readable existing YouEye installation")
 	}
 	if err := ordering.RequireUpgradeIdentity(installed.ImageVersion, w.bundle.Manifest.ImageVersion); err != nil {
 		return fmt.Errorf("preserve reinstall is unavailable: %w", err)
@@ -781,7 +761,7 @@ func (w applianceWizardModel) View() string {
 		hint = "Ctrl+C exits without changing disks"
 	case w.stage == applianceWizardLoading:
 		title = "YouEye Installer"
-		body = theme.Body.Render("Verifying the signed release and discovering target disks...")
+		body = theme.Body.Render("Verifying the release and discovering target disks...")
 		hint = "No target disk has been changed"
 	case w.stage == applianceWizardTarget:
 		title, step = "Choose installation drive", "Step 1"
@@ -879,7 +859,7 @@ func (w applianceWizardModel) diskListView(cursor int) string {
 			rows = append(rows, theme.Dim.Render("    Blank disk"))
 		}
 		if installed, ok := w.installed[disk.Path]; ok {
-			rows = append(rows, theme.Dim.Render(fmt.Sprintf("    Trusted YouEye: %s", installed.ImageVersion)))
+			rows = append(rows, theme.Dim.Render(fmt.Sprintf("    Installed YouEye: %s", installed.ImageVersion)))
 		}
 		if warning := w.identityWarnings[disk.Path]; warning != "" {
 			rows = append(rows, theme.Danger.Render("    "+shortApplianceText(warning, 58)))
@@ -915,20 +895,19 @@ func (w applianceWizardModel) networkView() string {
 
 func (w applianceWizardModel) releaseView() string {
 	labels := []struct{ title, detail string }{
-		{"Latest Stable", "Recommended public release track"},
-		{"Latest Development", "Newest signed development release"},
-		{"Signed branch track", "Latest signed release associated with a named branch"},
-		{"Exact signed release", "Immutable tag and signed appliance-manifest digest; no fallback"},
+		{"Stable", "Recommended"},
+		{"Beta", "Next release, tested"},
+		{"Alpha", "Early builds"},
+		{"Dev", "Every build; may break"},
 	}
 	rows := []string{
-		fmt.Sprintf("  Release source  %s  (Left/Right)", releaseProviderLabel(w.releaseProvider)),
-		fmt.Sprintf("  Freshness       %s  (F)", w.releaseFreshness), "",
+		fmt.Sprintf("  Release source  %s  (Left/Right)", releaseProviderLabel(w.releaseProvider)), "",
 	}
 	for index, option := range labels {
 		rows = append(rows, w.radioLine(index, w.releaseCur, option.title, option.detail))
 	}
 	for _, key := range w.releaseInputKeys() {
-		label := map[string]string{"api": "Releases API", "branch": "Branch", "tag": "Exact tag", "digest": "Manifest SHA-256"}[key]
+		label := map[string]string{"api": "Repository URL"}[key]
 		rows = append(rows, fmt.Sprintf("  %-17s %s", label+":", w.releaseInputs[key].View()))
 	}
 	rows = append(rows, "", theme.Dim.Render("The installed System comes from this media; first boot may update A/B before installing the Server interface."))
@@ -997,15 +976,15 @@ func (w applianceWizardModel) reviewView() string {
 	}
 	rows := []string{
 		fmt.Sprintf("Image:       %s", w.bundle.Manifest.ImageVersion),
-		fmt.Sprintf("Source:      %s", shortApplianceText(w.bundle.Manifest.SourceCommit, 40)),
-		fmt.Sprintf("Trust:       %s", w.bundle.Manifest.Trust.Class),
+		fmt.Sprintf("Source tree: %s", shortApplianceText(w.bundle.Manifest.SourceTree, 40)),
+		fmt.Sprintf("Channel:     %s", w.releasePolicySummary()),
 		"",
 		fmt.Sprintf("Drive:       %s  %s  serial %s", target.Path, formatBytes(target.SizeBytes), shortApplianceText(target.Serial, 24)),
 		"",
 		"Layout: 1 GiB ESP | 4 GiB Recovery | 8 GiB A | 8 GiB B | 4 GiB State",
 		"        YE-DATA uses the remaining drive capacity",
 		"Network: " + network,
-		fmt.Sprintf("Software: %s · %s", releaseProviderLabel(w.releasePolicyAnswer().Provider), w.releasePolicySummary()),
+		fmt.Sprintf("Software: %s · %s", releaseProviderLabel(w.releaseProvider), w.releasePolicySummary()),
 		"SSH:     " + ssh,
 		fmt.Sprintf("Developer console: %s", enabledLabel(w.developmentPolicy.LocalRootConsole)),
 		fmt.Sprintf("Root password SSH: %s", enabledLabel(w.developmentPolicy.RootPasswordSSH)),
@@ -1020,9 +999,9 @@ func (w applianceWizardModel) reviewView() string {
 		rows = append(rows, "Operation: Full erase and fresh install")
 	}
 	if installed, ok := w.installed[target.Path]; ok {
-		rows = append(rows, fmt.Sprintf("Existing: Trusted YouEye %s", installed.ImageVersion))
+		rows = append(rows, fmt.Sprintf("Existing: YouEye %s", installed.ImageVersion))
 	} else if warning := w.identityWarnings[target.Path]; warning != "" {
-		rows = append(rows, "Existing: Untrusted or unreadable YouEye metadata")
+		rows = append(rows, "Existing: unreadable YouEye metadata")
 	}
 	if w.isPreserveReinstall() {
 		rows = append(rows, "", theme.Danger.Render("System A/B, Recovery, and boot assets will be replaced. State and YE-DATA will remain."))
@@ -1042,14 +1021,7 @@ func enabledLabel(enabled bool) string {
 }
 
 func (w applianceWizardModel) releasePolicySummary() string {
-	policy := w.releasePolicyAnswer()
-	if policy.Mode == "exact" {
-		return "Exact " + policy.ExactTag
-	}
-	if policy.Track == "branch" {
-		return "Branch " + policy.Branch
-	}
-	return strings.Title(policy.Track)
+	return strings.Title(w.releasePolicyAnswer().Channel)
 }
 
 func (w applianceWizardModel) eraseView() string {

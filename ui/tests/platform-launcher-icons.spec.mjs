@@ -15,7 +15,7 @@ test('Market and Settings are regular drawer choices and always present in the a
   assert.match(api, /launcher_visible/);
   const drawer = read('src/components/layout/app-drawer.tsx');
   const launcher = read('src/components/layout/launcher.tsx');
-  assert.match(drawer, /aria-label=\{mode === "add" \? `Add \$\{app\.name\}`/);
+  assert.match(drawer, /aria-label=\{mode === "add" \? translateInterface\("m641cf33675f8", \{ value0: String\(app.name\) \}\)/);
   assert.match(drawer, /event\.key !== "Enter" && event\.key !== " "/);
   assert.match(launcher, /const allWithUrl/);
   assert.match(launcher, /for \(const a of allWithUrl\)/);

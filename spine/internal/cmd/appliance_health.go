@@ -16,6 +16,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 )
 
@@ -83,6 +84,9 @@ func runApplianceCommitHealthySlot() error {
 	if err != nil {
 		return fmt.Errorf("read kernel command line: %w", err)
 	}
+	if err := systemupdate.NewDefault().CheckCoreHostCommit(); err != nil {
+		return err
+	}
 	state, err := appliance.CommitHealthySlot(appliance.StatePath, *manifest, string(cmdline))
 	if err != nil {
 		return err
@@ -116,6 +120,9 @@ func runAppliancePrepare() error {
 			return err
 		}
 		if err := prepareAppliancePartitionStorage(decision); err != nil {
+			return err
+		}
+		if err := incus.PrepareNetworkProcessState(); err != nil {
 			return err
 		}
 		fmt.Println("Appliance persistent storage is mounted and compatible")
@@ -323,10 +330,10 @@ func collectApplianceHealth(profile string) applianceHealthResult {
 
 type installedReleaseIdentity struct {
 	Version        string
-	Tag            string
-	Branch         string
 	ArtifactSHA256 string
 }
+
+var firstDeployPackageVersion = containerPackageVersion
 
 type firstDeployReleaseComponent struct {
 	name      string
@@ -343,57 +350,81 @@ func firstDeployReleaseComponents(releaseSet appliance.ReleaseSet) []firstDeploy
 	}
 }
 
-func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, expectedBranch string, installed installedReleaseIdentity) error {
+func firstDeploymentServiceComponents(image appliance.Manifest) (appliance.Manifest, []firstDeployReleaseComponent, error) {
+	policy, err := systemupdate.LoadReleasePolicy(deploymentPolicyPath)
+	if err != nil {
+		return image, nil, err
+	}
+	r, _, err := coreDeploymentSelection(image, policy)
+	if err != nil {
+		return image, nil, err
+	}
+	components := firstDeployReleaseComponents(*image.ReleaseSet)
+	for i := range components {
+		role := map[string]string{"control": "cp", "ui": "ui"}[components[i].key]
+		if member, ok := r.Member(role); ok {
+			components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, SourceTree: member.SourceTree, ArtifactSHA256: member.Artifact.SHA256}
+		}
+	}
+	return image, components, nil
+}
+
+func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, installed installedReleaseIdentity) error {
 	if strings.TrimSpace(installed.Version) != expected.Version {
-		return fmt.Errorf("%s version %q does not match selected bundle version %q", name, installed.Version, expected.Version)
-	}
-	if expected.Tag != "" && installed.Tag != expected.Tag {
-		return fmt.Errorf("%s tag %q does not match selected bundle tag %q", name, installed.Tag, expected.Tag)
-	}
-	if installed.Branch != expectedBranch {
-		return fmt.Errorf("%s branch %q does not match selected bundle branch %q", name, installed.Branch, expectedBranch)
+		return fmt.Errorf("%s version %q does not match selected release version %q", name, installed.Version, expected.Version)
 	}
 	if strings.ToLower(strings.TrimSpace(installed.ArtifactSHA256)) != expected.ArtifactSHA256 {
-		return fmt.Errorf("%s artifact digest does not match the selected signed bundle", name)
+		return fmt.Errorf("%s artifact digest does not match the selected release", name)
 	}
 	return nil
 }
 
 func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string, string, string)) {
+	if addCoreInstalledHealthChecks(manifest, add) {
+		return
+	}
+	selected, components, err := firstDeploymentServiceComponents(manifest)
+	if err != nil {
+		add("first-deploy service selection", "fail", err.Error())
+		return
+	}
+	manifest = selected
 	if manifest.ReleaseSet == nil {
-		add("first-deploy release identity", "fail", "the sealed System has no exact signed release set")
+		add("first-deploy release identity", "fail", "the sealed System has no exact release set")
 		return
 	}
 	releaseSet := *manifest.ReleaseSet
-	executable, err := os.Executable()
+	reader, err := readCoreInstalledReader()
 	if err != nil {
 		add("System core provenance", "fail", "the running System core identity is unavailable")
-	} else if digest, digestErr := fileSHA256(executable); digestErr != nil || Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
-		add("System core provenance", "fail", "the running System core does not match the selected signed bundle")
+	} else if digest, digestErr := fileSHA256(reader.Executable); digestErr != nil || !reader.Bound && Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
+		add("System core provenance", "fail", "the running System core does not match the selected bundle")
 	} else {
-		add("System core provenance", "pass", "the running System core version and digest match the selected signed bundle")
+		add("System core provenance", "pass", "the canonical baked System core matches its bundle")
+		if reader.Bound {
+			add("System reader binding", "pass", "the separate "+reader.ReaderClass+" reader has an exact active binding")
+		}
 	}
-	for _, component := range firstDeployReleaseComponents(releaseSet) {
-		version := containerPackageVersion(component.container, component.appDir)
+	for _, component := range components {
+		version := firstDeployPackageVersion(component.container, component.appDir)
 		provenance, ok := update.GetProvenance(component.key)
 		installed := installedReleaseIdentity{Version: version}
 		if ok {
-			installed.Tag = provenance.Tag
-			installed.Branch = provenance.Branch
 			installed.ArtifactSHA256 = provenance.ArtifactSHA256
 		}
 		if !ok {
 			add(component.name+" provenance", "fail", "installed release provenance is missing")
-		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, releaseSet.Branch, installed); err != nil {
+		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
-			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected signed bundle")
+			add(component.name+" provenance", "pass", "the installed version and digest match the selected release")
 		}
 	}
 }
 
 func containerPackageVersion(containerName, appDir string) string {
-	raw, err := exec.Command("incus", "exec", containerName, "--", "cat", filepath.Join(appDir, "package.json")).Output()
+	// version.json is written by the build from YOUEYE_VERSION.
+	raw, err := exec.Command("incus", "exec", containerName, "--", "cat", filepath.Join(appDir, "version.json")).Output()
 	if err != nil || len(raw) > 1<<20 {
 		return ""
 	}

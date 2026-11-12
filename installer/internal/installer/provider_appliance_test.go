@@ -1,8 +1,6 @@
 package installer
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -109,7 +107,7 @@ func TestApplianceProviderRejectsSeedForDifferentManifest(t *testing.T) {
 	}
 }
 
-func TestApplianceProviderRequiresSignedBundleBeforeInstallerInput(t *testing.T) {
+func TestApplianceProviderRequiresVerifiedBundleBeforeInstallerInput(t *testing.T) {
 	ch := make(chan engineMsg, 16)
 	installAppliance(installConfig{}, ch)
 	close(ch)
@@ -118,15 +116,13 @@ func TestApplianceProviderRequiresSignedBundleBeforeInstallerInput(t *testing.T)
 		final = msg
 	}
 	if final.Err == nil || !strings.Contains(final.Err.Error(), "manifest") {
-		t.Fatalf("expected signed bundle requirement error, got %+v", final)
+		t.Fatalf("expected verified bundle requirement error, got %+v", final)
 	}
 }
 
 type testApplianceBundle struct {
-	manifestPath  string
-	signaturePath string
-	trustKeyPath  string
-	manifestSHA   string
+	manifestPath string
+	manifestSHA  string
 }
 
 type applianceExecutionRunner struct {
@@ -146,8 +142,6 @@ func (r *applianceExecutionRunner) Run(name string, args ...string) (string, err
 
 func (b testApplianceBundle) apply(cfg *installConfig) {
 	cfg.ApplianceManifestPath = b.manifestPath
-	cfg.ApplianceSignaturePath = b.signaturePath
-	cfg.ApplianceTrustKeyPath = b.trustKeyPath
 }
 
 func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
@@ -179,7 +173,7 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 	}
 	manifest := applianceBundleManifest{
 		Schema: applianceBundleSchema, ImageVersion: "0.6.0-dev.1", BuildID: "test-build",
-		SourceCommit: strings.Repeat("b", 40), Architecture: "amd64", FirmwareMode: "uefi",
+		SourceTree: strings.Repeat("b", 40), Architecture: "amd64", FirmwareMode: "uefi",
 		DiskLayout: applianceManifestLayout{
 			Version: 3, TargetMinGiB: 32,
 			ESPGiB: 1, RecoveryGiB: 4, RootSlotGiB: 8, StateGiB: 4,
@@ -189,12 +183,10 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 		KernelCompatibility: applianceKernelCompatibility, ZFSCompatibility: applianceZFSCompatibility,
 		ZFSFeatureProfile: applianceZFSFeatureProfile, IncusCompatibility: applianceIncusCompatibility,
 		RecoveryVersion: applianceRecoveryVersion,
-		Trust:           applianceManifestTrust{Class: applianceTrustDev, KeyID: "test-development-key"},
 		ReleaseSet: applianceManifestReleases{
-			Source: "forgejo", Branch: "dev", Fallback: []string{},
-			Spine:        applianceManifestComponent{Version: "0.5.17.0.0.9", SourceCommit: strings.Repeat("b", 40), ArtifactSHA256: validSHA256()},
-			ControlPanel: applianceManifestComponent{Version: "0.5.0", Tag: "cp-dev-v0.5.0", SourceCommit: strings.Repeat("d", 40), ArtifactSHA256: validSHA256()},
-			UI:           applianceManifestComponent{Version: "0.5.0", Tag: "ui-dev-v0.5.0", SourceCommit: strings.Repeat("e", 40), ArtifactSHA256: validSHA256()},
+			Spine:        applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("b", 40), ArtifactSHA256: validSHA256()},
+			ControlPanel: applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("d", 40), ArtifactSHA256: validSHA256()},
+			UI:           applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("e", 40), ArtifactSHA256: validSHA256()},
 		},
 		Artifacts: assets, SourceDateEpoch: 1,
 	}
@@ -207,23 +199,8 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 	if err := os.WriteFile(manifestPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signaturePath := filepath.Join(dir, "appliance-manifest.json.sig")
-	if err := os.WriteFile(signaturePath, ed25519.Sign(privateKey, raw), 0600); err != nil {
-		t.Fatal(err)
-	}
-	trustKeyPath := filepath.Join(dir, "appliance-development.pub")
-	if err := os.WriteFile(trustKeyPath, []byte(hex.EncodeToString(publicKey)+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	digest := sha256.Sum256(raw)
-	return testApplianceBundle{
-		manifestPath: manifestPath, signaturePath: signaturePath,
-		trustKeyPath: trustKeyPath, manifestSHA: hex.EncodeToString(digest[:]),
-	}
+	return testApplianceBundle{manifestPath: manifestPath, manifestSHA: hex.EncodeToString(digest[:])}
 }
 
 func writeTestSeed(t *testing.T, manifestSHA, targetSerial string) string {

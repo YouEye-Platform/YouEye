@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocale } from "next-intl";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import {
   Globe, ChevronDown, ChevronUp, ArrowLeft, ArrowRight, AlertTriangle,
   Lock, ShieldAlert, Upload, Check, Copy, Loader2, ShieldCheck,
@@ -12,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { TLD_OPTIONS } from '@/lib/wordart-presets';
 import { useTranslations } from 'next-intl';
 import { acceptRegistrationProof, runNamesEnrollment } from '@/lib/youeye-names/popup';
+import { useRef as useInterfaceTranslationRef } from "react";
 
 export type TlsChoice = 'youeye-names' | 'byo-provider' | 'letsencrypt' | 'selfsigned' | 'upload';
 
@@ -48,7 +51,7 @@ interface NamesDisclosure {
 
 interface NamesReadinessView {
   reachable: boolean;
-  service?: { managedZone: string };
+  service?: { managedZone: string; capabilities?: string[] };
   readiness?: {
     installation: {
       canProceedNow: boolean;
@@ -100,6 +103,7 @@ interface Props {
   yenCtAccepted: boolean;
   setYenCtAccepted: (v: boolean) => void;
   setYenReusing?: (v: boolean) => void;
+  setYenVerifiedSetup?: (v: boolean) => void;
   byoDomain: string;
   setByoDomain: (v: string) => void;
   byoProviderToken: string;
@@ -137,23 +141,7 @@ function isLocalHostname(hostname: string): boolean {
   return isLocalDomain(`.${labels[labels.length - 1]}`);
 }
 
-async function readSetupJson(response: Response, fallback: string): Promise<Record<string, unknown>> {
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.toLowerCase().includes('application/json')) {
-    const text = await response.text().catch(() => '');
-    const looksLikeLoginPage = response.redirected || response.url.includes('/login') || text.trim().startsWith('<!DOCTYPE');
-    if (looksLikeLoginPage || contentType.toLowerCase().includes('text/html')) {
-      throw new Error('Setup session expired. Refresh setup and sign in again.');
-    }
-    throw new Error(`${fallback} (${response.status})`);
-  }
 
-  try {
-    return await response.json() as Record<string, unknown>;
-  } catch {
-    throw new Error(`${fallback} returned an unreadable response`);
-  }
-}
 
 export default function SetupServerName({
   siteName, setSiteName,
@@ -169,10 +157,35 @@ export default function SetupServerName({
   yenTermsVersion, setYenTermsVersion,
   yenCtAccepted, setYenCtAccepted,
   setYenReusing,
+  setYenVerifiedSetup,
   byoDomain, setByoDomain,
   byoProviderToken, setByoProviderToken,
   onNext, onBack,
 }: Props) {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
+  interfaceTranslationRef.current = translateInterface;
+async function readSetupJson(response: Response, fallback: string): Promise<Record<string, unknown>> {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const text = await response.text().catch(() => '');
+    const looksLikeLoginPage = response.redirected || response.url.includes('/login') || text.trim().startsWith('<!DOCTYPE');
+    if (looksLikeLoginPage || contentType.toLowerCase().includes('text/html')) {
+      throw new Error(translateInterface("mbf329c86cfd7"));
+    }
+    throw new Error(`${fallback} (${response.status})`);
+  }
+
+  try {
+    return await response.json() as Record<string, unknown>;
+  } catch {
+    throw new Error(`${fallback} returned an unreadable response`);
+  }
+}
+
+
   const t = useTranslations('setup');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [identityEdited, setIdentityEdited] = useState(false);
@@ -188,6 +201,10 @@ export default function SetupServerName({
   const [yenDisclosure, setYenDisclosure] = useState<NamesDisclosure | null>(null);
   const [yenReadiness, setYenReadiness] = useState<NamesReadinessView | null>(null);
   const [yenRegistered, setYenRegistered] = useState(false);
+  const previewRequest = useRef<AbortController | null>(null);
+  const enrollment = useRef<AbortController | null>(null);
+  useEffect(() => () => {enrollment.current?.abort();previewRequest.current?.abort();}, []);
+  useEffect(() => { if (tlsChoice !== 'youeye-names') {enrollment.current?.abort();previewRequest.current?.abort();setYenLoading(false);} }, [tlsChoice]);
   // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
   const [reusing, setReusing] = useState(false);
 
@@ -213,56 +230,70 @@ export default function SetupServerName({
   // Auto-fill identity provider name.
   useEffect(() => {
     if (!identityEdited) {
-      setIdentityName(siteName ? `${siteName} ID` : 'Identity Provider');
+      setIdentityName(siteName ? `${siteName} ID` : interfaceTranslationRef.current("m69be2c96c261"));
     }
   }, [siteName, identityEdited, setIdentityName]);
 
   const fetchPreviews = useCallback(async () => {
+    previewRequest.current?.abort();
+    const request=new AbortController();previewRequest.current=request;
     setYenLoading(true);
     setYenError('');
     try {
-      const csrfRes = await fetch('/api/auth/csrf');
+      const csrfRes = await fetch('/api/auth/csrf',{signal:request.signal});
       const { csrfToken } = await csrfRes.json();
       const res = await fetch('/api/tls/youeye-names/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ count: 3 }),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.any([request.signal,AbortSignal.timeout(30_000)]),
       });
       const data = await res.json();
+      if(request.signal.aborted)return;
       if (!res.ok) throw new Error(data.error || t('yenError'));
+      setYenVerifiedSetup?.(data.verificationMode==='verified_setup');
       const opts: NamePreview[] = (data.previews || []).filter((p: NamePreview) => p.available);
       if (!opts.length) throw new Error(t('yenError'));
       setYenOptions(opts);
       setYenIndex(0);
     } catch (e) {
+      if(request.signal.aborted)return;
       setYenError(
         e instanceof Error
           ? (e.name === 'TimeoutError' ? t('yenError') : e.message)
           : t('yenError'),
       );
     } finally {
-      setYenLoading(false);
+      if(previewRequest.current===request) {previewRequest.current=null;if(!request.signal.aborted)setYenLoading(false);}
     }
-  }, [t]);
+  }, [t,setYenVerifiedSetup]);
 
   const startNamesEnrollment = useCallback(async () => {
+    if (enrollment.current) return;
     if (yenReadiness?.readiness && !yenReadiness.readiness.installation.canProceedNow) {
-      setYenError('YouEye Names cannot start a new address right now. Try again later or choose another address option.');
+      setYenError(translateInterface("m4d5af7674ab8"));
+      return;
+    }
+    if(yenReadiness?.service?.capabilities?.includes('verified-setup-v1')) {
+      await fetchPreviews();
       return;
     }
     setYenLoading(true);
     setYenError('');
+    const controller = new AbortController();
+    enrollment.current = controller;
     try {
-      await runNamesEnrollment('install_register', { accept: acceptRegistrationProof });
+      await runNamesEnrollment('install_register', { signal: controller.signal, accept: acceptRegistrationProof });
+      if (controller.signal.aborted) return;
       setYenRegistered(true);
       await fetchPreviews();
     } catch (error) {
-      setYenError(error instanceof Error ? error.message : 'Could not verify this installation.');
+      setYenError(error instanceof Error ? error.message : translateInterface("m2793272b8f41"));
     } finally {
+      enrollment.current = null;
       setYenLoading(false);
     }
-  }, [fetchPreviews, yenReadiness]);
+  }, [fetchPreviews, yenReadiness, translateInterface]);
 
   useEffect(() => {
     let active = true;
@@ -273,7 +304,7 @@ export default function SetupServerName({
         setYenReadiness(body);
       })
       .catch(() => {
-        if (active) setYenReadiness({ reachable: false, error: 'Could not reach YouEye Names.' });
+        if (active) setYenReadiness({ reachable: false, error: interfaceTranslationRef.current("m8ef6e612a6a6") });
       });
     return () => { active = false; };
   }, []);
@@ -283,7 +314,7 @@ export default function SetupServerName({
     fetch('/api/tls/youeye-names/disclosure', { cache: 'no-store' })
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not load the YouEye Names notice.');
+        if (!response.ok) throw new Error(data.error || interfaceTranslationRef.current("mbf60fae31c6f"));
         return data as NamesDisclosure;
       })
       .then((data) => {
@@ -292,7 +323,7 @@ export default function SetupServerName({
         setYenTermsVersion(data.terms.version);
       })
       .catch((error) => {
-        if (active) setYenError(error instanceof Error ? error.message : 'Could not load the YouEye Names notice.');
+        if (active) setYenError(error instanceof Error ? error.message : interfaceTranslationRef.current("mbf60fae31c6f"));
       });
     return () => { active = false; };
   }, [setYenTermsVersion]);
@@ -341,7 +372,7 @@ export default function SetupServerName({
   }, [currentYen, setYenFqdn, setYenName]);
 
   const refreshYen = () => {
-    if (yenRegistered) void fetchPreviews();
+    if (yenRegistered || yenReadiness?.service?.capabilities?.includes('verified-setup-v1')) void fetchPreviews();
     else void startNamesEnrollment();
   };
 
@@ -441,7 +472,7 @@ export default function SetupServerName({
         signal: AbortSignal.timeout(35_000),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start order');
+      if (!res.ok) throw new Error(data.error || translateInterface("m2f673d027cb1"));
       setAcmeOrderId(data.orderId);
       setAcmeChallenges(data.challenges);
       setAcmePhase('records');
@@ -450,7 +481,7 @@ export default function SetupServerName({
         ? (e.name === 'TimeoutError'
           ? "Request timed out — Let's Encrypt may be rate-limiting this domain. Try again later or use a self-signed certificate."
           : e.message)
-        : 'Failed to start ACME order';
+        : translateInterface("mc1b00659ebeb");
       setAcmeError(msg);
     } finally {
       setAcmeLoading(false);
@@ -471,7 +502,7 @@ export default function SetupServerName({
         signal: AbortSignal.timeout(65_000),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Verification failed');
+      if (!res.ok) throw new Error(data.error || translateInterface("mf0f2383f8af8"));
       setAcmePhase('done');
       setAcmeCertIssued(true);
     } catch (e) {
@@ -479,7 +510,7 @@ export default function SetupServerName({
         ? (e.name === 'TimeoutError'
           ? "Verification timed out — Let's Encrypt may be slow or rate-limiting. Your DNS records are still valid; try again in a few minutes."
           : e.message)
-        : 'ACME verification failed';
+        : translateInterface("m9cb66c320c50");
       setAcmeError(msg);
       setAcmePhase('records');
     } finally {
@@ -498,18 +529,18 @@ export default function SetupServerName({
     setProviderZone('');
     try {
       const csrfRes = await fetch('/api/auth/csrf');
-      const csrfData = await readSetupJson(csrfRes, 'Could not read setup session');
+      const csrfData = await readSetupJson(csrfRes, translateInterface("m4dcaa28ccba5"));
       const csrfToken = typeof csrfData.csrfToken === 'string' ? csrfData.csrfToken : '';
-      if (!csrfToken) throw new Error('Setup session expired. Refresh setup and sign in again.');
+      if (!csrfToken) throw new Error(translateInterface("mbf329c86cfd7"));
       const res = await fetch('/api/dns-providers/cloudflare/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ domain: providerDomain, token: byoProviderToken }),
         signal: AbortSignal.timeout(30_000),
       });
-      const data = await readSetupJson(res, 'Cloudflare connection failed');
+      const data = await readSetupJson(res, translateInterface("m9216848c8bec"));
       if (!res.ok || data.ok !== true) {
-        throw new Error(typeof data.error === 'string' ? data.error : 'Cloudflare connection failed');
+        throw new Error(typeof data.error === 'string' ? data.error : translateInterface("m9216848c8bec"));
       }
       const zone = data.zone && typeof data.zone === 'object'
         ? data.zone as { name?: unknown }
@@ -519,8 +550,8 @@ export default function SetupServerName({
       return true;
     } catch (e) {
       const msg = e instanceof Error
-        ? (e.name === 'TimeoutError' ? 'Cloudflare validation timed out. Check the token and try again.' : e.message)
-        : 'Cloudflare connection failed';
+        ? (e.name === 'TimeoutError' ? translateInterface("m9e002f0a0e93") : e.message)
+        : translateInterface("m9216848c8bec");
       setProviderError(msg);
       return false;
     } finally {
@@ -562,7 +593,7 @@ export default function SetupServerName({
           id="siteName"
           value={siteName}
           onChange={e => setSiteName(e.target.value)}
-          placeholder="My Server"
+          placeholder={translateInterface("mc2d9a82f6f18")}
           className="text-lg h-12"
           autoFocus
           disabled={acmeInProgress}
@@ -591,17 +622,17 @@ export default function SetupServerName({
               <div>
                 <p className="font-medium text-foreground">
                   {!yenReadiness.reachable
-                    ? 'YouEye Names is offline'
+                    ? translateInterface("m67916ee7e215")
                     : yenReadiness.readiness?.installation.state === 'degraded'
-                      ? 'Available with reduced redundancy'
+                      ? translateInterface("m9505d66b47f9")
                       : yenReadiness.readiness?.installation.canProceedNow
-                        ? `Available for ${yenReadiness.service?.managedZone || 'your secure address'}`
-                        : 'New addresses are paused'}
+                        ? translateInterface("m27bb77134d1e", { value0: String(yenReadiness.service?.managedZone || translateInterface("me4f24f46b4a2")) })
+                        : translateInterface("m0090720dbeea")}
                 </p>
                 {yenReadiness.readiness?.installation.state === 'degraded' && (
-                  <p className="mt-0.5 text-muted-foreground">Setup may continue; the service will use its available DNS and certificate paths.</p>
+                  <p className="mt-0.5 text-muted-foreground">{translateInterface("mb85a195f16f0")}</p>
                 )}
-                {!yenReadiness.reachable && <p className="mt-0.5 text-muted-foreground">Choose another address option or try again later.</p>}
+                {!yenReadiness.reachable && <p className="mt-0.5 text-muted-foreground">{translateInterface("mafc99049b84a")}</p>}
               </div>
             </div>
           )}
@@ -619,7 +650,7 @@ export default function SetupServerName({
             ) : yenError ? (
               <p className="text-sm text-amber-700 dark:text-amber-300">{yenError}</p>
             ) : yenOptions.length > 0 ? (
-              <div className="space-y-2" role="radiogroup" aria-label="Choose your YouEye address">
+              <div className="space-y-2" role="radiogroup" aria-label={translateInterface("m345621b4e8cf")}>
                 {yenOptions.map((option, index) => (
                   <button
                     key={option.fqdn}
@@ -637,22 +668,19 @@ export default function SetupServerName({
                 ))}
                 <Button type="button" variant="ghost" size="sm" onClick={refreshYen} disabled={yenLoading} className="w-full gap-2">
                   <RefreshCw className={`h-3.5 w-3.5 ${yenLoading ? 'animate-spin' : ''}`} />
-                  Show other names
-                </Button>
+                  {translateInterface("m33007e7f96ca")}</Button>
               </div>
             ) : yenLoading ? (
               <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Verification is in progress…
-              </p>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> {translateInterface("m3d4413724801")}</p>
             ) : (
               <Button
                 type="button"
                 onClick={() => void startNamesEnrollment()}
-                disabled={yenReadiness?.readiness?.installation.canProceedNow === false || yenReadiness?.reachable === false}
+                disabled={!yenReadiness?.reachable || yenReadiness.readiness?.installation.canProceedNow === false}
                 className="w-full gap-2"
               >
-                <ShieldCheck className="h-4 w-4" /> Get a secure address
-              </Button>
+                <ShieldCheck className="h-4 w-4" /> {translateInterface("m22ad1156ddcb")}</Button>
             )}
             <p className="text-xs text-muted-foreground mt-3 flex items-start gap-1.5">
               <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/70" />
@@ -670,17 +698,16 @@ export default function SetupServerName({
                   className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
                 />
                 <span>
-                  I understand that this public address and its certificates appear in public Certificate Transparency logs.
-                </span>
+                  {translateInterface("m657ed05019d5")}</span>
               </label>
               <details className="mt-3">
-                <summary className="cursor-pointer font-medium text-foreground">Privacy and certificate notice</summary>
+                <summary className="cursor-pointer font-medium text-foreground">{translateInterface("ma1a86d8e3724")}</summary>
                 <div className="mt-2 space-y-1.5 leading-relaxed">
                   <p>{yenDisclosure.terms.summary}</p>
-                  <p>No account is required. The service does not store your raw source IP in application records; short-lived rotating abuse identifiers are retained for {yenDisclosure.privacy.rotatingAbuseIdentifiers.individualIpHours} hours per address and {yenDisclosure.privacy.rotatingAbuseIdentifiers.subnetDays} days per subnet.</p>
-                  <p>Notice {yenDisclosure.privacy.version} · certificate terms {yenDisclosure.terms.version}</p>
+                  <p>{translateInterface("mca7e3ae1575c", {hours: yenDisclosure.privacy.rotatingAbuseIdentifiers.individualIpHours, days: yenDisclosure.privacy.rotatingAbuseIdentifiers.subnetDays})}</p>
+                  <p>{translateInterface("m65659145569b")}{yenDisclosure.privacy.version} {translateInterface("m1b9324bf2f40")}{yenDisclosure.terms.version}</p>
                   {yenDisclosure.service?.privacyPolicyUrl && (
-                    <p><a className="underline" href={yenDisclosure.service.privacyPolicyUrl} target="_blank" rel="noreferrer">Read the full privacy notice</a></p>
+                    <p><a className="underline" href={yenDisclosure.service.privacyPolicyUrl} target="_blank" rel="noreferrer">{translateInterface("mbc0e3417655a")}</a></p>
                   )}
                 </div>
               </details>
@@ -718,7 +745,7 @@ export default function SetupServerName({
           {tlsChoice === 'byo-provider' ? (
             <div className="space-y-3">
               <div className="space-y-2">
-                <Label>Your domain</Label>
+                <Label>{translateInterface("mb2660f810ea4")}</Label>
                 <Input
                   value={byoDomain}
                   onChange={e => { setByoDomain(e.target.value); setProviderValid(false); setProviderError(''); }}
@@ -726,7 +753,7 @@ export default function SetupServerName({
                   className="text-base h-11 font-mono"
                   disabled={providerLoading || !!domainReuse?.reuse}
                 />
-                <p className="text-xs text-muted-foreground">YouEye will manage this name and its app subdomains.</p>
+                <p className="text-xs text-muted-foreground">{translateInterface("m30ad24ff277e")}</p>
               </div>
               {domainReuse?.reuse && domainReuse.domain === providerDomain && (
                 <div className="rounded-xl border border-primary/30 bg-primary/[0.04] p-4">
@@ -735,16 +762,16 @@ export default function SetupServerName({
                       <ShieldCheck className="h-4 w-4 text-primary" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">Domain bundle staged</p>
+                      <p className="text-sm font-medium">{translateInterface("m563d15d1dabf")}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {domainReuse.certValid
-                          ? `Setup will reuse the existing certificate${domainReuse.expiresAt ? `, valid until ${new Date(domainReuse.expiresAt).toLocaleDateString()}` : ''}.`
-                          : 'The bundle certificate is close to expiry, so setup will issue a fresh one.'}
+                          ? translateInterface("m109c95639d60", { value0: String(domainReuse.expiresAt ? translateInterface("m90d814cb0d92", {date: new Date(domainReuse.expiresAt).toLocaleDateString(locale)}) : '') })
+                          : translateInterface("m2759f577c720")}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {domainReuse.hasDnsToken
-                          ? 'The DNS token is included and will be restored into the secret store.'
-                          : 'Paste a fresh provider token so DNS sync and renewal can continue.'}
+                          ? translateInterface("m6a1a176259e5")
+                          : translateInterface("m410f9f43c5d4")}
                       </p>
                     </div>
                   </div>
@@ -754,30 +781,29 @@ export default function SetupServerName({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium">Cloudflare</p>
-                    <p className="text-xs text-muted-foreground">DNS records and HTTPS validation</p>
+                    <p className="text-xs text-muted-foreground">{translateInterface("m0f45fa6c8614")}</p>
                   </div>
                   <div className="group relative">
-                    <button type="button" className="rounded-full p-1 text-muted-foreground hover:text-foreground" aria-label="Cloudflare token help">
+                    <button type="button" className="rounded-full p-1 text-muted-foreground hover:text-foreground" aria-label={translateInterface("m21abf05eeb84")}>
                       <Info className="h-4 w-4" />
                     </button>
                     <div className="pointer-events-none absolute right-0 z-10 mt-2 hidden w-72 rounded-xl border bg-popover p-3 text-left text-xs text-popover-foreground shadow-lg group-hover:block">
-                      <p className="font-semibold">Token steps</p>
+                      <p className="font-semibold">{translateInterface("m174ebe92dfee")}</p>
                       <ol className="mt-2 list-decimal space-y-1 pl-4 text-muted-foreground">
-                        <li>Open Cloudflare, then My Profile and API Tokens.</li>
-                        <li>Create a token from the Edit zone DNS template.</li>
-                        <li>Scope it to this domain&apos;s DNS zone.</li>
-                        <li>Grant Zone - Zone - Read and Zone - DNS - Edit.</li>
+                        <li>{translateInterface("m0e680c89b968")}</li>
+                        <li>{translateInterface("m41d8ec7a260e")}</li>
+                        <li>{translateInterface("me367a561a683")}</li>
+                        <li>{translateInterface("m19168e8bbcdf")}</li>
                       </ol>
                     </div>
                   </div>
                 </div>
                 {usingStagedDomainToken ? (
                   <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-400">
-                    Cloudflare token will be restored from the staged bundle.
-                  </p>
+                    {translateInterface("m6090bbdca7f1")}</p>
                 ) : (
                   <div className="space-y-2">
-                    <Label className="text-xs">API token</Label>
+                    <Label className="text-xs">{translateInterface("m63a6d0f61144")}</Label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
                         <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -785,21 +811,20 @@ export default function SetupServerName({
                           type="password"
                           value={byoProviderToken}
                           onChange={e => { setByoProviderToken(e.target.value); setProviderValid(false); setProviderError(''); }}
-                          placeholder="Paste token"
+                          placeholder={translateInterface("m67fa416afa64")}
                           className="h-10 pl-9"
                           disabled={providerLoading}
                         />
                       </div>
                       <Button type="button" variant="outline" className="h-10" disabled={!providerDomain || !byoProviderToken.trim() || providerLoading} onClick={handleValidateProvider}>
                         {providerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                        Test
-                      </Button>
+                        {translateInterface("m532eaabd9574")}</Button>
                     </div>
                   </div>
                 )}
                 {providerValid && (
                   <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-400">
-                    Cloudflare connected{providerZone ? ` for ${providerZone}` : ''}.
+                    {translateInterface("m4de25c3c84f4")}{providerZone ? translateInterface("m87e3795ceb75", {zone: providerZone}) : ''}.
                   </p>
                 )}
                 {providerError && (
@@ -827,12 +852,12 @@ export default function SetupServerName({
                     className="h-11 rounded-l-none rounded-r-md border border-input bg-muted pl-3 pr-8 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer disabled:opacity-50"
                     style={{ WebkitAppearance: 'menulist', appearance: 'menulist' }}
                   >
-                    <optgroup label="Local network">
+                    <optgroup label={translateInterface("m4fda695d3e86")}>
                       {TLD_OPTIONS.filter(opt => opt.group === 'local').map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </optgroup>
-                    <optgroup label="Public domains">
+                    <optgroup label={translateInterface("md6f100091fe6")}>
                       {TLD_OPTIONS.filter(opt => opt.group === 'real').map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -881,8 +906,8 @@ export default function SetupServerName({
               disabled={acmeInProgress}
               tone="blue"
               icon={Cloud}
-              title="Automatic with Cloudflare"
-              desc="YouEye keeps DNS and HTTPS updated for your own domain."
+              title={translateInterface("m2a34b1d484b3")}
+              desc={translateInterface("md2bd68c5e036")}
               onClick={() => selectOwn('byo-provider')}
             />
             <OptionCard
@@ -890,7 +915,7 @@ export default function SetupServerName({
               disabled={acmeInProgress || manualLetsEncryptIsLocal}
               tone="green"
               icon={Lock}
-              title="Manual Let's Encrypt"
+              title={translateInterface("me71397010e36")}
               desc={t('tlsLetsEncryptDesc')}
               note={manualLetsEncryptIsLocal ? t('tlsLetsEncryptLocalWarn') : undefined}
               onClick={() => selectOwn('letsencrypt')}
@@ -924,18 +949,18 @@ export default function SetupServerName({
                 {acmeChallenges.map((challenge, i) => (
                   <div key={i} className="rounded-lg border bg-muted/30 p-4 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-muted-foreground">TXT Record {i + 1}</span>
-                      <button onClick={() => copyText(challenge.txtValue, i)} className="p-1 rounded hover:bg-muted transition-colors" title="Copy value">
+                      <span className="text-xs font-medium text-muted-foreground">{translateInterface("m793facdfbe40")}{i + 1}</span>
+                      <button onClick={() => copyText(challenge.txtValue, i)} className="p-1 rounded hover:bg-muted transition-colors" title={translateInterface("mc019c0f81132")}>
                         {copiedIndex === i ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground" />}
                       </button>
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-muted-foreground w-12 flex-shrink-0">Name:</span>
+                        <span className="text-xs text-muted-foreground w-12 flex-shrink-0">{translateInterface("m2683cad48a14")}</span>
                         <code className="text-xs bg-muted rounded px-2 py-1 break-all">{challenge.txtName}</code>
                       </div>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-muted-foreground w-12 flex-shrink-0">Value:</span>
+                        <span className="text-xs text-muted-foreground w-12 flex-shrink-0">{translateInterface("m224a3369a5c9")}</span>
                         <code className="text-xs bg-muted rounded px-2 py-1 break-all">{challenge.txtValue}</code>
                       </div>
                     </div>
@@ -1033,9 +1058,9 @@ export default function SetupServerName({
       {/* Next button */}
       {acmePhase !== 'records' && acmePhase !== 'verifying' && (
         <div className="flex gap-2 pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-[400ms]">
-          <Button type="button" variant="outline" size="icon" onClick={onBack} title="Back">
+          <Button type="button" variant="outline" size="icon" onClick={onBack} title={translateInterface("m76900f1bfd16")}>
             <ArrowLeft className="h-4 w-4" />
-            <span className="sr-only">Back</span>
+            <span className="sr-only">{translateInterface("m76900f1bfd16")}</span>
           </Button>
           <Button
             onClick={handleContinue}
@@ -1047,7 +1072,7 @@ export default function SetupServerName({
             {tlsChoice === 'letsencrypt' && !acmeCertIssued
               ? t('acmeStartOrder')
               : tlsChoice === 'byo-provider' && !providerValid
-                ? 'Test and continue'
+                ? translateInterface("m57b8350456ee")
                 : t('continue')}
             {!acmeLoading && (tlsChoice !== 'letsencrypt' || acmeCertIssued) && <ArrowRight className="h-4 w-4" />}
           </Button>

@@ -1,28 +1,27 @@
-/**
- * i18n Configuration
- *
- * Defines supported locales and the default locale for the Control Panel.
- * The active locale is resolved server-side from youeye.yaml (system language).
- * CP does not support per-user language override — it follows system language only.
- */
-
-export const locales = ["en", "ru", "es", "de", "fr"] as const;
-export type Locale = (typeof locales)[number];
-export const defaultLocale: Locale = "en";
-
-/** Display names for the language selector (native name + English) */
-export const localeNames: Record<Locale, string> = {
-  en: "English",
-  ru: "Russian — Русский",
-  es: "Spanish — Español",
-  de: "German — Deutsch",
-  fr: "French — Français",
-};
-
-/** Validate that a string is a supported locale, falling back to "en" */
-export function resolveLocale(lang: string | undefined | null): Locale {
-  if (lang && locales.includes(lang as Locale)) {
-    return lang as Locale;
+/** Supported interface languages. Add catalogues and a registry entry together. */
+import languages from "../../../shared/languages.json";
+export { languages };
+export const locales = languages.map(language => language.code);
+export type Locale = string;
+export const defaultLocale = "en";
+export const localeDisplayNames = Object.fromEntries(languages.map(language => [language.code, language]));
+export const localeNames = Object.fromEntries(languages.map(language => [language.code,
+  language.native === language.english ? language.native : `${language.english} — ${language.native}`]));
+export function resolveLocale(value: unknown): Locale {
+  return resolvePreferredLocale(value, null);
+}
+export function resolvePreferredLocale(user: unknown, system: unknown): Locale {
+  for (const value of [user, system]) {
+    if (typeof value !== "string") continue;
+    // Exact regional catalogues win; an unsupported regional variant may use its base.
+    const code = value.toLowerCase();
+    const exact = locales.find(locale => locale.toLowerCase() === code);
+    if (exact) return exact;
+    const base = locales.find(locale => locale.toLowerCase() === code.split("-")[0]);
+    if (base) return base;
   }
   return defaultLocale;
+}
+export function localeDirection(locale: string): "ltr" | "rtl" {
+  return languages.find(language => language.code === locale)?.direction === "rtl" ? "rtl" : "ltr";
 }

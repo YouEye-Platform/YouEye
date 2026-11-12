@@ -3,35 +3,20 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 
-import {
-  listInfrastructureReleases,
-  selectInfrastructureStandaloneRelease,
-} from '@/lib/infrastructure/release-resolver';
-import type { ReleaseSource } from '@/lib/apps/release-source';
-import { verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
-import { getReleaseAssetDownloadURL } from '@/lib/apps/release-source';
-import { getMarketSource, getMarketSources, type MarketSource } from './source';
-import type { AppManifest, ContainerSpec, InstallConfig } from './types';
+import { downloadProductAsset, resolveChannelProduct } from '@/lib/releases/channel-index';
+import { productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
+import type { AppManifest, InstallConfig } from './types';
 
 const execFileAsync = promisify(execFile);
 const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_ARCHIVE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
-const SIGNATURE_ASSETS = new Set([
-  'release-development.pub',
-  'SHA256SUMS',
-  'SHA256SUMS.sig',
-  'provenance.json',
-  'sbom.spdx.json',
-]);
-const SIGNATURE_INDICATORS = new Set(['release-development.pub', 'SHA256SUMS.sig']);
 
-export type MarketNativeSignature =
-  | { status: 'unsigned' }
-  | { status: 'verified-development'; keyId: 'youeye-development-v1' };
+/** Native archives are always bound by their product release digests. */
+export type MarketNativeVerification = { status: 'product-release'; releaseSHA256: string };
 
 export interface StagedMarketNativeArtifact {
   containerName: string;
@@ -42,7 +27,9 @@ export interface StagedMarketNativeArtifact {
   artifactName: 'standalone.tar';
   artifactSHA256: string;
   artifactBytes: number;
-  signature: MarketNativeSignature;
+  verification: MarketNativeVerification;
+  productRelease: InstalledProductReceipt;
+  runtimeUUID?: string;
 }
 
 export interface StagedMarketNativeArtifacts {
@@ -51,7 +38,8 @@ export interface StagedMarketNativeArtifacts {
 }
 
 export interface MarketNativeStageOptions {
-  releases?: Record<string, { tag: string; version: string; sourceRepo?: string }>;
+  /** The exact release an update already selected; otherwise the channel index is read. */
+  selected?: VerifiedProductRelease;
   skipContainerNames?: string[];
 }
 
@@ -59,142 +47,51 @@ export class MarketNativeArtifactPolicyError extends Error {
   override name = 'MarketNativeArtifactPolicyError';
 }
 
-export function classifyMarketNativeSignatureAssets(assetNames: Iterable<string>): 'unsigned' | 'complete' {
-  const advertised = new Set(assetNames);
-  const claimsSignature = [...SIGNATURE_INDICATORS].some((name) => advertised.has(name));
-  if (!claimsSignature) return 'unsigned';
-  const present = [...SIGNATURE_ASSETS].filter((name) => advertised.has(name));
-  if (present.length !== SIGNATURE_ASSETS.size) {
-    throw new Error('Native app release advertises an incomplete signature bundle');
-  }
-  return 'complete';
+/** The native app of the box's channel: its product release from the channel index. */
+export async function resolveNativeProduct(product: string): Promise<VerifiedProductRelease> {
+  const selected = await resolveChannelProduct(product);
+  if (!selected) throw new MarketNativeArtifactPolicyError(`This channel has no ${product} release yet`);
+  if (selected.build.kind !== 'native') throw new MarketNativeArtifactPolicyError(`${product} release is not a native app`);
+  return selected;
 }
 
-function releaseSourceFromMarket(source: MarketSource): ReleaseSource {
-  return {
-    provider: source.provider,
-    base_url: source.base_url,
-    api_path: source.api_path,
-    organization: source.organization,
-    repository: source.repository,
-    repo_url: source.repo_url,
-  };
+const proxyImageUrl = (url: string) => `/api/market/image?url=${encodeURIComponent(url)}`;
+
+/**
+ * The installer contract (`youeye-app.yaml`) of a native product release, as
+ * the Market presents it: digest-checked against the build, version from the
+ * release, and only absolute HTTPS images (relative paths have no host).
+ */
+export async function nativeManifestFromContract(contract: Buffer, selected: VerifiedProductRelease): Promise<AppManifest> {
+  if (createHash('sha256').update(contract).digest('hex') !== selected.build.contract_sha256) {
+    throw new MarketNativeArtifactPolicyError('Product installer contract digest differs');
+  }
+  const { parseManifest } = await import('./parser');
+  const manifest = parseManifest(contract.toString('utf8'));
+  if (manifest.metadata.id !== selected.release.product || manifest.integration !== 'native') {
+    throw new MarketNativeArtifactPolicyError('Product installer contract names another app');
+  }
+  const absolute = (value?: string) => !!value && /^https:\/\//.test(value);
+  manifest.version = selected.release.version;
+  manifest.metadata.iconUrl = absolute(manifest.metadata.iconUrl) ? proxyImageUrl(manifest.metadata.iconUrl!) : undefined;
+  if (manifest.detail?.screenshots) {
+    manifest.detail.screenshots = manifest.detail.screenshots
+      .filter((shot) => absolute(shot.path))
+      .map((shot) => ({ ...shot, path: proxyImageUrl(shot.path) }));
+  }
+  return manifest;
 }
 
-function releaseSourceForRepo(repo: string, marketSource: MarketSource): { source: ReleaseSource; repo: string; identity: string } {
-  const cleaned = repo.trim().replace(/\.git$/, '').replace(/\/$/, '');
-  if (/^https:\/\//i.test(cleaned)) {
-    const parsed = new URL(cleaned);
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error('Native app source repository URL cannot contain credentials or query data');
-    }
-    const parts = parsed.pathname.split('/').filter(Boolean);
-    if (parts.length !== 2) throw new Error('Native app source repository URL must name one owner and repository');
-    return {
-      source: {
-        provider: parsed.hostname.toLowerCase() === 'github.com' ? 'github' : 'gitea',
-        base_url: parsed.origin,
-        api_path: parsed.hostname.toLowerCase() === 'github.com' ? '' : '/api/v1',
-        organization: parts[0],
-        repository: parts[1],
-        repo_url: `${parsed.origin}/${parts[0]}/${parts[1]}`,
-      },
-      repo: parts[1],
-      identity: `${parsed.origin}/${parts[0]}/${parts[1]}`,
-    };
-  }
-
-  const parts = cleaned.split('/').filter(Boolean);
-  if (parts.length > 2 || parts.some((part) => !/^[A-Za-z0-9_.-]+$/.test(part))) {
-    throw new Error('Native app source repository is malformed');
-  }
-  const owner = parts.length === 2 ? parts[0] : marketSource.organization;
-  const repoName = parts.at(-1);
-  if (!repoName) throw new Error('Native app source repository is missing');
-  const source = releaseSourceFromMarket({ ...marketSource, organization: owner });
-  return {
-    source,
-    repo: repoName,
-    identity: `${source.base_url.replace(/\/$/, '')}/${owner}/${repoName}`,
-  };
+export async function nativeManifestFromRelease(selected: VerifiedProductRelease): Promise<{ manifest: AppManifest; contract: Buffer }> {
+  const contract = await downloadProductAsset(selected, 'youeye-app.yaml');
+  return { manifest: await nativeManifestFromContract(contract, selected), contract };
 }
 
-async function selectedMarketSource(config: InstallConfig): Promise<MarketSource> {
-  if (config.sourceId?.startsWith('direct:') && config.sourceRepoUrl) {
-    const parsed = new URL(config.sourceRepoUrl);
-    const parts = parsed.pathname.split('/').filter(Boolean);
-    const apiRepo = parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'repos'
-      ? { organization: parts[3], repository: parts[4] }
-      : parts.length >= 2 ? { organization: parts[0], repository: parts[1] } : null;
-    if (!apiRepo?.organization || !apiRepo.repository) {
-      throw new Error('Direct manifest URL does not identify its repository');
-    }
-    const github = parsed.hostname.toLowerCase() === 'github.com' || parsed.hostname.toLowerCase() === 'raw.githubusercontent.com';
-    const baseURL = github ? 'https://github.com' : parsed.origin;
-    return {
-      id: config.sourceId,
-      name: 'Added',
-      repo_url: `${baseURL}/${apiRepo.organization}/${apiRepo.repository}`,
-      branch: parsed.searchParams.get('ref') || config.manifestBranch || 'main',
-      enabled: true,
-      priority: 0,
-      trust: 'custom',
-      provider: github ? 'github' : 'gitea',
-      base_url: baseURL,
-      api_path: github ? '' : '/api/v1',
-      organization: apiRepo.organization,
-      repository: apiRepo.repository,
-    };
+/** The manifest an install or update uses must be exactly the release's contract. */
+export async function verifyMarketProductInstallContract(contract: Buffer, selected: VerifiedProductRelease, manifest: AppManifest): Promise<void> {
+  if (!isDeepStrictEqual(await nativeManifestFromContract(contract, selected), manifest)) {
+    throw new MarketNativeArtifactPolicyError('Selected application manifest differs from the product contract');
   }
-  if (config.sourceId && !config.sourceId.startsWith('direct:')) {
-    const configured = (await getMarketSources()).find((source) => source.id === config.sourceId);
-    if (configured) return configured;
-  }
-  return getMarketSource();
-}
-
-async function downloadBounded(url: string): Promise<Buffer> {
-  const initial = new URL(url);
-  let current = initial;
-  let response: Response | null = null;
-  for (let redirects = 0; redirects <= 3; redirects += 1) {
-    response = await fetch(current, {
-      headers: { Accept: 'application/x-tar, application/octet-stream', 'User-Agent': 'youeye-control' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (response.status < 300 || response.status >= 400) break;
-    const location = response.headers.get('location');
-    if (!location || redirects === 3) throw new Error('Native app artifact redirect chain is invalid');
-    const next = new URL(location, current);
-    if (next.origin !== initial.origin || next.username || next.password) {
-      throw new Error('Native app artifact redirected outside its release source');
-    }
-    current = next;
-  }
-  if (!response) throw new Error('Native app artifact request did not complete');
-  if (!response.ok) throw new Error(`Native app artifact returned HTTP ${response.status}`);
-  const contentType = response.headers.get('content-type')?.toLowerCase() || '';
-  if (contentType.includes('text/html')) throw new Error('Native app artifact returned an HTML document');
-  const declared = Number(response.headers.get('content-length') || '0');
-  if (declared > MAX_ARTIFACT_BYTES) throw new Error('Native app artifact exceeds the 256 MiB limit');
-  if (!response.body) throw new Error('Native app artifact response has no body');
-
-  const chunks: Buffer[] = [];
-  let total = 0;
-  const reader = response.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_ARTIFACT_BYTES) {
-      await reader.cancel();
-      throw new Error('Native app artifact exceeds the 256 MiB limit');
-    }
-    chunks.push(Buffer.from(value));
-  }
-  if (total === 0) throw new Error('Native app artifact is empty');
-  return Buffer.concat(chunks, total);
 }
 
 function safeArchivePath(value: string): boolean {
@@ -259,84 +156,50 @@ export async function inspectMarketNativeArchive(path: string, requiredEntrypoin
   }
 }
 
-async function stageOne(
-  directory: string,
-  container: ContainerSpec,
-  marketSource: MarketSource,
-  override?: { tag: string; version: string; sourceRepo?: string },
-): Promise<StagedMarketNativeArtifact> {
-  if (container.type !== 'lxd' || !container.source) throw new Error('Native app container source is missing');
-  const resolvedRepo = releaseSourceForRepo(override?.sourceRepo || container.source.repo, marketSource);
-  const releases = await listInfrastructureReleases(resolvedRepo.source, resolvedRepo.repo);
-  const exactRelease = override ? releases.find((candidate) => candidate.tag_name === override.tag) : undefined;
-  const exactAsset = exactRelease?.assets.find((asset) => asset.name === 'standalone.tar');
-  const exactUrl = exactAsset ? getReleaseAssetDownloadURL(resolvedRepo.source, exactAsset, override?.tag) : null;
-  const selected = override
-    ? (exactRelease && exactUrl ? { tag: override.tag, version: override.version, url: exactUrl } : null)
-    : selectInfrastructureStandaloneRelease(
-        resolvedRepo.source,
-        releases,
-        container.source.tagPrefix || '',
-        marketSource.branch || 'main',
-      );
-  if (!selected) throw new Error(`No standalone release is available for ${resolvedRepo.identity}`);
-  const release = releases.find((candidate) => candidate.tag_name === selected.tag);
-  if (!release) throw new Error('Selected native app release disappeared during preflight');
-  const signatureClassification = classifyMarketNativeSignatureAssets(release.assets.map((asset) => asset.name));
-  const tarAsset = release.assets.find((asset) => asset.name === 'standalone.tar');
-  if (!tarAsset) throw new Error('Selected native app release has no standalone.tar asset');
-  const artifactURL = signatureClassification === 'unsigned' && tarAsset.uuid && /^[0-9a-f-]{36}$/i.test(tarAsset.uuid)
-    ? new URL(`/attachments/${tarAsset.uuid}`, resolvedRepo.source.base_url).toString()
-    : selected.url;
-
-  const bytes = await downloadBounded(artifactURL);
-  const artifactSHA256 = createHash('sha256').update(bytes).digest('hex');
-  const expectedDigest = container.source.artifactSHA256?.toLowerCase();
-  if (expectedDigest && expectedDigest !== artifactSHA256) {
-    throw new Error('Native app artifact does not match the manifest SHA-256');
+/** Shared digest-bound native archive staging for Market apps and managed Pointer. */
+export async function stageVerifiedProductArtifact(directory: string, containerName: string, assembly: VerifiedProductRelease, expectedDigest?: string): Promise<StagedMarketNativeArtifact> {
+  if (assembly.build.kind !== 'native' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(containerName)) throw new MarketNativeArtifactPolicyError('Invalid native product staging identity');
+  if (assembly.release.product === 'pointer') {
+    const contract = await downloadProductAsset(assembly, 'pointer-build-contract.json');
+    if (createHash('sha256').update(contract).digest('hex') !== assembly.build.contract_sha256) throw new MarketNativeArtifactPolicyError('Pointer build contract differs');
   }
-
-  let signature: MarketNativeSignature = { status: 'unsigned' };
-  if (signatureClassification === 'complete') {
-    await verifySignedReleaseArtifactBuffer(selected.url, bytes, 'standalone.tar', expectedDigest);
-    signature = { status: 'verified-development', keyId: 'youeye-development-v1' };
-  }
-
-  const artifactPath = join(directory, `${container.name}.standalone.tar`);
-  await writeFile(artifactPath, bytes, { mode: 0o600 });
-  await inspectMarketNativeArchive(artifactPath, 'server.js');
-  return {
-    containerName: container.name,
-    path: artifactPath,
-    tag: selected.tag,
-    version: selected.version,
-    sourceRepo: resolvedRepo.identity,
-    artifactName: 'standalone.tar',
-    artifactSHA256,
-    artifactBytes: bytes.byteLength,
-    signature,
-  };
+  const primary = assembly.build.assets.find(a => a.name === 'standalone.tar');
+  if (!primary) throw new MarketNativeArtifactPolicyError('Native product release has no standalone.tar');
+  if (expectedDigest && expectedDigest !== primary.sha256) throw new MarketNativeArtifactPolicyError('Native app artifact does not match the manifest SHA-256');
+  const bytes = await downloadProductAsset(assembly, 'standalone.tar', MAX_ARTIFACT_BYTES);
+  const artifactPath = join(directory,`${containerName}.standalone.tar`);
+  await writeFile(artifactPath,bytes,{mode:0o600});
+  await inspectMarketNativeArchive(artifactPath,'server.js');
+  return {containerName,path:artifactPath,tag:assembly.release.tag,version:assembly.release.version,
+    sourceRepo:assembly.repository,artifactName:'standalone.tar',artifactSHA256:primary.sha256,
+    artifactBytes:bytes.length,verification:{status:'product-release',releaseSHA256:assembly.manifestSHA256},productRelease:productReceipt(assembly)};
 }
 
+/**
+ * Stage the native archive of an app. A native app is one product: its single
+ * LXD container runs that product's `standalone.tar`, found through the box's
+ * channel index (or the exact release an update already selected).
+ */
 export async function stageMarketNativeArtifacts(
   manifest: AppManifest,
-  config: InstallConfig,
+  config: Pick<InstallConfig, 'appId'>,
   options: MarketNativeStageOptions = {},
 ): Promise<StagedMarketNativeArtifacts> {
   const skipped = new Set(options.skipContainerNames ?? []);
-  const nativeContainers = manifest.containers.filter((container) =>
-    container.type === 'lxd' && !skipped.has(container.name)
-  );
+  const lxd = manifest.containers.filter((container) => container.type === 'lxd');
+  const nativeContainers = lxd.filter((container) => !skipped.has(container.name));
   const byContainerName = new Map<string, StagedMarketNativeArtifact>();
   if (nativeContainers.length === 0) return { byContainerName, cleanup: async () => undefined };
+  if (lxd.length !== 1) throw new MarketNativeArtifactPolicyError('A native app has exactly one LXD container');
+  const product = config.appId;
+  const selected = options.selected ?? await resolveNativeProduct(product);
+  if (selected.release.product !== product) throw new MarketNativeArtifactPolicyError('Selected release belongs to another app');
 
   const directory = await mkdtemp(join(tmpdir(), 'youeye-market-native-'));
-  const marketSource = await selectedMarketSource(config);
   try {
-    for (const container of nativeContainers) {
-      const staged = await stageOne(directory, container, marketSource, options.releases?.[container.name]);
-      byContainerName.set(container.name, staged);
-    }
+    const container = nativeContainers[0];
+    const staged = await stageVerifiedProductArtifact(directory, container.name, selected, container.source?.artifactSHA256?.toLowerCase());
+    byContainerName.set(container.name, staged);
     return {
       byContainerName,
       cleanup: () => rm(directory, { recursive: true, force: true }),

@@ -1,7 +1,54 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./settings-workspace.css";
 
 @custom-variant dark (&:is(.dark *));
+
+@font-face {
+  font-family: "Settings Plex Sans";
+  src: url("/settings/fonts/plex/plex-sans.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Settings Plex Mono";
+  src: url("/settings/fonts/plex/plex-mono.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+}
+
+.settings-workspace {
+  font-family: "Settings Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+:root:has(.settings-workspace) { color-scheme: light; }
+:root.dark:has(.settings-workspace) { color-scheme: dark; }
+.settings-workspace :is(code, pre, .font-mono) {
+  font-family: "Settings Plex Mono", ui-monospace, monospace;
+}
+.settings-workspace h1 { font-weight: 600; }
+.settings-workspace [data-slot="card"] {
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+/* Resolve on the ancestor before inheritance across Pointer's shadow boundary:
+   Pointer also defines --primary/--border, so host references on the shadow
+   host itself would become cyclic. Authentication is a separate contract. */
+.settings-pointer-theme {
+  --pointer-host-background: var(--background);
+  --pointer-host-foreground: var(--foreground);
+  --pointer-host-card: var(--card);
+  --pointer-host-muted: var(--muted);
+  --pointer-host-muted-foreground: var(--muted-foreground);
+  --pointer-host-primary: var(--primary);
+  --pointer-host-primary-foreground: var(--primary-foreground);
+  --pointer-host-border: var(--border);
+  --pointer-host-ring: var(--ring);
+  --pointer-host-radius: var(--radius);
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -278,3 +325,52 @@
     grid-template-columns: minmax(0, 1fr) !important;
   }
 }
+
+/* Enter only after explicit navigation; reduced motion keeps focus changes. */
+@keyframes onboarding-enter {
+  from { opacity: 0; transform: translateX(24px) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes onboarding-back {
+  from { opacity: 0; transform: translateX(-24px) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.onboarding-step { animation: onboarding-enter 420ms ease-out both; }
+.onboarding-step.onboarding-back { animation-name: onboarding-back; }
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-step, .onboarding-step.onboarding-back { animation: none; }
+}
+
+@font-face { font-family: "Onboarding Plex Sans"; src: url("/onboarding-fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Onboarding Plex Sans"; src: url("/onboarding-fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); font-weight: 600 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Onboarding Plex Mono"; src: url("/onboarding-fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+.onboarding-shell, .onboarding-shell .mytitle-scope { font-family: "Onboarding Plex Sans", sans-serif; }
+.onboarding-shell .font-mono { font-family: "Onboarding Plex Mono", monospace; }
+.onboarding-shell {
+  --primary: #0f766e;
+  --primary-foreground: #ffffff;
+}
+.dark .onboarding-shell {
+  --primary: #5eead4;
+  --primary-foreground: #042f2e;
+}
+/* Focus announces the new step; interactive controls retain their focus rings. */
+.onboarding-step h1[tabindex="-1"]:focus { outline: none; }
+.onboarding-step label:has(input[type="radio"]:checked) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--background));
+}
+.onboarding-step input[type="radio"] { accent-color: var(--primary); }
+
+/* MyTitle-inspired onboarding: readable product text and expressive task headings. */
+.onboarding-shell { background: #f8f4e9; --primary: #21685a; --primary-foreground: #fff; }
+.onboarding-card { border: 1px solid #c4c9bc; border-radius: 28px; background: #fffdf5; box-shadow: 0 7px 0 #d9dfd1; }
+.onboarding-kicker { display: block; font-size: 11px; font-weight: 600; letter-spacing: .16em; margin-bottom: 16px; }
+.onboarding-title { font-size: clamp(2rem, 5vw, 3.5rem); line-height: 1.05; font-weight: 800; letter-spacing: -.045em; }
+.onboarding-shell h1 { letter-spacing: -.035em; }
+.onboarding-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) { border-radius: 12px; }
+.onboarding-shell button { min-height: 44px; }
+.dark .onboarding-shell { background: #182a26; }
+.dark .onboarding-card { background: #203932; border-color: #4c6c61; box-shadow: 0 7px 0 #10221d; }
+.studio-save-bar { position: sticky; bottom: 1rem; z-index: 20; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); box-shadow: 0 4px 18px #0002; }
+@media (max-width: 767px) { .studio-save-bar { bottom: calc(5.5rem + env(safe-area-inset-bottom)); } }

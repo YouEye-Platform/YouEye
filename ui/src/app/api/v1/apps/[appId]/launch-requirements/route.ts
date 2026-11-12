@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * App Launch Requirements API
  *
@@ -20,6 +21,7 @@ import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -28,6 +30,7 @@ function stringArray(value: unknown): string[] {
 
 function collectLaunchPermissions(manifest: Record<string, unknown> | null): string[] {
   const permissions = new Set<string>();
+  if (manifest?.integration === 'native') permissions.add('profile:read');
   for (const permission of stringArray(manifest?.permissions)) {
     permissions.add(permission);
   }
@@ -138,7 +141,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ appId: string }> }
 ) {
-  const session = await getSession();
+  const session = await getSession({ allowAppOrigin: true });
   const serviceUser = session ? null : await resolveServiceAuth(request);
   if (!session && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -154,6 +157,10 @@ export async function GET(
   }
 
   const manifestAppId = normalizePermissionAppId(serviceUser && serviceAppId ? serviceAppId : appId);
+  if ((session?.actingAppId && !permissionAppMatches(session.actingAppId, manifestAppId))
+    || !(await evaluateUiUserAdmission(manifestAppId, (session?.userId ?? serviceUser?.id)!)).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   const grantAppId = serviceUser && serviceAppId ? serviceAppId : appId;
   const app = await getApp(manifestAppId);
   if (!app) {
@@ -167,6 +174,7 @@ export async function GET(
   ].sort();
   const requiredPreferences = collectLaunchPreferences(manifest).filter((preference) => preference.required);
   const userId = (session?.userId ?? serviceUser?.id)!;
+  const { t } = await getUserTranslator(userId);
   const [checks, allUserSettings] = await Promise.all([
     Promise.all(
     required.map(async (permission) => ({
@@ -191,7 +199,7 @@ export async function GET(
     );
     const returnTo = request.nextUrl.searchParams.get("return_to");
     const approval = missing.length > 0
-      ? buildPermissionApproval(grantAppId, missing, "persistent", request, returnTo)
+      ? buildPermissionApproval(grantAppId, missing, "persistent", request, returnTo, t)
       : { success: false, approval_required: false };
     return NextResponse.json(
       {
@@ -200,11 +208,11 @@ export async function GET(
         first_launch_complete: false,
         app_id: grantAppId,
         manifest_app_id: app.id,
-        required_permissions: required.map((permission) => describePermission(permission)),
+        required_permissions: required.map((permission) => describePermission(permission, t)),
         granted_permissions: checks
           .filter((check) => check.decision === true)
-          .map((check) => describePermission(check.permission)),
-        denied_permissions: denied.map((permission) => describePermission(permission)),
+          .map((check) => describePermission(check.permission, t)),
+        denied_permissions: denied.map((permission) => describePermission(permission, t)),
       },
       { status: 202 }
     );
@@ -215,11 +223,11 @@ export async function GET(
     first_launch_complete: true,
     app_id: grantAppId,
     manifest_app_id: app.id,
-    required_permissions: required.map((permission) => describePermission(permission)),
+    required_permissions: required.map((permission) => describePermission(permission, t)),
     granted_permissions: checks
       .filter((check) => check.decision === true)
-      .map((check) => describePermission(check.permission)),
-    denied_permissions: denied.map((permission) => describePermission(permission)),
+      .map((check) => describePermission(check.permission, t)),
+    denied_permissions: denied.map((permission) => describePermission(permission, t)),
     missing_permissions: [],
     preferences_required: false,
     required_preferences: requiredPreferences,

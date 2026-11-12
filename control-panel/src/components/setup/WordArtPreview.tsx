@@ -3,6 +3,7 @@
 import { useMemo, useEffect, useRef, CSSProperties } from 'react';
 import type { SiteNameStyle } from '@/lib/wordart-presets';
 import { CHARACTER_SHAPE_PRESETS } from '@/lib/wordart-presets';
+import { Brand } from '@youeye/branding/brand';
 
 /** Font family → local CSS file mapping */
 const FONT_CSS_MAP: Record<string, string> = {
@@ -133,6 +134,8 @@ export default function WordArtPreview({ name, style, sizeOverride, className = 
     ? CHARACTER_SHAPE_PRESETS.find(p => p.id === style.charShapeId) ?? null
     : null;
   const text = name || 'YouEye';
+
+  if (style.mytitle) return <Brand design={style.mytitle} name={text} className={className} />;
 
   if (charShape) {
     const intensity = style.charShapeIntensity ?? 1;

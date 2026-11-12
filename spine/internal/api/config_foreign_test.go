@@ -15,7 +15,7 @@ import (
 // Regression for the youeye-id "Repairing migrated config" log spam, whose
 // root cause was PATCH silently dropping non-string unknown keys.
 func TestConfigForeignBlockRoundTrip(t *testing.T) {
-	defer setupChannelConfig(t, "site_name: DevVM\ndomain: devvm.test\n")()
+	defer setupTestConfig(t, "site_name: DevVM\ndomain: devvm.test\n")()
 	s := testServer()
 
 	doPatch := func(payload map[string]interface{}) *httptest.ResponseRecorder {
@@ -77,5 +77,39 @@ func TestConfigForeignBlockRoundTrip(t *testing.T) {
 	got = doGet()
 	if _, present := got["identity"]; present {
 		t.Fatalf("deleted foreign key still returned on GET: %v", got["identity"])
+	}
+}
+
+// The box's repository and channel live only in protected State. Retired
+// release keys sent through PATCH /api/config are ignored, never stored.
+func TestConfigPATCHIgnoresRetiredReleaseKeys(t *testing.T) {
+	defer setupTestConfig(t, "site_name: DevVM\n")()
+	s := testServer()
+	body := `{"site_name":"Kept","release_source":{"repo_url":"https://forge.example.org/acme/YouEye"},"release_branch":"dev","repo_url":"https://evil.example/x/YouEye","release_channels":{"default":{"branch":"main"}}}`
+	req := httptest.NewRequest("PATCH", "/api/config", bytes.NewReader([]byte(body)))
+	w := httptest.NewRecorder()
+	s.handleYouEyeConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body=%s", w.Code, w.Body.String())
+	}
+	raw, _ := os.ReadFile(youeyeConfigPath)
+	if !bytes.Contains(raw, []byte("Kept")) {
+		t.Fatalf("unrelated edit not applied:\n%s", raw)
+	}
+	for _, key := range []string{"release_source", "release_branch", "repo_url", "release_channels", "forge.example.org", "evil.example"} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Fatalf("retired release key %s persisted:\n%s", key, raw)
+		}
+	}
+	w = httptest.NewRecorder()
+	s.handleYouEyeConfig(w, httptest.NewRequest("GET", "/api/config", nil))
+	var got map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"release_source", "release_branch", "release_channels"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("GET still reports %s: %v", key, got)
+		}
 	}
 }

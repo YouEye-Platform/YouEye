@@ -1,3 +1,4 @@
+import { validateStudioStyle } from "@/lib/studio-style";
 /**
  * Apps & App Drawer Queries
  *
@@ -76,7 +77,9 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
 
   const configMap = new Map(userConfigs.map((c) => [c.appId, c]));
 
-  const mergedApps: AppWithConfig[] = allApps.map((app) => {
+  const { evaluateUiUserAdmission } = await import('@/lib/admission/store');
+  const admission = await Promise.all(allApps.map(app => evaluateUiUserAdmission(app.id, userId)));
+  const mergedApps: AppWithConfig[] = allApps.filter((_, i) => admission[i].allowed).map((app) => {
     const config = configMap.get(app.id);
     const adminWordart = (app.brandingWordart as unknown as SiteNameStyle) ?? null;
     const adminMode = app.headerDisplayMode ?? "logo-text";
@@ -334,7 +337,7 @@ export async function updateAppBranding(
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (data.brandingWordart !== undefined) {
     updates.brandingWordart = data.brandingWordart
-      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      ? (validateStudioStyle(data.brandingWordart) as unknown as Record<string, unknown>)
       : null;
   }
   if (data.headerDisplayMode !== undefined) {
@@ -371,7 +374,7 @@ export async function updateUserAppBranding(
   const updates: Record<string, unknown> = {};
   if (data.brandingWordart !== undefined) {
     updates.brandingWordart = data.brandingWordart
-      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      ? (validateStudioStyle(data.brandingWordart) as unknown as Record<string, unknown>)
       : null;
   }
   if (data.headerDisplayMode !== undefined) {

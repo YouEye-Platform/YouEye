@@ -1,3 +1,6 @@
+import { prepareDesign, renderSvg } from "@youeye/branding/server";
+import { join } from "node:path";
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * Header Config API
  *
@@ -21,13 +24,16 @@ import { getUnreadCount } from "@/lib/db/queries/notifications";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCompactCSS } from "@/lib/themes/css-generator";
-import { getUserSettings, getDrawerPrefs } from "@/lib/db/queries/settings";
+import { getUserSettings, getDrawerPrefs, getSystemLanguage } from "@/lib/db/queries/settings";
+import { resolvePreferredLocale } from "@/i18n/config";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { siteNameStyleToCSS } from "@/lib/site-name-utils";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { checkPermission } from '@/lib/db/queries/permissions';
+import { resolveTitle } from "@youeye/branding/appearance";
 
 export async function GET(request: NextRequest) {
   // Try session auth first, fall back to service-to-service headers
@@ -37,8 +43,11 @@ export async function GET(request: NextRequest) {
   let email = "";
   let isAdmin = false;
 
-  const session = await getSession();
+  const session = await getSession({ allowAppOrigin: true });
   if (session) {
+    if (session.actingAppId && !await checkPermission(session.userId, session.actingAppId, 'profile:read')) {
+      return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
+    }
     userId = session.userId;
     username = session.username;
     name = session.name ?? session.username;
@@ -48,6 +57,10 @@ export async function GET(request: NextRequest) {
     // Try service-to-service auth
     const serviceUser = await resolveServiceAuth(request);
     if (serviceUser) {
+      const appId = (request.headers.get('x-youeye-app') || '').replace(/^ye-/, '');
+      if (!await checkPermission(serviceUser.id, appId, 'profile:read')) {
+        return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
+      }
       userId = serviceUser.id;
       username = serviceUser.username;
       name = serviceUser.name;
@@ -58,6 +71,9 @@ export async function GET(request: NextRequest) {
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session?.actingAppId && !await checkPermission(session.userId, session.actingAppId, 'profile:read')) {
+    return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
   }
 
   const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userProfileRow, drawerPrefs] =
@@ -93,7 +109,7 @@ export async function GET(request: NextRequest) {
     baseDomain = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
   }
 
-  const apps = appsData.apps.map((a) => {
+  const apps = await Promise.all(appsData.apps.map(async (a) => {
     let url: string | null;
     if (a.subdomain) {
       const baseUrl = `https://${a.subdomain}.${baseDomain}`;
@@ -124,6 +140,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (bw?.mytitle) {
+      try {
+        const design = await prepareDesign({ ...bw.mytitle, name: a.customName || a.name }, join(process.cwd(), "public/mytitle/fonts"));
+        const svg = renderSvg(design, "light", "title", `app-${a.id}`, false, true);
+        brandingCss = { display: "inline-block", width: "12rem", maxWidth: "40vw", height: "2rem", fontSize: 0,
+          backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, backgroundRepeat: "no-repeat", backgroundPosition: "center", backgroundSize: "contain" };
+        brandingFontUrl = null; brandingCssChars = null;
+      } catch { /* An unavailable appearance must not block the user's apps. */ }
+    }
     return {
       id: a.id,
       name: a.name,
@@ -141,7 +166,7 @@ export async function GET(request: NextRequest) {
       branding_font_url: brandingFontUrl,
       branding_css_chars: brandingCssChars,
     };
-  });
+  }));
 
   // Per-app "self" branding — Plan 4 Phase 0.
   // A native app (service call) can no longer see the full `apps` list (E1
@@ -193,11 +218,15 @@ export async function GET(request: NextRequest) {
   // Derive UI base URL from environment
   const uiBaseUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
 
+  const title = resolveTitle(branding, userSettingsData.wordartOverride as SiteNameStyle | undefined);
+  const { locale, t } = await getUserTranslator(userId);
   return NextResponse.json({
+    // Uses the already authorized acting user's settings, never a query user ID.
+    locale,
     branding: {
-      site_name: branding.site_name,
-      site_name_style: branding.site_name_style,
-      logo_url: branding.logo_url,
+      site_name: title.name,
+      site_name_style: title.style,
+      logo_url: branding.site_name_style?.showHeaderLogo === true ? branding.logo_url : null,
       favicon_url: branding.favicon_url,
       accent_color: branding.accent_color,
     },
@@ -236,10 +265,10 @@ export async function GET(request: NextRequest) {
     theme: themeResponse,
     user_menu: {
       platform_items: [
-        { key: "dashboard", label: "Dashboard", icon: "LayoutDashboard", url: uiBaseUrl || "/" },
-        { key: "timeline", label: "Timeline", icon: "Clock", url: `${uiBaseUrl}/timeline` },
-        { key: "notifications", label: "Notifications", icon: "Bell", url: `${uiBaseUrl}/notifications` },
-        { key: "settings", label: "Settings", icon: "Settings", url: `${uiBaseUrl}/settings` },
+        { key: "dashboard", label: t("m67b696468610"), icon: "LayoutDashboard", url: uiBaseUrl || "/" },
+        { key: "timeline", label: t("m9dcff98e275f"), icon: "Clock", url: `${uiBaseUrl}/timeline` },
+        { key: "notifications", label: t("m788011833a5a"), icon: "Bell", url: `${uiBaseUrl}/notifications` },
+        { key: "settings", label: t("m74a883a037bc"), icon: "Settings", url: `${uiBaseUrl}/settings` },
       ],
       // If the request comes from a native app, include a deep link to its settings in YE-UI
       ...(isServiceCall && request.headers.get("x-youeye-app")
@@ -250,5 +279,5 @@ export async function GET(request: NextRequest) {
       logout_url: "/api/auth/logout",
     },
     drawer_prefs: drawerPrefs,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

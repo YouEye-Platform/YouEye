@@ -7,11 +7,12 @@ test('Control Panel persists the app-network plan before health and reconciliati
   const instrumentation = await readFile(path.join(process.cwd(), 'src/instrumentation.ts'), 'utf8');
   const bootstrap = instrumentation.indexOf('await ensureAppNetworkBootstrapConfig()');
   const health = instrumentation.indexOf('startHealthMonitor()');
-  const reconcile = instrumentation.indexOf('reconcileApps()');
+  const reconcile = instrumentation.indexOf('runStartupReconciliation()');
 
   assert.ok(bootstrap >= 0, 'startup must await app-network bootstrap');
   assert.ok(health > bootstrap, 'health monitoring must start after bootstrap');
   assert.ok(reconcile > bootstrap, 'app reconciliation must start after bootstrap');
+  assert.ok(instrumentation.indexOf('await waitForIncusReady()') < bootstrap, 'bootstrap needs authenticated Incus readiness');
 });
 
 test('empty-network repair persists config and IPAM before strict verification', async () => {

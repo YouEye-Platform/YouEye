@@ -96,6 +96,7 @@ function operationPath(appId: string): string {
 function sanitiseText(value: string | undefined): string | undefined {
   if (!value) return value;
   return value
+    .replace(/ye_app_v1_[A-Za-z0-9_-]{43}/g, '[REDACTED]')
     .replace(/\b(Bearer)\s+[^\s"']+/gi, '$1 [REDACTED]')
     .replace(/\b(password|token|secret|authorization)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
     .slice(0, 4_096);
@@ -119,7 +120,7 @@ export function sanitiseInstallEvent(event: InstallEvent): InstallEvent {
     ...event,
     message: sanitiseText(event.message) ?? '',
     // Arbitrary dependency errors frequently embed response payloads or
-    // generated credentials. Keep them in the live SSE only, never on disk.
+    // generated credentials. Withhold them from both SSE and disk.
     detail: event.detail ? 'Additional diagnostic detail withheld from durable operation history' : undefined,
     errorContext: event.errorContext ? {
       method: event.errorContext.method,

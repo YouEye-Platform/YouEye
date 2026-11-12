@@ -57,6 +57,7 @@ export async function POST() {
     });
   }
 
+  await spineClient.restartControl(5);
   return NextResponse.json({
     ok: true,
     identity: 'youeye-id',

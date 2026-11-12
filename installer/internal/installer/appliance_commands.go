@@ -37,7 +37,6 @@ type applianceImageAssets struct {
 	SystemBUKIPath  string
 	RecoveryUKIPath string
 	ManifestPath    string
-	SignaturePath   string
 	ManifestSHA256  string
 	ImageVersion    string
 	TransactionID   string
@@ -73,7 +72,6 @@ func applianceCommandPlan(plan applianceInstallPlan, assets applianceImageAssets
 		"System B UKI": assets.SystemBUKIPath,
 		"Recovery UKI": assets.RecoveryUKIPath,
 		"manifest":     assets.ManifestPath,
-		"signature":    assets.SignaturePath,
 	} {
 		if strings.TrimSpace(path) == "" {
 			return nil, fmt.Errorf("%s path is required", name)
@@ -113,7 +111,6 @@ func applianceCommandPlan(plan applianceInstallPlan, assets applianceImageAssets
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.SystemBUKIPath}},
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.RecoveryUKIPath}},
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.ManifestPath}},
-		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.SignaturePath}},
 		{Stage: stagePartitionTarget, Name: "sgdisk", Args: []string{"--zap-all", target}},
 		{Stage: stagePartitionTarget, Name: "sgdisk", Args: []string{
 			"--new=1:2048:+1024M", "--typecode=1:EF00", "--change-name=1:YE-ESP",
@@ -129,6 +126,7 @@ func applianceCommandPlan(plan applianceInstallPlan, assets applianceImageAssets
 		{Stage: stageFormatState, Name: "mkfs.ext4", Args: []string{"-F", "-L", "YE-STATE", state}},
 		{Stage: stageInitializeJournal, Name: "mkdir", Args: []string{"-p", stateMount}},
 		{Stage: stageInitializeJournal, Name: "mount", Args: []string{state, stateMount}},
+		retainCoreInstallSelectionCommand(assets),
 		installJournalCommand(stageInitializeJournal, plan, assets),
 		{Stage: stagePrepareData, Name: "wipefs", Args: []string{"-a", dataPart}},
 		payloadWriteCommand(stageWriteSystemA, assets.RootPayload, systemA),
@@ -218,7 +216,7 @@ jq -e --argjson state_schema "$state_schema" --argjson data_schema "$data_schema
 [ -s "$mountpoint/etc/machine-id" ]
 [ -s "$mountpoint/etc/systemd/network/20-youeye.network" ]`
 	updateState := `set -eu
-state_root="$1"; manifest="$2"; signature="$3"; image="$4"; recovery="$5"
+state_root="$1"; manifest="$2"; image="$3"; recovery="$4"
 path="$state_root/appliance-state.json"; tmp="$path.tmp"
 jq --arg image "$image" --arg recovery "$recovery" '
   .slots = {current:"A",current_image_version:$image} |
@@ -226,7 +224,6 @@ jq --arg image "$image" --arg recovery "$recovery" '
 ' "$path" > "$tmp"
 chmod 0600 "$tmp"; sync -f "$tmp"; mv -f "$tmp" "$path"
 install -m 0644 "$manifest" "$state_root/installer/appliance-manifest.json"
-install -m 0644 "$signature" "$state_root/installer/appliance-manifest.json.sig"
 sync -f "$state_root/installer"; sync -f "$state_root"`
 	commands := []applianceCommand{
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.RootPayload.Path}},
@@ -238,6 +235,7 @@ sync -f "$state_root/installer"; sync -f "$state_root"`
 		{Stage: stageVerifyInputs, Name: "sh", Args: []string{"-c", verifyState, "youeye-preserve-state", state, stateMount, strconv.Itoa(manifest.StateSchemaMin), strconv.Itoa(manifest.DataSchemaMin), strconv.Itoa(manifest.DiskLayout.Version), manifest.RecoveryVersion}},
 		{Stage: stageInitializeJournal, Name: "mkdir", Args: []string{"-p", stateMount}},
 		{Stage: stageInitializeJournal, Name: "mount", Args: []string{state, stateMount}},
+		retainCoreInstallSelectionCommand(assets),
 		installJournalCommand(stageInitializeJournal, plan, assets),
 		payloadWriteCommand(stageWriteSystemA, assets.RootPayload, systemA),
 		payloadReadbackCommand(stageWriteSystemA, assets.RootPayload, systemA),
@@ -248,7 +246,7 @@ sync -f "$state_root/installer"; sync -f "$state_root"`
 		payloadWriteCommand(stageWriteRecovery, assets.RecoveryPayload, recovery),
 		payloadReadbackCommand(stageWriteRecovery, assets.RecoveryPayload, recovery),
 		installJournalCommand(stageWriteRecovery, plan, assets),
-		{Stage: stageInitializeState, Name: "sh", Args: []string{"-c", updateState, "youeye-preserve-state-update", stateMount, assets.ManifestPath, assets.SignaturePath, assets.ImageVersion, manifest.RecoveryVersion}},
+		{Stage: stageInitializeState, Name: "sh", Args: []string{"-c", updateState, "youeye-preserve-state-update", stateMount, assets.ManifestPath, assets.ImageVersion, manifest.RecoveryVersion}},
 		installJournalCommand(stageInitializeState, plan, assets),
 		{Stage: stageInstallBootAssets, Name: "mkdir", Args: []string{"-p", espMount}},
 		{Stage: stageInstallBootAssets, Name: "mount", Args: []string{"-t", "vfat", "-o", "rw,nodev,nosuid,noexec,umask=0077", esp, espMount}},
@@ -272,6 +270,7 @@ sync -f "$state_root/installer"; sync -f "$state_root"`
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", systemA}},
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", systemB}},
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", recovery}},
+		{Stage: stageVerifyInstall, Name: "sh", Args: []string{"-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", stateMount, assets.TransactionID, assets.ManifestSHA256, assets.ImageVersion}},
 		installJournalCommand(stageVerifyInstall, plan, assets),
 		{Stage: stageVerifyInstall, Name: "sync"},
 		{Stage: stageVerifyInstall, Name: "umount", Args: []string{stateMount}},
@@ -337,14 +336,13 @@ func applianceStateInitArgs(assets applianceImageAssets) []string {
 source_root="$1"
 state_root="$2"
 manifest="$3"
-signature="$4"
-network_mode="$5"
-address="$6"
-gateway="$7"
-dns="$8"
-adapter_mac="$9"
-answer="${10}"
-shift 10
+network_mode="$4"
+address="$5"
+gateway="$6"
+dns="$7"
+adapter_mac="$8"
+answer="$9"
+shift 9
 
 install -d -m 0700 "$state_root/installer" "$state_root/bootstrap" "$state_root/root/.ssh"
 install -d -m 0755 "$state_root/etc/ssh" "$state_root/etc/systemd/network"
@@ -356,7 +354,6 @@ cp -a "$source_root/var/log/." "$state_root/var/log/"
 rm -f "$state_root/etc/ssh/ssh_host_"*
 ssh-keygen -A -f "$state_root"
 install -m 0644 "$manifest" "$state_root/installer/appliance-manifest.json"
-install -m 0644 "$signature" "$state_root/installer/appliance-manifest.json.sig"
 tr -d '-' < /proc/sys/kernel/random/uuid > "$state_root/etc/machine-id"
 printf '\n' >> "$state_root/etc/machine-id"
 openssl rand 4 > "$state_root/etc/hostid"
@@ -393,13 +390,9 @@ chmod 0644 "$state_root/etc/systemd/network/20-youeye.network"
 
 # Persist desired bootstrap policy outside the sealed System slots. The answer
 # file is protected and the password hash is never copied through argv or logs.
-if jq -e '.schema == "youeye.appliance.answer.v3"' "$answer" >/dev/null 2>&1; then
-  jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
-  jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
-else
-  jq -n '{schema:"youeye.release-policy.v1",provider:"github",mode:"track",track:"stable",freshness:"require-current"}' > "$state_root/bootstrap/release-policy.json.tmp"
-  jq -n '{schema:"youeye.development-access.v1",local_root_console:false,root_password_ssh:false}' > "$state_root/bootstrap/development-access.json.tmp"
-fi
+jq -e '.schema == "youeye.appliance.answer.v1"' "$answer" >/dev/null
+jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
+jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
 jq -n --arg mode "$network_mode" --arg adapter_mac "$adapter_mac" --arg address "$address" --arg gateway "$gateway" --arg dns "$dns" '
   {schema:"youeye.network-profile.v1",id:"primary",kind:"ethernet",ipv4:{mode:$mode}}
   + if $adapter_mac != "" then {adapter_mac:$adapter_mac} else {} end
@@ -409,7 +402,39 @@ for file in release-policy development-access network-profile; do
   chmod 0600 "$state_root/bootstrap/$file.json.tmp"
   mv -f "$state_root/bootstrap/$file.json.tmp" "$state_root/bootstrap/$file.json"
 done
+if jq -e '.core_release != null' "$answer" >/dev/null 2>&1; then
+  jq -er '.core_release.manifest_base64' "$answer" | base64 -d > "$state_root/bootstrap/core-release.json.tmp"
+  # The release policy records this exact digest; Spine accepts nothing else.
+  test "$(sha256sum "$state_root/bootstrap/core-release.json.tmp" | awk '{print $1}')" = "$(jq -er '.release_policy.core_manifest_sha256' "$answer")"
+  chmod 0600 "$state_root/bootstrap/core-release.json.tmp"
+  mv -f "$state_root/bootstrap/core-release.json.tmp" "$state_root/bootstrap/core-release.json"
+fi
 sync -f "$state_root/bootstrap"
+# Optional transport cache from the same answer medium. Artifact digests and
+# sealed component pins remain mandatory when these bytes are consumed.
+cache_digest=$(jq -r '.release_cache_sha256 // empty' "$answer")
+if [ -n "$cache_digest" ]; then
+  cache_source="$(dirname "$answer")/release-cache"
+  test "$(sha256sum "$cache_source/index.json" | awk '{print $1}')" = "$cache_digest"
+  test ! -e "$state_root/release-cache"
+  mkdir -p "$state_root/release-cache/objects"
+  cp -- "$cache_source/index.json" "$state_root/release-cache/index.json"
+  # The full digest is split across short path segments on ISO9660 media.
+  # Restore the normal content-addressed layout only after verifying each object.
+  jq -er '.objects | type == "object"' "$cache_source/index.json" >/dev/null
+  jq -r '.objects[].sha256' "$cache_source/index.json" | sort -u | while IFS= read -r digest; do
+    printf '%s\n' "$digest" | grep -Eq '^[0-9a-f]{64}$'
+    relative=$(printf '%s\n' "$digest" | awk '{print substr($0,1,16) "/" substr($0,17,16) "/" substr($0,33,16) "/" substr($0,49,16)}')
+    source="$cache_source/objects/$relative"
+    test -f "$source" && test ! -L "$source"
+    test "$(sha256sum "$source" | awk '{print $1}')" = "$digest"
+    cp -- "$source" "$state_root/release-cache/objects/$digest"
+    chmod 0400 "$state_root/release-cache/objects/$digest"
+  done
+  chmod 0400 "$state_root/release-cache/index.json"
+  chmod 0700 "$state_root/release-cache" "$state_root/release-cache/objects"
+fi
+
 
 if [ "$#" -gt 0 ]; then
   printf '%s\n' "$@" > "$state_root/root/.ssh/authorized_keys"
@@ -421,7 +446,7 @@ fi`
 	}
 	args := []string{
 		"-c", script, "youeye-state-init", systemMount, stateMount,
-		assets.ManifestPath, assets.SignaturePath, mode,
+		assets.ManifestPath, mode,
 		assets.Network.Address, assets.Network.Gateway, assets.Network.DNS,
 		assets.Network.AdapterMAC,
 		assets.AnswerPath,
@@ -429,8 +454,41 @@ fi`
 	return append(args, assets.AuthorizedKeys...)
 }
 
+func preserveSystemUpdateReconcileScript() string {
+	return `set -eu
+state_root="$1"; transaction="$2"; manifest_sha="$3"; image="$4"
+install_journal="$state_root/installer/install-journal.json"
+manifest="$state_root/installer/appliance-manifest.json"
+state="$state_root/appliance-state.json"
+jq -e --arg transaction "$transaction" --arg manifest_sha "$manifest_sha" --arg image "$image" '
+  .schema == "youeye.appliance.install-journal.v3" and
+  .operation == "preserve-reinstall" and .transaction_id == $transaction and
+  .manifest_sha256 == $manifest_sha and .image_version == $image and
+  (.stage == "activate-system-boot" or .stage == "verify-install")
+' "$install_journal" >/dev/null
+printf '%s  %s\n' "$manifest_sha" "$manifest" | sha256sum -c - >/dev/null
+jq -e --arg image "$image" '.slots.current == "A" and .slots.current_image_version == $image and .transaction == {}' "$state" >/dev/null
+updates="$state_root/system-update"
+history="$updates/history/preserve-reinstall-$transaction"
+if [ -e "$updates/journal.json" ] || [ -e "$updates/healthy-manifest.json" ]; then
+  mkdir -m 0700 -p "$history"
+  for file in journal.json healthy-manifest.json; do
+    if [ -e "$updates/$file" ]; then
+      test ! -e "$history/$file"
+    fi
+  done
+  for file in healthy-manifest.json journal.json; do
+    if [ -e "$updates/$file" ]; then
+      mv "$updates/$file" "$history/$file"
+    fi
+  done
+  sync -f "$history"; sync -f "$updates"
+fi`
+}
+
 func applianceLoaderConfigScript() string {
 	return `set -eu
+rm -f /mnt/youeye-esp/loader/entries/youeye-system-a*.conf /mnt/youeye-esp/loader/entries/youeye-system-b*.conf
 cat > /mnt/youeye-esp/loader/loader.conf <<'EOF'
 timeout 3
 editor no
@@ -455,6 +513,7 @@ sort-key zz-youeye-recovery
 version 1
 efi /EFI/YouEye/youeye-recovery.efi
 EOF
+sync -f /mnt/youeye-esp/loader/entries
 printf 'type1\n' > /mnt/youeye-esp/loader/entries.srel`
 }
 

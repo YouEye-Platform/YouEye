@@ -66,44 +66,45 @@ export async function POST(request: NextRequest) {
             tls: 'names-bundle',
             namesBundle: appliedBundle,
             namesIdentity: importedIdentity,
+            beforeRestart: async () => {
+              await applyBundleIdentity(appliedBundle);
+              const activeCertificate = await tlsStorage.getCert();
+              if (!activeCertificate) throw new Error('Imported certificate state is missing after reconfigure.');
+              const validatedCertificate = validateCertificateMaterial({
+                certificateChain: activeCertificate.certPem,
+                privateKeyPem: activeCertificate.keyPem,
+                fqdn: newDomain,
+              });
+              const brokerCertificate = await getCurrentCertificate(appliedBundle.name, importedIdentity);
+              const activatedAt = new Date().toISOString();
+              await writeNamesLifecycleState({
+                schemaVersion: 2,
+                service: appliedBundle.service,
+                name: appliedBundle.name,
+                fqdn: newDomain,
+                status: 'healthy',
+                provisioning: null,
+                termsVersion: appliedBundle.consent.termsVersion,
+                certificateTransparencyAcceptedAt: appliedBundle.consent.certificateTransparencyAcceptedAt,
+                certificate: {
+                  fingerprint: validatedCertificate.fingerprint,
+                  provider:
+                    brokerCertificate?.fingerprint === validatedCertificate.brokerFingerprint
+                      ? brokerCertificate.provider
+                      : appliedBundle.certificate.provider,
+                  issuedAt: validatedCertificate.issuedAt,
+                  expiresAt: validatedCertificate.expiresAt,
+                },
+                lastBrokerContactAt: activatedAt,
+                lastHeartbeatAt: null,
+                nextCheckAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+                lastError: null,
+              });
+              send({ step: 'identity_import', status: 'done', message: 'Saved name identity installed' });
+            },
           },
           (event) => send(event),
         );
-
-        await applyBundleIdentity(appliedBundle);
-        const activeCertificate = await tlsStorage.getCert();
-        if (!activeCertificate) throw new Error('Imported certificate state is missing after reconfigure.');
-        const validatedCertificate = validateCertificateMaterial({
-          certificateChain: activeCertificate.certPem,
-          privateKeyPem: activeCertificate.keyPem,
-          fqdn: newDomain,
-        });
-        const brokerCertificate = await getCurrentCertificate(appliedBundle.name, importedIdentity);
-        const activatedAt = new Date().toISOString();
-        await writeNamesLifecycleState({
-          schemaVersion: 2,
-          service: appliedBundle.service,
-          name: appliedBundle.name,
-          fqdn: newDomain,
-          status: 'healthy',
-          provisioning: null,
-          termsVersion: appliedBundle.consent.termsVersion,
-          certificateTransparencyAcceptedAt: appliedBundle.consent.certificateTransparencyAcceptedAt,
-          certificate: {
-            fingerprint: validatedCertificate.fingerprint,
-            provider:
-              brokerCertificate?.fingerprint === validatedCertificate.brokerFingerprint
-                ? brokerCertificate.provider
-                : appliedBundle.certificate.provider,
-            issuedAt: validatedCertificate.issuedAt,
-            expiresAt: validatedCertificate.expiresAt,
-          },
-          lastBrokerContactAt: activatedAt,
-          lastHeartbeatAt: null,
-          nextCheckAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-          lastError: null,
-        });
-        send({ step: 'identity_import', status: 'done', message: 'Saved name identity installed' });
 
         send({ complete: true, newUrl: result.newUrl });
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));

@@ -15,14 +15,18 @@
  * DNS: bridge dnsmasq → pihole (via raw.dnsmasq server= directive) → LAN DNS.
  */
 
-import { incusRequest, execShell } from './server';
+import { incusRequest as providerIncusRequest, execShell } from './server';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { sameIncusFields, sameIncusAcl } from './config-equality';
 import { getContainerIP } from './container-ip';
 import { getSystemStaticIP } from './static-ips';
+import { planCaddyAppNIC } from './app-network-caddy-nic';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { parse as parseYaml } from 'yaml';
 import { assertNoCriticalIssues, observeIssue, resolveIssue } from '@/lib/health/issues';
 import { spineClient } from '@/lib/spine/client';
+import { AppLifecycleAdmissionError, withAppLifecycle } from '@/lib/market/update-admission';
 import {
   applyIncusDeviceMergePatch,
   type IncusDeviceMap,
@@ -62,6 +66,25 @@ import {
   assertLegacyNetworkCandidate,
   readLegacySubnetRegistry,
 } from './app-network-legacy-migration';
+
+// A pass-local audit can prove that no action is needed. It can never authorize
+// an effect: the first attempted write aborts the audit before reaching Incus.
+// Repairs run outside this context after fresh observation under both locks.
+const readOnlyAudit = new AsyncLocalStorage<Map<string, Promise<unknown>>>();
+async function incusRequest<T = unknown>(...args: Parameters<typeof providerIncusRequest>) {
+  const reads = readOnlyAudit.getStore();
+  if (!reads) return providerIncusRequest<T>(...args);
+  const [method, path] = args;
+  if (method !== 'GET') throw new Error('Network audit requires a fresh admitted repair');
+  let response = reads.get(path);
+  if (!response) {
+    response = providerIncusRequest(...args);
+    reads.set(path, response);
+  }
+  // Helpers may construct writable maps from a response. Never let one helper
+  // alter the shared observation used by another app in the same pass.
+  return structuredClone(await response) as Awaited<ReturnType<typeof providerIncusRequest<T>>>;
+}
 
 // ─── Constants ──────────────────────────────────────────────
 
@@ -765,6 +788,46 @@ export async function getAppBridgeGatewayIP(appId: string): Promise<string | nul
   return address.split('/')[0] || null;
 }
 
+/** Add the logical ID host to a proved, owned bridge without replacing its DNS policy. */
+export function appIdentityDnsConfig(current: string | undefined, gateway: string): string | null {
+  if (!current || !current.split('\n').some((line) => line.startsWith('server='))) {
+    throw new AppNetworkStateError('App bridge has no DNS forwarding policy');
+  }
+  const lines = current.trimEnd().split('\n');
+  const mappings = lines.filter((line) => line.startsWith('address=/id.youeye/'));
+  const local = 'local=/id.youeye/';
+  const locals = lines.filter((line) => line === local);
+  const expected = `address=/id.youeye/${gateway}`;
+  if (mappings.length > 1 || locals.length > 1) {
+    throw new AppNetworkStateError('App bridge has multiple id.youeye DNS mappings');
+  }
+  if (mappings.length === 1 && mappings[0] === expected && locals.length === 1) return null;
+  const next = lines.map((line) => line === mappings[0] ? expected : line);
+  if (mappings.length === 0) next.push(expected);
+  // dnsmasq2.86+ forwards unmatched RR types unless this domain is local.
+  // An upstream AAAA NXDOMAIN makes musl reject even our valid A answer.
+  if (locals.length === 0) next.push(local);
+  return next.join('\n');
+}
+
+async function reconcileAppIdentityDns(network: IncusNetwork, lease: AppNetworkLease): Promise<void> {
+  assertOwnedNetworkMatchesLease(network, lease);
+  const next = appIdentityDnsConfig(network.config?.['raw.dnsmasq'], lease.gateway);
+  if (next === null) return;
+  const patched = await incusRequest('PATCH', `/1.0/networks/${lease.bridgeName}`, {
+    config: { 'raw.dnsmasq': next },
+  }, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
+  await waitForIncusOperation(patched, `Add ID DNS on ${lease.bridgeName}`);
+  const readBack = assertIncusSuccess(
+    await incusRequest<IncusNetwork>('GET', `/1.0/networks/${lease.bridgeName}`),
+    `Read ID DNS on ${lease.bridgeName}`,
+  );
+  assertOwnedNetworkMatchesLease(readBack, lease);
+  if (readBack.config?.['raw.dnsmasq'] !== next) {
+    throw new AppNetworkStateError(`App bridge ${lease.bridgeName} ID DNS read-back mismatch`);
+  }
+}
+
 /** Check if a bridge exists. */
 async function bridgeExists(name: string): Promise<boolean> {
   const res = await incusRequest('GET', `/1.0/networks/${name}`, undefined, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
@@ -831,7 +894,10 @@ export async function createAppNetwork(
 
   // Forward unresolved DNS queries to Pi-Hole. This is a hard invariant for
   // app networks so per-app DNS policy and local rewrites are always applied.
+  // Keep the app's OIDC issuer stable when IPAM reallocates its bridge. The
+  // local dnsmasq answers this name before forwarding other names to Pi-hole.
   config['raw.dnsmasq'] = `server=${piholeIP}`;
+  config['raw.dnsmasq'] += `\naddress=/id.youeye/${lease.gateway}\nlocal=/id.youeye/`;
 
   try {
     if (!(await bridgeExists(lease.bridgeName))) {
@@ -1060,15 +1126,17 @@ export async function addCaddyToAppNetwork(appId: string): Promise<void> {
     throw new AppNetworkStateError(`No bridge found for ${appId}`);
   }
 
-  const deviceName = `net-${appId}`;
+  return addCaddyToProvedAppNetwork(appId, bridgeName);
+}
 
+async function addCaddyToProvedAppNetwork(appId: string, bridgeName: string): Promise<void> {
   const res = await incusRequest<{
     devices: Record<string, Record<string, string>>;
   }>('GET', '/1.0/instances/youeye-caddy');
   const metadata = assertIncusSuccess(res, 'Read Caddy NICs');
   const devices = { ...metadata.devices };
-  const ifName = `eth-${appId.substring(0, 11)}`;
-  const expected = { type: 'nic', network: bridgeName, name: ifName };
+  const { deviceName, device: expected } = planCaddyAppNIC(appId, bridgeName, devices);
+  const ifName = expected.name;
   if (!devices[deviceName]) {
     devices[deviceName] = expected;
     const patched = await incusRequest('PATCH', '/1.0/instances/youeye-caddy', { devices });
@@ -1076,10 +1144,10 @@ export async function addCaddyToAppNetwork(appId: string): Promise<void> {
   }
   const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', '/1.0/instances/youeye-caddy');
   const attached = assertIncusSuccess(readBack, 'Read back Caddy NICs').devices?.[deviceName];
-  if (!attached || attached.network !== bridgeName || attached.name !== ifName) {
+  if (!attached || attached.type !== 'nic' || attached.network !== bridgeName || attached.name !== ifName) {
     throw new AppNetworkStateError(`Caddy NIC ${deviceName} did not read back on ${bridgeName}`);
   }
-  console.log(`[app-network] Added Caddy NIC for ${bridgeName} (${appId})`);
+  if (!readOnlyAudit.getStore()) console.log(`[app-network] Added Caddy NIC for ${bridgeName} (${appId})`);
 }
 
 /**
@@ -1242,6 +1310,10 @@ export async function addSystemProxyDevices(
     throw new Error(`Cannot add system proxies for ${appId}: app bridge gateway not found`);
   }
 
+  return addSystemProxiesToProvedGateway(appId, services, gatewayIP);
+}
+
+async function addSystemProxiesToProvedGateway(appId: string, services: ProxyService[], gatewayIP: string): Promise<void> {
   // nat-mode (kernel DNAT) requires each proxy be attached to the instance whose
   // STATIC IP it connects to — so group doorways by target instance and PATCH
   // each. This replaces the userspace forkproxy (~17 MiB RSS each) with an
@@ -1269,6 +1341,7 @@ export async function addSystemProxyDevices(
       devices: Record<string, Record<string, string>>;
     }>('GET', `/1.0/instances/${instance}`);
     const metadata = assertIncusSuccess(res, `Read system proxy target ${instance}`);
+    if (Object.entries(newDevices).every(([name, expected]) => sameIncusFields(metadata.devices?.[name], expected))) continue;
     const devices = { ...metadata.devices, ...newDevices };
     const patched = await incusRequest('PATCH', `/1.0/instances/${instance}`, { devices });
     await waitForIncusOperation(patched, `Attach system proxies for ${appId} to ${instance}`);
@@ -1281,7 +1354,7 @@ export async function addSystemProxyDevices(
       }
     }
   }
-  console.log(`[app-network] Added ${services.length} nat-mode proxy devices for ${appId} on ${gatewayIP}`);
+  if (!readOnlyAudit.getStore()) console.log(`[app-network] Added ${services.length} nat-mode proxy devices for ${appId} on ${gatewayIP}`);
 }
 
 export async function removeSystemProxyDevices(appId: string): Promise<void> {
@@ -1435,7 +1508,8 @@ export async function prepareAppEgressAcl(
     const created = await incusRequest('POST', '/1.0/network-acls', body, { timeout: 120_000 });
     await waitForIncusOperation(created, `Create app ACL ${name}`, 180);
   } else {
-    assertIncusSuccess(existing, `Read app ACL ${name}`);
+    const current = assertIncusSuccess(existing, `Read app ACL ${name}`) as Parameters<typeof sameIncusAcl>[0];
+    if (sameIncusAcl(current, body)) return name;
     const replaced = await incusRequest('PUT', `/1.0/network-acls/${name}`, {
       description: body.description,
       egress,
@@ -1474,9 +1548,18 @@ export async function applyAppEgressAcl(
   containerNames: string[],
   opts: { needsSharedDb: boolean; needsSSO: boolean; needsAI?: boolean },
 ): Promise<void> {
-  const name = await prepareAppEgressAcl(appId, opts);
   const bridgeName = await getAppBridgeName(appId);
   if (!bridgeName) throw new AppNetworkStateError(`Cannot apply policy for ${appId}: app bridge lease not found`);
+  return applyEgressAclToProvedBridge(appId, containerNames, opts, bridgeName);
+}
+
+async function applyEgressAclToProvedBridge(
+  appId: string,
+  containerNames: string[],
+  opts: { needsSharedDb: boolean; needsSSO: boolean; needsAI?: boolean },
+  bridgeName: string,
+): Promise<void> {
+  const name = await prepareAppEgressAcl(appId, opts);
 
   for (const cn of containerNames) {
     const res = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${cn}`);
@@ -1496,6 +1579,7 @@ export async function applyAppEgressAcl(
         'security.mac_filtering': 'true',
         'security.ipv4_filtering': 'true',
       };
+      if (sameIncusFields(metadata.devices.eth0, devices.eth0)) continue;
       const patched = await incusRequest('PATCH', `/1.0/instances/${cn}`, { devices });
       await waitForIncusOperation(patched, `Apply primary app NIC policy to ${cn}`);
       const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${cn}`);
@@ -1509,7 +1593,7 @@ export async function applyAppEgressAcl(
       throw new AppNetworkStateError(`Container ${cn} has no primary eth0 NIC for isolation policy`);
     }
   }
-  console.log(`[app-network] Applied egress ACL ${name} to ${containerNames.join(', ')}`);
+  if (!readOnlyAudit.getStore()) console.log(`[app-network] Applied egress ACL ${name} to ${containerNames.join(', ')}`);
 }
 
 /** Remove the per-app egress ACL (best-effort; safe once container holders are gone). */
@@ -1775,6 +1859,7 @@ export async function buildAppNIC(appId: string): Promise<Record<string, Record<
 export interface AppNetworkReconcileResult {
   repaired: string[];
   unresolved: string[];
+  observedNetworks?: AppNetworkSummary[];
 }
 
 function instanceNameFromUsedBy(reference: string): string | null {
@@ -1864,7 +1949,17 @@ async function stopWorkloadsAfterObservationFailure(error: unknown): Promise<str
     if (!affected) continue;
     const appId = network.config?.[OWNERSHIP_APP_KEY];
     const safeAppId = appId && /^[a-z0-9][a-z0-9-]{0,62}$/.test(appId) ? appId : null;
-    for (const name of await stopAffectedAppContainers(safeAppId, network)) stopped.add(name);
+    if (!safeAppId) continue; // No proved app identity means no safe mutation admission.
+    try {
+      await withAppLifecycle(safeAppId, () => withAppNetworkOperationLock(safeAppId, 'reconcile-stop', async () => {
+        for (const name of await stopAffectedAppContainers(safeAppId, network)) stopped.add(name);
+      }));
+    } catch (lockError) {
+      if (lockError instanceof AppLifecycleAdmissionError
+        || lockError instanceof AppNetworkOperationConflictError
+        || (lockError instanceof Error && lockError.message.includes('executor lock is busy'))) continue;
+      throw lockError;
+    }
   }
   return [...stopped];
 }
@@ -1917,147 +2012,230 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
     return { repaired, unresolved };
   }
 
+  const initialLeaseCount = observation.state.leases.length;
+  let unchangedApps = 0;
+  const auditReads = new Map<string, Promise<unknown>>(observation.networks.map(network => [
+    `/1.0/networks/${network.name}`,
+    Promise.resolve({ type: 'sync', status_code: 200, metadata: network }),
+  ]));
   for (const originalLease of [...observation.state.leases]) {
-    const network = observation.networks.find((candidate) => candidate.name === originalLease.bridgeName);
-    try {
-      if (network) assertOwnedNetworkMatchesLease(network, originalLease);
-
-      if (originalLease.state === 'reserved' && activeInstalls.has(originalLease.appId)) {
-        // A live installer owns this transitional lease.
-        continue;
-      }
-
-      if (originalLease.state === 'reserved' || originalLease.state === 'cleanup_pending') {
-        if (originalLease.state === 'reserved') {
-          await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
-            transitionLease(state, originalLease.appId, 'cleanup_pending', {
-              operationId: originalLease.operationId,
-              failure: {
-                stage: 'reconcile-interrupted-reservation',
-                message: 'No live durable install operation owns this reservation',
-                observedAt: new Date().toISOString(),
-              },
-            }),
-          );
-        }
-        const { cleanupAppByScan } = await import('../market/reconciler');
-        const cleanup = await withAppNetworkOperationLock(originalLease.appId, 'reconcile-cleanup', () =>
-          cleanupAppByScan(originalLease.appId, { keepData: true, dropDatabase: false }),
-        );
-        repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
-        if (cleanup.unresolved.length > 0) {
-          throw new Error(cleanup.unresolved.join('; '));
-        }
-        await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-        continue;
-      }
-
-      if (!network) {
-        throw new AppNetworkStateError(
-          `Active lease ${originalLease.appId} owns ${originalLease.bridgeName}, but the bridge is absent`,
-        );
-      }
-
-      const { readInstallMetadata } = await import('../market/metadata');
-      const metadata = await readInstallMetadata(originalLease.appId);
-      if (!metadata) {
-        throw new AppNetworkStateError(
-          `Active lease ${originalLease.appId} has no install metadata; refusing automatic adoption or deletion`,
-        );
-      }
-      if (metadata.lifecycleState === 'installing' && !activeInstalls.has(originalLease.appId)) {
-        await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
-          transitionLease(state, originalLease.appId, 'cleanup_pending', {
-            operationId: originalLease.operationId,
-            failure: {
-              stage: 'reconcile-interrupted-finalization',
-              message: 'No live durable install operation owns installing metadata',
-              observedAt: new Date().toISOString(),
-            },
-          }),
-        );
-        const { cleanupAppByScan } = await import('../market/reconciler');
-        const cleanup = await withAppNetworkOperationLock(originalLease.appId, 'reconcile-finalization', () =>
-          cleanupAppByScan(originalLease.appId),
-        );
-        repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
-        if (cleanup.unresolved.length > 0) throw new Error(cleanup.unresolved.join('; '));
-        await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-        continue;
-      }
-      const containerNames = (metadata.containers ?? [])
-        .map((container) => typeof container === 'string' ? container : container.containerName)
-        .filter((name): name is string => Boolean(name));
-      if (containerNames.length === 0) {
-        throw new AppNetworkStateError(`Active lease ${originalLease.appId} has no recorded containers`);
-      }
-      const needsSharedDb = metadata.databaseMode === 'shared';
-      const needsSSO = metadata.hasSSO ?? metadata.enableSSO;
-      const needsAI = metadata.aiConnection?.state !== undefined;
-      await addCaddyToAppNetwork(originalLease.appId);
-      await addSystemProxyDevices(
-        originalLease.appId,
-        await getSystemServices({ needsSharedDb, needsSSO, needsAI }),
-      );
-      await applyAppEgressAcl(originalLease.appId, containerNames, { needsSharedDb, needsSSO, needsAI });
-      await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-    } catch (error) {
-      // A supported install/remove/repair owns the same per-app lock. The
-      // observation above is necessarily stale while that mutation is in
-      // flight, so let its postconditions (and the next reconciliation pass)
-      // decide health instead of raising a false critical issue.
-      if (error instanceof AppNetworkOperationConflictError) continue;
-
-      // Reconciliation observes the allocator and Incus before it starts
-      // checking each lease. A supported uninstall can finish between that
-      // snapshot and this catch block. If the exact lease no longer exists,
-      // or has since advanced to a different operation/state, the failure was
-      // derived from stale ownership state and must not become a persistent
-      // critical issue that blocks the next install.
+    // A read-only comparison needs no mutation lease. The audit wrapper rejects
+    // every provider write before dispatch; any uncertainty enters the existing
+    // fresh, locked repair path below. Do not acquire hundreds of OS locks just
+    // to prove that unchanged resources need no work.
+    if (originalLease.state === 'active') {
       try {
-        const latest = await observeAppNetworkState();
-        const currentLease = latest.state.leases.find(
-          (candidate) => candidate.appId === originalLease.appId,
-        );
-        const leaseAdvanced = currentLease
-          && (currentLease.operationId !== originalLease.operationId
-            || currentLease.state !== originalLease.state
-            || currentLease.bridgeName !== originalLease.bridgeName
-            || currentLease.cidr !== originalLease.cidr);
-        if (!currentLease || leaseAdvanced) {
-          await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-          continue;
-        }
+        const candidateState = await readIpamState({ config: await loadAppNetworkConfig(), allowInitialize: false });
+        const candidate = candidateState.leases.find(lease => lease.appId === originalLease.appId);
+        if (!candidate || candidate.operationId !== originalLease.operationId
+          || candidate.state !== originalLease.state || candidate.bridgeName !== originalLease.bridgeName
+          || candidate.cidr !== originalLease.cidr) throw new Error('App ownership changed during audit');
+        const { readInstallMetadata } = await import('../market/metadata');
+        const metadata = await readInstallMetadata(candidate.appId);
+        if (!metadata || metadata.lifecycleState === 'installing') throw new Error('App lifecycle requires fresh repair admission');
+        await readOnlyAudit.run(auditReads, async () => {
+          const network = assertIncusSuccess(
+            await incusRequest<IncusNetwork>('GET', `/1.0/networks/${candidate.bridgeName}`),
+            'Audit app network ownership',
+          );
+          await reconcileActiveAppNetwork(candidate, network, metadata);
+        });
+        await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${candidate.appId}`);
+        unchangedApps++;
+        continue;
       } catch {
-        // If fresh ownership cannot be observed, retain the conservative
-        // critical path below. Ambiguous state must never be auto-adopted.
+        // Drift, disconnects and unknown state never authorize effects from a
+        // shared snapshot. Re-observe under both mutation locks below.
       }
+    }
+    try {
+      await withAppLifecycle(originalLease.appId, () =>
+        withAppNetworkOperationLock(originalLease.appId, 'reconcile', async () => {
+          // Read durable ownership again after admission even when no repair is
+          // needed. Shared observations are hints for skipping work, never a
+          // substitute for mutation authority or an update's current fencing.
+          const candidateState = await readIpamState({ config: await loadAppNetworkConfig(), allowInitialize: false });
+          const candidate = candidateState.leases.find(lease => lease.appId === originalLease.appId);
+          if (!candidate || candidate.operationId !== originalLease.operationId
+            || candidate.state !== originalLease.state || candidate.bridgeName !== originalLease.bridgeName
+            || candidate.cidr !== originalLease.cidr) return;
+          // A repair can change shared system devices. No other app may inspect
+          // the pre-repair map, and the repair itself must read live objects.
+          auditReads.clear();
+          // The initial observation may predate admission. Refresh under both locks
+          // before repairing attachments or ACLs so an update's fencing is never undone.
+          observation = await observeAppNetworkState();
+          const currentLease = observation.state.leases.find(lease => lease.appId === originalLease.appId);
+          if (!currentLease || currentLease.operationId !== originalLease.operationId
+            || currentLease.state !== originalLease.state || currentLease.bridgeName !== originalLease.bridgeName
+            || currentLease.cidr !== originalLease.cidr) return;
+          const network = observation.networks.find((candidate) => candidate.name === originalLease.bridgeName);
+          try {
+            if (network) assertOwnedNetworkMatchesLease(network, originalLease);
 
-      let stopped: string[] = [];
-      if (originalLease.state === 'active') {
-        try {
-          stopped = await stopAffectedAppContainers(originalLease.appId, network);
-        } catch {
-          unresolved.push(`app-network-stop:${originalLease.appId}:stop-or-verification-failed`);
-        }
-      }
-      const message = safeNetworkFailure(error);
-      unresolved.push(`app-network:${originalLease.appId}:${message}`);
-      await observeIssue({
-        id: `${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`,
-        severity: 'critical',
-        source: 'app-network',
-        title: `App network isolation could not be verified for ${originalLease.appId}`,
-        body: `Lease ${originalLease.bridgeName} (${originalLease.cidr}) remains owned and non-reusable. ${stopped.length > 0 ? `Only the affected app containers were stopped: ${stopped.join(', ')}. ` : ''}${message}`,
-        fixable: true,
-        repairFn: 'reconcile-apps',
-        learnMore: '/settings/system/health',
-        debounce: 1,
-      });
+            if (originalLease.state === 'reserved' && activeInstalls.has(originalLease.appId)) {
+              // A live installer owns this transitional lease.
+              return;
+            }
+
+            if (originalLease.state === 'reserved' || originalLease.state === 'cleanup_pending') {
+              if (originalLease.state === 'reserved') {
+                await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
+                  transitionLease(state, originalLease.appId, 'cleanup_pending', {
+                    operationId: originalLease.operationId,
+                    failure: {
+                      stage: 'reconcile-interrupted-reservation',
+                      message: 'No live durable install operation owns this reservation',
+                      observedAt: new Date().toISOString(),
+                    },
+                  }),
+                );
+              }
+              const { cleanupAppByScan } = await import('../market/reconciler');
+              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData: true, dropDatabase: false });
+              repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
+              if (cleanup.unresolved.length > 0) {
+                throw new Error(cleanup.unresolved.join('; '));
+              }
+              await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+              return;
+            }
+
+            if (!network) {
+              throw new AppNetworkStateError(
+                `Active lease ${originalLease.appId} owns ${originalLease.bridgeName}, but the bridge is absent`,
+              );
+            }
+
+            const { readInstallMetadata } = await import('../market/metadata');
+            const metadata = await readInstallMetadata(originalLease.appId);
+            if (!metadata) {
+              throw new AppNetworkStateError(
+                `Active lease ${originalLease.appId} has no install metadata; refusing automatic adoption or deletion`,
+              );
+            }
+            if (metadata.lifecycleState === 'installing' && !activeInstalls.has(originalLease.appId)) {
+              await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
+                transitionLease(state, originalLease.appId, 'cleanup_pending', {
+                  operationId: originalLease.operationId,
+                  failure: {
+                    stage: 'reconcile-interrupted-finalization',
+                    message: 'No live durable install operation owns installing metadata',
+                    observedAt: new Date().toISOString(),
+                  },
+                }),
+              );
+              const { cleanupAppByScan } = await import('../market/reconciler');
+              const cleanup = await cleanupAppByScan(originalLease.appId);
+              repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
+              if (cleanup.unresolved.length > 0) throw new Error(cleanup.unresolved.join('; '));
+              await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+              return;
+            }
+            await reconcileActiveAppNetwork(currentLease, network, metadata);
+            await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+          } catch (error) {
+            // A supported install/remove/repair owns the same per-app lock. The
+            // observation above is necessarily stale while that mutation is in
+            // flight, so let its postconditions (and the next reconciliation pass)
+            // decide health instead of raising a false critical issue.
+            if (error instanceof AppNetworkOperationConflictError) return;
+
+            // Reconciliation observes the allocator and Incus before it starts
+            // checking each lease. A supported uninstall can finish between that
+            // snapshot and this catch block. If the exact lease no longer exists,
+            // or has since advanced to a different operation/state, the failure was
+            // derived from stale ownership state and must not become a persistent
+            // critical issue that blocks the next install.
+            try {
+              const latest = await observeAppNetworkState();
+              const currentLease = latest.state.leases.find(
+                (candidate) => candidate.appId === originalLease.appId,
+              );
+              const leaseAdvanced = currentLease
+                && (currentLease.operationId !== originalLease.operationId
+                  || currentLease.state !== originalLease.state
+                  || currentLease.bridgeName !== originalLease.bridgeName
+                  || currentLease.cidr !== originalLease.cidr);
+              if (!currentLease || leaseAdvanced) {
+                await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+                return;
+              }
+            } catch {
+              // If fresh ownership cannot be observed, retain the conservative
+              // critical path below. Ambiguous state must never be auto-adopted.
+            }
+
+            let stopped: string[] = [];
+            if (originalLease.state === 'active') {
+              try {
+                stopped = await stopAffectedAppContainers(originalLease.appId, network);
+              } catch {
+                unresolved.push(`app-network-stop:${originalLease.appId}:stop-or-verification-failed`);
+              }
+            }
+            const message = safeNetworkFailure(error);
+            unresolved.push(`app-network:${originalLease.appId}:${message}`);
+            await observeIssue({
+              id: `${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`,
+              severity: 'critical',
+              source: 'app-network',
+              title: `App network isolation could not be verified for ${originalLease.appId}`,
+              body: `Lease ${originalLease.bridgeName} (${originalLease.cidr}) remains owned and non-reusable. ${stopped.length > 0 ? `Only the affected app containers were stopped: ${stopped.join(', ')}. ` : ''}${message}`,
+              fixable: true,
+              repairFn: 'reconcile-apps',
+              learnMore: '/settings/system/health',
+              debounce: 1,
+            });
+          }
+        }));
+    } catch (error) {
+      // Lifecycle admission is the authority even when the old writer has died.
+      // An unfinished receipt is never grounds for automatic network repair.
+      if (error instanceof AppLifecycleAdmissionError
+        || error instanceof AppNetworkOperationConflictError
+        || (error instanceof Error && error.message.includes('executor lock is busy'))) continue;
+      unresolved.push(`app-network:${originalLease.appId}:${safeNetworkFailure(error)}`);
     }
   }
 
-  return { repaired, unresolved };
+  // Only a wholly unchanged pass can lend its observation to the outer scan.
+  // Repair, cleanup or an admission/ownership race invalidates that shortcut.
+  return { repaired, unresolved, observedNetworks: unchangedApps === initialLeaseCount
+    ? summarizeAppNetworks(observation.state.leases) : undefined };
+}
+
+async function reconcileActiveAppNetwork(
+  lease: AppNetworkLease,
+  network: IncusNetwork,
+  metadata: NonNullable<Awaited<ReturnType<typeof import('../market/metadata').readInstallMetadata>>>,
+): Promise<void> {
+  const containerNames = (metadata.containers ?? [])
+    .map(container => typeof container === 'string' ? container : container.containerName)
+    .filter((name): name is string => Boolean(name));
+  if (containerNames.length === 0) throw new AppNetworkStateError(`Active lease ${lease.appId} has no recorded containers`);
+  const options = { needsSharedDb: metadata.databaseMode === 'shared', needsSSO: metadata.hasSSO ?? metadata.enableSSO, needsAI: metadata.aiConnection?.state !== undefined };
+  await reconcileAppIdentityDns(network, lease);
+  await addCaddyToProvedAppNetwork(lease.appId, lease.bridgeName);
+  await addSystemProxiesToProvedGateway(lease.appId, await getSystemServices(options), lease.gateway);
+  await applyEgressAclToProvedBridge(lease.appId, containerNames, options, lease.bridgeName);
+}
+
+/** A fresh visibility gate under app admission, not allocation/repair authority.
+ * The global audit has already checked the entire inventory. UI reconciliation
+ * only needs to prove that this app still owns its active bridge before exposing
+ * its registration; it must not repeat every other app's network inventory. */
+export async function hasActiveAppNetwork(appId: string): Promise<boolean> {
+  const config = await loadAppNetworkConfig();
+  const state = await readIpamState({ config, allowInitialize: false });
+  const lease = state.leases.find(candidate => candidate.appId === appId);
+  if (!lease || lease.state !== 'active') return false;
+  const network = assertIncusSuccess(
+    await incusRequest<IncusNetwork>('GET', `/1.0/networks/${lease.bridgeName}`),
+    'Read active app network',
+  );
+  assertOwnedNetworkMatchesLease(network, lease);
+  return true;
 }
 
 // ─── Query Helpers ──────────────────────────────────────────
@@ -2065,21 +2243,26 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
 /**
  * List all per-app bridges.
  */
-export async function listAppNetworks(): Promise<Array<{
+interface AppNetworkSummary {
   appId: string;
   bridgeName: string;
   subnet: number;
   subnetCIDR: string;
   state: AppNetworkLease['state'];
-}>> {
-  const observation = await observeAppNetworkState();
-  return observation.state.leases.map((lease) => ({
+}
+
+function summarizeAppNetworks(leases: AppNetworkLease[]): AppNetworkSummary[] {
+  return leases.map((lease) => ({
     appId: lease.appId,
     bridgeName: lease.bridgeName,
     subnet: lease.bridgeId,
     subnetCIDR: lease.cidr,
     state: lease.state,
   }));
+}
+
+export async function listAppNetworks(): Promise<AppNetworkSummary[]> {
+  return summarizeAppNetworks((await observeAppNetworkState()).state.leases);
 }
 
 // System app IDs — the short names used in manifests and bridge records.

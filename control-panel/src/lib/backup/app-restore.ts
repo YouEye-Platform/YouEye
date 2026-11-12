@@ -20,7 +20,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { spineClient } from '@/lib/spine/client';
 import { incusRequest } from '@/lib/incus/server';
-import { waitForOperation } from '@/lib/incus/snapshot';
+import { containerState, waitForOperation } from '@/lib/incus/snapshot';
 import { readInstallMetadata, removeInstallMetadataRecord } from '@/lib/market/metadata';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { installApp } from '@/lib/market/engine';
@@ -42,6 +42,15 @@ import { resolveOwnPostgres, resolveSharedDatabasePasswordFile } from './manifes
 import { finishTracking, startTracking, trackEvent } from '@/lib/market/install-tracker';
 import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
 import { deleteCreatedRecoveryStorage, listStorageLocations } from '@/lib/market/storage';
+import { withAppInventory, withAppLifecycle } from '@/lib/market/update-admission';
+import { prepareRestoredAppCredential } from '@/lib/apps/service-credential-bridge';
+import { operateAppCredential } from '@/lib/apps/service-credential-operations';
+import { sanitiseInstallEvent } from '@/lib/market/install-tracker';
+import { readAppRestoreIntent } from './app-restore-intent';
+import { getAdmissionPolicy } from '@/lib/admission/store';
+import { readRestoredManagedAI } from '@/lib/market/restored-managed-ai';
+import { resolveOwnPostgresRestore } from './own-postgres-restore';
+import { readSecret } from '@/lib/infrastructure/secrets';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
@@ -105,7 +114,7 @@ export async function restoreApp(
   onEvent: BackupEventCallback,
   protectCurrentState = true,
 ): Promise<void> {
-  return restoreAppOnce(config, onEvent, protectCurrentState);
+  return withAppInventory(() => withAppLifecycle(config.appId, () => restoreAppOnce(config, onEvent, protectCurrentState)));
 }
 
 async function restoreAppOnce(
@@ -175,8 +184,14 @@ async function restoreAppOnce(
     if (existsSync(installJsonPath)) {
       backedUpInstallMeta = JSON.parse(await readFile(installJsonPath, 'utf-8'));
     }
+    const backedUpAI = readRestoredManagedAI(appId, backedUpInstallMeta?.aiConnection);
 
     // Freeze and validate the manifest input before removing the current app.
+    const { validateAppAdmissionRestore } = await import('@/lib/admission/backup');
+    const admissionPath = path.join(stagingDir, 'admission.json');
+    if (!existsSync(admissionPath)) throw new Error('Backup is missing versioned admission ownership metadata');
+    const admissionBackup = await validateAppAdmissionRestore(JSON.parse(await readFile(admissionPath, 'utf8')), appId);
+    const restoredIntent = readAppRestoreIntent(backedUpInstallMeta, admissionBackup.policy, await getAdmissionPolicy(appId));
     // Database restore must use the exact secret filename that reinstall reads.
     let manifest;
     const manifestPath = path.join(stagingDir, 'manifest.json');
@@ -187,6 +202,7 @@ async function restoreAppOnce(
     }
 
     const ownDumpPath = path.join(stagingDir, 'databases', `${appId}-own.sql`);
+    const ownPostgresRestore = existsSync(ownDumpPath) ? resolveOwnPostgresRestore(manifest, appId) : null;
     if (existsSync(ownDumpPath)) {
       const backupSection = (manifest as Record<string, unknown>).backup as { ownPostgres?: { container?: string; database?: string; user?: string } } | undefined;
       if (!backupSection?.ownPostgres?.container || !backupSection.ownPostgres.database) {
@@ -212,7 +228,12 @@ async function restoreAppOnce(
       rollbackArchive = path.join(rollbackDirectory, rollbackFiles[0]);
     }
     if (currentMeta) {
-      const removal = await uninstallApp(appId, { dropSharedDatabase: true, keepData: false });
+      // The current installation owns the resources being removed; an older
+      // archive may declare a different database mode. Preserve legacy mode
+      // inference while explicit own/none installations have no shared drop.
+      const dropSharedDatabase = currentMeta.databaseMode !== 'none' && currentMeta.databaseMode !== 'own';
+      const removal = await uninstallApp(appId, { dropSharedDatabase, keepData: false,
+        preserveAdmission: true, preserveManagedAI: backedUpAI });
       if (!removal.success) {
         throw new Error(`Could not clear the current ${appId} installation before restore`);
       }
@@ -295,7 +316,6 @@ async function restoreAppOnce(
     const selectedIntegrations = Array.isArray(backedUpInstallMeta?.selectedIntegrations)
       ? backedUpInstallMeta.selectedIntegrations.filter((value): value is string => typeof value === 'string')
       : undefined;
-    const backedUpAI = backedUpInstallMeta?.aiConnection as { modelGroupId?: unknown } | undefined;
     const installConfig: InstallConfig = {
       appId,
       subdomain,
@@ -316,26 +336,31 @@ async function restoreAppOnce(
         ? { forwardAuthGate: backedUpInstallMeta.forwardAuthEnabled }
         : {}),
       ...(typeof backedUpAI?.modelGroupId === 'string'
-        ? { aiSettings: { enabled: true, modelGroupId: backedUpAI.modelGroupId } }
+        ? { aiSettings: { enabled: true, modelGroupId: backedUpAI.modelGroupId,
+          ownerUserId: backedUpAI.ownerUserId, externalInstallationId: backedUpAI.externalInstallationId } }
         : {}),
     };
 
     // Run the install engine — it handles container creation, config files, etc.
     const installAbortController = startTracking(appId, manifest.metadata.name);
     try {
+      // Old runtime exports can contain the source's env secret. Retire both
+      // current authorities and prepare a fresh destination installation first.
+      await prepareRestoredAppCredential(appId);
       await installApp(
         manifest,
         installConfig,
         (event) => {
           trackEvent(appId, event);
           // Relay install events as restore sub-events
+          const safe = sanitiseInstallEvent(event);
           onEvent({
             step,
             totalSteps,
             status: event.status === 'error' ? 'error' : 'progress',
             stage: 'reinstall',
-            message: event.message,
-            detail: event.detail,
+            message: safe.message,
+            detail: safe.detail,
           });
         },
         installAbortController.signal,
@@ -343,6 +368,10 @@ async function restoreAppOnce(
           skipSecrets: true,
           skipDatabase: true,
           skipConfigFiles: true,
+          deferServiceCredentialReadiness: true,
+          restoredManagedAI: backedUpAI,
+          restoredIdentity: restoredIntent.admission,
+          desiredState: restoredIntent.desiredState,
           runtimeImages,
           runtimeInstances,
           recoveryCreatedStorage: createdRecoveryStorage.map((volume) => `${volume.pool}/${volume.name}`),
@@ -367,11 +396,10 @@ async function restoreAppOnce(
       if (!backupSection?.ownPostgres?.container || !backupSection.ownPostgres.database) {
         throw new Error('Backup is missing own-database restore metadata');
       }
-      const { container, database, user } = resolveOwnPostgres({
-        container: backupSection.ownPostgres.container,
-        database: backupSection.ownPostgres.database,
-        user: backupSection.ownPostgres.user,
-      }, appId);
+      if (!ownPostgresRestore) throw new Error('Application database restore identity is unavailable');
+      const { container, database, user, adminUser, passwordFile } = ownPostgresRestore;
+      const password = passwordFile ? await readSecret(`app-${appId}`, passwordFile) : undefined;
+      if (passwordFile && !password) throw new Error('Restored application database owner credential is unavailable');
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(container) || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database)) {
         throw new Error('Backup contains invalid own-database restore metadata');
       }
@@ -387,10 +415,18 @@ async function restoreAppOnce(
           await stopContainerForRestore(containerName);
           stoppedContainers.push(containerName);
         }
+        // A restored disabled installation may have quiesced this database.
+        // Only its exact declared runtime may open under the complete app fence.
+        if (await containerState(container) === 'Stopped') await startContainerAfterRestore(container);
+        if (await containerState(container) !== 'Running') throw new Error('Application database is not running for logical restore');
+        const { waitForPostgresHealth } = await import('@/lib/market/health');
+        if (!await waitForPostgresHealth(container, adminUser, 60_000)) throw new Error('Application database did not become ready for logical restore');
         await restoreOwnPostgresDatabase({
           container,
           database,
           user,
+          adminUser,
+          password: password ?? undefined,
           dump: await readFile(ownDumpPath),
         });
       } finally {
@@ -416,6 +452,10 @@ async function restoreAppOnce(
         message: `Restored the encrypted database dump for ${appId}`,
       });
     }
+
+    // All archived data/runtime configuration has been applied. Rewrite only
+    // credential-bearing mappings, prove runtime/verifier agreement, then ready.
+    await operateAppCredential(appId, { action: 'reconcile' });
 
     // ── Step 7: Restore routing ─────────────────────────────
     emit('restore-routing', `Restoring routes for ${appId}...`);
@@ -453,7 +493,17 @@ async function restoreAppOnce(
     if (containers.length > 0) await new Promise(resolve => setTimeout(resolve, 3000));
 
     let healthy = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    if (restoredIntent.desiredState === 'stopped') {
+      // Installer health and credential probes ran while access remained pending.
+      // A deliberately stopped app is complete only after exact quiescence.
+      const metadata = await readInstallMetadata(appId);
+      healthy = containers.length > 0 && metadata?.enabled === false
+        && metadata.desiredState === 'stopped' && metadata.serviceCredentialState === 'ready';
+      for (const name of containers) {
+        if (await containerState(name) !== 'Stopped') healthy = false;
+      }
+    }
+    for (let attempt = 0; restoredIntent.desiredState === 'running' && attempt < 3; attempt++) {
       const result = (await probeInstalledApps()).find(item => item.appId === appId);
       if (result?.state === 'running') {
         healthy = true;

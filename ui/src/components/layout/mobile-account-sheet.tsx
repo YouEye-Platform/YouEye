@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -74,6 +75,8 @@ function SectionButton({
 }
 
 export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSheetProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const router = useRouter();
   const t = useTranslations("nav");
   const { theme, setTheme } = useTheme();
@@ -146,8 +149,10 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    router.push("/login");
+    const response = await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    const result = response?.ok ? await response.json() : null;
+    if (result?.logoutUrl) window.location.assign(result.logoutUrl);
+    else router.push("/login");
   }
 
   const THEMES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [
@@ -160,16 +165,16 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
     <div className="fixed inset-0 z-[100] text-foreground">
       <button
         type="button"
-        aria-label="Close account sheet"
+        aria-label={translateInterface("m3313b27c5473")}
         className="absolute inset-0 bg-background/45 backdrop-blur-sm"
         onClick={() => setOpen(false)}
       />
       <div className="fixed inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl border border-border/60 bg-popover/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-xl">
         <div className="mb-2 flex items-center justify-between px-1">
-          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Account</span>
+          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{translateInterface("m7e1b0d5641f2")}</span>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={translateInterface("m7d9eb7acb13e")}
             onClick={() => setOpen(false)}
             className="grid size-9 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
@@ -185,28 +190,28 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
               <AvatarFallback className="text-xl">{fallback}</AvatarFallback>
             </Avatar>
             <div className="flex items-center gap-1.5 text-base font-medium">
-              <span>Hi, {firstName}!</span>
+              <span>{translateInterface("m48e1645a3bf4", { name: firstName })}</span>
               {isAdmin && <Shield className="size-3.5 text-primary" />}
             </div>
           </div>
         </div>
 
         <div className="mt-3 overflow-hidden rounded-2xl border border-border/50 bg-card/60">
-          <SectionButton section="notifications" activeSection={activeSection} label="Notifications" Icon={Bell} onOpen={setActiveSection} />
+          <SectionButton section="notifications" activeSection={activeSection} label={translateInterface("m788011833a5a")} Icon={Bell} onOpen={setActiveSection} />
           {activeSection === "notifications" && (
             <div className="border-t bg-background/35">
               <NotificationBell embedded onUnreadCountChange={setUnreadCount} />
             </div>
           )}
           <div className="border-t" />
-          <SectionButton section="drawer" activeSection={activeSection} label="App drawer" Icon={LayoutGrid} onOpen={setActiveSection} />
+          <SectionButton section="drawer" activeSection={activeSection} label={translateInterface("md18accaf2b74")} Icon={LayoutGrid} onOpen={setActiveSection} />
           {activeSection === "drawer" && (
             <div className="border-t bg-background/35">
               <AppDrawer embedded isAdmin={isAdmin} onOpenLauncher={() => setActiveSection("launcher")} />
             </div>
           )}
           <div className="border-t" />
-          <SectionButton section="launcher" activeSection={activeSection} label="Launcher" Icon={LayoutGrid} onOpen={setActiveSection} />
+          <SectionButton section="launcher" activeSection={activeSection} label={translateInterface("m22614ace1aef")} Icon={LayoutGrid} onOpen={setActiveSection} />
           {activeSection === "launcher" && (
             <div className="h-[460px] border-t bg-background/35">
               <Launcher embedded />
@@ -221,8 +226,7 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
             className="flex w-full items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-accent"
           >
             <Home className="size-4 text-muted-foreground" />
-            Home
-          </button>
+            {translateInterface("m3a78695388b3")}</button>
           <div className="border-t" />
           <button
             type="button"
@@ -245,8 +249,7 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
           <div className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="flex items-center gap-3 text-sm">
               <Sun className="size-4 text-muted-foreground" />
-              Theme
-            </span>
+              {translateInterface("mefb52e7172b7")}</span>
             <div className="inline-flex rounded-lg border bg-background p-0.5">
               {THEMES.map(({ mode, Icon, label }) => {
                 const active = (theme ?? "system") === mode;
@@ -287,7 +290,7 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="Account menu"
+        aria-label={translateInterface("m7fb5995bca43")}
         className="relative inline-flex size-12 items-center justify-center rounded-2xl transition-colors hover:bg-accent"
       >
         <Avatar className="size-8">

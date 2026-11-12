@@ -1,0 +1,11 @@
+{
+  "[\"src/app/permissions/approve/permission-approval-form.tsx\",\"approved\"]": 1,
+  "[\"src/app/permissions/approve/permission-approval-form.tsx\",\"approving\"]": 1,
+  "[\"src/app/permissions/approve/permission-approval-form.tsx\",\"denied\"]": 1,
+  "[\"src/app/permissions/approve/permission-approval-form.tsx\",\"error\"]": 1,
+  "[\"src/components/timeline/timeline-entry-detail.tsx\",\"&nbsp;\"]": 1,
+  "[\"src/components/timeline/timeline-info-card.tsx\",\"error\"]": 1,
+  "[\"src/components/timeline/timeline-info-card.tsx\",\"loading\"]": 1,
+  "[\"src/components/timeline/timeline-info-card.tsx\",\"none\"]": 1,
+  "[\"src/components/timeline/timeline-info-card.tsx\",\"ready\"]": 1
+}

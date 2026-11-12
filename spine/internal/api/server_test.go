@@ -62,18 +62,6 @@ func TestHandleVersion(t *testing.T) {
 	}
 }
 
-func TestHandleUpdatesCheck_MethodNotAllowed(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("POST", "/api/updates/check", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdatesCheck(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 func TestHandleAuthVerify_MethodNotAllowed(t *testing.T) {
 	s := testServer()
 	req := httptest.NewRequest("GET", "/api/auth/verify", nil)
@@ -362,30 +350,6 @@ func TestHandleYouEyeConfig_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleUpdateSelf_MethodNotAllowed(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("GET", "/api/update/self", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdateSelf(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-func TestHandleUpdateControl_MethodNotAllowed(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("GET", "/api/update/control", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdateControl(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 // ─── /api/status ─────────────────────────────────────────────────────────────
 
 func TestHandleStatus_Returns200(t *testing.T) {
@@ -437,73 +401,6 @@ func TestHandleStatus_ContentType(t *testing.T) {
 }
 
 // ─── /api/updates/check ───────────────────────────────────────────────────────
-
-func TestHandleUpdatesCheck_Returns200(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("GET", "/api/updates/check", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdatesCheck(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-}
-
-func TestHandleUpdatesCheck_ResponseShape(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("GET", "/api/updates/check", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdatesCheck(w, req)
-
-	var body map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("response is not valid JSON: %v", err)
-	}
-
-	// Required top-level keys
-	for _, key := range []string{"checked_at", "spine", "control", "ui", "incus", "system", "apps"} {
-		if _, ok := body[key]; !ok {
-			t.Errorf("response missing key %q", key)
-		}
-	}
-}
-
-func TestHandleUpdatesCheck_SpineHasCurrentVersion(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("GET", "/api/updates/check", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdatesCheck(w, req)
-
-	var body map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&body) //nolint:errcheck
-
-	spineRaw, ok := body["spine"]
-	if !ok {
-		t.Fatal("body[\"spine\"] missing")
-	}
-	spine, ok := spineRaw.(map[string]interface{})
-	if !ok {
-		t.Fatalf("body[\"spine\"] not a map: %T", spineRaw)
-	}
-	if spine["current"] != "0.2.6.1" {
-		t.Errorf("spine.current = %v, want %q", spine["current"], "0.2.6.1")
-	}
-}
-
-func TestHandleUpdatesCheck_MethodNotAllowed_POST(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest("POST", "/api/updates/check", nil)
-	w := httptest.NewRecorder()
-
-	s.handleUpdatesCheck(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /api/updates/check = %d, want 405", w.Code)
-	}
-}
 
 // ─── /api/config ─────────────────────────────────────────────────────────────
 
@@ -637,74 +534,6 @@ func TestHandleYouEyeConfig_PATCH_UpdatesSiteName(t *testing.T) {
 	json.NewDecoder(vw.Body).Decode(&vBody) //nolint:errcheck
 	if vBody["site_name"] != "Patched" {
 		t.Errorf("after PATCH, site_name = %v, want %q", vBody["site_name"], "Patched")
-	}
-}
-
-func TestHandleYouEyeConfig_PATCH_UpdatesReleaseSource(t *testing.T) {
-	cleanupSite := setupTestConfig(t, "site_name: Original\ndomain: test.local\n")
-	defer cleanupSite()
-
-	spineDir := t.TempDir()
-	spinePath := filepath.Join(spineDir, "config.yaml")
-	if err := os.WriteFile(spinePath, []byte("releases:\n  repo_url: \"https://github.com/youeye-platform/YouEye\"\n"), 0644); err != nil {
-		t.Fatalf("write spine config: %v", err)
-	}
-	if _, err := config.LoadFromFile(spinePath); err != nil {
-		t.Fatalf("load spine config: %v", err)
-	}
-	defer config.Reset()
-
-	s := testServer()
-	body := `{"release_source":{"repo_url":"https://forge.example.org/acme/YouEye.git"}}`
-	req := httptest.NewRequest("PATCH", "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	s.handleYouEyeConfig(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
-	}
-	if got := s.cfg.CoreReleaseRepo().RepoURL; got != "https://forge.example.org/acme/YouEye" {
-		t.Fatalf("runtime RepoURL = %q", got)
-	}
-	saved, err := os.ReadFile(spinePath)
-	if err != nil {
-		t.Fatalf("read spine config: %v", err)
-	}
-	if !strings.Contains(string(saved), "repo_url: https://forge.example.org/acme/YouEye") {
-		t.Fatalf("spine config did not persist normalized repo URL:\n%s", string(saved))
-	}
-
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
-	cfg, ok := resp["config"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("config missing from response: %v", resp)
-	}
-	source, ok := cfg["release_source"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("release_source missing from response: %v", cfg)
-	}
-	if source["repo_url"] != "https://forge.example.org/acme/YouEye" {
-		t.Errorf("response repo_url = %v", source["repo_url"])
-	}
-}
-
-func TestHandleYouEyeConfig_PATCH_InvalidReleaseSource(t *testing.T) {
-	cleanup := setupTestConfig(t, "site_name: Original\ndomain: test.local\n")
-	defer cleanup()
-
-	s := testServer()
-	body := `{"release_source":{"repo_url":"not-a-url"}}`
-	req := httptest.NewRequest("PATCH", "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	s.handleYouEyeConfig(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
 	}
 }
 

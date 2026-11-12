@@ -1,0 +1,26 @@
+{
+  "schema": "youeye.build-inputs.v1",
+  "version": "0.6.1-rc.1",
+  "debian_snapshot": "20260805T142647Z",
+  "minimum_current_version": "0.6.1-rc.1",
+  "components": {
+    "spine": {
+      "version": "0.6.1-rc.1",
+      "artifact_sha256": "dd85a58ebdab0465e7fec1ed57cc23822564bd105f33790c659debd3dbc2f355",
+      "source_date_epoch": 1788934628,
+      "source_tree": "e7befe40fc6de83e7b86b424b19a41425eca57d4"
+    },
+    "control_panel": {
+      "version": "0.6.1-rc.1",
+      "artifact_sha256": "64414674ec719b5643d43956968ef65500182c50da28e305b635b3795acddda7",
+      "source_date_epoch": 1788934628,
+      "source_tree": "37e9f6ddeec3d32fa4780217652e6b854278f507"
+    },
+    "ui": {
+      "version": "0.6.1-rc.1",
+      "artifact_sha256": "35d42e3c8a423ccec94f4d42d855d9c805c2eb15145e2b01d1c05fca989c7fa3",
+      "source_date_epoch": 1788934628,
+      "source_tree": "37e9f6ddeec3d32fa4780217652e6b854278f507"
+    }
+  }
+}

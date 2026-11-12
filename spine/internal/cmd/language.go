@@ -96,11 +96,6 @@ func resolveLanguageCode(input string) (string, error) {
 }
 
 func showLanguage() error {
-	cfg, err := loadBranchConfig()
-	if err != nil {
-		return err
-	}
-
 	// Language is stored in youeye.yaml alongside other config.
 	// We read it via the raw YAML to get the language field.
 	langCfg, err := loadLanguageFromConfig()
@@ -120,7 +115,6 @@ func showLanguage() error {
 		return nil
 	}
 
-	_ = cfg // suppress unused warning — we already loaded config for validation
 	fmt.Printf("System language: %s (%s)\n", name, lang)
 	return nil
 }
@@ -196,13 +190,7 @@ func setLanguage(input string) error {
 // loadLanguageFromConfig reads just the language field from youeye.yaml.
 // Returns empty string if not set (caller should treat as "en").
 func loadLanguageFromConfig() (string, error) {
-	cfg, err := loadBranchConfig()
-	if err != nil {
-		return "", err
-	}
-	_ = cfg
-
-	// Read raw YAML to get language field (branchConfig doesn't have it)
+	// Read raw YAML to get the language field.
 	data, err := readYouEyeConfigRaw()
 	if err != nil {
 		return "", nil // file doesn't exist yet — default to empty

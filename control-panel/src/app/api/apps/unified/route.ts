@@ -28,7 +28,6 @@ import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
-import { componentUpdatePresentation } from '@/lib/updates/presentation';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -55,6 +54,7 @@ export interface UnifiedApp {
   /** False when an installed user app was intentionally turned off */
   enabled?: boolean;
   desiredState?: 'running' | 'stopped';
+  serviceCredentialState?: 'pending' | 'ready' | 'revoked';
   databaseMode?: 'shared' | 'own' | 'none';
   /** OCI update available */
   updateAvailable: boolean;
@@ -66,12 +66,11 @@ export interface UnifiedApp {
   managementLinks?: Array<{ label: string; href: string }>;
   /** Health check status for Market-installed/native apps */
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
-  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
   failingLevel?: 'L1' | 'L2' | 'L3';
   healthDetail?: string | null;
   autoRestart?: boolean;
   /** Per-app release channel key. Omitted for external and infrastructure apps. */
-  updateChannelKey?: string;
   /** Last health check timestamp */
   healthCheckedAt?: string | null;
 }
@@ -127,10 +126,9 @@ export async function GET() {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
+    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
-      spineClient.checkUpdates(),
       listInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
@@ -143,7 +141,6 @@ export async function GET() {
     );
 
     const status = spineStatus.status === 'fulfilled' ? spineStatus.value : null;
-    const updates = spineUpdates.status === 'fulfilled' ? spineUpdates.value : null;
     const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
     const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
     const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
@@ -248,27 +245,7 @@ export async function GET() {
         }
       }
 
-      // Spine-managed update detection
-      if (def.updatedBy === 'spine' && updates) {
-        if (def.id === 'spine' && updates.spine) {
-          const presentation = componentUpdatePresentation(updates.spine);
-          updateAvailable = presentation.available;
-          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
-        }
-        if (def.id === 'control-panel' && updates.control) {
-          const presentation = componentUpdatePresentation(updates.control);
-          updateAvailable = presentation.available;
-          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
-        }
-        if (def.id === 'incus' && updates.incus?.upgradeable) {
-          updateAvailable = true;
-          updateInfo = 'System package upgrade available';
-        }
-        if (def.id === 'host-system' && updates.system && updates.system.upgradeable_count > 0) {
-          updateAvailable = true;
-          updateInfo = `${updates.system.upgradeable_count} packages upgradeable`;
-        }
-      }
+      // Spine, the Control Panel and the UI update with the System release (Settings → System).
 
       // Market system apps (Caddy/Pi-Hole/Postgres): version + update come from
       // the Market system manifest plan (pinned), never the moving-tag checker.
@@ -312,12 +289,6 @@ export async function GET() {
         failingLevel: installedApp?.failingLevel,
         healthDetail: installedApp?.healthDetail ?? null,
         healthCheckedAt: installedApp?.healthCheckedAt ?? null,
-        updateChannelKey:
-          def.releaseChannelKey ? def.releaseChannelKey
-          : def.id === 'spine' && status?.runtime?.kind === 'mutable-host' ? 'spine'
-          : def.id === 'control-panel' ? 'control'
-          : def.id === 'ui' ? 'ui'
-          : undefined,
       };
     });
 
@@ -409,6 +380,7 @@ export async function GET() {
         status,
         enabled,
         desiredState: enabled ? 'running' as const : 'stopped' as const,
+        serviceCredentialState: meta.serviceCredentialState,
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
@@ -418,7 +390,6 @@ export async function GET() {
         healthDetail: dbEntry?.healthDetail ?? null,
         healthCheckedAt: dbEntry?.healthCheckedAt ?? null,
         autoRestart: meta.autoRestart !== false,
-        updateChannelKey: manifest?.integration === 'native' ? `app:${meta.appId}` : undefined,
       };
     });
 

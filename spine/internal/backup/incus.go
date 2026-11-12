@@ -72,17 +72,23 @@ type IncusInstanceImportRequest struct {
 	Name        string `json:"name"`
 	Pool        string `json:"pool"`
 	Network     string `json:"network"`
+	Offline     bool   `json:"offline,omitempty"`
 }
 
 func incusInstanceImportArgs(request IncusInstanceImportRequest) ([]string, error) {
-	if !incusNamePattern.MatchString(request.Name) || !incusNamePattern.MatchString(request.Pool) || !incusNamePattern.MatchString(request.Network) {
+	if !incusNamePattern.MatchString(request.Name) || !incusNamePattern.MatchString(request.Pool) ||
+		(!request.Offline && !incusNamePattern.MatchString(request.Network)) ||
+		(request.Offline && (request.Network != "" || !strings.HasPrefix(request.Name, "ye-retained-"))) {
 		return nil, fmt.Errorf("invalid Incus instance import target")
 	}
-	return []string{
+	args := []string{
 		"import", request.ArchivePath, request.Name,
 		"--storage", request.Pool,
-		"--device", "eth0,network=" + request.Network,
-	}, nil
+	}
+	if !request.Offline {
+		args = append(args, "--device", "eth0,network="+request.Network)
+	}
+	return args, nil
 }
 
 func validateIncusPlan(runtimes []IncusRuntimeRef, volumes []IncusVolumeRef) error {
@@ -498,7 +504,7 @@ func ImportIncusInstance(request IncusInstanceImportRequest) error {
 	if exec.Command("incus", "info", request.Name).Run() == nil {
 		return fmt.Errorf("target instance already exists")
 	}
-	if exec.Command("incus", "network", "show", request.Network).Run() != nil {
+	if !request.Offline && exec.Command("incus", "network", "show", request.Network).Run() != nil {
 		return fmt.Errorf("target instance network is unavailable")
 	}
 	if err := runIncus(args...); err != nil {

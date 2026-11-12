@@ -91,13 +91,14 @@ export const PostDeployStepSchema = z.object({
   timeout: z.number().int().positive().default(30_000),
 });
 
-// ─── Container Source (LXD-only release repo deploy) ───────
+// ─── Container Source (LXD native app runtime) ─────────────
+// The archive is the app's product release on the box's channel; `repo` is
+// informational only and never used to locate releases.
 
 export const ContainerSourceSchema = z.object({
-  repo: z.string().min(1),
+  repo: z.string().min(1).optional(),
   nodeVersion: z.string().optional(),
   appDir: z.string().default('/opt/app'),
-  tagPrefix: z.string().optional(),
   artifactSHA256: z.string().regex(/^[0-9a-fA-F]{64}$/, 'artifactSHA256 must be a SHA-256 digest').optional(),
 });
 
@@ -225,6 +226,7 @@ export const SSOSetupSchema = z.object({
 export const SSOSchema = z.object({
   type: z.enum(['oauth2', 'ldap']).default('oauth2'),
   callback_path: z.string().min(1),
+  backchannel_logout_path: z.string().regex(/^\/(?!\/)[^?#]*$/).optional(),
   entry_url: z.string().optional(),
   additional_callbacks: z.array(z.string()).default([]),
   adminMapping: AdminMappingSchema.optional(),
@@ -565,6 +567,10 @@ export const AppManifestSchema = z
 
     metadata: MetadataSchema,
     database: DatabaseSchema.optional(),
+    // Declaration of app-enforced UUID namespaces, never an admission grant.
+    data_ownership: z.object({
+      per_user: z.literal('identity_uuid'),
+    }).strict().optional(),
     env_mapping: z.record(z.string(), z.string()).optional().default({}),
     containers: z.array(ContainerSchema).min(1),
 
@@ -603,15 +609,6 @@ export const AppManifestSchema = z
     },
     { message: 'Multi-container apps must have exactly one primary container' }
   )
-  .refine(
-    (data) => {
-      for (const c of data.containers) {
-        if (c.type === 'lxd' && c.source && !c.source.repo) return false;
-      }
-      return true;
-    },
-    { message: 'LXD containers with source must specify a repo' }
-  )
   .superRefine((data, ctx) => {
     // F2: roleClaim scope coherence check at schema level
     if (data.sso?.adminMapping?.type === 'roleClaim') {
@@ -633,15 +630,19 @@ export const AppManifestSchema = z
 
 // ─── Catalog Schema ───────────────────────────────────────
 
+const CatalogRepositoryRefSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/)
+  .refine((ref) => !ref.includes('..') && !ref.includes('//') && !ref.endsWith('/'), 'Unsafe repository ref');
+
 export const CatalogEntrySchema = z.object({
   id: z.string().min(1),
   file: z.string().optional(),
   repo: z.string().optional(),
+  branch: CatalogRepositoryRefSchema.optional(),
   /**
    * New per-app folder layout: the app's folder in this store (e.g. `apps/redlib`). The
    * manifest is read from `<path>/<manifest>` and assets (icon.svg, screenshots/) are
-   * resolved relative to `<path>/`. Coexists with the legacy `file:`/`repo:` fields — an
-   * entry uses exactly one of `path` | `file` | `repo`.
+   * resolved relative to `<path>/`. An entry uses exactly one of `path` | `file` | `repo`,
+   * except an official native entry, which names only its id (`integration: native`).
    */
   path: z.string().optional(),
   manifest: z.string().default('youeye-app.yaml'),
@@ -671,6 +672,7 @@ export const IntegrationCatalogEntrySchema = z.object({
   id: z.string().min(1),
   file: z.string().optional(),
   repo: z.string().optional(),
+  branch: CatalogRepositoryRefSchema.optional(),
   manifest: z.string().default('youeye-integration.yaml'),
   latestVersion: z.string().optional(),
   targetAppId: z.string().optional(),

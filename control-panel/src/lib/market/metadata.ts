@@ -63,11 +63,11 @@ async function secureMetadataDirectory(appId: string, baseDir = BASE_DIR): Promi
   return directory;
 }
 
-export async function saveInstallMetadata(meta: InstallMetadata): Promise<void> {
+async function saveMetadataDocument(meta: InstallMetadata, filename: 'install.json' | 'retained.json'): Promise<void> {
   const dir = metadataDir(meta.appId);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await secureMetadataDirectory(meta.appId);
-  const destination = metadataPath(meta.appId);
+  const destination = path.join(dir, filename);
   const temporary = path.join(dir, `.install-${randomUUID()}.tmp`);
   try {
     const handle = await open(temporary, 'wx', 0o600);
@@ -91,16 +91,27 @@ export async function saveInstallMetadata(meta: InstallMetadata): Promise<void> 
   }
 }
 
-async function readInstallMetadataFromBase(appId: string, baseDir: string): Promise<InstallMetadata | null> {
+export async function saveInstallMetadata(meta: InstallMetadata): Promise<void> {
+  await saveMetadataDocument(meta, 'install.json');
+}
+
+export async function saveRetainedInstallMetadata(meta: InstallMetadata): Promise<void> {
+  await saveMetadataDocument(meta, 'retained.json');
+}
+
+async function readInstallMetadataFromBase(
+  appId: string, baseDir: string, filename: 'install.json' | 'retained.json' = 'install.json',
+): Promise<InstallMetadata | null> {
   try {
     await secureMetadataDirectory(appId, baseDir);
-    const file = metadataPath(appId, baseDir);
+    const file = path.join(metadataDir(appId, baseDir), filename);
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     let data: string;
     try {
       const fileStat = await handle.stat();
       if (!fileStat.isFile()
         || fileStat.uid !== effectiveUid()
+        || fileStat.size > 4 * 1024 * 1024
         || (fileStat.mode & 0o777) !== 0o600) {
         throw new Error(`Install metadata permissions are unsafe for ${appId}`);
       }
@@ -124,6 +135,15 @@ async function readInstallMetadataFromBase(appId: string, baseDir: string): Prom
 
 export async function readInstallMetadata(appId: string): Promise<InstallMetadata | null> {
   return readInstallMetadataFromBase(appId, BASE_DIR);
+}
+
+export async function readRetainedInstallMetadata(appId: string): Promise<InstallMetadata | null> {
+  return readInstallMetadataFromBase(appId, BASE_DIR, 'retained.json');
+}
+
+export async function removeRetainedInstallMetadata(appId: string): Promise<void> {
+  await secureMetadataDirectory(appId);
+  await rm(path.join(metadataDir(appId), 'retained.json'), { force: true });
 }
 
 // Direct export for isolated filesystem regression coverage. Production
@@ -185,7 +205,7 @@ export async function removeInstallMetadataRecordAtBaseForTest(
 /**
  * List all installed apps by scanning /var/lib/youeye/app-* directories.
  */
-export async function listInstalledApps(): Promise<InstallMetadata[]> {
+async function listMetadata(filename: 'install.json' | 'retained.json'): Promise<InstallMetadata[]> {
   const results: InstallMetadata[] = [];
 
   try {
@@ -193,7 +213,7 @@ export async function listInstalledApps(): Promise<InstallMetadata[]> {
     for (const entry of entries) {
       if (entry.startsWith('app-')) {
         const appId = entry.slice(4); // Remove 'app-' prefix
-        const meta = await readInstallMetadata(appId);
+        const meta = await readInstallMetadataFromBase(appId, BASE_DIR, filename);
         if (meta) results.push(meta);
       }
     }
@@ -202,4 +222,12 @@ export async function listInstalledApps(): Promise<InstallMetadata[]> {
   }
 
   return results;
+}
+
+export async function listInstalledApps(): Promise<InstallMetadata[]> {
+  return listMetadata('install.json');
+}
+
+export async function listRetainedApps(): Promise<InstallMetadata[]> {
+  return listMetadata('retained.json');
 }

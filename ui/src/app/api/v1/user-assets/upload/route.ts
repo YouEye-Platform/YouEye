@@ -15,7 +15,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
-const ASSET_DIR = join(process.cwd(), "public", "user-assets");
+import { USER_ASSET_DIR as ASSET_DIR, imageExtension } from '@/lib/persistent-assets';
 const MAX_SIZE = 2 * 1024 * 1024; // 2MB
 const ALLOWED_TYPES = [
   "image/png",
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     const userDir = join(ASSET_DIR, session.userId);
     await mkdir(userDir, { recursive: true });
 
-    const ext = file.name.split(".").pop() ?? "png";
+    const ext = imageExtension(file.type);
     const filename = `${type}-${randomUUID()}.${ext}`;
     const filepath = join(userDir, filename);
     const bytes = await file.arrayBuffer();

@@ -30,13 +30,14 @@ func TestPreserveInstallerSeedsAcrossDataMount(t *testing.T) {
 	}{
 		filepath.Join("config", "config.yaml"): {"releases:\n  repo_url: https://forge.example/YouEye\n", 0o600},
 		filepath.Join("config", "youeye.yaml"): {"release:\n  branch: f-installer-deploy-recovery\n", 0o600},
-		"market-source.json":                   {`{"repo":"YE-AppMarket"}`, 0o640},
-		"market-sources.json":                  {`[{"repo":"YE-AppMarket"}]`, 0o644},
 	}
 	for relativePath, fixture := range fixtures {
 		writeSeedFixture(t, root, relativePath, fixture.contents, fixture.mode)
 	}
 	writeSeedFixture(t, root, "unrelated-state", "must not migrate", 0o600)
+	// Market sources are no longer installer seeds: the official Market comes
+	// from the channel index.
+	writeSeedFixture(t, root, "market-source.json", `{"repo":"YE-AppMarket"}`, 0o640)
 
 	hiddenRoot := root + "-before-mount"
 	err := preserveInstallerSeedsAcrossDataMount(root, func() error {
@@ -66,14 +67,16 @@ func TestPreserveInstallerSeedsAcrossDataMount(t *testing.T) {
 			t.Errorf("restored %s mode = %o, want %o", relativePath, got, fixture.mode)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "unrelated-state")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("unrelated pre-mount state migrated into new dataset: %v", err)
+	for _, name := range []string{"unrelated-state", "market-source.json"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s migrated into new dataset: %v", name, err)
+		}
 	}
 }
 
 func TestPreserveInstallerSeedsRestoresAfterMountError(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "var-lib-youeye")
-	writeSeedFixture(t, root, "market-source.json", "source", 0o600)
+	writeSeedFixture(t, root, filepath.Join("config", "config.yaml"), "source", 0o600)
 
 	mountFailure := errors.New("mount verification failed")
 	err := preserveInstallerSeedsAcrossDataMount(root, func() error {
@@ -88,7 +91,7 @@ func TestPreserveInstallerSeedsRestoresAfterMountError(t *testing.T) {
 	if !errors.Is(err, mountFailure) {
 		t.Fatalf("error = %v, want mount failure", err)
 	}
-	contents, readErr := os.ReadFile(filepath.Join(root, "market-source.json"))
+	contents, readErr := os.ReadFile(filepath.Join(root, "config", "config.yaml"))
 	if readErr != nil || string(contents) != "source" {
 		t.Fatalf("seed not restored after mount error: contents=%q err=%v", contents, readErr)
 	}
@@ -132,7 +135,10 @@ func TestCaptureInstallerSeedsRejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
 	writeSeedFixture(t, root, "target", "source", 0o600)
-	if err := os.Symlink(target, filepath.Join(root, "market-source.json")); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "config", "config.yaml")); err != nil {
 		t.Fatal(err)
 	}
 

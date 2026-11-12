@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/youeye-platform/YouEye/spine/internal/channels"
+	"github.com/youeye-platform/YouEye/releasecache"
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
@@ -69,6 +71,14 @@ func DeployControlPanel(cfg *config.Config) error {
 		return fmt.Errorf("existing Control Panel container is an unjournaled ambiguous partial deployment; refusing to overwrite it")
 	}
 	if observation.ready() {
+		// A preserved Incus state can hold an older complete application after
+		// reset. Never give that bundle the newly selected release provenance.
+		if status, manifest, detectErr := appliance.Detect(); detectErr == nil && status.Kind == appliance.RuntimeApplianceImage && manifest != nil && manifest.ReleaseSet != nil {
+			installedVersion := GetInstalledVersion(containerName, appDir)
+			if err := verifyExistingControlVersion(installedVersion, *manifest, systemupdate.CoreBootstrapPath); err != nil {
+				return err
+			}
+		}
 		util.LogSuccess(fmt.Sprintf("Control Panel container '%s' is complete; reconciling it", containerName))
 		if err := RepairControlPanelPortProxy(containerName, port); err != nil {
 			return fmt.Errorf("failed to repair Control Panel localhost proxy: %w", err)
@@ -550,15 +560,10 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	appDir := cfg.Deployment.ControlPanel.AppDir
 	port := cfg.Deployment.ControlPanel.Port
 
-	// Get download URL from release assets.
-	util.LogSubStep("Fetching latest release info...")
-	effectiveChannel, err := controlPanelReleaseChannel(cfg)
+	// The Control Panel is the cp member of the accepted System release.
+	downloadURL, member, err := releases.SelectedCoreArtifact("cp")
 	if err != nil {
-		return fmt.Errorf("failed to load release channel: %w", err)
-	}
-	downloadURL, err := releases.AssetURLForChannel(cfg, effectiveChannel, cfg.Releases.Repositories.ControlPanel, "standalone.tar", cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if err != nil {
-		return fmt.Errorf("failed to get download URL: %w", err)
+		return fmt.Errorf("locate the selected Control Panel: %w", err)
 	}
 
 	util.LogSubStep(fmt.Sprintf("Downloading from %s", downloadURL))
@@ -589,8 +594,8 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	}
 	util.LogSuccess(fmt.Sprintf("Downloaded %.2f MB", float64(written)/1024/1024))
 	defer os.Remove(tmpFile)
-	if err := releases.VerifySignedReleaseArtifact(client, downloadURL, tmpFile, effectiveChannel.ArtifactSHA256); err != nil {
-		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
+	if err := releases.VerifyArtifactFile(tmpFile, member.Artifact); err != nil {
+		return fmt.Errorf("verify Control Panel release artifact: %w", err)
 	}
 
 	// Deploy to container
@@ -618,6 +623,20 @@ func DeployControlPanelApp(cfg *config.Config) error {
 		return err
 	}
 
+	// Staged signed-release bytes remain separate from the installed package.
+	if _, cacheErr := releasecache.Load(releasecache.Root()); cacheErr == nil {
+		if err := util.RunIncusExec(containerName, "mkdir", "-p", "/var/lib/youeye-state"); err != nil {
+			return err
+		}
+		if _, err := util.RunCmdCapture("incus", "file", "push", "--recursive", releasecache.Root(), containerName+"/var/lib/youeye-state/"); err != nil {
+			return fmt.Errorf("stage release transport cache: %w", err)
+		}
+	} else if !os.IsNotExist(cacheErr) {
+		return cacheErr
+	}
+	if err := stageCoreSelection(containerName); err != nil {
+		return err
+	}
 	// Create systemd service
 	util.LogSubStep("Creating systemd service...")
 	jwtSecret := util.GenerateJWTSecret()
@@ -766,50 +785,26 @@ func verifyControlPanelArtifact(containerName, appDir string) error {
 	return nil
 }
 
-func controlPanelReleaseChannel(cfg *config.Config) (channels.Channel, error) {
-	chCfg, err := channels.Load()
-	if err != nil {
-		return channels.Channel{}, err
-	}
-	return chCfg.Effective(channels.ComponentControl, cfg), nil
-}
-
-// recordControlProvenance records the installed Control Panel release into the
-// core provenance file after a deploy. Resolution failures are non-fatal — the
-// deploy already succeeded — but are logged.
+// recordControlProvenance records the installed Control Panel release.
 func recordControlProvenance(cfg *config.Config, containerName, appDir string) {
-	chCfg, err := channels.Load()
+	_, member, err := releases.SelectedCoreArtifact("cp")
 	if err != nil {
-		util.LogDebug(fmt.Sprintf("provenance: load channels failed: %v", err))
+		util.LogDebug(fmt.Sprintf("provenance: selected Control Panel unknown: %v", err))
 		return
 	}
-	cand, err := releases.ResolveComponent(cfg, channels.ComponentControl, cfg.Releases.Repositories.ControlPanel, cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if err != nil {
-		util.LogDebug(fmt.Sprintf("provenance: resolve control failed: %v", err))
-		return
-	}
-	// Prefer the actually-installed package.json version when available.
-	installedVer := GetInstalledVersion(containerName, appDir)
-	ver := cand.Version
-	if installedVer != "" && installedVer != "unknown" {
-		ver = installedVer
-	}
-	_ = chCfg
-	if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
-		Version:        ver,
-		Tag:            cand.Tag,
-		Branch:         cand.Branch,
-		Source:         cand.Source,
-		ArtifactSHA256: cand.ArtifactSHA256,
+	if err := update.WriteProvenance("control", update.ProvenanceEntry{
+		Version:        GetInstalledVersion(containerName, appDir),
+		ArtifactSHA256: member.Artifact.SHA256,
 	}); err != nil {
 		util.LogDebug(fmt.Sprintf("provenance: write control failed: %v", err))
 	}
 }
 
-// GetInstalledVersion gets the version from the installed package.json.
+// GetInstalledVersion reads version.json, which the build writes into the
+// package from YOUEYE_VERSION. package.json carries only a placeholder.
 func GetInstalledVersion(containerName, appDir string) string {
 	out, err := exec.Command("incus", "exec", containerName, "--",
-		"cat", appDir+"/package.json").Output()
+		"cat", appDir+"/version.json").Output()
 	if err != nil {
 		return "unknown"
 	}

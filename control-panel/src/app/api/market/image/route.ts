@@ -2,8 +2,13 @@
  * GET /api/market/image?url=<encoded-url>
  * Proxies external images through the CP to avoid CORS issues.
  * Only allows URLs from trusted domains.
+ *
+ * GET /api/market/image?catalog=<path>
+ * Serves an image from the accepted official catalog.tar (hash-checked).
  */
 
+import { releaseCacheFetch } from '@/lib/releases/cache';
+import { officialCatalogFile } from '@/lib/market/catalog-release';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +29,7 @@ function isTrustedImageURL(raw: string): boolean {
   try {
     const parsed = new URL(raw);
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash
-      && ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain));
+      && (ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)));
   } catch {
     return false;
   }
@@ -34,7 +39,7 @@ async function fetchTrustedImage(raw: string): Promise<Response> {
   let current = raw;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     if (!isTrustedImageURL(current)) throw new Error('Image URL or redirect is not trusted');
-    const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+    const response = await releaseCacheFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
     if (!REDIRECT_STATUSES.has(response.status)) return response;
     if (redirects === 5) throw new Error('Image download exceeded five redirects');
     const location = response.headers.get('location');
@@ -96,6 +101,21 @@ async function fetchImage(imageUrl: string): Promise<Response> {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const catalogPath = searchParams.get('catalog');
+  if (catalogPath) {
+    const media = /\.(svg|png|jpe?g|webp|gif)$/i.exec(catalogPath)?.[1]?.toLowerCase();
+    if (!media) return NextResponse.json({ error: 'Not an image' }, { status: 400 });
+    try {
+      const bytes = await officialCatalogFile(catalogPath);
+      const contentType = media === 'svg' ? 'image/svg+xml' : media === 'jpg' || media === 'jpeg' ? 'image/jpeg' : `image/${media}`;
+      return new NextResponse(new Uint8Array(bytes), {
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" },
+      });
+    } catch (err) {
+      console.warn('[market/image] Catalog image unavailable:', err);
+      return placeholderImageResponse();
+    }
+  }
   const imageUrl = searchParams.get('url');
 
   if (!imageUrl) {

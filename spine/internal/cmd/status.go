@@ -6,12 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
-	"github.com/youeye-platform/YouEye/spine/internal/releases"
-	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 var statusJSON bool
@@ -37,13 +34,7 @@ func runStatus() error {
 		fmt.Printf("System Image:    v%s (image-managed)\n", runtimeStatus.ImageVersion)
 		fmt.Printf("Spine:           v%s (system image)\n", Version)
 	} else {
-		fmt.Printf("Spine:           v%s", Version)
-		if update, newVer := checkSpineUpdate(cfg); update {
-			fmt.Printf(" → v%s available", newVer)
-		} else {
-			fmt.Print(" (latest)")
-		}
-		fmt.Println("")
+		fmt.Printf("Spine:           v%s\n", Version)
 	}
 
 	// Host system
@@ -190,11 +181,6 @@ func runStatus() error {
 	}
 
 	// Suggestions
-	if runtimeStatus.Capabilities.SpineUpdate {
-		if update, _ := checkSpineUpdate(cfg); update {
-			fmt.Println("Run 'youeye update self' to update.")
-		}
-	}
 	if upgrades > 0 {
 		fmt.Println("Run 'youeye update system' to update host OS.")
 	}
@@ -243,95 +229,6 @@ func writeStatusJSON(cfg *config.Config, runtimeStatus appliance.RuntimeStatus, 
 }
 
 func pathExists(path string) bool { _, err := os.Stat(path); return err == nil }
-
-func checkSpineUpdate(cfg *config.Config) (bool, string) {
-	client := releases.NewIPv4Client(30 * time.Second)
-	apiURL := fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
-		cfg.Releases.BaseURL,
-		cfg.Releases.APIPath,
-		cfg.Releases.Organization,
-		cfg.Releases.Repositories.Spine)
-
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		return false, ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return false, ""
-	}
-
-	var rels []struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil || len(rels) == 0 {
-		return false, ""
-	}
-
-	// Read release branch from youeye.yaml
-	branch := ""
-	if data, err := os.ReadFile("/var/lib/youeye/config/youeye.yaml"); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "release_branch:") {
-				branch = strings.TrimSpace(strings.TrimPrefix(line, "release_branch:"))
-				branch = strings.Trim(branch, "\"'")
-				break
-			}
-		}
-	}
-
-	tagPrefix := cfg.Releases.Repositories.SpineTagPrefix
-
-	// Find latest version matching our branch (sort by version numerically)
-	latestVer := ""
-	if branch != "" && branch != "main" {
-		branchSuffix := branch + "-v"
-		var branchVersions []string
-		for _, r := range rels {
-			stripped := r.TagName
-			if tagPrefix != "" {
-				if !strings.HasPrefix(stripped, tagPrefix+"-") {
-					continue
-				}
-				stripped = strings.TrimPrefix(stripped, tagPrefix+"-")
-			}
-			if strings.HasPrefix(stripped, branchSuffix) {
-				branchVersions = append(branchVersions, strings.TrimPrefix(stripped, branchSuffix))
-			}
-		}
-		if len(branchVersions) > 0 {
-			version.SortVersionsDesc(branchVersions)
-			latestVer = branchVersions[0]
-		}
-	}
-	// Fallback to main releases
-	if latestVer == "" {
-		var mainVersions []string
-		for _, r := range rels {
-			stripped := r.TagName
-			if tagPrefix != "" {
-				if !strings.HasPrefix(stripped, tagPrefix+"-") {
-					continue
-				}
-				stripped = strings.TrimPrefix(stripped, tagPrefix+"-")
-			}
-			if len(stripped) >= 2 && stripped[0] == 'v' && stripped[1] >= '0' && stripped[1] <= '9' {
-				mainVersions = append(mainVersions, strings.TrimPrefix(stripped, "v"))
-			}
-		}
-		if len(mainVersions) > 0 {
-			version.SortVersionsDesc(mainVersions)
-			latestVer = mainVersions[0]
-		}
-	}
-
-	if latestVer != "" && version.IsNewer(latestVer, Version) {
-		return true, latestVer
-	}
-	return false, ""
-}
 
 func getOSRelease() string {
 	data, err := os.ReadFile("/etc/os-release")
