@@ -30,7 +30,6 @@ import type {
   RestoreOptions,
   StorageVolumeMeta,
 } from './types';
-import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { createHash, randomUUID } from 'crypto';
 import path from 'path';
@@ -38,32 +37,30 @@ import { resolveVariables, resolveEnvironment } from './variables';
 import { deepestConfigStorageMount, enforceAllConfigFilePermissions, writeAllConfigFiles } from './config-writer';
 import {
   listInstalledApps,
+  listRetainedApps,
   saveInstallMetadata,
   removeInstallMetadata,
   removeInstallMetadataRecord,
   readInstallMetadata,
 } from './metadata';
 import { getInstalledApp, upsertInstalledApp, removeInstalledApp } from './installed-apps';
-import { deployOCIContainer, startOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
+import { deployOCIContainer, startOCIContainer } from '../infrastructure/oci-deployer';
 import { adoptRestoredLXDContainer, deployMarketLXDContainer } from '../infrastructure/lxd-deployer';
 import { execCommand, incusRequest, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from '../infrastructure/resource-policy';
 import { execShell } from '../incus/server';
 import {
-  getOrCreateSecret,
+  getOrCreateAppSecret,
   generatePassword,
   generateSecretKey,
   generateHexToken,
-  readSecret,
-  writeSecret,
+  readAppSecret,
+  writeAppSecret,
+  deleteAllAppSecrets,
 } from '../infrastructure/secrets';
-import { addRoute, getRoutes, removeRoute, removeAppRoutes, addAppRoutes, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
-import type { EntranceConfig } from '../caddy/client';
+import { addRoute, getRoutes, removeRoute, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
-import {
-  executeSSOSteps,
-  StepError,
-} from './sso-engine';
+import { runSetup, setupFor } from './setup-runner';
 import {
   createOAuthClient,
   getIdentityProviderConfig,
@@ -76,10 +73,11 @@ import {
   resolveEnvMapping,
   generateAppToken,
   envToString,
-  coerceInstallParams,
   getPlatformContext,
+  assertYouEyeRequirement,
 } from './platform-env';
-import { getContainerName } from './engine-helpers';
+import { getContainerName, leftoverAppPaths } from './engine-helpers';
+import { assertContainerNamesAvailable, assertInstancesAbsent, deleteOwnedInstance, InstanceOwnershipError } from './instance-ownership';
 import { resolveSharedDatabasePasswordFile } from '@/lib/backup/manifest-values';
 import { CONTAINER_DOMAIN } from './constants';
 import {
@@ -98,10 +96,12 @@ import {
   setAppNetworkNAT,
   withAppNetworkOperationLock,
   AppNetworkOperationConflictError,
+  appContainerAddress,
 } from '../incus/app-network';
-import { injectCaddyRootCA, stageCaddyTrustBundle } from './caddy-ca';
-import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge, pushConnectionsToUI } from '../bridges/manager';
+import { injectCaddyRootCA, removeCaddyTrustBundle, stageCaddyTrustBundle } from './caddy-ca';
+import { activatePendingBridges, pushConnectionsToUI } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
+import { logOperationFailure } from './install-tracker';
 import { getUserById } from '@/lib/identity/store';
 import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import {
@@ -129,6 +129,8 @@ import { assertPrivateCredentialMapping, assertPrivateCredentialConfig } from '.
 interface RollbackContext {
   containerNames: string[];
   appId: string;
+  /** Rollback deletes only instances tagged with this installation. */
+  installationId?: string;
   ssoSlug?: string;
   forwardAuthSlug?: string;
   subdomain?: string;
@@ -177,29 +179,17 @@ async function rollbackInstall(
     try { await revokeAppCredential(ctx.appId); } catch (error) { recordFailure('service credential', error); }
   }
 
-  // 1. Remove containers
+  // 1. Remove containers: the exact names this install created, and only when they carry
+  // this installation's tag. A same-name instance owned by anything else stays untouched.
   for (const name of ctx.containerNames) {
     try {
-      if (!(await containerExists(name))) continue;
-      try {
-        await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 10 });
-        await new Promise((r) => setTimeout(r, 2000));
-      } catch {
-        console.warn(`[engine] Rollback could not confirm stop for container ${name}; delete verification will decide the result`);
-      }
-      const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
-      if (result.type === 'error') throw new Error(result.error || result.status);
-      if (result.type === 'async' && result.operation) {
-        const waited = await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, { timeout: 40_000 });
-        if (waited.type === 'error') throw new Error(waited.error || waited.status);
-      }
-      if (await containerExists(name)) throw new Error('container still exists after delete');
+      await deleteOwnedInstance(name, ctx.installationId ? { appId: ctx.appId, installationId: ctx.installationId } : undefined);
     } catch (err) {
       recordFailure(`container ${name}`, err);
     }
   }
 
-  // 2. Remove Caddy route
+  // 2. Remove Caddy route (exact hostname only)
   if (ctx.subdomain && ctx.domain) {
     try {
       const hostname = `${ctx.subdomain}.${ctx.domain}`;
@@ -209,9 +199,8 @@ async function rollbackInstall(
           await removeRoute(route.id);
         }
       }
-      await removeAppRoutes(ctx.appId);
       const remainingRoutes = await getRoutes();
-      if (remainingRoutes.some((route) => route.hostname === hostname || route.id.startsWith(`app-${ctx.appId}-`))) {
+      if (remainingRoutes.some((route) => route.hostname === hostname)) {
         throw new Error('Caddy routes still exist after rollback removal');
       }
     } catch (err) {
@@ -313,21 +302,20 @@ async function rollbackInstall(
     }
   }
 
-  // 5. Remove generated secrets and new-app data. Install metadata remains the
-  // durable recovery map until every other resource is verified absent.
+  // 5. Remove the generated CA directory (always: it is regenerated on install), and the
+  // generated secrets and new-app data. Install metadata remains the durable recovery map
+  // until every other resource is verified absent.
+  try {
+    await removeCaddyTrustBundle(ctx.appId);
+  } catch (err) {
+    recordFailure('generated CA directory', err);
+  }
   if (!ctx.preserveData) {
     try {
+      await deleteAllAppSecrets(ctx.appId);
       const { rm } = await import('fs/promises');
-      await Promise.all([
-        `/var/lib/youeye/apps/${ctx.appId}`,
-        `/var/lib/youeye/secrets/app-${ctx.appId}`,
-        ...(ctx.dataPaths ?? []),
-      ].map((target) => rm(target, { recursive: true, force: true })));
-      if ([
-        `/var/lib/youeye/apps/${ctx.appId}`,
-        `/var/lib/youeye/secrets/app-${ctx.appId}`,
-        ...(ctx.dataPaths ?? []),
-      ].some((target) => existsSync(target))) {
+      await Promise.all((ctx.dataPaths ?? []).map((target) => rm(target, { recursive: true, force: true })));
+      if ((ctx.dataPaths ?? []).some((target) => existsSync(target))) {
         throw new Error('one or more app data paths remain');
       }
     } catch (err) {
@@ -448,36 +436,15 @@ async function rollbackInstall(
 
 // ─── Helpers ──────────────────────────────────────────────
 
-function getSecretsPath(appId: string): string {
-  return `app-${appId}`;
-}
+/** The install-time toggle for YouEye ID sign-in of an app whose SSO needs a setup file. */
+const IDENTITY_SIGN_IN = 'youeye-id';
 
-const LEGACY_IDENTITY_PROVIDER_INTEGRATION = 'youeye-id';
-
-// Shared storage groups live under one root so members share a filesystem (hardlink-safe).
-
-function hasLegacySSOConfigureIntegration(manifest: AppManifest): boolean {
-  const setupMethod = manifest.sso?.setup?.method;
-  return (
-    (setupMethod === 'api' && (manifest.sso?.setup?.api?.steps?.length ?? 0) > 0) ||
-    (setupMethod === 'cli' && (manifest.sso?.setup?.cli?.steps?.length ?? 0) > 0)
-  );
+function hasSSOSetup(manifest: AppManifest): boolean {
+  return Boolean(manifest.sso && setupFor(manifest, 'sso'));
 }
 
 function getDefaultSelectedIntegrations(manifest: AppManifest): string[] {
-  const ids = new Set<string>();
-
-  for (const integration of manifest.integrations ?? []) {
-    if (integration.required || integration.installByDefault || integration.recommended) {
-      ids.add(integration.id);
-    }
-  }
-
-  if (hasLegacySSOConfigureIntegration(manifest)) {
-    ids.add(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
-  }
-
-  return [...ids];
+  return hasSSOSetup(manifest) ? [IDENTITY_SIGN_IN] : [];
 }
 
 function getSelectedIntegrations(manifest: AppManifest, config: InstallConfig): string[] {
@@ -564,7 +531,6 @@ function managedAIConnection(
 async function provisionManagedAI(
   manifest: AppManifest,
   config: InstallConfig,
-  secretsPath: string,
   rollbackCtx: RollbackContext,
   restored?: RestoredManagedAI,
 ): Promise<NonNullable<InstallMetadata['aiConnection']> | null> {
@@ -581,7 +547,7 @@ async function provisionManagedAI(
     if (externalInstallationId !== restored.externalInstallationId || groupId !== restored.modelGroupId
       || actor.id !== restored.ownerUserId) throw new Error('Restore AI Settings identity changed');
     const current = await readPointerManagedApp(externalInstallationId, actor);
-    const credential = await readSecret(secretsPath, 'pointer_api_key');
+    const credential = await readAppSecret(manifest.metadata.id, 'pointer_api_key');
     assertRestoredManagedAI(manifest.metadata.id, restored, current, credential);
     config.aiSettings = { ...config.aiSettings!, runtimeCredential: credential! };
     return { ...managedAIConnection(config, current), state: restored.state };
@@ -600,8 +566,8 @@ async function provisionManagedAI(
     throw new Error('Pointer did not provide the new application credential');
   }
   rollbackCtx.aiProvisioned = true;
-  await writeSecret(secretsPath, 'pointer_api_key', delivery.credential);
-  const protectedReadBack = await readSecret(secretsPath, 'pointer_api_key');
+  await writeAppSecret(manifest.metadata.id, 'pointer_api_key', delivery.credential);
+  const protectedReadBack = await readAppSecret(manifest.metadata.id, 'pointer_api_key');
   if (protectedReadBack !== delivery.credential) {
     throw new Error('The protected application credential did not read back exactly');
   }
@@ -625,15 +591,13 @@ async function provisionManagedAI(
 
 function shouldEnableSSO(manifest: AppManifest, selectedIntegrations: string[]): boolean {
   if (!manifest.sso) return false;
-  if (!hasLegacySSOConfigureIntegration(manifest)) return true;
-  return selectedIntegrations.includes(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
+  if (!hasSSOSetup(manifest)) return true;
+  return selectedIntegrations.includes(IDENTITY_SIGN_IN);
 }
 
 function oauthScopesForManifest(manifest: AppManifest): string[] {
   const scopes = new Set(['openid', 'profile', 'email', 'groups']);
-  if (manifest.sso?.adminMapping?.type === 'roleClaim') {
-    scopes.add(manifest.sso.adminMapping.claimName);
-  }
+  if (manifest.sso?.role_claim) scopes.add(manifest.sso.role_claim.claim);
   return [...scopes];
 }
 
@@ -654,12 +618,10 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean, managedAI = fals
 
   steps++; // Add Caddy route
 
-  // SSO configure steps
-  const hasConfigureSteps = ssoEnabled && manifest.sso && (
-    (manifest.sso.setup?.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
-    (manifest.sso.setup?.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
-  );
-  if (hasConfigureSteps) steps++;
+  // SSO setup file
+  if (ssoEnabled && hasSSOSetup(manifest)) steps++;
+  // Install setup file
+  if (setupFor(manifest, 'install')) steps++;
 
   steps += 2; // Save metadata + register with UI
   return steps;
@@ -744,14 +706,16 @@ function buildInstallRecoveryMetadata(
   ssoEnabled: boolean,
   restoreOptions?: RestoreOptions,
 ): InstallMetadata {
-  const nativeIdentityIntegrationPlanned = config.plannedNativeIdentityIntegration === true;
-  const hasOwnAccountLogin = ssoEnabled || nativeIdentityIntegrationPlanned;
+  const hasOwnAccountLogin = ssoEnabled;
   const forwardAuthChoice = hasOwnAccountLogin ? config.forwardAuthGate : config.protectWithAccountLogin;
   const forwardAuthEnabled = resolveForwardAuth(manifest, hasOwnAccountLogin, forwardAuthChoice);
   const ssoSlug = ssoEnabled ? `youeye-app-${manifest.metadata.id}` : undefined;
   const installedVersion = manifest.version ?? '';
   return {
+    schema: 'youeye.install.v1',
     appId: manifest.metadata.id,
+    installationId: config.admissionInstallationId,
+    sharedFolders: sharedFoldersOf(manifest),
     lifecycleState: 'installing',
     recoveryPreserveData: Boolean(restoreOptions),
     catalogKey: config.catalogKey || (config.sourceId ? `${config.sourceId}:app:${manifest.metadata.id}` : undefined),
@@ -762,7 +726,7 @@ function buildInstallRecoveryMetadata(
     manifestPath: config.manifestPath,
     manifestRepo: config.manifestRepo,
     manifestBranch: config.manifestBranch,
-    manifestDigest: config.manifestDigest,
+    manifestDigest: manifest.frozen?.digest ?? config.manifestDigest,
     integration: manifest.integration,
     perUserData: manifest.data_ownership?.per_user,
     subdomain: config.subdomain,
@@ -776,12 +740,11 @@ function buildInstallRecoveryMetadata(
     enabled: false,
     desiredState: 'stopped',
     autoRestart: true,
-    entrances: manifest.entrances?.map((entrance) => ({ ...entrance })),
     containers: describeContainers(manifest),
     ssoSlug,
     ssoClientId: ssoSlug,
     forwardAuthSlug: forwardAuthEnabled ? `youeye-fa-${manifest.metadata.id}` : undefined,
-    manifestSource: config.repoUrl || config.sourceRepoUrl || 'market',
+    manifestSource: config.sourceRepoUrl || 'market',
     credentials: manifest.credentials?.length
       ? manifest.credentials.map((credential) => ({
         label: credential.label,
@@ -794,6 +757,7 @@ function buildInstallRecoveryMetadata(
     databaseName: manifest.database?.mode === 'shared' ? manifest.database.name : undefined,
     databaseUser: manifest.database?.mode === 'shared' ? manifest.database.user : undefined,
     databasePasswordFile: manifest.database?.mode === 'shared' ? resolveSharedDatabasePasswordFile(manifest) : undefined,
+    sharedDatabaseCreated: manifest.database?.mode === 'shared' && restoreOptions?.sharedDatabaseCreated ? true : undefined,
     hasSSO: ssoEnabled,
     provides: manifest.provides?.length ? manifest.provides : undefined,
     wants: manifest.wants?.length ? manifest.wants : undefined,
@@ -807,6 +771,13 @@ function buildInstallRecoveryMetadata(
       : undefined,
     usePerAppBridge: true,
   };
+}
+
+/** The shared folders (`shared:` groups) the app mounts; installing it approves them. */
+function sharedFoldersOf(manifest: AppManifest): string[] | undefined {
+  const groups = [...new Set(manifest.containers.flatMap((container) =>
+    container.volumes.map((volume) => volume.storageGroup).filter((group): group is string => Boolean(group))))].sort();
+  return groups.length ? groups : undefined;
 }
 
 function preflightManifestStorage(manifest: AppManifest): void {
@@ -876,14 +847,25 @@ async function preflightInstallResources(
       `Hostname ${hostname} is already reserved by ${durableHostnameCollision.appId}`,
     );
   }
-  const routeCollision = (await getRoutes()).find((route) =>
-    route.hostname === hostname || route.id.startsWith(`app-${appId}-`),
-  );
+  const routeCollision = (await getRoutes()).find((route) => route.hostname === hostname);
   if (routeCollision) {
     throw new AppNetworkOperationConflictError(
       `App ${appId} conflicts with existing route ${routeCollision.id} for ${routeCollision.hostname}`,
     );
   }
+  // Container names are exact and unambiguous: refuse names another installed or retained app
+  // records (app `foo` + sidecar `bar` vs app `foo-bar`), and any name Incus already holds.
+  // A same-name instance is never replaced, reused or deleted.
+  const containerNames = manifest.containers.map((container) =>
+    getContainerName(appId, container.name, manifest.containers.length));
+  try {
+    assertContainerNamesAvailable(appId, containerNames, [...durableApps, ...await listRetainedApps()]);
+    await assertInstancesAbsent(containerNames);
+  } catch (error) {
+    if (error instanceof InstanceOwnershipError) throw new AppNetworkOperationConflictError(error.message);
+    throw error;
+  }
+
   const { getCNAMERecords, getDNSRecords } = await import('../apps/pihole-api');
   const [cnames, dnsRecords] = await Promise.all([getCNAMERecords(), getDNSRecords()]);
   if (cnames.some((record) => record.domain === hostname)
@@ -908,11 +890,9 @@ async function preflightInstallResources(
   }
 
   if (!restoreOptions) {
-    const orphanPath = [
-      `/var/lib/youeye/app-${appId}`,
-      `/var/lib/youeye/apps/${appId}`,
-      `/var/lib/youeye/secrets/app-${appId}`,
-    ].find((candidate) => existsSync(candidate));
+    // The app directory (install.json, secrets) and the generated CA directory; uninstall with
+    // delete-data removes both, so a reinstall passes.
+    const orphanPath = leftoverAppPaths(appId)[0];
     if (orphanPath) {
       throw new AppNetworkOperationConflictError(
         `App ${appId} has retained data without an active install; use supported recovery before retrying`,
@@ -958,88 +938,6 @@ async function readBridgeToken(): Promise<string | null> {
     return readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
   } catch {
     return process.env.UI_BRIDGE_TOKEN ?? null;
-  }
-}
-
-/**
- * Fetch an icon image and return it as a base64 data URI.
- * This inlines the icon at install time so it works on all domains
- * (UI, native app subdomains) without needing a runtime image proxy.
- * Returns null on failure — caller should fall back to the Lucide icon name.
- */
-async function fetchIconAsDataUri(iconRef: string): Promise<string | null> {
-  // Extract the real URL from proxy wrapper if present
-  let url = iconRef;
-  if (iconRef.startsWith('/api/market/image?url=')) {
-    const encoded = iconRef.replace('/api/market/image?url=', '');
-    url = decodeURIComponent(encoded);
-  }
-
-  if (!url.startsWith('http')) return null;
-
-  try {
-    const https = await import('https');
-    const parsed = new URL(url);
-    const isInsecure = false; // GitHub uses valid TLS
-
-    const buffer: Buffer = await new Promise((resolve, reject) => {
-      const options = {
-        hostname: parsed.hostname,
-        port: parsed.port || 443,
-        path: parsed.pathname + parsed.search,
-        method: 'GET',
-        rejectUnauthorized: !isInsecure,
-        timeout: 10_000,
-      };
-
-      const req = https.request(options, (res) => {
-        // Follow redirects
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          const redirectUrl = new URL(res.headers.location, url).href;
-          fetchIconAsDataUri(redirectUrl).then(r => {
-            if (r) {
-              // Return the data URI as a Buffer trick — unwrap in caller
-              resolve(Buffer.from(r, 'utf-8'));
-            } else {
-              reject(new Error('Redirect failed'));
-            }
-          }).catch(reject);
-          return;
-        }
-        if (res.statusCode && res.statusCode >= 400) {
-          reject(new Error(`HTTP ${res.statusCode}`));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-      req.end();
-    });
-
-    // Determine MIME type from URL extension or content
-    const ext = parsed.pathname.split('.').pop()?.toLowerCase();
-    const mimeMap: Record<string, string> = {
-      svg: 'image/svg+xml',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      webp: 'image/webp',
-      gif: 'image/gif',
-      ico: 'image/x-icon',
-    };
-    const mime = mimeMap[ext ?? ''] ?? 'image/png';
-
-    // Check if we got a data URI back from redirect handling
-    const asString = buffer.toString('utf-8');
-    if (asString.startsWith('data:')) return asString;
-
-    return `data:${mime};base64,${buffer.toString('base64')}`;
-  } catch {
-    console.warn('[engine] Failed to inline an app icon');
-    return null;
   }
 }
 
@@ -1293,7 +1191,7 @@ function buildOCIManifest(
   };
 }
 
-// ─── Main Install Function (v2: unified) ──────────────────
+// ─── Main Install Function ────────────────────────────────
 
 export async function installApp(
   manifest: AppManifest,
@@ -1317,6 +1215,8 @@ export async function installApp(
   };
 
   return withAppInventory(() => withAppLifecycle(appId, () => withAppNetworkOperationLock(appId, 'install', async () => {
+    // An app that needs a newer YouEye is refused before anything is created.
+    await assertYouEyeRequirement(manifest);
     if (!restoreOptions) {
       const { prepareRetainedAdoption } = await import('@/lib/admission/retained-data');
       restoreOptions = await prepareRetainedAdoption(manifest, config);
@@ -1329,7 +1229,7 @@ export async function installApp(
     rollbackCtx.aiExternalInstallationId = config.aiSettings?.externalInstallationId;
     const selectedIntegrations = getSelectedIntegrations(manifest, config);
     const ssoEnabled = shouldEnableSSO(manifest, selectedIntegrations);
-    const needsSSO = ssoEnabled || config.plannedNativeIdentityIntegration === true;
+    const needsSSO = ssoEnabled;
     const { getPendingBridgesForTarget } = await import('../bridges/store');
     const pendingIntegrationCount = (await getPendingBridgesForTarget(appId)).length;
     const requiredAddresses = 1 // bridge gateway
@@ -1354,6 +1254,7 @@ export async function installApp(
       { host: `${config.subdomain}.${config.domain}` },
     ] });
     config.admissionInstallationId = admission.installationId;
+    rollbackCtx.installationId = admission.installationId;
     config.admissionDataOwnerId = admission.ownerId;
     config.admissionResourceOwners = await getAdmissionResourceOwners(appId);
     const recoveredNativeContainers = manifest.containers
@@ -1384,6 +1285,7 @@ export async function installApp(
           nat: true,
           operationId,
           requiredAddresses,
+          installationId: admission.installationId,
         });
         await prepareAppEgressAcl(appId, {
           needsSharedDb: dbMode === 'shared',
@@ -1463,13 +1365,12 @@ async function installAppLocked(
   stagedNativeArtifacts: StagedMarketNativeArtifacts,
 ): Promise<void> {
   const appId = manifest.metadata.id;
-  const secretsPath = getSecretsPath(appId);
 
   // Determine SSO support from manifest
   const selectedIntegrations = getSelectedIntegrations(manifest, config);
   const identityConfig = await getIdentityProviderConfig();
   const ssoEnabled = shouldEnableSSO(manifest, selectedIntegrations);
-  const nativeIdentityIntegrationPlanned = config.plannedNativeIdentityIntegration === true;
+  const nativeIdentityIntegrationPlanned = false;
   const totalSteps = countSteps(manifest, ssoEnabled, usesManagedAI(manifest, config));
   let step = 0;
 
@@ -1497,15 +1398,16 @@ async function installAppLocked(
   if (restoreOptions?.skipSecrets) {
     emit(onEvent, step, totalSteps, 'running', 'Reading restored secrets...');
     for (const secret of manifest.secrets) {
-      const secretValue = await readFile(`/var/lib/youeye/app-${appId}/${secret.file}`, 'utf-8');
-      secrets[secret.name] = secretValue.trim();
+      const secretValue = await readAppSecret(appId, secret.name);
+      if (secretValue === null) throw new Error(`Restored secret ${secret.name} is missing`);
+      secrets[secret.name] = secretValue;
     }
     emit(onEvent, step, totalSteps, 'success', 'Secrets read from backup');
   } else {
     emit(onEvent, step, totalSteps, 'running', 'Generating secrets...');
     for (const secret of manifest.secrets) {
       const generator = getGenerator(secret.generator, secret.length);
-      secrets[secret.name] = await getOrCreateSecret(secretsPath, secret.file, generator);
+      secrets[secret.name] = await getOrCreateAppSecret(appId, secret.name, generator);
     }
     emit(onEvent, step, totalSteps, 'success', 'Secrets generated');
   }
@@ -1518,7 +1420,6 @@ async function installAppLocked(
     aiConnection = await provisionManagedAI(
       manifest,
       config,
-      secretsPath,
       rollbackCtx,
       restoreOptions?.restoredManagedAI,
     ) ?? undefined;
@@ -1534,7 +1435,10 @@ async function installAppLocked(
 
   // ── Step 2: Setup shared PostgreSQL ─────────────────────
 
-  let dbPassword = '';
+  // The database password is the app's `db_password` secret (shared or own database).
+  let dbPassword = dbMode === 'own' ? secrets.db_password ?? '' : '';
+  // Whether the shared database and role belong to this installation (uninstall drops only those).
+  let sharedDatabaseCreated = dbMode === 'shared' && Boolean(restoreOptions?.sharedDatabaseCreated);
   if (dbMode === 'shared' && dbName && dbUser) {
     checkCancelled();
     step++;
@@ -1545,6 +1449,13 @@ async function installAppLocked(
       emit(onEvent, step, totalSteps, 'running', 'Setting up shared database...');
       try {
         await setupSharedPostgres(dbName, dbUser, dbPassword, rollbackCtx);
+        sharedDatabaseCreated = true;
+        const created = await readInstallMetadata(appId);
+        if (!created || created.lifecycleState !== 'installing') {
+          throw new Error('Durable install recovery metadata is unavailable after database creation');
+        }
+        created.sharedDatabaseCreated = true;
+        await saveInstallMetadata(created);
         emit(onEvent, step, totalSteps, 'success', 'Database ready');
       } catch (err) {
         emit(onEvent, step, totalSteps, 'error', 'Failed to setup database', 'Shared database setup failed');
@@ -1570,15 +1481,12 @@ async function installAppLocked(
       // Build redirect URIs from callback_path + additional_callbacks
       const redirectUris: string[] = [];
       const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
-      prelimCtx.secrets = secrets;
+      prelimCtx.secret = secrets;
 
-      if (manifest.sso.callback_path) {
-        const resolvedCallbackPath = resolveVariables(manifest.sso.callback_path, prelimCtx);
-        redirectUris.push(`${appUrl}${resolvedCallbackPath}`);
-      }
-
-      for (const cb of manifest.sso.additional_callbacks || []) {
-        redirectUris.push(cb);
+      // Callbacks are paths on the app itself (never another host), or custom-scheme URIs of
+      // the app's own clients (e.g. app.immich:///oauth-callback), which are used as written.
+      for (const callback of [manifest.sso.callback_path, ...manifest.sso.additional_callbacks]) {
+        redirectUris.push(callback.startsWith('/') ? `${appUrl}${resolveVariables(callback, prelimCtx)}` : callback);
       }
 
       rollbackCtx.ssoSlug = ssoSlug;
@@ -1590,6 +1498,7 @@ async function installAppLocked(
         backchannelLogoutUri: manifest.sso.backchannel_logout_path
           ? `${appUrl}${manifest.sso.backchannel_logout_path}` : undefined,
         scopes: oauthScopesForManifest(manifest),
+        roleClaim: manifest.sso.role_claim ?? null,
       });
 
       ssoClientId = result.clientId;
@@ -1638,22 +1547,14 @@ async function installAppLocked(
 
   // ── Step 5: Build canonical context for the pre-reserved bridge ──
 
-  const wantsInternet = manifest.containers.some(c => c.network === 'internet')
-    || (manifest.internet?.hosts?.length ?? 0) > 0;
+  // `internet: true` is NAT on for the app network; there is no per-host allowlist.
+  const wantsInternet = manifest.containers.some(c => c.network === 'internet');
 
   await prepareCredentialForAppInstall(appId, appServiceCredentials);
   rollbackCtx.credentialProvisioned = true;
   const appToken = await generateAppToken(appId);
   const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken, !!appBridgeName);
-  ctx.secrets = secrets;
-
-  // Populate installParams with type coercion
-  if (config.installParams) {
-    ctx.installParams = coerceInstallParams(
-      config.installParams,
-      manifest.installParams || [],
-    );
-  }
+  ctx.secret = secrets;
 
   // Resolve env_mapping once — used for all containers
   const envFromMapping = manifest.env_mapping
@@ -1676,6 +1577,10 @@ async function installAppLocked(
   const identityTrustBundle = ssoEnabled || nativeIdentityIntegrationPlanned
     ? await stageCaddyTrustBundle(appId)
     : undefined;
+
+  // Every instance this install creates carries the installation's ownership tags.
+  if (!config.admissionInstallationId) throw new Error('Installation id is unavailable before container deployment');
+  const owner = { appId, installationId: config.admissionInstallationId };
 
   // Build NIC device config for per-app bridge (if available)
   let appNIC: Record<string, Record<string, string>> | undefined;
@@ -1715,8 +1620,8 @@ async function installAppLocked(
             image: containerSpec.image,
             imageServer: 'https://images.linuxcontainers.org',
             imageProtocol: 'simplestreams',
-            nodeVersion: source.nodeVersion || '22.x',
-            appDir: source.appDir || '/opt/app',
+            nodeVersion: `${source.node}.x`,
+            appDir: '/opt/app',
             port: containerSpec.port || 3000,
             volumes: volumesForContainer(storageVolumes, containerName).map((volume) => ({
               kind: 'custom' as const,
@@ -1733,7 +1638,7 @@ async function installAppLocked(
             await copyRetainedRuntime({ appId, installationId: config.admissionInstallationId!,
               ownerId: retainedRuntime.ownerId, sourceName: containerName,
               retainedName: retainedRuntime.name, pool: retainedRuntime.pool });
-            await adoptRestoredLXDContainer(lxdSpec, appNIC);
+            await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
           } else if (recoveredRuntime) {
             const recoveryNetwork = appNIC?.eth0?.network;
             if (!recoveryNetwork) throw new Error('Recovered native runtime has no target app network');
@@ -1743,31 +1648,26 @@ async function installAppLocked(
               pool: recoveredRuntime.pool,
               network: recoveryNetwork,
             });
-            await adoptRestoredLXDContainer(lxdSpec, appNIC);
+            await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
           } else {
             if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${containerSpec.name}`);
-            await deployMarketLXDContainer(lxdSpec, {}, stagedArtifact, appNIC);
+            await deployMarketLXDContainer(lxdSpec, {}, stagedArtifact, appNIC, owner);
           }
 
           // Write env file to LXD container
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv };
+          const fullEnv = isPrimary ? { ...envFromMapping, ...staticEnv } : staticEnv;
           assertPrivateCredentialMapping(fullEnv, appToken);
           await writeEnvToContainer(containerName, fullEnv);
 
           // Restart service to pick up env
           await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 15_000 });
 
-          // Post-deploy commands
-          if (!retainedRuntime && containerSpec.postDeploy && containerSpec.postDeploy.length > 0) {
-            for (const cmd of containerSpec.postDeploy) {
-              await execShell(containerName, cmd.exec, { timeout: cmd.timeout });
-            }
-          }
         } else {
           // ── OCI container deployment ─────────────────
+          // The app's env goes to its own container; a sidecar gets only its own env.
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv };
+          const fullEnv = isPrimary ? { ...envFromMapping, ...staticEnv } : staticEnv;
           assertPrivateCredentialMapping(fullEnv, appToken);
           // Trust the YouEye root CA for SERVER-SIDE HTTPS to YouEye-managed services — chiefly the
           // identity provider's OIDC discovery (https://id.<domain>/.../.well-known/openid-configuration),
@@ -1794,7 +1694,7 @@ async function installAppLocked(
             identityTrustBundle,
           );
           const retainedRuntime = restoreOptions?.retainedRuntimes?.[containerName];
-          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName,
+          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName, owner, signal,
             ...(retainedRuntime ? { retainedRuntime: { appId,
               installationId: config.admissionInstallationId!, ownerId: retainedRuntime.ownerId,
               sourceName: containerName, retainedName: retainedRuntime.name, pool: retainedRuntime.pool } } : {}) });
@@ -1861,29 +1761,22 @@ async function installAppLocked(
         emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
 
         const hcStart = Date.now();
-        let healthy = false;
-        if (containerSpec.healthCheck.type === 'http') {
-          healthy = await waitForAppHealth(
+        const healthy = containerSpec.healthCheck.type === 'postgres'
+          ? await waitForPostgresHealth(containerName, containerSpec.healthCheck.user, containerSpec.healthCheck.timeout)
+          : await waitForAppHealth(
             containerName,
             containerSpec.port || 80,
             containerSpec.healthCheck.path,
             containerSpec.healthCheck.timeout
           );
-        } else if (containerSpec.healthCheck.type === 'postgres') {
-          healthy = await waitForPostgresHealth(
-            containerName,
-            containerSpec.healthCheck.user,
-            containerSpec.healthCheck.timeout
-          );
-        }
 
         const hcDuration = Date.now() - hcStart;
         if (healthy) {
           onEvent({ step, totalSteps, status: 'success', message: `${containerName} is healthy`, duration: hcDuration });
         } else {
-          const hcUrl = containerSpec.healthCheck.type === 'http'
-            ? `http://${containerName}:${containerSpec.port || 80}${containerSpec.healthCheck.path || '/'}`
-            : `postgres://${containerName}`;
+          const hcUrl = containerSpec.healthCheck.type === 'postgres'
+            ? `postgres://${containerName}`
+            : `http://${containerName}:${containerSpec.port || 80}${containerSpec.healthCheck.path || '/'}`;
           onEvent({
             step,
             totalSteps,
@@ -1952,12 +1845,7 @@ async function installAppLocked(
 
   try {
 
-  // ── Step 7: SSO Configure Steps ─────────────────────────
-
-  const hasConfigureSteps = ssoEnabled && manifest.sso?.setup && (
-    (manifest.sso.setup.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
-    (manifest.sso.setup.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
-  );
+  // ── Step 7: Setup files (install, then SSO) ─────────────
 
   // Inject Caddy root CA into OCI containers that use native identity, so they
   // can reach YouEye-managed HTTPS services such as YouEye ID.
@@ -1970,52 +1858,32 @@ async function installAppLocked(
     }
   }
 
-  if (hasConfigureSteps) {
+  const setupContainers = Object.fromEntries(manifest.containers.map((containerSpec) => [
+    containerSpec.name, getContainerName(appId, containerSpec.name, manifest.containers.length),
+  ]));
+  for (const purpose of ['install', 'sso'] as const) {
+    if (purpose === 'sso' && !ssoEnabled) continue;
+    const file = setupFor(manifest, purpose);
+    if (!file) continue;
     checkCancelled();
-    // Get primary container IP for SSO configuration
-    const primaryIP = await getContainerIP(primaryContainerName);
-    if (primaryIP) {
-      ctx.container = { ip: primaryIP, port: primaryPort };
-    }
-
     step++;
-    emit(onEvent, step, totalSteps, 'running', `Configuring ${manifest.metadata.name} SSO...`);
+    const label = purpose === 'sso' ? `${manifest.metadata.name} SSO` : manifest.metadata.name;
+    emit(onEvent, step, totalSteps, 'running', `Configuring ${label} (${file.name})...`);
     try {
-      if (manifest.sso!.setup?.method === 'cli' && manifest.sso!.setup.cli?.steps) {
-        // CLI-based SSO setup: exec commands in primary container
-        for (const cliStep of manifest.sso!.setup.cli.steps) {
-          const resolvedCmd = resolveVariables(cliStep.exec, ctx);
-          await execShell(primaryContainerName, resolvedCmd, { timeout: cliStep.timeout });
-        }
-      } else {
-        // API-based SSO setup
-        await executeSSOSteps(manifest.sso!, ctx);
-      }
-      emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} SSO configured`);
-
-      // F2: Runtime roleClaim scope warning
-      if (manifest.sso?.adminMapping?.type === 'roleClaim') {
-        const { checkRoleClaimScope } = await import('./validator');
-        const scopeWarning = checkRoleClaimScope(manifest);
-        if (scopeWarning) {
-          onEvent({
-            step,
-            totalSteps,
-            status: 'warning',
-            message: scopeWarning.message,
-            detail: scopeWarning.detail,
-          });
-        }
-      }
+      await runSetup(manifest, purpose, {
+        appId,
+        containers: setupContainers,
+        variables: ctx,
+        onProgress: (message) => emit(onEvent, step, totalSteps, 'running', message),
+      });
+      emit(onEvent, step, totalSteps, 'success', `${label} configured`);
     } catch (err) {
-      const errorContext = err instanceof StepError ? err.errorContext : undefined;
       onEvent({
         step,
         totalSteps,
         status: 'error',
-        message: 'SSO configuration failed',
-        detail: 'Identity integration configuration failed',
-        errorContext,
+        message: `${file.name} failed`,
+        detail: err instanceof Error ? err.message : 'Setup file failed',
       });
       throw err;
     }
@@ -2045,38 +1913,20 @@ async function installAppLocked(
 
     const hostname = `${config.subdomain}.${config.domain}`;
 
-    if (manifest.entrances && manifest.entrances.length > 0) {
-      // Multi-entrance routing: each entrance gets its own Caddy route
-      const entrances: EntranceConfig[] = manifest.entrances.map((e) => ({
-        name: e.name,
-        path: e.path || '/',
-        port: e.port,
-        container: e.container,
-        protocol: e.protocol || 'http',
-        authLevel: e.authLevel || 'private',
-        stripPath: e.stripPath || false,
-      }));
-
-      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig, appBridgeName);
-      emit(onEvent, step, totalSteps, 'success', `Routes added: ${entrances.length} entrances for ${hostname}`);
-    } else {
-      // Single-route (standard)
-      // For per-app bridge containers, use IP instead of DNS name.
-      // Caddy's DNS resolver (incusbr0) can't resolve names on app bridges.
-      let routeUpstream = primaryContainerName;
-      if (appBridgeName) {
-        const appIP = await getIncusContainerIP(primaryContainerName);
-        if (appIP) routeUpstream = appIP;
-      }
-      await ensureRoute({
-        hostname,
-        path: '/*',
-        upstream: routeUpstream,
-        port: primaryPort,
-        forwardAuth: forwardAuthConfig,
-      });
-      emit(onEvent, step, totalSteps, 'success', `Route added: ${hostname}`);
+    // For per-app bridge containers, use IP instead of DNS name.
+    // Caddy's DNS resolver (incusbr0) can't resolve names on app bridges.
+    let routeUpstream = primaryContainerName;
+    if (appBridgeName) {
+      routeUpstream = await appContainerAddress(primaryContainerName, appId);
     }
+    await ensureRoute({
+      hostname,
+      path: '/*',
+      upstream: routeUpstream,
+      port: primaryPort,
+      forwardAuth: forwardAuthConfig,
+    });
+    emit(onEvent, step, totalSteps, 'success', `Route added: ${hostname}`);
     await migrateSystemUpstreamsToIPv4();
   } catch (err) {
     emit(onEvent, step, totalSteps, 'error', 'Failed to configure route', 'Caddy route creation or verification failed');
@@ -2090,7 +1940,10 @@ async function installAppLocked(
   const installedVersion = manifest.version ?? '';
 
   const meta: InstallMetadata = {
+    schema: 'youeye.install.v1',
     appId,
+    installationId: config.admissionInstallationId,
+    sharedFolders: sharedFoldersOf(manifest),
     lifecycleState: 'installing',
     recoveryPreserveData: Boolean(restoreOptions),
     storageVolumes,
@@ -2102,7 +1955,7 @@ async function installAppLocked(
     manifestPath: config.manifestPath,
     manifestRepo: config.manifestRepo,
     manifestBranch: config.manifestBranch,
-    manifestDigest: config.manifestDigest,
+    manifestDigest: manifest.frozen?.digest ?? config.manifestDigest,
     nativeArtifacts: describeNativeArtifacts(stagedNativeArtifacts),
     integration: manifest.integration,
     perUserData: manifest.data_ownership?.per_user,
@@ -2111,18 +1964,17 @@ async function installAppLocked(
     enableSSO: ssoEnabled,
     forwardAuthEnabled,
     protectWithAccountLogin: ssoEnabled || nativeIdentityIntegrationPlanned || forwardAuthEnabled,
-    installedAt: new Date().toISOString(),
+    installedAt: provisionalMetadata.installedAt,
     installedVersion,
     catalogVersion: installedVersion || undefined,
     enabled: false,
     desiredState: 'stopped',
     autoRestart: true,
-    entrances: manifest.entrances?.map((entrance) => ({ ...entrance })),
     containers: containerMetas,
     ssoSlug,
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
-    manifestSource: config.repoUrl || config.sourceRepoUrl || 'market',
+    manifestSource: config.sourceRepoUrl || 'market',
     credentials: manifest.credentials?.length
       ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
       : undefined,
@@ -2134,6 +1986,7 @@ async function installAppLocked(
     databaseName: manifest.database?.mode === 'shared' ? manifest.database.name : undefined,
     databaseUser: manifest.database?.mode === 'shared' ? manifest.database.user : undefined,
     databasePasswordFile: manifest.database?.mode === 'shared' ? resolveSharedDatabasePasswordFile(manifest) : undefined,
+    sharedDatabaseCreated: sharedDatabaseCreated || undefined,
     hasSSO: ssoEnabled,
     provides: manifest.provides?.length ? manifest.provides : undefined,
     wants: manifest.wants?.length ? manifest.wants : undefined,
@@ -2157,16 +2010,17 @@ async function installAppLocked(
   emit(onEvent, step, totalSteps, 'running', 'Preparing dashboard registration...');
   try {
     const displayName = config.customName || manifest.metadata.name;
-    // Inline icon as base64 data URI so it works on all subdomains
-    const iconRef = config.customIcon || manifest.metadata.iconUrl || null;
-    let displayIcon: string | null = null;
-    if (iconRef) {
-      displayIcon = await fetchIconAsDataUri(iconRef);
-    }
-    // Fall back to Lucide icon name if inlining failed or no URL available
-    if (!displayIcon) {
-      displayIcon = manifest.metadata.icon || null;
-    }
+    // Inline the icon from the app's own catalog files (never a URL) so it works on all
+    // subdomains; fall back to the Lucide icon name.
+    const { resolveAppIcon } = await import('./app-icon');
+    const { officialCatalogFile } = await import('./catalog-release');
+    const displayIcon = await resolveAppIcon({
+      appId,
+      iconUrl: manifest.metadata.iconUrl,
+      lucide: manifest.metadata.icon,
+      customIcon: config.customIcon,
+      manifestPath: config.sourceId?.startsWith('direct:') ? undefined : config.manifestPath,
+    }, (filePath) => officialCatalogFile(filePath));
     const ssoEntryUrl = manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined;
@@ -2178,98 +2032,10 @@ async function installAppLocked(
     throw err;
   }
 
-  // ── Step 11: Detect bridge dependencies from env_mapping ──
-
-  if (manifest.env_mapping) {
-    const deps = detectBridgeDependencies(manifest.env_mapping, appId);
-    for (const dep of deps) {
-      await createBridge({
-        from: appId,
-        to: dep.targetAppId,
-        envMappings: dep.envMappings,
-        approvedBy: 'auto',
-      });
-    }
-    if (deps.length > 0) {
-      emit(onEvent, step, totalSteps, 'success', `Detected ${deps.length} bridge dependencies`);
-    }
-  }
-
-  // ── Step 12: Activate approved connections from install dialog ──
-
-  const approvedConnections = config.approvedConnections ?? [];
-  const approvedIds = new Set(
-    approvedConnections.filter(c => c.approved).map(c => c.targetAppId)
-  );
-
-  if (approvedIds.size > 0) {
-    step++;
-    emit(onEvent, step, totalSteps, 'running', `Setting up ${approvedIds.size} approved connections...`);
-    const platform = await getPlatformContext();
-    const dom = platform.domain || config.domain;
-    let activated = 0;
-
-    for (const targetId of approvedIds) {
-        // Build env mappings from manifest.wants (if this app references the target)
-        const envMappings = manifest.env_mapping
-          ? detectBridgeDependencies(manifest.env_mapping, appId)
-              .filter(d => d.targetAppId === targetId)
-              .flatMap(d => d.envMappings)
-          : [];
-
-        const bridge = await createBridge({
-          from: appId,
-          to: targetId,
-          envMappings,
-          approvedBy: 'install',
-        });
-
-      // If target is installed, resolve mappings and activate immediately.
-      // A missing target remains a durable pending approval; a present target
-      // must activate exactly or the install rolls back.
-      const targetMeta = await readInstallMetadata(targetId);
-      if (targetMeta) {
-        const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetId}`;
-        const targetPort = manifest.wants?.find(w => w.appId === targetId || w.type)?.defaultPort || 8080;
-        const targetSub = targetMeta.subdomain || targetId;
-
-        const resolved = await resolveBridgeMappings(
-          envMappings, targetContainer, targetPort, targetSub, dom
-        );
-        const { updateBridge } = await import('../bridges/store');
-        await updateBridge(bridge.id, { envMappings: resolved });
-        const result = await activateBridge(bridge.id);
-        if (!result?.active) throw new Error(`Approved bridge ${bridge.id} did not become active`);
-        activated++;
-      }
-    }
-
-    emit(onEvent, step, totalSteps, 'success',
-      activated > 0
-        ? `Activated ${activated} connections`
-        : `${approvedIds.size} connections created (will activate when targets are installed)`
-    );
-  }
-
-  // ── Step 12b: Activate pending bridges targeting this app ──
-
-  const pendingPlatform = await getPlatformContext();
-  const pendingDomain = pendingPlatform.domain || config.domain;
-  const activatedPending = await activatePendingBridges(
-    appId,
-    primaryContainerName,
-    primaryPort,
-    config.subdomain,
-    pendingDomain,
-  );
-  if (activatedPending.length > 0) {
-    emit(onEvent, step, totalSteps, 'success', `Activated ${activatedPending.length} pending bridges`);
-  }
-
-  // ── Step 13: Generate suggestions for unapproved connections ──
+  // ── Step 12: Generate suggestions for unapproved connections ──
 
   try {
-    const suggestions = await generateSuggestionsForApp(manifest, approvedIds);
+    const suggestions = await generateSuggestionsForApp(manifest);
     if (suggestions.length > 0) {
       emit(onEvent, step, totalSteps, 'success', `Generated ${suggestions.length} connection suggestions`);
     }
@@ -2278,8 +2044,7 @@ async function installAppLocked(
   }
 
   } catch (err) {
-    const reason = err instanceof Error ? err.message : 'unknown post-deploy failure';
-    console.error(`[market] Post-deploy configuration failed for ${appId}: ${reason}`);
+    logOperationFailure(`Post-deploy configuration of ${appId}`, err);
     // Comprehensive rollback: clean up containers, DB, SSO, Caddy, metadata
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
@@ -2336,6 +2101,7 @@ async function installAppLocked(
       finalMetadata.serviceCredentialDesiredState = finalMetadata.desiredState;
       await saveInstallMetadata(finalMetadata);
       emit(onEvent, step, totalSteps, 'success', 'App runtime restored; service credentials await reconciliation');
+      await activateWaitingConnections();
       return;
     }
     await activateProvisionedCredential(appId, () => probeNativeAppCredential(appId, manifest));
@@ -2368,10 +2134,27 @@ async function installAppLocked(
       emit(onEvent, step, totalSteps, 'error', 'App service integration is pending; reconcile credentials');
       throw new AppServiceIntegrationPending();
     }
-    const reason = error instanceof Error ? error.message : 'unknown final installation failure';
-    console.error(`[market] Final installation commit failed for ${appId}: ${reason}`);
+    logOperationFailure(`Final installation commit of ${appId}`, error);
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw error;
+  }
+  await activateWaitingConnections();
+
+  /**
+   * Connections other apps were waiting for (from a bundle) that target this app. They need
+   * this app's network lease to be active, so they run after the install is committed; a
+   * failure is logged and never fails or rolls back the install.
+   */
+  async function activateWaitingConnections(): Promise<void> {
+    try {
+      const platform = await getPlatformContext();
+      const activated = await activatePendingBridges(appId, primaryContainerName, primaryPort, config.subdomain,
+        platform.domain || config.domain);
+      if (activated.length > 0) emit(onEvent, step, totalSteps, 'success', `Activated ${activated.length} waiting connections`);
+    } catch (error) {
+      logOperationFailure(`Activating connections waiting for ${appId}`, error);
+      emit(onEvent, step, totalSteps, 'warning', 'Connections waiting for this app could not be activated');
+    }
   }
 }
 

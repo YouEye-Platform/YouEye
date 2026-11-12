@@ -9,11 +9,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { spineClient } from '@/lib/spine/client';
 import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { handleMarketUpdate } from '@/lib/market/update-http';
 
@@ -21,7 +22,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ component: string }> }
 ) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   const { component } = await params;
@@ -37,7 +38,7 @@ export async function POST(
     const appDef = getAppDefinition(component);
     if (appDef?.lxdConfig) {
       let lastMessage = '';
-      await updateLXDApp(appDef, (event) => {
+      await withUserOperationLockWait(() => updateLXDApp(appDef, (event) => {
         lastMessage = event.message;
         const stageToStatus: Record<string, string> = {
           starting: 'checking', snapshot: 'downloading', stopping: 'installing',
@@ -46,7 +47,7 @@ export async function POST(
         };
         const status = (stageToStatus[event.stage] || 'installing') as Parameters<typeof writeStatus>[1];
         writeStatus(component, status, event.progress ?? 0, event.message).catch(() => {});
-      });
+      }));
       await completeUpdate(component, '', '').catch(() => {});
       return NextResponse.json({
         status: 'success',

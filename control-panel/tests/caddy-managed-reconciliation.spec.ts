@@ -7,7 +7,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { getContainerIP } from '../src/lib/incus/container-ip';
+import { getContainerIP, hostSideNICAddress } from '../src/lib/incus/container-ip';
 import { waitForIncusReady, safeIncusFailure } from '../src/lib/incus/readiness';
 import { isUsableIPv4 } from '../src/lib/incus/ipv4';
 import { runStartupReconciliation } from '../src/lib/incus/startup-reconciliation';
@@ -81,19 +81,70 @@ test('managed discovery never falls back to DNS when both static and live querie
   });
 });
 
-test('invalid static subnet falls through to validated live IPv4 discovery', async () => {
+function hostSideIncus(input: {
+  status?: string;
+  devices?: Record<string, Record<string, string>>;
+  leases?: Array<{ address: string; hwaddr: string; type?: string }>;
+  staticSubnet?: string;
+}, paths: string[] = []) {
+  return (path: string) => {
+    paths.push(path);
+    if (path === '/1.0/networks/incusbr0') {
+      return { type: 'sync', metadata: { config: { 'ipv4.address': input.staticSubnet ?? '999.12.1.1/24' } } };
+    }
+    if (path.endsWith('/leases')) return { type: 'sync', metadata: input.leases ?? [] };
+    if (path.endsWith('/state')) {
+      // A container's own report: never consulted.
+      return { type: 'sync', metadata: { network: { eth0: { addresses: [{ family: 'inet', scope: 'global', address: '10.45.18.13' }] } } } };
+    }
+    return { type: 'sync', metadata: {
+      status: input.status ?? 'Running',
+      config: { 'volatile.eth0.hwaddr': '10:66:6A:00:00:01', 'volatile.net-peer.hwaddr': '10:66:6a:00:00:02' },
+      expanded_devices: input.devices ?? { eth0: { type: 'nic', network: 'yeapp1', name: 'eth0' } },
+    } };
+  };
+}
+
+test('an app container address comes from its NIC lease, never from what the container reports', async () => {
   const paths: string[] = [];
-  await withIncus((path) => path.includes('/networks/')
-    ? (paths.push(path), { type: 'sync', metadata: { config: { 'ipv4.address': '999.12.1.1/24' } } })
-    : (paths.push(path), { type: 'sync', metadata: { network: { eth0: { addresses: [
-      { family: 'inet6', scope: 'global', address: 'fd00::2' },
-      { family: 'inet', scope: 'global', address: '127.0.0.1' },
-      { family: 'inet', scope: 'global', address: '10.45.18.16' },
-    ] } } } }), async () => {
-    assert.equal(await getContainerIP('youeye-control', { required: true }), '10.45.18.16');
-    assert.equal(await resolveCaddyUpstream('youeye-control.incus'), '10.45.18.16');
+  await withIncus(hostSideIncus({ leases: [
+    { address: '10.76.0.40', hwaddr: '10:66:6a:00:00:99' },
+    { address: '10.76.0.34', hwaddr: '10:66:6a:00:00:01', type: 'dynamic' },
+  ] }, paths), async () => {
+    assert.equal(await getContainerIP('app-one', { required: true }), '10.76.0.34');
+    assert.deepEqual(await hostSideNICAddress('app-one'), { network: 'yeapp1', address: '10.76.0.34' });
+    assert.equal(await resolveCaddyUpstream('app-one.youeye'), '10.76.0.34');
   });
-  assert.equal(paths.filter((path) => path.endsWith('/state')).length, 2);
+  assert.equal(paths.some((path) => path.endsWith('/state')), false);
+  assert.ok(paths.includes('/1.0/networks/yeapp1/leases'));
+});
+
+test('a fixed NIC address wins; a hot-plugged NIC is found by its interface name', async () => {
+  await withIncus(hostSideIncus({ devices: {
+    eth0: { type: 'nic', network: 'yeapp1', name: 'eth0', 'ipv4.address': '10.76.0.35' },
+    'net-peer': { type: 'nic', network: 'yeapp2', name: 'eth-peer' },
+  }, leases: [{ address: '10.76.0.66', hwaddr: '10:66:6a:00:00:02' }] }), async () => {
+    assert.equal(await getContainerIP('app-one'), '10.76.0.35');
+    assert.deepEqual(await hostSideNICAddress('app-one', 'eth-peer'), { network: 'yeapp2', address: '10.76.0.66' });
+    assert.equal(await hostSideNICAddress('app-one', 'eth9'), null);
+  });
+});
+
+test('a stopped container, a missing lease or an ambiguous lease gives no address', async () => {
+  await withIncus(hostSideIncus({ status: 'Stopped', leases: [{ address: '10.76.0.34', hwaddr: '10:66:6a:00:00:01' }] }), async () => {
+    assert.equal(await getContainerIP('app-one'), null);
+    assert.deepEqual(await hostSideNICAddress('app-one', 'eth0', { allowStopped: true }), { network: 'yeapp1', address: '10.76.0.34' });
+  });
+  await withIncus(hostSideIncus({ leases: [] }), async () => {
+    assert.equal(await getContainerIP('app-one'), null);
+    await assert.rejects(getContainerIP('app-one', { required: true }), /IPv4 discovery failed/);
+  });
+  await withIncus(hostSideIncus({ leases: [
+    { address: '10.76.0.34', hwaddr: '10:66:6a:00:00:01' },
+    { address: '10.76.0.36', hwaddr: '10:66:6a:00:00:01' },
+  ] }), async () => {
+    assert.equal(await getContainerIP('app-one'), null);
+  });
 });
 
 test('valid static discovery computes an installation-specific IPv4 without a live-state lookup', async () => {
@@ -107,14 +158,10 @@ test('valid static discovery computes an installation-specific IPv4 without a li
   assert.deepEqual(paths, ['/1.0/networks/incusbr0']);
 });
 
-test('missing and invalid live addresses fail strictly while optional discovery remains nullable', async () => {
-  await withIncus(() => ({ type: 'sync', metadata: { network: { eth0: { addresses: [
-    { family: 'inet', scope: 'global', address: '0.0.0.0' },
-    { family: 'inet', scope: 'global', address: '169.254.1.2' },
-    { family: 'inet', scope: 'global', address: '224.0.0.1' },
-  ] } } } }), async () => {
+test('unusable lease addresses fail strictly while optional discovery remains nullable', async () => {
+  await withIncus(hostSideIncus({ leases: [{ address: '169.254.1.2', hwaddr: '10:66:6a:00:00:01' }] }), async () => {
     assert.equal(await getContainerIP('app-invalid'), null);
-    await assert.rejects(getContainerIP('app-invalid', { required: true }), /no usable global IPv4/);
+    await assert.rejects(getContainerIP('app-invalid', { required: true }), /IPv4 discovery failed/);
   });
   for (const value of ['999.1.1.1', '127.0.0.1', '0.0.0.0', '169.254.1.1', '::1', '224.0.0.1']) {
     assert.equal(isUsableIPv4(value), false, value);

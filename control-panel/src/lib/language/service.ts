@@ -45,7 +45,7 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
 }>> {
   try {
     const { listInstalledApps } = await import('../market/metadata');
-    const { fetchManifest } = await import('../market/catalog');
+    const { readInstalledAppManifest } = await import('../market/frozen-manifest');
     const installed = await listInstalledApps();
 
     const result: Array<{
@@ -57,7 +57,7 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
 
     for (const app of installed) {
       try {
-        const manifest = await fetchManifest(app.appId);
+        const manifest = await readInstalledAppManifest(app.appId);
         // Language support is declared via env_mapping with ${platform.locale}
         const envMapping = manifest?.env_mapping ?? {};
         const localeVar = Object.entries(envMapping).find(([, v]) => v.includes('${platform.locale'));

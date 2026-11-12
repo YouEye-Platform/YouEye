@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { userinfo } from '@/lib/identity/http';
-import { verifyBearerToken } from '@/lib/identity/tokens';
+import { roleClaims, verifyBearerToken } from '@/lib/identity/tokens';
+import { getClient } from '@/lib/identity/store';
 import { decodeJwt } from 'jose';
 
 async function tokenFromRequest(request: NextRequest): Promise<string> {
@@ -28,7 +29,14 @@ async function handleUserinfo(request: NextRequest) {
   const user = await verifyBearerToken(token);
   if (!user) return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
   const claims = decodeJwt(token);
-  return NextResponse.json({ ...userinfo(user), ...(typeof claims.sid === 'string' ? { sid: claims.sid } : {}) });
+  // The app's role claim (manifest `sso.role_claim`), as in its ID token: some apps read roles only from userinfo.
+  const client = typeof claims.client_id === 'string' ? await getClient(claims.client_id) : null;
+  const scope = typeof claims.scope === 'string' ? claims.scope : '';
+  return NextResponse.json({
+    ...userinfo(user),
+    ...roleClaims(user, scope, client?.role_claim),
+    ...(typeof claims.sid === 'string' ? { sid: claims.sid } : {}),
+  });
 }
 
 export async function GET(request: NextRequest) {

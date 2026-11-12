@@ -24,7 +24,7 @@ export interface ResolvedCatalogUpdateEvidence {
   sourceId: string;
   sourceRepoUrl: string;
   sourceRepoUrls?: string[];
-  entry: Pick<CatalogEntry, 'repo' | 'path' | 'file' | 'integration'>;
+  entry: Pick<CatalogEntry, 'path' | 'integration'>;
   manifestIntegration: 'native' | 'basic';
 }
 

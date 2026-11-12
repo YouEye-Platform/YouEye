@@ -1,16 +1,19 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
 
-import { downloadProductAsset, resolveChannelProduct } from '@/lib/releases/channel-index';
+import { downloadProductAsset, downloadProductAssetTo, resolveChannelProduct } from '@/lib/releases/channel-index';
 import { productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
 import type { AppManifest, InstallConfig } from './types';
 
 const execFileAsync = promisify(execFile);
-const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
+/** Largest native app package (standalone.tar). It is streamed to disk and to
+ * the container, never held in memory, so this bounds disk use and time only. */
+export const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_ARCHIVE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
@@ -55,36 +58,44 @@ export async function resolveNativeProduct(product: string): Promise<VerifiedPro
   return selected;
 }
 
-const proxyImageUrl = (url: string) => `/api/market/image?url=${encodeURIComponent(url)}`;
-
 /**
- * The installer contract (`youeye-app.yaml`) of a native product release, as
- * the Market presents it: digest-checked against the build, version from the
- * release, and only absolute HTTPS images (relative paths have no host).
+ * The installer contract (`youeye-app.yaml`) of a native product release, as the Market
+ * presents it: digest-checked against the build, parsed strictly, and versioned by the release.
+ * Native releases carry no setup files and no listing images (relative files have no host).
  */
 export async function nativeManifestFromContract(contract: Buffer, selected: VerifiedProductRelease): Promise<AppManifest> {
   if (createHash('sha256').update(contract).digest('hex') !== selected.build.contract_sha256) {
     throw new MarketNativeArtifactPolicyError('Product installer contract digest differs');
   }
-  const { parseManifest } = await import('./parser');
-  const manifest = parseManifest(contract.toString('utf8'));
+  const { loadApp } = await import('./app-format/compile');
+  let manifest: AppManifest;
+  try {
+    manifest = loadApp({ manifest: contract.toString('utf8') });
+  } catch (error) {
+    throw new MarketNativeArtifactPolicyError(`Product installer contract is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
   if (manifest.metadata.id !== selected.release.product || manifest.integration !== 'native') {
     throw new MarketNativeArtifactPolicyError('Product installer contract names another app');
   }
-  const absolute = (value?: string) => !!value && /^https:\/\//.test(value);
   manifest.version = selected.release.version;
-  manifest.metadata.iconUrl = absolute(manifest.metadata.iconUrl) ? proxyImageUrl(manifest.metadata.iconUrl!) : undefined;
-  if (manifest.detail?.screenshots) {
-    manifest.detail.screenshots = manifest.detail.screenshots
-      .filter((shot) => absolute(shot.path))
-      .map((shot) => ({ ...shot, path: proxyImageUrl(shot.path) }));
-  }
+  if (manifest.frozen) manifest.frozen.version = selected.release.version;
+  manifest.metadata.iconUrl = undefined;
+  if (manifest.detail) manifest.detail.screenshots = [];
   return manifest;
 }
 
 export async function nativeManifestFromRelease(selected: VerifiedProductRelease): Promise<{ manifest: AppManifest; contract: Buffer }> {
   const contract = await downloadProductAsset(selected, 'youeye-app.yaml');
   return { manifest: await nativeManifestFromContract(contract, selected), contract };
+}
+
+/**
+ * The install record's manifest reference for a native release. Its digest is the manifest's
+ * canonical frozen digest, the same value an install records, so the frozen copy keeps matching.
+ */
+export function nativeManifestReference(selected: Pick<VerifiedProductRelease, 'repository' | 'release'>, manifest: AppManifest) {
+  if (!manifest.frozen?.digest) throw new MarketNativeArtifactPolicyError('Product installer contract has no frozen digest');
+  return { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen.digest };
 }
 
 /** The manifest an install or update uses must be exactly the release's contract. */
@@ -166,13 +177,16 @@ export async function stageVerifiedProductArtifact(directory: string, containerN
   const primary = assembly.build.assets.find(a => a.name === 'standalone.tar');
   if (!primary) throw new MarketNativeArtifactPolicyError('Native product release has no standalone.tar');
   if (expectedDigest && expectedDigest !== primary.sha256) throw new MarketNativeArtifactPolicyError('Native app artifact does not match the manifest SHA-256');
-  const bytes = await downloadProductAsset(assembly, 'standalone.tar', MAX_ARTIFACT_BYTES);
+  if (primary.size_bytes > MAX_ARTIFACT_BYTES) {
+    const mb = (bytes: number) => Math.ceil(bytes / (1024 * 1024));
+    throw new MarketNativeArtifactPolicyError(`The ${assembly.release.product} ${assembly.release.version} package (${mb(primary.size_bytes)} MB) is larger than the limit (${mb(MAX_ARTIFACT_BYTES)} MB)`);
+  }
   const artifactPath = join(directory,`${containerName}.standalone.tar`);
-  await writeFile(artifactPath,bytes,{mode:0o600});
+  const artifactBytes = await downloadProductAssetTo(assembly, 'standalone.tar', artifactPath, MAX_ARTIFACT_BYTES);
   await inspectMarketNativeArchive(artifactPath,'server.js');
   return {containerName,path:artifactPath,tag:assembly.release.tag,version:assembly.release.version,
     sourceRepo:assembly.repository,artifactName:'standalone.tar',artifactSHA256:primary.sha256,
-    artifactBytes:bytes.length,verification:{status:'product-release',releaseSHA256:assembly.manifestSHA256},productRelease:productReceipt(assembly)};
+    artifactBytes,verification:{status:'product-release',releaseSHA256:assembly.manifestSHA256},productRelease:productReceipt(assembly)};
 }
 
 /**
@@ -210,11 +224,15 @@ export async function stageMarketNativeArtifacts(
   }
 }
 
-export async function readStagedMarketNativeArtifact(artifact: StagedMarketNativeArtifact): Promise<Buffer> {
-  const bytes = await readFile(artifact.path);
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  if (digest !== artifact.artifactSHA256 || bytes.byteLength !== artifact.artifactBytes) {
+/** Re-check a staged archive's size and digest (streamed) right before it is deployed. */
+export async function verifyStagedMarketNativeArtifact(artifact: StagedMarketNativeArtifact): Promise<void> {
+  const hash = createHash('sha256');
+  let bytes = 0;
+  for await (const chunk of createReadStream(artifact.path)) {
+    bytes += (chunk as Buffer).byteLength;
+    hash.update(chunk as Buffer);
+  }
+  if (hash.digest('hex') !== artifact.artifactSHA256 || bytes !== artifact.artifactBytes) {
     throw new Error('Staged native app artifact changed before deployment');
   }
-  return bytes;
 }

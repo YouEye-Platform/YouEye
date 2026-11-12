@@ -87,6 +87,7 @@ function fixture(t: TestContext, options: {
     }};
     if(id==='@/lib/apps/manifest') return {POSTGRES_MANIFEST:{containerName:'postgres'}};
     if(id==='./password-policy') return {requireIdentityPassword(){}};
+    if(id==='./username-policy') return require('../src/lib/identity/username-policy.ts');
     if(id==='@/lib/admission/schema') return {ADMISSION_SCHEMA_SQL};
     if(id==='@/lib/copy/admission-schema') return {ADMISSION_COPY_SCHEMA_SQL};
     if(id==='@/lib/updates/core-schema') return {runCoreSchemaOnce:async (role:string, initialize:()=>Promise<void>) => {
@@ -94,6 +95,7 @@ function fixture(t: TestContext, options: {
       return initialize();
     }};
     if(id==='../market/update-admission') return gate;
+    if(id==='./forward-auth-cache') return {clearForwardAuthCaches(){}};
     throw Error('Unexpected store dependency '+id);
   }});
   const api: any = {};

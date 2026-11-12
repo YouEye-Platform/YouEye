@@ -148,8 +148,8 @@ var backupCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a platform backup",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		if backupMediaID == "" {
 			return fmt.Errorf("select a detected backup drive with --media")
@@ -171,8 +171,8 @@ var backupStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check backup task status",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/backup/status")
 		if err != nil {
@@ -198,8 +198,8 @@ var backupListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available backups",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/backup/core")
 		if err != nil {
@@ -234,8 +234,8 @@ var restoreCmd = &cobra.Command{
 	Short: "Restore the platform from a backup",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		if restoreMediaID == "" {
 			return fmt.Errorf("select the attached backup drive with --media")
@@ -284,8 +284,8 @@ var settingsCmd = &cobra.Command{
 	Use:   "settings",
 	Short: "Show platform settings",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/settings")
 		if err != nil {

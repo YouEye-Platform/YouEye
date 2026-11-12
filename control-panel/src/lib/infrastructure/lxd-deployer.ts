@@ -11,16 +11,41 @@ import { spineClient } from '../spine/client';
  *   - security.nesting removed (not needed without sockets)
  */
 
-import { incusRequest, execShell, incusUploadFile } from '../incus/server';
+import { incusRequest, execShell, incusUploadFile, incusUploadLocalFile } from '../incus/server';
 import { applyStaticIP, getSystemStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
 import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '@/lib/releases/artifact';
 import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
-  readStagedMarketNativeArtifact,
+  verifyStagedMarketNativeArtifact,
   type StagedMarketNativeArtifact,
 } from '@/lib/market/native-artifact';
+import { assertInstanceName, APP_TAG, INSTALLATION_TAG, ownershipConfig, type InstanceOwner } from '@/lib/market/instance-ownership';
+
+/** Native app runtimes: the app always lives in /opt/app and Node comes from this list only. */
+export const NATIVE_APP_DIR = '/opt/app';
+export const NATIVE_NODE_VERSIONS = ['22.x', '24.x'] as const;
+
+/**
+ * The deployer boundary of a Market native app. Everything here reaches a shell command or a
+ * systemd unit, so it is checked again even though the manifest schema already allows only
+ * `node: 22 | 24` and no app directory at all.
+ */
+export function assertMarketNativeSpec(spec: LXDContainerSpec): void {
+  assertInstanceName(spec.containerName);
+  if (spec.appDir !== NATIVE_APP_DIR) throw new Error('Native app directory must be /opt/app');
+  if (!(NATIVE_NODE_VERSIONS as readonly string[]).includes(spec.nodeVersion)) {
+    throw new Error(`Native app Node.js version must be one of ${NATIVE_NODE_VERSIONS.join(', ')}`);
+  }
+  if (spec.runtime !== undefined && spec.runtime !== 'node') throw new Error('Native apps run on Node.js');
+  if (spec.entryFile !== undefined) throw new Error('Native apps start server.js');
+  if (spec.postInstallCommands?.length) throw new Error('Native apps cannot run post-install commands');
+  if (!Number.isInteger(spec.port) || spec.port < 1 || spec.port > 65535) throw new Error('Native app port is invalid');
+  if (/[\u0000-\u001f\u007f]/.test(spec.displayName) || spec.displayName.length > 200) {
+    throw new Error('Native app display name is invalid');
+  }
+}
 
 type LXDDeploymentConfig = {
   exposeHostPort?: boolean;
@@ -80,9 +105,16 @@ export async function deployMarketLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   artifact: StagedMarketNativeArtifact,
-  nicDevices?: Record<string, Record<string, string>>,
+  nicDevices: Record<string, Record<string, string>> | undefined,
+  owner: InstanceOwner,
 ): Promise<LXDRelease | null> {
-  return deployLXDContainerInternal(spec, cfg, nicDevices, artifact);
+  assertMarketNativeSpec(spec);
+  const tags = ownershipConfig(owner);
+  // Never adopt or replace a same-name instance: it may belong to something else.
+  if (await containerExists(spec.containerName)) {
+    throw new Error(`An Incus instance named ${spec.containerName} already exists; refusing to reuse it`);
+  }
+  return deployLXDContainerInternal(spec, cfg, nicDevices, artifact, undefined, tags);
 }
 
 async function deployLXDContainerInternal(
@@ -91,6 +123,7 @@ async function deployLXDContainerInternal(
   nicDevices?: Record<string, Record<string, string>>,
   marketArtifact?: StagedMarketNativeArtifact,
   preparedRelease?: LXDRelease,
+  ownerTags: Record<string, string> = {},
 ): Promise<LXDRelease | null> {
   if (await containerExists(spec.containerName)) return null;
 
@@ -124,6 +157,7 @@ async function deployLXDContainerInternal(
     config: {
       'boot.autostart': 'false',
       'security.privileged': 'false',
+      ...ownerTags,
     },
   };
 
@@ -214,11 +248,17 @@ async function deployLXDContainerInternal(
   return { ...release, artifactSHA256 };
 }
 
-/** Adopt an exact instance imported from a YouEye recovery point. */
+/**
+ * Adopt an exact instance imported from a YouEye recovery point or copied back from retained
+ * data. The instance must already carry this installation's ownership tag.
+ */
 export async function adoptRestoredLXDContainer(
   spec: LXDContainerSpec,
-  nicDevices?: Record<string, Record<string, string>>,
+  nicDevices: Record<string, Record<string, string>> | undefined,
+  owner: InstanceOwner,
 ): Promise<void> {
+  assertMarketNativeSpec(spec);
+  const tags = ownershipConfig(owner);
   const current = await incusRequest<{
     architecture?: string;
     config?: Record<string, string>;
@@ -229,6 +269,11 @@ export async function adoptRestoredLXDContainer(
     expanded_devices?: Record<string, Record<string, string>>;
   }>('GET', `/1.0/instances/${encodeURIComponent(spec.containerName)}`);
   if (current.type === 'error') throw new Error('Imported application runtime is unavailable');
+  const currentConfig = current.metadata.config ?? {};
+  if (currentConfig[INSTALLATION_TAG] !== tags[INSTALLATION_TAG]
+    || (currentConfig[APP_TAG] !== undefined && currentConfig[APP_TAG] !== tags[APP_TAG])) {
+    throw new Error('Imported application runtime is not tagged with this installation');
+  }
   if (current.metadata.status !== 'Stopped') throw new Error('Imported application runtime must be stopped before adoption');
   // Retained roots have no inherited profile or network. Keep their verified
   // root explicitly when replacing devices with the target mounts and NICs.
@@ -244,7 +289,8 @@ export async function adoptRestoredLXDContainer(
     {
       architecture: current.metadata.architecture,
       config: {
-        ...(current.metadata.config ?? {}),
+        ...currentConfig,
+        ...tags,
         'boot.autostart': 'true',
         'security.privileged': 'false',
       },
@@ -296,7 +342,7 @@ export async function deployPointerLXDContainer(
     || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
     throw new Error('Pointer archive differs from its product release selection');
   }
-  await readStagedMarketNativeArtifact(artifact);
+  await verifyStagedMarketNativeArtifact(artifact);
   if (replaceExisting) await removeLXDContainer(spec);
   return deployLXDContainerInternal(spec, cfg, undefined, artifact);
 }
@@ -444,8 +490,8 @@ async function installNodeAndApp(
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
   if (marketArtifact) {
-    const bytes = await readStagedMarketNativeArtifact(marketArtifact);
-    await incusUploadFile(cn, '/tmp/app.tar', bytes, { timeout: 300_000, mode: '0600' });
+    await verifyStagedMarketNativeArtifact(marketArtifact);
+    await incusUploadLocalFile(cn, '/tmp/app.tar', marketArtifact.path, { timeout: 300_000, mode: '0600' });
   }
 
   if (cachedRelease) {

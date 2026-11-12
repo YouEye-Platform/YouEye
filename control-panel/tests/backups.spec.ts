@@ -12,12 +12,14 @@ const read = (filename: string) => englishInterfaceSource(readFileSync(path.join
 
 test('shared database restore reads the manifest-declared password file', () => {
   assert.equal(resolveSharedDatabasePasswordFile({
-    secrets: [{ name: 'db_password', file: '.db_password', generator: 'password' }],
-  }), '.db_password');
-  assert.equal(resolveSharedDatabasePasswordFile({ secrets: [] }), 'db-password');
-  assert.throws(() => resolveSharedDatabasePasswordFile({
-    secrets: [{ name: 'db_password', file: '../outside', generator: 'password' }],
-  }), /outside the app-owned secret directory/);
+    secrets: [{ name: 'db_password', file: 'secrets/db_password', generator: 'password', length: 32 }],
+  }), 'secrets/db_password');
+  assert.equal(resolveSharedDatabasePasswordFile({ secrets: [] }), 'secrets/db_password');
+  for (const file of ['../outside', '.db_password', 'secrets/../install.json', 'install.json']) {
+    assert.throws(() => resolveSharedDatabasePasswordFile({
+      secrets: [{ name: 'db_password', file, generator: 'password', length: 32 }],
+    }), /outside the app-owned secret directory/);
+  }
 });
 
 test('recovery import errors stay safe and useful', () => {
@@ -146,7 +148,7 @@ test('database and application restore failures cannot be reported as success', 
   assert.match(fullRestore, /missing required database dumps/);
   assert.match(engine, /if \(!restoreOptions\) \{[\s\S]*Shared database collision preflight/);
   assert.match(engine, /Network isolation failed for \$\{appId\}: \$\{reason\}/);
-  assert.match(engine, /Final installation commit failed for \$\{appId\}: \$\{reason\}/);
+  assert.match(engine, /logOperationFailure\(`Final installation commit of \$\{appId\}`, error\);\s*await rollbackInstall/);
 });
 
 test('PostgreSQL readiness uses structured arguments and the command exit status', () => {
@@ -168,7 +170,8 @@ test('whole-server recovery removes omitted app registrations and keeps setup ga
   assert.match(fullRestore, /clearRestoredAppRegistration/);
   assert.match(fullRestore, /for \(const restoredApp of restoredApps\)/);
   assert.match(fullRestore, /route\.hostname === hostname/);
-  assert.match(fullRestore, /route\.id\.startsWith\(`app-\$\{app\.appId\}-`\)/);
+  // Exact hostname only: no `app-<id>-` prefix matching (cleaning up `foo` never touches `foo-bar`).
+  assert.doesNotMatch(fullRestore, /startsWith\(`app-/);
   assert.match(fullRestore, /Routing registration remains/);
   assert.match(fullRestore, /restoreApp\([\s\S]*false,/);
   assert.match(fullRestore, /setup_completed: false/);

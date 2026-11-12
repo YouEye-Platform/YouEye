@@ -7,7 +7,8 @@
 
 import { Socket } from 'net';
 import { connect as tlsConnect, type TLSSocket } from 'tls';
-import { readFileSync } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
+import { stat } from 'fs/promises';
 import { createIncusTransport } from './http-transport';
 
 // ─── Incus transport ────────────────────────────────────────
@@ -265,9 +266,12 @@ export async function incusRequest<T = unknown>(
  * Used when Control Panel must stage artifacts without giving the target
  * container outbound internet access.
  */
+/** A local file streamed as an upload body, so large files are never held in memory. */
+type UploadSource = Buffer | { file: string; size: number };
+
 async function incusUploadRawFile(
   path: string,
-  data: Buffer,
+  data: UploadSource,
   options?: { timeout?: number; mode?: string; createDirs?: boolean }
 ): Promise<void> {
   const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
@@ -283,13 +287,23 @@ async function incusUploadRawFile(
         ...(options?.mode ? [`X-Incus-mode: ${options.mode}`] : []),
         ...(options?.createDirs ? ['X-Incus-create-dirs: true'] : []),
         'X-Incus-write: overwrite',
-        `Content-Length: ${data.length}`,
+        `Content-Length: ${Buffer.isBuffer(data) ? data.length : data.size}`,
         'Connection: close',
         '',
         '',
       ].join('\r\n');
       socket.write(headers);
-      socket.write(data);
+      if (Buffer.isBuffer(data)) {
+        socket.write(data);
+      } else {
+        // Keep the socket open for the response after the body is sent.
+        const body = createReadStream(data.file);
+        body.on('error', (error) => {
+          socket.destroy();
+          reject(new Error(`Upload source error: ${error.message}`));
+        });
+        body.pipe(socket, { end: false });
+      }
     }, socketPath);
 
     socket.on('data', (chunk) => {
@@ -338,6 +352,22 @@ export async function incusUploadFile(
   return incusUploadRawFile(
     `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`,
     data,
+    options,
+  );
+}
+
+/** Upload a local file into an instance, streaming it (memory use does not grow with its size). */
+export async function incusUploadLocalFile(
+  instanceName: string,
+  remotePath: string,
+  localPath: string,
+  options?: { timeout?: number; mode?: string; createDirs?: boolean }
+): Promise<void> {
+  const info = await stat(localPath);
+  if (!info.isFile()) throw new Error('Upload source is not a regular file');
+  return incusUploadRawFile(
+    `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`,
+    { file: localPath, size: info.size },
     options,
   );
 }

@@ -303,19 +303,7 @@ export class AppUpdateJournalStore {
   /** Short OS-held guard shared by admission and final reservation release. */
   withAdmission<T>(work: () => T): T {
     privateDirectory(this.directory);
-    return withAppUpdateExecutorLock(path.join(this.directory, 'admission.flock'), () => {
-      // Upgrade residue only. All running store instances must use OS fencing;
-      // rolling coexistence with the old unfenced implementation is unsupported.
-      const legacy = path.join(this.directory, 'admission.lock');
-      try {
-        privateDirectory(legacy);
-        rmdirSync(legacy); // Refuse nonempty, foreign or insecure legacy guards.
-        syncDirectory(this.directory);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      }
-      return work();
-    });
+    return withAppUpdateExecutorLock(path.join(this.directory, 'admission.flock'), () => work());
   }
 
   private createUnderAdmission(input: NewAppUpdate): AppUpdateJournalLease {

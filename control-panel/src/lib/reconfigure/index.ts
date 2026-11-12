@@ -40,7 +40,10 @@ import { incusRequest, execShell } from '@/lib/incus/server';
 import { getContainerName } from '@/lib/market/engine-helpers';
 import { restartContainerAndWait } from '@/lib/infrastructure/oci-deployer';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
-import type { InstallMetadata, AppManifest, ConfigFileSpec } from '@/lib/market/types';
+import type { InstallMetadata, AppManifest, ConfigFileSpec, VariableContext } from '@/lib/market/types';
+import { runSetup, setupFor } from '@/lib/market/setup-runner';
+import { logOperationFailure } from '@/lib/market/install-tracker';
+import { installedSetupVariables, setupContainers } from '@/lib/market/setup-context';
 import {
   configureControlPanelIdentitySSO,
   configureUIIdentitySSO,
@@ -247,6 +250,7 @@ async function resyncClientRedirectUris(
     redirectUris: newRedirectUris,
     postLogoutRedirectUris: existing.post_logout_redirect_uris.map((uri) => replaceAll(uri, oldDomain, newDomain)),
     scopes: existing.scopes,
+    roleClaim: existing.role_claim,
     clientSecret: existing.client_secret, // preserve — no secret rotation on a domain change
     backchannelLogoutUri: existing.backchannel_logout_uri
       ? replaceAll(existing.backchannel_logout_uri, oldDomain, newDomain) : null,
@@ -261,21 +265,15 @@ function replaceAll(value: string, from: string, to: string): string {
 // ─── App Domain Update ────────────────────────────────────
 
 /**
- * Fetch an app manifest from the app's own Market source (falls back to the
- * default source). Best-effort: returns null when the catalog is unreachable —
- * env propagation does not depend on it.
+ * The installed app's manifest: its frozen copy (never the live catalog). Best-effort: returns
+ * null when it is unreadable — env propagation does not depend on it.
  */
-async function fetchAppManifest(appId: string, sourceId?: string): Promise<AppManifest | null> {
+async function fetchAppManifest(appId: string): Promise<AppManifest | null> {
   try {
-    const { fetchManifestFromSource } = await import('@/lib/market/catalog');
-    return await fetchManifestFromSource(appId, sourceId);
+    const { readFrozenUpdateManifest } = await import('@/lib/market/frozen-manifest');
+    return await readFrozenUpdateManifest(appId);
   } catch {
-    try {
-      const { fetchManifest } = await import('@/lib/market/catalog');
-      return await fetchManifest(appId);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -358,25 +356,19 @@ async function buildRenderContext(
 
   // Secrets from disk (never regenerated here)
   const secrets: Record<string, string> = {};
-  const { readFile } = await import('fs/promises');
+  const { readAppSecret } = await import('@/lib/infrastructure/secrets');
   for (const sec of manifest.secrets || []) {
-    try {
-      secrets[sec.name] = (await readFile(`/var/lib/youeye/app-${meta.appId}/${sec.file}`, 'utf-8')).trim();
-    } catch {
-      // Secret may not exist — leave unresolved; render is wrapped in try/catch
-    }
+    // A missing secret is left unresolved; rendering is wrapped in try/catch.
+    const value = await readAppSecret(meta.appId, sec.name).catch(() => null);
+    if (value) secrets[sec.name] = value;
   }
 
-  // Containers map (internal DNS names are domain-free)
-  const containers: Record<string, { internal_host: string; internal_url: string; url: string }> = {};
+  // Sidecars (internal DNS names are domain-free)
+  const sidecar: Record<string, { host: string; url?: string }> = {};
   for (const c of manifest.containers) {
-    const cn = getContainerName(meta.appId, c.name, manifest.containers.length);
-    const isPrimary = c.primary || manifest.containers.length === 1;
-    containers[c.name] = {
-      internal_host: `${cn}.${CONTAINER_DOMAIN}`,
-      internal_url: c.port ? `http://${cn}.${CONTAINER_DOMAIN}:${c.port}` : `http://${cn}.${CONTAINER_DOMAIN}`,
-      url: isPrimary ? appUrl : '',
-    };
+    if (c.primary || manifest.containers.length === 1) continue;
+    const host = `${getContainerName(meta.appId, c.name, manifest.containers.length)}.${CONTAINER_DOMAIN}`;
+    sidecar[c.name] = { host, url: c.port ? `http://${host}:${c.port}` : undefined };
   }
 
   // Platform context — read fresh settings (the domain was already persisted)
@@ -415,19 +407,13 @@ async function buildRenderContext(
       url: appUrl,
       internal_url: '',
     },
-    install: {
-      url: appUrl,
-      subdomain: meta.subdomain,
-      domain: newDomain,
-    },
-    containers,
-    secrets,
+    sidecar,
+    secret: secrets,
     sso: {
       slug: meta.ssoSlug || '',
       client_id: ssoClientId,
       client_secret: ssoClientSecret,
     },
-    container: { ip: '', port: 0 },
   };
 }
 
@@ -555,7 +541,7 @@ async function updateInstalledAppLocked(
 
   // 2. Refresh manifest-declared config files (SearXNG settings.yml,
   //    Nextcloud trusted-domains file, ...).
-  const manifest = installedManifest ?? await fetchAppManifest(appId, meta.sourceId);
+  const manifest = installedManifest ?? await fetchAppManifest(appId);
   let refreshedConfigFiles: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
   if (manifest) {
     refreshedConfigFiles = await refreshConfigFiles(manifest, meta, oldDomain, newDomain, warn, identityOrigins);
@@ -576,46 +562,29 @@ async function updateInstalledAppLocked(
     }
 
     // Wait for the primary container to be ready before running SSO steps
-    if (meta.enableSSO && manifest) {
-      const primary = manifest.containers.find((c) => c.primary) || manifest.containers[0];
-      const primaryPort = primary?.port || 0;
-      const primaryContainerName = getContainerName(appId, primary?.name || 'main', manifest.containers.length);
-      if (primaryPort > 0) {
-        // Up to 60s — after a whole-platform rename every app restarts at
-        // once, so DHCP leases + app boot can take well past 30s.
-        for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          try {
-            const ip = await getContainerIP(primaryContainerName);
-            if (!ip) continue;
-            const res = await fetch(`http://${ip}:${primaryPort}/`, {
-              signal: AbortSignal.timeout(3000),
-            });
-            if (res.ok || res.status < 500) break;
-          } catch { /* not ready yet */ }
-        }
-      }
-    }
+    if (meta.enableSSO && manifest) await waitForPrimary(appId, manifest);
 
-    // Manifest reconfigure hooks — app-specific cleanup a URL change needs
-    // beyond env/config/restart. Runs AFTER restart so e.g. a cache flush
-    // hits the fresh process (Nextcloud's valkey persists a stale OIDC
-    // discovery document across restarts; its manifest flushes it here).
-    const hookCommands = manifest
-      ? ((manifest as { reconfigure?: { commands?: Array<{ container: string; command: string; timeout?: number }> } })
-          .reconfigure?.commands || [])
-      : [];
-    for (const hook of hookCommands) {
-      const target = getContainerName(appId, hook.container, manifest?.containers.length || 1);
+    // The app's `url-change` setup file: app-specific work a URL change needs beyond
+    // env/config/restart (e.g. Nextcloud trusted domains, flushing a cached OIDC
+    // discovery document). Runs AFTER restart so it hits the fresh process.
+    if (manifest) {
       try {
-        const result = await execShell(target, hook.command, { timeout: hook.timeout || 30_000 });
-        if (result.exitCode !== 0) {
-          warn(`${appId}: reconfigure hook on ${target} exited ${result.exitCode}: ${result.stderr}`);
-        }
+        await runSetup(manifest, 'url-change', {
+          appId,
+          containers: setupContainers(manifest, meta),
+          variables: await installedSetupVariables(manifest, meta, { domain: newDomain }),
+        });
       } catch (err) {
-        warn(`${appId}: reconfigure hook on ${target} failed: ${err}`);
+        logOperationFailure(`url-change setup of ${appId}`, err);
+        warn(`${appId}: url-change setup failed (details in the CP log)`);
       }
     }
+  }
+
+  // A stopped app gets its url-change (and sso) setup when it is next started (runPendingUrlChangeSetup).
+  if (intentionallyStopped && manifest
+    && (setupFor(manifest, 'url-change') || (meta.enableSSO && setupFor(manifest, 'sso')))) {
+    meta.urlChangeSetupPending = true;
   }
 
   // 4. Persist the new domain to install metadata BEFORE the SSO re-sync.
@@ -635,31 +604,18 @@ async function updateInstalledAppLocked(
         warn(`${appId}: failed to re-sync redirect_uris: ${err}`);
       }
     }
-    // (b) Integration apps: re-apply each installed identity integration with the
-    //     NEW domain context. applyIntegration re-creates the OAuth client and
-    //     re-runs the app's SSO setup steps, which rewrite the app's stored
-    //     EXTERNAL authorize URL to the new domain.
-    if (meta.installedIntegrations?.length && !intentionallyStopped) {
-      const { applyIntegration } = await import('@/lib/market/integration-runner');
-      for (const integ of meta.installedIntegrations) {
-        // Transient failures are common right after a whole-platform restart
-        // (container IP not yet resolvable, app still booting) — a failed
-        // re-apply leaves the app's stored authorize URL on the OLD domain,
-        // so retry before giving up.
-        let lastErr: unknown = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          if (attempt > 0) await new Promise((r) => setTimeout(r, 10_000));
-          try {
-            await applyIntegration({ integrationId: integ.id, sourceId: integ.sourceId }, () => {});
-            lastErr = null;
-            break;
-          } catch (err) {
-            lastErr = err;
-          }
-        }
-        if (lastErr) {
-          warn(`${appId}: failed to re-apply integration ${integ.id} after 3 attempts: ${lastErr}`);
-        }
+    // (b) Apps whose SSO is configured by a setup file: re-run it (steps are
+    //     idempotent) so the app's stored EXTERNAL authorize URL follows the new domain.
+    if (manifest && setupFor(manifest, 'sso') && !intentionallyStopped) {
+      try {
+        await runSetup(manifest, 'sso', {
+          appId,
+          containers: setupContainers(manifest, meta),
+          variables: await installedSetupVariables(manifest, meta, { domain: newDomain }),
+        });
+      } catch (err) {
+        logOperationFailure(`SSO setup re-run of ${appId}`, err);
+        warn(`${appId}: SSO setup re-run failed (details in the CP log)`);
       }
       // Restart so any cached OIDC client rebuilds from the re-applied config.
       for (const containerName of containerNames) {
@@ -668,6 +624,62 @@ async function updateInstalledAppLocked(
         } catch (err) { warn(`${appId}: SSO restart failed for ${containerName}: ${err}`); }
       }
     }
+  }
+}
+
+/** Wait (up to 60 s) until the app's primary container answers HTTP. */
+async function waitForPrimary(appId: string, manifest: AppManifest): Promise<void> {
+  const primary = manifest.containers.find((c) => c.primary) || manifest.containers[0];
+  const primaryPort = primary?.port || 0;
+  const primaryContainerName = getContainerName(appId, primary?.name || 'main', manifest.containers.length);
+  if (primaryPort <= 0) return;
+  // Up to 60s — after a whole-platform rename every app restarts at
+  // once, so DHCP leases + app boot can take well past 30s.
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const ip = await getContainerIP(primaryContainerName);
+      if (!ip) continue;
+      const res = await fetch(`http://${ip}:${primaryPort}/`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok || res.status < 500) break;
+    } catch { /* not ready yet */ }
+  }
+}
+
+/**
+ * The box's address changed while this app was stopped (`urlChangeSetupPending`): run its
+ * url-change setup file, then its sso file when sign-in is on, now that it has been started.
+ * Failures are logged; the flag is cleared either way (as after an address change).
+ */
+export async function runPendingUrlChangeSetup(meta: InstallMetadata): Promise<void> {
+  if (!meta.urlChangeSetupPending) return;
+  try {
+    const { readFrozenUpdateManifest } = await import('@/lib/market/frozen-manifest');
+    const manifest = await readFrozenUpdateManifest(meta.appId);
+    await waitForPrimary(meta.appId, manifest);
+    for (const purpose of ['url-change', 'sso'] as const) {
+      if (purpose === 'sso' && !meta.enableSSO) continue;
+      if (!setupFor(manifest, purpose)) continue;
+      try {
+        await runSetup(manifest, purpose, {
+          appId: meta.appId,
+          containers: setupContainers(manifest, meta),
+          variables: await installedSetupVariables(manifest, meta),
+        });
+        if (purpose === 'sso') {
+          for (const name of Object.values(setupContainers(manifest, meta))) await restartContainerAndWait(name);
+        }
+      } catch (error) {
+        logOperationFailure(`${purpose} setup of ${meta.appId} after an address change`, error);
+      }
+    }
+  } catch (error) {
+    logOperationFailure(`Address-change setup of ${meta.appId}`, error);
+  } finally {
+    delete meta.urlChangeSetupPending;
+    await saveInstallMetadata(meta);
   }
 }
 
@@ -1382,7 +1394,7 @@ async function getExistingUISecrets(): Promise<{
 // ─── Helper: Propagate language env var to a Market-installed app ──
 
 /**
- * Read the app's manifest from the catalog, check if it has a language config,
+ * Read the app's frozen manifest, check if it has a language config,
  * and if so, update the container's environment variable via incus config set.
  */
 async function propagateLanguageToApp(
@@ -1390,22 +1402,19 @@ async function propagateLanguageToApp(
   systemLang: string
 ): Promise<void> {
   try {
-    // Language is now handled via env_mapping with ${platform.locale}
-    const { fetchManifest } = await import('@/lib/market/catalog');
-    const manifest = await fetchManifest(app.appId);
+    // Language reaches the app via env_mapping with ${platform.locale}; the env mapping goes
+    // to the main container only. The installed app's frozen copy, never the live catalog.
+    const manifest = await fetchAppManifest(app.appId);
     const envMapping = manifest?.env_mapping ?? {};
     const localeEntry = Object.entries(envMapping).find(([, v]) => v.includes('${platform.locale'));
-    if (!localeEntry) return;
+    if (!manifest || !localeEntry) return;
 
     const [envVar] = localeEntry;
-    for (const containerSpec of manifest.containers) {
-      const containerName = manifest.containers.length === 1
-        ? `app-${app.appId}`
-        : `app-${app.appId}-${containerSpec.name}`;
-      await incusRequest('PATCH', `/1.0/instances/${containerName}`, {
-        config: { [`environment.${envVar}`]: systemLang },
-      });
-    }
+    const main = manifest.containers.find((c) => c.primary) ?? manifest.containers[0];
+    const containerName = getContainerName(app.appId, main.name, manifest.containers.length);
+    await incusRequest('PATCH', `/1.0/instances/${containerName}`, {
+      config: { [`environment.${envVar}`]: systemLang },
+    });
   } catch {
     // Best-effort — app may not be running or manifest may not be available
   }

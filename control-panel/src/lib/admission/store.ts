@@ -9,6 +9,7 @@ import {
 } from '@/lib/identity/store';
 
 import { withAppLifecycle } from '../market/update-admission';
+import { clearForwardAuthCaches } from '../identity/forward-auth-cache';
 import { assertRestoredAdmission } from '../backup/app-restore-intent';
 
 export { evaluateAdmission };
@@ -220,6 +221,20 @@ export async function resolveAdmissionRoute(host: string, path: string): Promise
     ORDER BY length(r.path_prefix) DESC LIMIT 1`);
   return match[0] ? getAdmissionPolicy(match[0].app_id) : null;
 }
+/** Every admission route on a host with its app's policy, for in-memory matching. */
+export async function listAdmissionHostRoutes(host: string): Promise<Array<{ pathPrefix: string; policy: AdmissionPolicy }>> {
+  await ensureIdentitySchema();
+  if (!/^[a-z0-9.-]+$/.test(host)) return [];
+  const routes = await rows<{ path_prefix: string; app_id: string }>(`
+    SELECT r.path_prefix, p.app_id FROM admission_routes r JOIN admission_policies p USING (installation_id)
+    WHERE r.host = ${sql(host)}`);
+  const policies = new Map<string, AdmissionPolicy | null>();
+  for (const appId of new Set(routes.map(route => route.app_id))) policies.set(appId, await getAdmissionPolicy(appId));
+  return routes.flatMap(route => {
+    const policy = policies.get(route.app_id);
+    return policy ? [{ pathPrefix: route.path_prefix, policy }] : [];
+  });
+}
 export async function updateAdmissionPolicy(input: {
   actorId: string; expectedRevision: number; policy: AdmissionPolicy;
 }): Promise<AdmissionPolicy> {
@@ -264,6 +279,7 @@ async function updateAdmissionPolicyUnderLifecycle(input: {
       FROM changed
     )`, 'SELECT installation_id::text FROM eligible');
   if (!changed.length) throw new Error('Policy conflict, invalid principal, or administrator required');
+  clearForwardAuthCaches();
   return (await getAdmissionPolicy(p.appId))!;
 }
 export async function saveResourceOwnership(resource: ResourceOwnership): Promise<void> {

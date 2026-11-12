@@ -4,8 +4,8 @@ import { updateConfigurationContext, updateEnvironment, resolveUpdateTemplate } 
 import type { AppManifest } from '../src/lib/market/types';
 
 const old = {
-  containers: [{ name: 'main', environment: { DATABASE_URL: '${database.url}' } }],
-  env_mapping: { OIDC_SECRET: '${sso.client_secret}', TOKEN: '${integration.app_token}' },
+  containers: [{ name: 'main', primary: true, environment: { DATABASE_URL: '${database.url}' } }],
+  env_mapping: { OIDC_SECRET: '${sso.client_secret}', TOKEN: '${youeye.app_token}' },
 } as unknown as AppManifest;
 
 test('changed config resolves installed credentials without minting or replacing them', () => {
@@ -15,18 +15,19 @@ test('changed config resolves installed credentials without minting or replacing
   } }, { database: { url: '' }, sso: { client_secret: '' } } as never);
   assert.equal(resolveUpdateTemplate('db=${database.url}', context), 'db=postgresql://app:fixture-secret@db/app');
   assert.equal(resolveUpdateTemplate('sso=${sso.client_secret}', context), 'sso=installed-oidc');
-  const next = updateEnvironment({ TOKEN: '${integration.app_token}', SETTING: 'old', REMOVED: 'gone' },
-    { TOKEN: '${integration.app_token}', SETTING: 'new' },
+  const next = updateEnvironment({ TOKEN: '${youeye.app_token}', SETTING: 'old', REMOVED: 'gone' },
+    { TOKEN: '${youeye.app_token}', SETTING: 'new' },
     { TOKEN: 'installed-token', SETTING: 'old', REMOVED: 'gone', PLATFORM_CA: '/ca.pem' }, context);
   assert.deepEqual(next, { TOKEN: 'installed-token', SETTING: 'new', PLATFORM_CA: '/ca.pem' });
 });
 
 test('missing, inconsistent or empty new credential declarations fail safely', () => {
-  assert.throws(() => updateEnvironment({ TOKEN: '${integration.app_token}' },
-    { TOKEN: '${integration.app_token}' }, {}, {}), /missing/);
+  assert.throws(() => updateEnvironment({ TOKEN: '${youeye.app_token}' },
+    { TOKEN: '${youeye.app_token}' }, {}, {}), /missing/);
   assert.throws(() => resolveUpdateTemplate('${database.password}', { database: { password: '' } } as never), /unavailable/);
   assert.throws(() => updateConfigurationContext({ ...old,
-    containers: [{ name: 'a' }, { name: 'b' }],
+    containers: [{ name: 'a', environment: { OIDC_SECRET: '${sso.client_secret}' } },
+      { name: 'b', environment: { OIDC_SECRET: '${sso.client_secret}' } }],
   } as AppManifest, { a: { OIDC_SECRET: 'a' }, b: { OIDC_SECRET: 'b' } }, {}), /inconsistent/);
 });
 

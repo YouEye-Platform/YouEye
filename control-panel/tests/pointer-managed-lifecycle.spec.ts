@@ -21,7 +21,7 @@ test('Pointer candidate resolution and updates use the box channel index', () =>
   const updater = read('src/lib/apps/lxd-updater.ts');
   assert.match(checks, /readChannelIndex\(\)\)\.index\.products\.pointer/);
   assert.doesNotMatch(checks, /effectiveChannel|resolveCandidate|package\.json/);
-  assert.match(route, /await updateLXDApp\(appDef, emit\)/);
+  assert.match(route, /await withUserOperationLockWait\(\(\) => updateLXDApp\(appDef, emit\)\)/);
   assert.match(infrastructureDeployer, /resolve: \(\) => resolveNativeProduct\('pointer'\)/);
   assert.match(infrastructureDeployer, /tag: resolved\.tag/);
   assert.match(infrastructureDeployer, /artifactSHA256: resolved\.artifactSHA256/);

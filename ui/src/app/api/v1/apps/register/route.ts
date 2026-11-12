@@ -48,11 +48,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // Try to fetch manifest from the app; fall back to the one CP sent
-  const liveManifest = await fetchAppManifest(container_url);
+  // The Control Panel's registration carries the installed app's frozen copy (`frozen`): it
+  // wins over anything the app serves live at /api/manifest, which can never replace or drop it.
   const existing = await getApp(id);
   const completeCpManifest = cpManifest && Object.keys(cpManifest).some(key => key !== 'integration') ? cpManifest : null;
-  const manifest = liveManifest ?? completeCpManifest ?? existing?.manifest ?? cpManifest ?? null;
+  const frozenCpManifest = isBridgeAuth && completeCpManifest && completeCpManifest.frozen ? completeCpManifest : null;
+  const liveManifest = frozenCpManifest ? null : await fetchAppManifest(container_url);
+  const manifest = frozenCpManifest ?? liveManifest ?? completeCpManifest ?? existing?.manifest ?? cpManifest ?? null;
   if (manifest && isBridgeAuth && cpManifest?.integration === 'native') {
     Object.assign(manifest, { integration: 'native' });
   }

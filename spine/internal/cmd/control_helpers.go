@@ -145,22 +145,23 @@ type untrackedApp struct {
 // controlClient is the global Control Panel API client, initialized in PersistentPreRunE.
 var controlClient *controlapi.Client
 
-// requireControlPanel prints an error and returns false if CP is unreachable or has no token.
-func requireCP() bool {
+// requireCP prints why and returns an exit error (status 1, nothing more printed) if CP is unreachable or has no
+// token, so scripts see the command fail instead of a silent success.
+func requireCP() error {
 	if controlClient == nil {
 		controlClient = controlapi.NewClient()
 	}
 	if !controlClient.Available() {
 		output.Error("Control Panel is unreachable.")
 		fmt.Println("  Check that YouEye is deployed and running: youeye status")
-		return false
+		return &ExitError{Code: 1}
 	}
 	if !controlClient.HasToken() {
 		output.Warn("CLI token not found at " + controlapi.CLITokenPath)
 		fmt.Println("  Run: sudo youeye deploy (or provision the CLI token manually)")
-		return false
+		return &ExitError{Code: 1}
 	}
-	return true
+	return nil
 }
 
 // str gets a string value from a map.

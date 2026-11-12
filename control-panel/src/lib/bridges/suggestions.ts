@@ -2,17 +2,16 @@
  * Suggestions Engine
  *
  * Scans app `wants` declarations against installed apps to generate
- * connection suggestions. Also generates internet access suggestions
- * from `internet.hosts` declarations.
+ * connection suggestions. Internet access is NAT on/off (`internet:`), so there are no
+ * per-host internet suggestions; `proxy:` scopes are granted per user in the dashboard.
  */
 
 import { readFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { listInstalledApps } from '../market/metadata';
-import { fetchManifest } from '../market/catalog';
+import { readInstalledAppManifest } from '../market/frozen-manifest';
 import { sendNotificationToUI } from '../health/notification-bridge';
 import { loadBridges } from './store';
-import { listInternetGrants } from './internet-store';
 import { writeJsonAtomically } from './atomic-json-store';
 import type { AppManifest, InstallMetadata, ProvidesSpec, WantSpec } from '../market/types';
 
@@ -76,8 +75,25 @@ export async function removeSuggestion(id: string): Promise<void> {
 }
 
 /**
+ * Forget an uninstalled app: drop the suggestions it made, and mark suggestions that point at it
+ * as waiting for their target again.
+ */
+export async function forgetSuggestionsForApp(appId: string): Promise<void> {
+  const suggestions = await readStore();
+  const kept = suggestions.filter((s) => s.fromAppId !== appId);
+  let changed = kept.length !== suggestions.length;
+  for (const s of kept) {
+    if (s.targetAppId === appId && s.targetInstalled !== false) {
+      s.targetInstalled = false;
+      changed = true;
+    }
+  }
+  if (changed) await writeStore(kept);
+}
+
+/**
  * Generate suggestions for a newly installed app.
- * Scans its `wants` list against installed apps, and its `internet.hosts`.
+ * Scans its `wants` list against installed apps.
  * Also checks all OTHER installed apps' `wants` to see if any want this new app.
  *
  * @param skipTargetIds - target app IDs to skip (already approved at install time)
@@ -94,13 +110,11 @@ function wantResolvesToApp(
   return false;
 }
 
-/** Read an installed app's declared `wants`. Prefers the value persisted in install
- *  metadata; for apps installed before `wants` were persisted, falls back to a (cached)
- *  manifest fetch so the reverse-scan still works during the transition. */
+/** Read an installed app's declared `wants`: from install metadata, else its frozen copy. */
 async function installedWants(meta: InstallMetadata): Promise<WantSpec[]> {
   if (meta.wants) return meta.wants;
   try {
-    const m = await fetchManifest(meta.appId);
+    const m = await readInstalledAppManifest(meta.appId);
     return m.wants ?? [];
   } catch {
     return [];
@@ -138,8 +152,7 @@ async function notifyNewConnections(newBridges: Suggestion[]): Promise<void> {
  * Three passes, all `scope`-aware:
  *  1. Forward — this app's `wants` (appId-based → the named target; type-based → every
  *     installed app whose `provides` matches the wanted capability type).
- *  2. Internet — this app's `internet.hosts`.
- *  3. Reverse — every OTHER installed app whose `wants` resolve to THIS newly installed app
+ *  2. Reverse — every OTHER installed app whose `wants` resolve to THIS newly installed app
  *     (so installing a provider lights up the pending-connection count for existing consumers).
  *
  * Then pushes one heads-up notification covering the connections that can be approved now
@@ -153,7 +166,6 @@ export async function generateSuggestionsForApp(
 ): Promise<Suggestion[]> {
   const existing = await readStore();
   const bridges = await loadBridges();
-  const internetGrants = await listInternetGrants();
   const installedMetas = await listInstalledApps();
 
   const newSuggestions: Suggestion[] = [];
@@ -242,27 +254,7 @@ export async function generateSuggestionsForApp(
     }
   }
 
-  // 2. This app's internet.hosts
-  const internetHosts = manifest.internet?.hosts ?? [];
-  if (internetHosts.length > 0) {
-    const existingGrant = internetGrants.find((g) => g.appId === appId);
-    if (!existingGrant) {
-      const existingSuggestion = existing.find((s) => s.fromAppId === appId && s.type === 'internet');
-      if (!existingSuggestion) {
-        newSuggestions.push({
-          id: `internet-${appId}`,
-          type: 'internet',
-          fromAppId: appId,
-          fromAppName: appName,
-          hosts: internetHosts,
-          dismissed: false,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    }
-  }
-
-  // 3. Reverse — other installed apps that want THIS newly installed app.
+  // 2. Reverse — other installed apps that want THIS newly installed app.
   for (const consumer of installedMetas) {
     if (consumer.appId === appId) continue;
     const consumerWants = await installedWants(consumer);

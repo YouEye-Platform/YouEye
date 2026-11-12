@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { readInstallMetadata } from '@/lib/market/metadata';
-import { readSecret } from '@/lib/infrastructure/secrets';
+import { isAppSecretName, readAppSecret } from '@/lib/infrastructure/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +37,9 @@ export async function GET(request: NextRequest) {
 
   const credentials = await Promise.all(
     metadata.credentials.map(async (cred) => {
-      const password = await readSecret(`app-${appId}`, `.${cred.passwordSecret}`);
+      const password = isAppSecretName(cred.passwordSecret)
+        ? await readAppSecret(appId, cred.passwordSecret)
+        : null;
       return {
         label: cred.label,
         username: cred.username,

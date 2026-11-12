@@ -7,6 +7,7 @@ import {useLocale} from "next-intl";
 
 import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { authenticatedFetch } from "@/lib/api-client";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -136,8 +137,8 @@ function OverviewTab() {
     try {
       setError(null);
       const [statsRes, histRes] = await Promise.all([
-        fetch("/api/ui-bridge/dns/stats"),
-        fetch("/api/ui-bridge/dns/history"),
+        authenticatedFetch("/api/ui-bridge/dns/stats"),
+        authenticatedFetch("/api/ui-bridge/dns/history"),
       ]);
       if (statsRes.ok) setData(await statsRes.json());
       if (histRes.ok) {
@@ -265,7 +266,7 @@ function OverviewTab() {
     setToggling(true);
     const action = data.status === "enabled" ? "disable" : "enable";
     try {
-      const res = await fetch("/api/ui-bridge/dns/control", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
@@ -356,7 +357,7 @@ function QueryLogTab() {
       const params = new URLSearchParams({ limit: "200" });
       if (filter) params.set("domain", filter);
       if (statusFilter) params.set("status", statusFilter);
-      const res = await fetch(`/api/ui-bridge/dns/queries?${params}`);
+      const res = await authenticatedFetch(`/api/ui-bridge/dns/queries?${params}`);
       if (res.ok) {
         const d = await res.json();
         setQueries(d.queries || []);
@@ -470,7 +471,7 @@ function DomainsTab() {
 
   const fetchDomains = useCallback(async () => {
     try {
-      const res = await fetch("/api/ui-bridge/dns/domains");
+      const res = await authenticatedFetch("/api/ui-bridge/dns/domains");
       if (res.ok) setLists(await res.json());
     } catch { /* silently fail */ } finally { setLoading(false); }
   }, []);
@@ -482,7 +483,7 @@ function DomainsTab() {
     setAdding(true);
     setError("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/domains", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/domains", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: newDomain.trim(), list: activeList, kind: newKind }),
@@ -500,7 +501,7 @@ function DomainsTab() {
 
   const handleRemove = async (domain: string, kind: "exact" | "regex") => {
     try {
-      await fetch("/api/ui-bridge/dns/domains", {
+      await authenticatedFetch("/api/ui-bridge/dns/domains", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain, list: activeList, kind }),
@@ -610,8 +611,8 @@ function LocalDnsTab() {
   const fetchAll = useCallback(async () => {
     try {
       const [rRes, cRes] = await Promise.all([
-        fetch("/api/ui-bridge/dns/records"),
-        fetch("/api/ui-bridge/dns/cname"),
+        authenticatedFetch("/api/ui-bridge/dns/records"),
+        authenticatedFetch("/api/ui-bridge/dns/cname"),
       ]);
       if (rRes.ok) setRecords(await rRes.json());
       if (cRes.ok) setCnames(await cRes.json());
@@ -624,7 +625,7 @@ function LocalDnsTab() {
     if (!newIp.trim() || !newDomain.trim()) return;
     setAdding(true); setError("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/records", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/records", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip: newIp.trim(), domain: newDomain.trim() }),
@@ -638,7 +639,7 @@ function LocalDnsTab() {
 
   const handleRemoveRecord = async (ip: string, domain: string) => {
     try {
-      await fetch("/api/ui-bridge/dns/records", {
+      await authenticatedFetch("/api/ui-bridge/dns/records", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip, domain }),
@@ -651,7 +652,7 @@ function LocalDnsTab() {
     if (!newDomain.trim() || !newTarget.trim()) return;
     setAdding(true); setError("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/cname", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/cname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: newDomain.trim(), target: newTarget.trim() }),
@@ -665,7 +666,7 @@ function LocalDnsTab() {
 
   const handleRemoveCname = async (domain: string, target: string) => {
     try {
-      await fetch("/api/ui-bridge/dns/cname", {
+      await authenticatedFetch("/api/ui-bridge/dns/cname", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain, target }),
@@ -784,7 +785,7 @@ function BlocklistsTab() {
 
   const fetchLists = useCallback(async () => {
     try {
-      const res = await fetch("/api/ui-bridge/dns/lists");
+      const res = await authenticatedFetch("/api/ui-bridge/dns/lists");
       if (res.ok) {
         const d = await res.json();
         setLists(d.lists || []);
@@ -798,7 +799,7 @@ function BlocklistsTab() {
     if (!newUrl.trim()) return;
     setAdding(true); setError("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/lists", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/lists", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: newUrl.trim(), comment: newComment.trim() }),
@@ -815,7 +816,7 @@ function BlocklistsTab() {
 
   const handleRemove = async (address: string) => {
     try {
-      await fetch("/api/ui-bridge/dns/lists", {
+      await authenticatedFetch("/api/ui-bridge/dns/lists", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address }),
@@ -827,7 +828,7 @@ function BlocklistsTab() {
   const handleGravity = async () => {
     setUpdating(true); setSuccess(""); setError("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/gravity", { method: "POST" });
+      const res = await authenticatedFetch("/api/ui-bridge/dns/gravity", { method: "POST" });
       if (res.ok) {
         setSuccess(translateInterface("mfbe100ccfbee"));
         fetchLists();
@@ -928,8 +929,8 @@ function SettingsTab() {
   const fetchConfig = useCallback(async () => {
     try {
       const [configRes, upstreamRes] = await Promise.all([
-        fetch("/api/ui-bridge/dns/config"),
-        fetch("/api/ui-bridge/dns/upstream"),
+        authenticatedFetch("/api/ui-bridge/dns/config"),
+        authenticatedFetch("/api/ui-bridge/dns/upstream"),
       ]);
       if (configRes.ok) {
         const d = await configRes.json();
@@ -950,7 +951,7 @@ function SettingsTab() {
     if (filtered.length === 0) { setError(translateInterface("m9c1f18e8e581")); return; }
     setSaving(true); setError(""); setSuccess("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/upstream", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/upstream", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ upstreams: filtered }),
@@ -969,7 +970,7 @@ function SettingsTab() {
   const handleConfigSave = async (patch: Record<string, unknown>) => {
     setSaving(true); setError(""); setSuccess("");
     try {
-      const res = await fetch("/api/ui-bridge/dns/config", {
+      const res = await authenticatedFetch("/api/ui-bridge/dns/config", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config: patch }),

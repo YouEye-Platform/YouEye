@@ -7,11 +7,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { getCNAMERecords, addCNAMERecord, removeCNAMERecord } from '@/lib/apps/pihole-api';
 
 export async function GET(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

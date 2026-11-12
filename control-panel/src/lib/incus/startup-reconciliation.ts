@@ -22,6 +22,8 @@ export function runStartupReconciliation(
     bootstrap: async () => (await import('./app-network')).ensureAppNetworkBootstrapConfig(),
     apps: async () => (await import('@/lib/market/reconciler')).reconcileApps(),
     routes: async () => {
+      // Every CP start (updates included) keeps Caddy's admin API on its static address only.
+      await (await import('@/lib/caddy/client')).ensureAdminListenerPinned();
       const raw = await (await import('@/lib/settings')).settingsService.getRaw();
       if (!raw.setup_completed || !raw.domain) return;
       await (await import('@/lib/caddy/client')).reconcileManagedRoutes(raw.domain);

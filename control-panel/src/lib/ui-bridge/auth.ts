@@ -1,51 +1,35 @@
 /**
- * UI Bridge Authentication — CP Side
+ * Authorization for the CP's own /api/ui-bridge/* routes.
  *
- * One-Way Bridge: CP's /api/ui-bridge/* routes are for EMBEDS only.
- * UI server never calls CP. Bridge token auth is intentionally disabled
- * on CP to enforce this isolation.
+ * These routes serve the CP's embed pages (/embed/*, shown by the dashboard in
+ * iframes). The embed's browser code calls them same-origin, so the caller is
+ * whoever holds the CP session cookie: every request needs a valid CP session
+ * of an admin (every embed is admin-only), and every state change also needs
+ * the CSRF token (`X-CSRF-Token` matching the `ye-csrf` cookie, as on every
+ * other CP route; `authenticatedFetch` sends it).
  *
- * Embeds are CP pages loaded in UI iframes. When embed client-side code
- * makes fetch calls to these routes, they're same-origin (CP→CP) and
- * validated via Referer header.
+ * The UI server never calls these routes (CP → UI only), and nothing here
+ * trusts a Referer or a bridge token.
  */
 
 import { NextResponse } from 'next/server';
+import { getSession, verifyCSRFToken } from '@/lib/auth/session';
+import { embedBridgeDecision, SAFE_METHODS } from './embed-decision';
 
 /**
- * Validate requests to CP's /api/ui-bridge/* routes.
- * Returns null if valid, or a NextResponse with 401 status if invalid.
+ * Returns null when the request may proceed, or the refusal response.
  *
- * ONLY accepts same-origin embed requests (Referer from /embed/*).
- * Bridge token auth is intentionally NOT accepted — UI server should
- * never call CP. This enforces one-way bridge architecture.
- *
- * Usage in route handlers:
  * ```
- * const authError = await validateBridgeToken(request);
+ * const authError = await requireEmbedAdmin(request);
  * if (authError) return authError;
  * ```
  */
-export async function validateBridgeToken(
-  request: Request
-): Promise<NextResponse | null> {
-  // Only accept same-origin embed requests (Referer starts with /embed/)
-  const referer = request.headers.get('referer');
-  if (referer) {
-    try {
-      const refUrl = new URL(referer);
-      if (refUrl.pathname.startsWith('/embed/')) {
-        return null;
-      }
-    } catch {
-      // Invalid referer URL
-    }
-  }
-
-  // Reject everything else — including bridge token attempts
-  // This enforces one-way bridge (CP→UI only, UI never calls CP)
-  return NextResponse.json(
-    { error: 'Unauthorized: embed requests only', valid: false },
-    { status: 401 }
-  );
+export async function requireEmbedAdmin(request: Request): Promise<NextResponse | null> {
+  const session = await getSession();
+  const csrfToken = request.headers.get('x-csrf-token');
+  const csrfValid = SAFE_METHODS.has(request.method.toUpperCase())
+    ? true
+    : Boolean(csrfToken) && await verifyCSRFToken(csrfToken!);
+  const refusal = embedBridgeDecision({ method: request.method, session, csrfValid });
+  return refusal ? NextResponse.json({ error: refusal.error }, { status: refusal.status }) : null;
 }

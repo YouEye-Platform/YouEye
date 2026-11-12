@@ -46,16 +46,7 @@ export function collectInternetScopes(manifest: Record<string, unknown> | null |
     });
   }
 
-  if (scopes.length > 0) return scopes;
-
-  for (const host of asStringArray(internet.hosts)) {
-    scopes.push({
-      host: normalizeHost(host),
-      paths: ["/*"],
-      methods: ["GET"],
-      scope: "user",
-    });
-  }
+  // `proxy` scopes are the only per-host mechanism; `internet:` is NAT on/off, not a host list.
   return scopes;
 }
 

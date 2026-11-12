@@ -82,6 +82,28 @@ type CorePreparationCanceller interface {
 	CancelPreparation(context.Context, CoreJournal) error
 }
 
+// CoreCheckpointRefusalVerifier proves that a failed checkpoint ended in its read-only preflight, before any
+// writer, ingress or snapshot was touched. Only then may the request end by cancellation instead of recovery.
+type CoreCheckpointRefusalVerifier interface {
+	VerifyCheckpointRefusal(context.Context, CoreJournal) error
+}
+
+// corePreparationOnly: no step past preparation has started, except a checkpoint recorded "failed". Cancellation
+// publishes "cancelling" over such a checkpoint only after CoreCheckpointRefusalVerifier passed, so native
+// cancellation guards use this instead of rejecting every non-pending checkpoint.
+func corePreparationOnly(j CoreJournal) bool {
+	if len(j.RecoverySteps) > 0 {
+		return false
+	}
+	for _, step := range j.Steps {
+		if step.State == "pending" || step.Name == "verify-members" || step.Name == "stage-host" || (step.Name == "checkpoint" && step.State == "failed") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 type CoreManager struct {
 	Root     string
 	Executor CoreExecutor
@@ -509,6 +531,16 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 		case "failed":
 			step.State = "failed"
 			step.Evidence = observation.Evidence
+			if step.Name == "checkpoint" && observation.Code == coreCheckpointPreflightRefused {
+				if m.verifyCheckpointRefusal(ctx, j) == nil {
+					// The preflight refused before any writer was touched: there is nothing to
+					// recover, and paired recovery would repeat the same refused inspection.
+					// End the request on the installed release and release its lifecycle hold.
+					j.Error = coreCheckpointRefusedError
+					return m.cancelLocked(ctx, j)
+				}
+				// Without verified proof (for example a checkpoint record exists), recover.
+			}
 			j.Phase = "needs-recovery"
 			j.Error = "Recorded lifecycle action failed; retain paired checkpoint and prior release"
 			return j, m.saveCore(&j)
@@ -560,6 +592,8 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 
 // Cancel is permitted only before an effectful checkpoint/lifecycle step.
 // Once effects exist, explicit recovery must reconcile their actual outcomes.
+// A checkpoint whose read-only preflight refused has no such effects; it is
+// cancellable once the executor verifies that refusal.
 func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal, error) {
 	unlock, err := m.lockCore()
 	if err != nil {
@@ -579,6 +613,23 @@ func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal,
 	if j.Phase == "committed" || j.Phase == "rolled-back" || len(j.RecoverySteps) > 0 {
 		return j, fmt.Errorf("completed or recovering core request cannot be cancelled")
 	}
+	return m.cancelLocked(ctx, j)
+}
+
+// verifyCheckpointRefusal requires a recorded failed checkpoint, nothing started after it, no recovery graph,
+// and the executor's positive proof that the failure was the read-only preflight refusal.
+func (m CoreManager) verifyCheckpointRefusal(ctx context.Context, j CoreJournal) error {
+	verifier, ok := m.Executor.(CoreCheckpointRefusalVerifier)
+	if !ok || !corePreparationOnly(j) {
+		return fmt.Errorf("core update requires lifecycle recovery before cancellation")
+	}
+	return verifier.VerifyCheckpointRefusal(ctx, j)
+}
+
+const coreCheckpointRefusedError = "System update stopped before any service was touched: the checkpoint preflight refused (see the checkpoint step). The installed release is unchanged."
+
+// cancelLocked runs under the core lock after the caller has checked the phase.
+func (m CoreManager) cancelLocked(ctx context.Context, j CoreJournal) (CoreJournal, error) {
 	// Activation intent may precede host staging. Only actual checkpoint or
 	// later action intent requires paired recovery; retain the owner's original
 	// intent in the journal rather than clearing it to make cancellation pass.
@@ -587,7 +638,13 @@ func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal,
 		if step.State == "pending" {
 			continue
 		}
-		if step.Name != "verify-members" && step.Name != "stage-host" {
+		if step.Name == "checkpoint" && step.State == "failed" {
+			// Verified before cancel intent is published: once "cancelling", Advance and
+			// Recover refuse, so an unverified checkpoint must never reach that phase.
+			if err := m.verifyCheckpointRefusal(ctx, j); err != nil {
+				return j, fmt.Errorf("core update requires lifecycle recovery before cancellation: %w", err)
+			}
+		} else if step.Name != "verify-members" && step.Name != "stage-host" {
 			return j, fmt.Errorf("core update requires lifecycle recovery before cancellation")
 		}
 		hasEffects = true
@@ -600,10 +657,10 @@ func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal,
 		// Publish exclusive cancellation intent before stopping any owned child.
 		// A lost response can retry cleanup but cannot resume the apply graph.
 		j.Phase = "cancelling"
-		if err = m.saveCore(&j); err != nil {
+		if err := m.saveCore(&j); err != nil {
 			return j, err
 		}
-		if err = canceller.CancelPreparation(ctx, j); err != nil {
+		if err := canceller.CancelPreparation(ctx, j); err != nil {
 			return j, err
 		}
 	}

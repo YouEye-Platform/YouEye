@@ -2499,7 +2499,21 @@
     "m84d6732746f8": "Der Kanal konnte nicht geändert werden.",
     "m66de5771dc12": "Der Release-Kanal ist nicht verfügbar.",
     "m4d6bfb83f08f": "Der Release-Server hat die Anfrage abgelehnt oder begrenzt. YouEye versucht es automatisch erneut; prüfen Sie in einigen Minuten noch einmal.",
-    "ma28bdb69b7f1": "Branch {value0}"
+    "ma28bdb69b7f1": "Branch {value0}",
+    "m8977bde3d0f7": "Einrichtungsdateien",
+    "m41a1b4787986": "Diese App richtet sich mit diesen Dateien ein. Sie laufen nur in den eigenen Containern der App.",
+    "m3214819b16f1": "Ersteinrichtung",
+    "mfb7ed10de1ed": "Anmeldung mit YouEye ID",
+    "m18bac77ed792": "Adressänderungen",
+    "m7c07160bf0db": "Verbindung zu {app}",
+    "m2514aaccdb83": "Diese Einrichtungsdateien aus einer hinzugefügten Quelle ausführen lassen",
+    "m1d8034f00ca4": "Diese App hat Einrichtungsdateien. Prüfe sie und erlaube sie, um fortzufahren.",
+    "mcb476eaab560": "Die Einstellung zur Anmeldung mit YouEye ID konnte nicht geändert werden.",
+    "m8f71b12330db": "Anmeldung mit YouEye ID für {app} wird eingeschaltet… Das kann einige Minuten dauern.",
+    "m709433447a43": "Anmeldung mit YouEye ID für {app} wird ausgeschaltet…",
+    "m3bf590b2bb82": "Personen melden sich bei {app} mit ihrer YouEye ID an.",
+    "m2f5875924e6c": "{app} verwendet eigene Konten. Schalte dies ein, damit sich Personen mit ihrer YouEye ID anmelden können.",
+    "m70843fac04a3": "Anmeldung mit YouEye ID für {app}"
   },
   "settingsNavigation": {
     "profile": "Profil",

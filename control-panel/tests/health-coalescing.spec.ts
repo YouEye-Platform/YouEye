@@ -35,6 +35,7 @@ test('health route bundles share cold/warm observations and recover after expiry
           async health() { return { status: 'ok' }; }, async version() { return { version: 'test' }; },
         } };
         if (id === '@/lib/postgres/platform') return { async platformCommand() { return '17'; } };
+        if (id === '@/lib/caddy/client') return { async caddyAdminAddress() { return '10.0.0.13:2019'; } };
         throw new Error(id);
       },
     });

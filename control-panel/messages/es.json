@@ -2499,7 +2499,21 @@
     "m84d6732746f8": "No se pudo cambiar el canal.",
     "m66de5771dc12": "El canal de versiones no está disponible.",
     "m4d6bfb83f08f": "El servidor de versiones rechazó o limitó la solicitud. YouEye lo reintenta automáticamente; vuelve a comprobarlo en unos minutos.",
-    "ma28bdb69b7f1": "Rama {value0}"
+    "ma28bdb69b7f1": "Rama {value0}",
+    "m8977bde3d0f7": "Archivos de configuración",
+    "m41a1b4787986": "Esta app se configura con estos archivos. Solo se ejecutan dentro de los propios contenedores de la app.",
+    "m3214819b16f1": "Configuración inicial",
+    "mfb7ed10de1ed": "Inicio de sesión con YouEye ID",
+    "m18bac77ed792": "Cambios de dirección",
+    "m7c07160bf0db": "Conexión con {app}",
+    "m2514aaccdb83": "Permitir que se ejecuten estos archivos de configuración de una fuente añadida",
+    "m1d8034f00ca4": "Esta app tiene archivos de configuración. Revísalos y permítelos para continuar.",
+    "mcb476eaab560": "No se pudo cambiar el ajuste de inicio de sesión con YouEye ID.",
+    "m8f71b12330db": "Activando el inicio de sesión con YouEye ID para {app}… Esto puede tardar unos minutos.",
+    "m709433447a43": "Desactivando el inicio de sesión con YouEye ID para {app}…",
+    "m3bf590b2bb82": "Las personas inician sesión en {app} con su YouEye ID.",
+    "m2f5875924e6c": "{app} usa sus propias cuentas. Actívalo para que las personas inicien sesión con su YouEye ID.",
+    "m70843fac04a3": "Inicio de sesión con YouEye ID para {app}"
   },
   "settingsNavigation": {
     "profile": "Perfil",

@@ -1,0 +1,158 @@
+schema: youeye.setup.v1
+for: sso
+steps:
+  - sleep: 10
+  - http:
+      method: POST
+      path: /Startup/Configuration
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        UICulture: en-US
+        MetadataCountryCode: US
+        PreferredMetadataLanguage: en
+      allow_failure: true
+  - http:
+      method: GET
+      path: /Startup/User
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      allow_failure: true
+  - http:
+      method: POST
+      path: /Startup/User
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        Name: admin
+        password: ${secret.admin_password}
+      allow_failure: true
+  - http:
+      method: POST
+      path: /Startup/RemoteAccess
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        EnableRemoteAccess: true
+        EnableAutomaticPortMapping: false
+      allow_failure: true
+  - http:
+      method: POST
+      path: /Startup/Complete
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      allow_failure: true
+  - http:
+      method: POST
+      path: /Users/AuthenticateByName
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        Username: admin
+        Pw: ${secret.admin_password}
+      save: {jellyfinToken: AccessToken}
+  - http:
+      method: GET
+      path: /Repositories
+      headers:
+        Authorization: MediaBrowser Token="${vars.jellyfinToken}"
+      save: {currentRepos: $}
+  - http:
+      method: POST
+      path: /Repositories
+      headers:
+        Authorization: MediaBrowser Token="${vars.jellyfinToken}"
+      body:
+        - Name: Jellyfin Stable
+          Url: https://repo.jellyfin.org/files/plugin/manifest.json
+          Enabled: true
+        - Name: SSO Authentication
+          Url: https://raw.githubusercontent.com/9p4/jellyfin-plugin-sso/manifest-release/manifest.json
+          Enabled: true
+  - http:
+      method: POST
+      path: /Packages/Installed/SSO%20Authentication?assemblyGuid=505ce9d1-d916-42fa-86ca-673ef241d7df&repositoryUrl=https%3A%2F%2Fraw.githubusercontent.com%2F9p4%2Fjellyfin-plugin-sso%2Fmanifest-release%2Fmanifest.json
+      headers:
+        Authorization: MediaBrowser Token="${vars.jellyfinToken}"
+      allow_failure: true
+  - http:
+      method: POST
+      path: /System/Restart
+      headers:
+        Authorization: MediaBrowser Token="${vars.jellyfinToken}"
+      allow_failure: true
+  - sleep: 15
+  - http:
+      method: POST
+      path: /Users/AuthenticateByName
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        Username: admin
+        Pw: ${secret.admin_password}
+      save: {jellyfinToken: AccessToken}
+  - http:
+      method: GET
+      path: /sso/OID/Del/${sso.slug}?api_key=${vars.jellyfinToken}
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      allow_failure: true
+  - http:
+      method: POST
+      path: /sso/OID/Add/${sso.slug}?api_key=${vars.jellyfinToken}
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        oidEndpoint: ${sso.issuer}
+        oidClientId: ${sso.client_id}
+        oidSecret: ${sso.client_secret}
+        enabled: true
+        enableAuthorization: true
+        enableAllFolders: true
+        enabledFolders: []
+        adminRoles: [admin]
+        roles: []
+        enableFolderRoles: false
+        folderRoleMapping: []
+        enableLiveTvRoles: false
+        liveTvRoles: []
+        liveTvManagementRoles: []
+        enableLiveTv: false
+        enableLiveTvManagement: false
+        roleClaim: groups
+        oidScopes: [openid, email, profile]
+        defaultProvider: ''
+        defaultUsernameClaim: preferred_username
+        # Split-channel OIDC over an internal HTTP back-channel. The OIDC discovery
+        # document (issuer/token/userinfo/jwks) is served on the internal app-gateway
+        # http://<gw>:3002 (no internal TLS), while the authorization_endpoint is on the
+        # external browser host https://id.<domain>. The Jellyfin SSO plugin uses Duende
+        # IdentityModel, which (a) requires HTTPS for the discovery fetch and (b) validates
+        # that every endpoint shares the issuer host. Both reject this split-channel setup,
+        # so the OIDC client throws while loading discovery and /sso/OID/start returns 500.
+        # All three flags are required and safe here: the issuer is a trusted first-party
+        # YouEye ID provider on the isolated internal network; token signature/audience/
+        # expiry validation is unaffected.
+        # allow the http://<gw>:3002 discovery fetch (else "HTTPS required")
+        disableHttps: true
+        # authorize host (id.<domain>) != issuer host (<gw>:3002)
+        doNotValidateEndpoints: true
+        # issuer name differs from the external browser host
+        doNotValidateIssuerName: true
+        doNotLoadProfile: false
+        schemeOverride: https
+remove:
+  - http:
+      method: POST
+      path: /Users/AuthenticateByName
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"
+      body:
+        Username: admin
+        Pw: ${secret.admin_password}
+      save: {jellyfinToken: AccessToken}
+  - http:
+      method: GET
+      path: /sso/OID/Del/${sso.slug}?api_key=${vars.jellyfinToken}
+      headers:
+        X-Emby-Authorization: MediaBrowser Client="YouEye", Device="Server", DeviceId="youeye-setup", Version="1.0.0"

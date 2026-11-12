@@ -1,108 +1,336 @@
 /**
  * Market engine types.
- * Inferred from Zod schemas + runtime types for install flow.
+ *
+ * `AppManifest` is the engine's internal app model. It is plain TypeScript: no YAML is ever
+ * parsed into it. `app-format/compile.ts` builds it from a parsed `youeye.app.v1` manifest
+ * and its setup files.
  */
 
-import type { z } from 'zod/v4';
-import type {
-  AppManifestSchema,
-  MetadataSchema,
-  ContainerSchema,
-  ContainerSourceSchema,
-  SecretSchema,
-  CredentialSchema,
-  DatabaseSchema,
-  ConfigFileSchema,
-  CapabilitiesSchema,
-  AdminMappingSchema,
-  SSOSchema,
-  SSOStepSchema,
-  SSOSetupSchema,
-  SSOCliStepSchema,
-  IntegrationSchema,
-  IntegrationManifestSchema,
-  BackupSchema,
-  UninstallSchema,
-  UpdateSchema,
-  SystemAppManifestSchema,
-  UpdateHookStepSchema,
-  MigrationSchema,
-  MigrationStepSchema,
-  HealthCheckSchema,
-  CatalogSchema,
-  CategorySchema,
-  CurationSchema,
-  BundleManifestSchema,
-  StoreDescriptorSchema,
-  CatalogEntrySchema,
-  SystemCatalogEntrySchema,
-  IntegrationCatalogEntrySchema,
-  UpdatePlanSchema,
-  UpdatePlanCatalogEntrySchema,
-  DetailSchema,
-  DetailScreenshotSchema,
-  InstallParamSchema,
-  ProvidesSchema,
-  WantSchema,
-  ProxyScopeSchema,
-  InternetProxyScopeSchema,
-  InternetSchema,
-  PostDeployStepSchema,
-  VolumeSchema,
-  SurfaceSchema,
-  UserPreferenceFieldSchema,
-  AppSettingsSchema,
-} from './schema';
+import type { SetupStep } from './app-format/schema';
 
-// ─── Manifest Types (from Zod) ─────────────────────────────
+// ─── Internal app model ────────────────────────────────────
 
-export type AppManifest = z.infer<typeof AppManifestSchema>;
-export type AppMetadata = z.infer<typeof MetadataSchema>;
-export type ContainerSpec = z.infer<typeof ContainerSchema>;
-export type ContainerSource = z.infer<typeof ContainerSourceSchema>;
-export type SecretSpec = z.infer<typeof SecretSchema>;
-export type CredentialSpec = z.infer<typeof CredentialSchema>;
-export type DatabaseSpec = z.infer<typeof DatabaseSchema>;
-export type ConfigFileSpec = z.infer<typeof ConfigFileSchema>;
-export type AdminMapping = z.infer<typeof AdminMappingSchema>;
-export type SSOConfig = z.infer<typeof SSOSchema>;
-export type SSOStep = z.infer<typeof SSOStepSchema>;
-export type SSOSetup = z.infer<typeof SSOSetupSchema>;
-export type SSOCliStep = z.infer<typeof SSOCliStepSchema>;
-export type IntegrationSpec = z.infer<typeof IntegrationSchema>;
-export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
-export type SystemAppManifest = z.infer<typeof SystemAppManifestSchema>;
-export type Capabilities = z.infer<typeof CapabilitiesSchema>;
-export type BackupSpec = z.infer<typeof BackupSchema>;
-export type UninstallSpec = z.infer<typeof UninstallSchema>;
-export type UpdateSpec = z.infer<typeof UpdateSchema>;
-export type UpdateHookStep = z.infer<typeof UpdateHookStepSchema>;
-export type MigrationSpec = z.infer<typeof MigrationSchema>;
-export type MigrationStep = z.infer<typeof MigrationStepSchema>;
-export type HealthCheckSpec = z.infer<typeof HealthCheckSchema>;
-export type Catalog = z.infer<typeof CatalogSchema>;
-export type MarketCategory = z.infer<typeof CategorySchema>;
-export type MarketCuration = z.infer<typeof CurationSchema>;
-export type MarketBundle = z.infer<typeof BundleManifestSchema>;
-export type StoreDescriptor = z.infer<typeof StoreDescriptorSchema>;
-export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
-export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
-export type IntegrationCatalogEntry = z.infer<typeof IntegrationCatalogEntrySchema>;
-export type UpdatePlan = z.infer<typeof UpdatePlanSchema>;
-export type UpdatePlanCatalogEntry = z.infer<typeof UpdatePlanCatalogEntrySchema>;
-export type AppDetail = z.infer<typeof DetailSchema>;
-export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
-export type InstallParam = z.infer<typeof InstallParamSchema>;
-export type ProvidesSpec = z.infer<typeof ProvidesSchema>;
-export type WantSpec = z.infer<typeof WantSchema>;
-export type ProxyScopeSpec = z.infer<typeof ProxyScopeSchema>;
-export type InternetProxyScopeSpec = z.infer<typeof InternetProxyScopeSchema>;
-export type InternetSpec = z.infer<typeof InternetSchema>;
-export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
-export type VolumeSpec = z.infer<typeof VolumeSchema>;
-export type SurfaceSpec = z.infer<typeof SurfaceSchema>;
-export type UserPreferenceField = z.infer<typeof UserPreferenceFieldSchema>;
-export type AppSettingsSpec = z.infer<typeof AppSettingsSchema>;
+export interface AppMetadata {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  iconUrl?: string;
+  category: string;
+  website?: string;
+  developer?: string;
+  license?: string;
+  sourceCode?: string;
+  support?: string;
+  docs?: string;
+  tagline?: string;
+  tags: string[];
+  defaultSubdomain: string;
+}
+
+interface HealthCheckCommon {
+  /** Milliseconds. */
+  timeout: number;
+  retries: number;
+  startPeriod: number;
+  autoRestart: boolean;
+}
+
+/** An HTTP path on the container, or `pg_isready` as `user` (PostgreSQL sidecars). */
+export type HealthCheckSpec =
+  | (HealthCheckCommon & { type: 'http'; path: string })
+  | (HealthCheckCommon & { type: 'postgres'; user: string });
+
+export interface VolumeSpec {
+  name: string;
+  /** Mount path inside the container. */
+  container: string;
+  type: 'config' | 'data' | 'media' | 'cache';
+  read_only: boolean;
+  /** Shared folder group (`shared:` in the manifest). */
+  storageGroup?: string;
+  sourceVolume?: string;
+  sourcePath?: string;
+}
+
+export interface ContainerSource {
+  /** Node.js major version of a native app runtime. The app dir is always /opt/app. */
+  node: '22' | '24';
+  artifactSHA256?: string;
+}
+
+export interface ContainerSpec {
+  /** Logical name: `main` for the app, the sidecar name otherwise. */
+  name: string;
+  type: 'lxd' | 'oci';
+  primary: boolean;
+  image: string;
+  port?: number;
+  /** OCI entrypoint, shell-quoted from the manifest's argv. */
+  command?: string;
+  /** Container-specific environment (sidecars); the app's `env` is `AppManifest.env_mapping`. */
+  environment: Record<string, string>;
+  volumes: VolumeSpec[];
+  healthCheck?: HealthCheckSpec;
+  source?: ContainerSource;
+  network: 'isolated' | 'internet';
+}
+
+export interface SecretSpec {
+  name: string;
+  /** `secrets/<name>`: the file under the app's private directory (/var/lib/youeye/app-<id>). */
+  file: string;
+  generator: 'password' | 'secretKey' | 'hexToken';
+  length: number;
+}
+
+export interface CredentialSpec {
+  label: string;
+  username: string;
+  passwordSecret: string;
+}
+
+export interface DatabaseSpec {
+  mode: 'shared' | 'own' | 'none';
+  name?: string;
+  user?: string;
+  /** Own database: the sidecar that runs it. */
+  container?: string;
+}
+
+export interface ConfigFileSpec {
+  container: string;
+  path: string;
+  permission: string;
+  directoryPermission: string;
+  template: string;
+}
+
+/**
+ * A per-app claim YouEye ID adds to the app's tokens and userinfo when the app requests it as a scope:
+ * `admin_value` for YouEye ID admins, `default_value` for everyone else. A list value is sent as a JSON array.
+ */
+export interface RoleClaim { claim: string; admin_value: string | string[]; default_value: string | string[] }
+
+export interface SSOConfig {
+  /** Path on the app; may contain ${sso.slug}. */
+  callback_path: string;
+  entry_url?: string;
+  /** Further callback paths on the app. */
+  additional_callbacks: string[];
+  backchannel_logout_path?: string;
+  /** The group that marks admins (unused when `role_claim` is set). */
+  admin_group: string;
+  /** Admins are marked by a claim value; the claim is requested as an OAuth scope. */
+  role_claim?: RoleClaim;
+}
+
+export interface LinkHandlerSpec {
+  type: string;
+  description: string;
+  endpoint?: string;
+  triggers: string[];
+}
+
+export interface Capabilities {
+  notifications?: boolean | 'push';
+  smtp?: boolean;
+  ai_api?: boolean;
+  events?: string[];
+  widgets?: boolean;
+  info_cards?: boolean;
+  settings_panel?: boolean;
+  link_handlers?: LinkHandlerSpec[];
+}
+
+export interface SurfaceSettingsField {
+  key: string;
+  type: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  choices?: { value: string; label: string }[];
+}
+
+export interface SurfaceSpec {
+  id: string;
+  kind: 'widget' | 'info-card' | 'timeline-card' | 'notification' | 'settings-panel';
+  placement: 'dashboard' | 'timeline' | 'notification-center' | 'app-settings' | 'app-detail';
+  name?: string;
+  description?: string;
+  embedPath: string;
+  permissions: string[];
+  defaultSize?: { width: number; height: number };
+  minSize?: { width: number; height: number };
+  maxSize?: { width: number; height: number };
+  refreshInterval?: number;
+  settingsSchema: SurfaceSettingsField[];
+  triggers: string[];
+}
+
+export interface ProvidesSpec {
+  type: string;
+  description?: string;
+  port?: number;
+  scope: 'user' | 'service';
+}
+
+export interface ProxyScopeSpec {
+  paths: string[];
+  methods: string[];
+}
+
+/** A connection this app can make (`connects:` in the manifest). */
+export interface WantSpec {
+  appId?: string;
+  type?: string;
+  name: string;
+  description?: string;
+  defaultPort?: number;
+  proxy?: ProxyScopeSpec;
+  scope: 'user' | 'service';
+  /** Setup file (`setup/<name>.yaml`, `for: connect:<app>`) run when the connection is approved. */
+  setup?: string;
+}
+
+export interface InternetProxyScopeSpec extends ProxyScopeSpec {
+  host: string;
+  scope: 'user' | 'service';
+}
+
+/**
+ * Internet access. `internet: true|false` in the manifest is the app network's NAT (on/off for
+ * all of its containers; see ContainerSpec.network) — there is no per-host allowlist. The
+ * UI-gateway `proxy:` scopes below are the only per-host mechanism.
+ */
+export interface InternetSpec {
+  proxy: InternetProxyScopeSpec[];
+}
+
+export interface BackupSpec {
+  ownPostgres?: { container: string; database: string; user?: string };
+}
+
+export interface AppDetail {
+  longDescription: string;
+  releaseNotes?: string;
+  screenshots: { path: string; caption?: string }[];
+}
+
+export interface ApiSpec {
+  base?: string;
+  spec?: string;
+  auth?: { id: string; principal: string; scheme: string; provision: string }[];
+  identity?: string;
+}
+
+/** A parsed `youeye.setup.v1` file. Run by the setup runner (`setup-runner.ts`). */
+export interface SetupFile {
+  /** `setup/<name>.yaml` */
+  name: string;
+  for: string;
+  steps: SetupStep[];
+  remove?: SetupStep[];
+}
+
+/** The source an installed app was installed from (its frozen copy). */
+export interface FrozenAppSource {
+  schema: 'youeye.frozen-app.v1';
+  /** `youeye-app.yaml` text. */
+  manifest: string;
+  /** Setup file name → text. */
+  setups: Record<string, string>;
+  /** Manifest digest (see app-format/digest.ts). */
+  digest: string;
+  /** Native product releases: the release version, which replaces the manifest's `version`. */
+  version?: string;
+}
+
+export interface AppManifest {
+  integration: 'native' | 'basic';
+  version: string;
+  requires?: { youeye: string };
+  metadata: AppMetadata;
+  database?: DatabaseSpec;
+  /** Declaration of app-enforced UUID namespaces, never an admission grant. */
+  data_ownership?: { per_user: 'identity_uuid' };
+  /** The app's environment (`env` plus `sso.env`, `ai.env`, `smtp.env`); main container only. */
+  env_mapping: Record<string, string>;
+  containers: ContainerSpec[];
+  secrets: SecretSpec[];
+  credentials: CredentialSpec[];
+  configFiles: ConfigFileSpec[];
+  capabilities?: Capabilities;
+  surfaces: SurfaceSpec[];
+  provides: ProvidesSpec[];
+  wants: WantSpec[];
+  /** The secret (in the app's secret store) that holds its API key. */
+  apiKey?: { secret: string };
+  internet?: InternetSpec;
+  forwardAuth?: 'default' | 'enabled' | 'disabled';
+  sso?: SSOConfig;
+  backup?: BackupSpec;
+  detail?: AppDetail;
+  api?: ApiSpec;
+  /** Setup files, run by the setup runner. */
+  setups: SetupFile[];
+  /** The source this model was compiled from; stored as the installed app's frozen copy. */
+  frozen?: FrozenAppSource;
+}
+
+export interface SystemAppManifest {
+  id: string;
+  version: string;
+  name: string;
+  image: string;
+  health?: string;
+}
+
+export interface MarketCategory {
+  id: string;
+  label: string;
+  icon?: string;
+  order?: number;
+  tile?: { bg: string; fg: string };
+}
+
+export interface MarketCuration {
+  spotlight?: { title?: string; apps: string[] };
+  collections: { id: string; label: string; apps: string[] }[];
+}
+
+/** Bundles: install-and-wire recipes. A bundle is not an app (no subdomain). */
+export interface MarketBundle {
+  id: string;
+  name: string;
+  description: string;
+  icon?: string;
+  category?: string;
+  setupSummary?: string;
+  /** Install order (providers before consumers). */
+  members: string[];
+  connections: { from: string; to: string; scope: 'user' | 'service' }[];
+  storageGroups: string[];
+}
+
+/** One app of a Market source, discovered from its folders. */
+export interface CatalogEntry {
+  id: string;
+  /** Native apps come from their product release on the box's channel. */
+  integration: 'native' | 'basic';
+  /** App folder (`apps/<id>`) of a container app. */
+  path?: string;
+}
+
+/** A Market source's catalog: `catalog.yaml` plus what was discovered from its folders. */
+export interface Catalog {
+  apps: CatalogEntry[];
+  bundles: string[];
+  system: string[];
+  categories: MarketCategory[];
+  curation?: MarketCuration;
+}
 
 // ─── Install Config ────────────────────────────────────────
 
@@ -124,6 +352,8 @@ export interface InstallConfig {
   sourceRepoUrl?: string;
   /** In-memory acknowledgement required for the first install of an Added source. */
   acceptUnverifiedPublisher?: boolean;
+  /** Second, explicit approval to run the setup files of an app from an Added (URL) source. */
+  allowSetup?: boolean;
   /** Resolved manifest location and content hash used for catalog installs */
   manifestPath?: string;
   manifestRepo?: string;
@@ -131,19 +361,11 @@ export interface InstallConfig {
   manifestDigest?: string;
   subdomain: string;
   domain: string;
-  /** Optional app-specific install parameters */
-  installParams?: Record<string, string>;
   /** Custom display name chosen by user at install time */
   customName?: string;
   /** Custom icon chosen by user at install time */
   customIcon?: string;
-  /** Repo URL for custom (non-catalog) installs */
-  repoUrl?: string;
-  /** Branch/tag for repo-based installs */
-  repoBranch?: string;
-  /** Connections approved at install time (from manifest.wants) */
-  approvedConnections?: ApprovedConnection[];
-  /** Optional Market integrations selected during install */
+  /** `youeye-id` when the owner chose YouEye ID sign-in for an app whose SSO needs a setup file */
   selectedIntegrations?: string[];
   /** User's install-time choice for platform account-login protection */
   protectWithAccountLogin?: boolean;
@@ -156,18 +378,6 @@ export interface InstallConfig {
    * `protectWithAccountLogin`; this field is left undefined.
    */
   forwardAuthGate?: boolean;
-  /** True when a selected standalone identity Integration will provide app-native SSO after base install */
-  plannedNativeIdentityIntegration?: boolean;
-  installedIntegrations?: {
-    id: string;
-    sourceId?: string;
-    sourceName?: string;
-    manifestPath?: string;
-    manifestRepo?: string;
-    manifestBranch?: string;
-    manifestDigest?: string;
-    installedAt: string;
-  }[];
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
   /**
@@ -196,11 +406,6 @@ export interface InstallConfig {
 }
 
 /** A connection approved by the user at install time */
-export interface ApprovedConnection {
-  targetAppId: string;
-  approved: boolean;
-}
-
 // ─── Install Metadata (persisted to install.json) ──────────
 
 export interface ContainerMeta {
@@ -250,10 +455,27 @@ export interface StorageVolumeMeta {
   backup: true;
 }
 
+/**
+ * `install.json` (`youeye.install.v1`) in /var/lib/youeye/app-<id>/: the installed app's record.
+ * Uninstall, updates and repairs decide from it plus the frozen copy, never the live catalog.
+ */
 export interface InstallMetadata {
+  schema?: 'youeye.install.v1';
   appId: string;
-  /** Stable admission installation binding; app administration, not row ownership. */
+  /**
+   * The installation id (random, created at install with the app's admission policy). Every
+   * Incus instance, custom volume and network the install creates carries it as
+   * `user.youeye.installation_id`; cleanup acts only on resources with this tag.
+   */
   installationId?: string;
+  /** Shared folders (`shared:` groups) the owner approved by installing the app. */
+  sharedFolders?: string[];
+  /** Set when an uninstall or cleanup could not remove everything; the next one retries. */
+  cleanupPending?: boolean;
+  /** The box's address changed while the app was stopped: its url-change (and sso) setup runs at the next start. */
+  urlChangeSetupPending?: boolean;
+  /** Last time the record was written (installedAt is when it was created). */
+  updatedAt?: string;
   admissionOwnerId?: string;
   /** Offline root copies; original data owners remain independent of administration. */
   retainedRoots?: {
@@ -278,6 +500,7 @@ export interface InstallMetadata {
   manifestPath?: string;
   manifestRepo?: string;
   manifestBranch?: string;
+  /** Digest of the frozen copy (app-format/digest.ts): `sha256:<hex>`. */
   manifestDigest?: string;
   nativeArtifacts?: Array<{
     productRelease?: import('../releases/product-release').InstalledProductReceipt;
@@ -313,16 +536,6 @@ export interface InstallMetadata {
   desiredState?: 'running' | 'stopped';
   /** Owner-controlled automatic recovery policy; defaults to enabled. */
   autoRestart?: boolean;
-  /** Durable route description used by reconciliation to recreate every entrance. */
-  entrances?: {
-    name: string;
-    path: string;
-    port: number;
-    container?: string;
-    protocol?: 'http' | 'tcp';
-    authLevel?: 'private' | 'public' | 'internal' | 'none';
-    stripPath?: boolean;
-  }[];
   disabledAt?: string;
   disabledBy?: string;
   lastPowerAction?: 'start' | 'stop' | 'restart';
@@ -349,19 +562,8 @@ export interface InstallMetadata {
   manifestSource?: string;
   /** Admin-visible default credentials (references secrets by name) */
   credentials?: CredentialMeta[];
-  /** Optional Market integrations selected during install */
+  /** `youeye-id` when YouEye ID sign-in was chosen for an app whose SSO needs a setup file */
   selectedIntegrations?: string[];
-  /** Optional Market integrations successfully applied to this install */
-  installedIntegrations?: {
-    id: string;
-    sourceId?: string;
-    sourceName?: string;
-    manifestPath?: string;
-    manifestRepo?: string;
-    manifestBranch?: string;
-    manifestDigest?: string;
-    installedAt: string;
-  }[];
   /** SSO entry URL path (e.g. /sso/OID/start/provider) — appended to app URL for direct login */
   ssoEntryUrl?: string;
   /** Database mode from manifest — used by ACL migration to determine postgres access */
@@ -369,6 +571,12 @@ export interface InstallMetadata {
   /** Exact shared-database resources recorded before creation for restart-safe cleanup. */
   databaseName?: string;
   databaseUser?: string;
+  /**
+   * True only once this installation created the shared database and role (or a backup
+   * restore created them for it, or it adopted retained data whose record had this set).
+   * Delete-data uninstall drops them only when this is set.
+   */
+  sharedDatabaseCreated?: boolean;
   /** Exact file under the private app directory; preserved by retained-data recovery. */
   databasePasswordFile?: string;
   /** Whether this app has SSO configured — used by ACL migration to determine identity access */
@@ -399,14 +607,6 @@ export interface InstallMetadata {
   };
   /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
-  /** Required migration gates already completed for this install. */
-  appliedMigrations?: {
-    key: string;
-    fromVersion: string;
-    toVersion: string;
-    appliedAt: string;
-    source?: 'manifest' | 'update-plan';
-  }[];
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────
@@ -459,16 +659,6 @@ export interface AppStatusInfo {
   manifestRepo?: string;
   manifestBranch?: string;
   manifestDigest?: string;
-  installedIntegrations?: {
-    id: string;
-    sourceId?: string;
-    sourceName?: string;
-    manifestPath?: string;
-    manifestRepo?: string;
-    manifestBranch?: string;
-    manifestDigest?: string;
-    installedAt: string;
-  }[];
 }
 
 export interface ContainerStatusInfo {
@@ -477,17 +667,16 @@ export interface ContainerStatusInfo {
   ip?: string;
 }
 
-// ─── Variable Context (v2: canonical) ──────────────────────
+// ─── Variable Context ──────────────────────────────────────
+// Values for the `${…}` names of the variable registry (app-format/variables.ts).
 
 export interface VariableContext {
   platform: {
     domain: string;
     version: string;
     locale: string;
-    locale_full: string;
     timezone: string;
     site_name: string;
-    proxy_ip: string;
   };
   app: {
     id: string;
@@ -497,18 +686,10 @@ export interface VariableContext {
     url: string;
     internal_url: string;
   };
-  integration: {
-    gateway_url: string;
-    app_token: string;
-  };
-  containers: Record<string, {
-    internal_host: string;
-    internal_url: string;
-    url: string;
-  }>;
+  sidecar: Record<string, { host: string; url?: string }>;
+  secret: Record<string, string>;
   database: {
     url: string;
-    dsn: string;
     host: string;
     port: string;
     name: string;
@@ -524,13 +705,12 @@ export interface VariableContext {
     client_secret: string;
     callback_url: string;
     logout_url: string;
+    admin_group: string;
   };
   identity: {
-    externalUrl: string;
-    internalUrl: string;
     name: string;
-    issuer: string;
-    discoveryUrl: string;
+    external_url: string;
+    internal_url: string;
   };
   smtp: {
     host: string;
@@ -541,28 +721,24 @@ export interface VariableContext {
     security: string;
   };
   ai: {
-    enabled: boolean;
-    openaiBaseUrl: string;
-    anthropicBaseUrl: string;
-    googleBaseUrl: string;
-    apiKey: string;
-    defaultModel: string;
-    utilityModel: string;
-    groupId: string;
+    openai_base_url: string;
+    anthropic_base_url: string;
+    google_base_url: string;
+    api_key: string;
+    default_model: string;
+    utility_model: string;
   };
-  secrets: Record<string, string>;
-  installParams: Record<string, string>;
-
-  // Set only during connection wiring — the two endpoints of the connection being approved,
-  // with resolved internal host/port and API key. Recipes use ${wire.to.apiKey}, ${wire.from.host}, …
-  wire?: {
-    from: { id: string; host: string; port?: number; apiKey?: string; url?: string };
-    to: { id: string; host: string; port?: number; apiKey?: string; url?: string };
+  youeye: {
+    gateway_url: string;
+    app_token: string;
   };
-
-  // Manifest aliases retained by the current v1 schema.
-  install: { url: string; subdomain: string; domain: string };
-  container: { ip: string; port: number };
+  /** Setup files only: values saved by earlier steps. */
+  vars?: Record<string, unknown>;
+  /** Setup files only: the current item of a for_each step. */
+  item?: Record<string, unknown>;
+  /** `connect:<app>` setup files only. */
+  peer?: { id: string; host: string; url: string; api_key: string };
+  self?: { host: string; url: string; api_key: string };
 }
 
 // ─── Catalog App (UI display) ──────────────────────────────
@@ -570,7 +746,7 @@ export interface VariableContext {
 export interface MarketApp {
   id: string;
   catalogKey?: string;
-  itemKind?: 'app' | 'integration' | 'system';
+  itemKind?: 'app' | 'system';
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
@@ -585,6 +761,8 @@ export interface MarketApp {
   category: string;
   integration: 'native' | 'basic';
   version?: string;
+  /** `>=X.Y.Z` when the app needs a newer YouEye than some boxes run. */
+  requiresYouEye?: string;
   defaultSubdomain: string;
   supportsSSO: boolean;
   website?: string;
@@ -600,53 +778,18 @@ export interface MarketApp {
     releaseNotes?: string;
     screenshots: { url: string; caption?: string }[];
   };
-  installParams?: {
-    name: string;
-    label: string;
-    required: boolean;
-    description?: string;
-    type?: 'string' | 'number' | 'boolean' | 'select' | 'password';
-    default?: string | number | boolean;
-    choices?: { value: string; label: string }[];
-    validation?: {
-      pattern?: string;
-      message?: string;
-      min?: number;
-      max?: number;
-    };
-  }[];
+  /** Setup files the install runs (shown in the install dialog). */
+  setups?: { name: string; for: string }[];
+  /** Install-time toggles. Only `youeye-id` (YouEye ID sign-in through a setup file) exists. */
   integrations?: {
     id: string;
     name: string;
     description?: string;
-    type: 'identity' | 'plugin' | 'addon' | 'script';
+    type: 'identity';
     recommended?: boolean;
     installByDefault?: boolean;
     required?: boolean;
     permissions?: string[];
-    itemKind?: 'integration';
-    sourceId?: string;
-    sourceName?: string;
-    sourceRepoUrl?: string;
-    manifestPath?: string;
-    manifestRepo?: string;
-    manifestBranch?: string;
-    manifestDigest?: string;
-    hasUninstall?: boolean;
-  }[];
-  target?: {
-    appId: string;
-    appName?: string;
-    version?: string;
-  };
-  entrances?: {
-    name: string;
-    path: string;
-    port: number;
-    container?: string;
-    protocol?: 'http' | 'tcp';
-    authLevel?: 'private' | 'public' | 'internal' | 'none';
-    stripPath?: boolean;
   }[];
   forwardAuth?: 'default' | 'enabled' | 'disabled';
   capabilities?: {
@@ -659,8 +802,6 @@ export interface MarketApp {
   surfaces?: SurfaceSpec[];
   system?: {
     image: string;
-    containerName?: string;
-    minPlatformVersion?: string;
     managedBy: 'control-panel';
   };
 }
@@ -684,6 +825,8 @@ export interface RestoreOptions {
   retainedRuntimes?: Record<string, { name: string; ownerId: string; pool: string }>;
   /** Imported recovery volumes owned by this transaction and removed on rollback. */
   recoveryCreatedStorage?: string[];
+  /** The shared database and role (skipped by `skipDatabase`) were created for this app. */
+  sharedDatabaseCreated?: boolean;
 }
 
 // ─── Uninstall Options ────────────────────────────────────

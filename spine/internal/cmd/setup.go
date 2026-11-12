@@ -18,8 +18,8 @@ var setupStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check if setup wizard has been completed",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/setup/config")
 		if err != nil {
@@ -52,8 +52,8 @@ var setupReconfigureCmd = &cobra.Command{
 	Use:   "reconfigure",
 	Short: "Re-run the setup wizard",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		_, err := controlClient.Post("/api/setup/reconfigure", nil)
 		if err != nil {

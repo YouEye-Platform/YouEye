@@ -12,7 +12,7 @@
  * Includes apt upgrade to keep base OS current inside LXD containers.
  */
 
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appUpdateJournalStore, withAppLifecycle } from '@/lib/market/update-admission';
@@ -20,7 +20,7 @@ import { resolveNativeProduct, stageVerifiedProductArtifact } from '@/lib/market
 import { acceptProductSequence, productReceipt } from '@/lib/releases/product-release';
 import { publishProductProjection, verifyProductProjection } from '@/lib/releases/product-projection';
 import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease } from '@/lib/pointer/release-metadata';
-import { execShell, incusUploadFile } from '@/lib/incus/server';
+import { execShell, incusUploadLocalFile } from '@/lib/incus/server';
 import {
   createSnapshot,
   restoreSnapshot,
@@ -96,7 +96,7 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     emit({ stage: 'rebuilding', message: `Downloading ${selected.release.version}`, container: containerName, progress: 20 });
     stagedDirectory = await mkdtemp(join(tmpdir(), 'youeye-pointer-release-'));
     const staged = await stageVerifiedProductArtifact(stagedDirectory, containerName, selected);
-    await incusUploadFile(containerName, '/tmp/update.tar', await readFile(staged.path), { mode: '0600' });
+    await incusUploadLocalFile(containerName, '/tmp/update.tar', staged.path, { mode: '0600' });
     const digest = await execShell(containerName, 'sha256sum /tmp/update.tar', { timeout: 30_000 });
     if (digest.exitCode !== 0 || digest.stdout.split(/\s+/)[0] !== staged.artifactSHA256) throw new Error('Pointer upload differs from verified artifact');
     emit({ stage: 'rebuilding', message: 'Release artifact digest verified', container: containerName, progress: 30 });

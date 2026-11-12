@@ -25,7 +25,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { getRoutes, removeRoute, addRoute } from '@/lib/caddy/client';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { createOAuthClient } from '@/lib/identity/provider';
@@ -38,7 +38,7 @@ interface SubdomainChangeRequest {
 }
 
 export async function PUT(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   let body: SubdomainChangeRequest;
@@ -123,6 +123,7 @@ export async function PUT(request: NextRequest) {
           postLogoutRedirectUris: client.post_logout_redirect_uris.map((uri) => uri.replace(oldHostname, newHostname)),
           backchannelLogoutUri: client.backchannel_logout_uri?.replace(oldHostname, newHostname),
           scopes: client.scopes,
+          roleClaim: client.role_claim,
         });
         results.identity = { success: true };
       } else {

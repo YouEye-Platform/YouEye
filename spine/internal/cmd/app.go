@@ -16,8 +16,8 @@ var appListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List installed apps with health status",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/apps/unified")
 		if err != nil {
@@ -71,8 +71,8 @@ var appInfoCmd = &cobra.Command{
 	Short: "Show detailed app information",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		app := findUnifiedApp(args[0])
 		if app == nil {
@@ -108,26 +108,37 @@ var appInfoCmd = &cobra.Command{
 	},
 }
 
-var appInstallURL string
+var (
+	appInstallURL      string
+	appInstallTrusted  bool
+	appInstallAllowSet bool
+)
 
 var appInstallCmd = &cobra.Command{
 	Use:   "install <name>",
 	Short: "Install an app from Market",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := validateAppInstallArgs(args, appInstallURL, appInstallTrusted, appInstallAllowSet); err != nil {
+			return err
+		}
+		if err := requireCP(); err != nil {
+			return err
 		}
 
 		if appInstallURL != "" {
+			// An app from a URL is not reviewed by the YouEye Market: the owner
+			// must say they trust its publisher, and separately allow its setup
+			// files (steps that run inside the app) when it has any.
+			if !appInstallTrusted {
+				return fmt.Errorf("an app from a URL is not reviewed by YouEye; add --i-trust-this-publisher to install it")
+			}
 			output.Info("Installing from URL: " + appInstallURL)
 			return controlClient.PostSSE("/api/market/install-url", map[string]interface{}{
-				"url": appInstallURL,
+				"url":                       appInstallURL,
+				"acceptUnverifiedPublisher": true,
+				"allowSetup":                appInstallAllowSet,
 			}, sseHandler)
-		}
-
-		if len(args) == 0 {
-			return fmt.Errorf("specify an app name or use --url")
 		}
 
 		output.Info("Installing " + args[0] + "...")
@@ -135,6 +146,24 @@ var appInstallCmd = &cobra.Command{
 			"appId": args[0],
 		}, sseHandler)
 	},
+}
+
+// validateAppInstallArgs refuses combinations that would otherwise be silently ignored: a Market name together
+// with --url (the URL wins), and the URL-only flags without --url.
+func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool) error {
+	if url == "" {
+		if allowSetup || trusted {
+			return fmt.Errorf("--allow-setup and --i-trust-this-publisher apply only to --url installs")
+		}
+		if len(args) == 0 {
+			return fmt.Errorf("specify an app name or use --url")
+		}
+		return nil
+	}
+	if len(args) > 0 {
+		return fmt.Errorf("give either an app name or --url, not both")
+	}
+	return nil
 }
 
 var appUpdateAll bool
@@ -145,8 +174,8 @@ var appUpdateCmd = &cobra.Command{
 	Short: "Update an installed app",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 
 		if appUpdateAll {
@@ -199,8 +228,8 @@ var appRemoveCmd = &cobra.Command{
 	Short: "Uninstall an app",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		output.Info("Removing " + args[0] + "...")
 		result, err := controlClient.Post("/api/market/uninstall", map[string]interface{}{
@@ -243,8 +272,8 @@ func newAppControlCmd(action string) *cobra.Command {
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !requireCP() {
-				return nil
+			if err := requireCP(); err != nil {
+				return err
 			}
 			result, err := controlClient.Post("/api/apps/"+args[0]+"/control", map[string]interface{}{
 				"action": action,
@@ -267,8 +296,8 @@ var appCredentialsCmd = &cobra.Command{
 	Short: "Show admin credentials for an app",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/market/credentials?appId=" + args[0])
 		if err != nil {
@@ -292,8 +321,8 @@ var appCheckUpdatesCmd = &cobra.Command{
 	Use:   "check-updates",
 	Short: "Check all apps for available updates",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		output.Info("Checking for updates...")
 		data, err := controlClient.Post("/api/apps/check-updates", nil)
@@ -325,7 +354,9 @@ var appCheckUpdatesCmd = &cobra.Command{
 }
 
 func init() {
-	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install from a custom repository URL")
+	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install the youeye-app.yaml at this HTTPS URL")
+	appInstallCmd.Flags().BoolVar(&appInstallTrusted, "i-trust-this-publisher", false, "Confirm you trust the publisher of a --url app (required with --url)")
+	appInstallCmd.Flags().BoolVar(&appInstallAllowSet, "allow-setup", false, "Allow the --url app's setup files to run (required when it has any)")
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
 	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
 	appRemoveCmd.Flags().BoolVar(&appRemoveKeepData, "keep-data", false, "Preserve app data volumes")

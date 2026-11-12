@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,13 +24,9 @@ function readControl(path: string): string {
   return readFileSync(join(controlRoot, path), 'utf8');
 }
 
-function readMarket(marketRoot: string, path: string): string {
-  return readFileSync(join(marketRoot, path), 'utf8');
-}
-
 test('system app manifests are first-class Market artifacts', () => {
-  const schema = readControl('src/lib/market/schema.ts');
-  const parser = readControl('src/lib/market/parser.ts');
+  const schema = readControl('src/lib/market/app-format/schema.ts');
+  const parser = readControl('src/lib/market/app-format/parse.ts');
   const catalog = readControl('src/lib/market/catalog.ts');
   const api = readControl('src/app/api/market/catalog/route.ts');
   const systemManifestApi = readControl('src/app/api/deploy/infrastructure/system-manifests/route.ts');
@@ -40,9 +37,9 @@ test('system app manifests are first-class Market artifacts', () => {
   const updater = readControl('src/lib/infrastructure/system-updater.ts');
   const deployer = readControl('src/lib/infrastructure/deployer.ts');
 
-  assert.match(schema, /SystemAppManifestSchema/);
-  assert.match(schema, /kind:\s*z\.literal\('system-app'\)/);
-  assert.match(parser, /parseSystemManifest/);
+  assert.match(schema, /SystemAppSchema/);
+  assert.match(schema, /schema: z\.literal\('youeye\.system-app\.v1'\)/);
+  assert.match(parser, /export function parseSystemApp/);
   assert.match(catalog, /fetchAvailableSystemApps/);
   assert.match(catalog, /systemManifestToMarketApp/);
   assert.match(api, /systemApps/);
@@ -75,27 +72,14 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(deployer, /recordSystemContainerManifest\('pihole'/);
 });
 
-test('Market system catalog entries resolve to pinned system manifests', (t) => {
+test('the Market catalog and its system apps validate with the Control Panel parser', (t) => {
   const marketRoot = resolveMarketRoot();
   if (!marketRoot) {
-    t.skip('YE-AppMarket repo not checked out beside YouEye (set MARKET_ROOT) — catalog assertion needs the separate market repo');
+    t.skip('YE-AppMarket repo not checked out beside YouEye (set MARKET_ROOT)');
     return;
   }
-  const catalog = readMarket(marketRoot, 'catalog.yaml');
-
-  const expected = new Map([
-    ['postgresql', { version: '17.10', file: 'system/postgresql.yaml', image: 'docker.io/library/postgres:17.10-alpine', containerName: 'youeye-postgres' }],
-    ['pihole', { version: '2026.05.0', file: 'system/pihole.yaml', image: 'docker.io/pihole/pihole:2026.05.0', containerName: 'youeye-pihole' }],
-    ['caddy', { version: '2.11.4', file: 'system/caddy.yaml', image: 'docker.io/library/caddy:2.11.4', containerName: 'youeye-caddy' }],
-  ]);
-
-  for (const [id, target] of expected) {
-    assert.match(catalog, new RegExp(`id: ${id}[\\s\\S]*file: ${target.file}[\\s\\S]*latestVersion: "${target.version}"`));
-    const manifest = readMarket(marketRoot, target.file);
-    assert.match(manifest, /kind: system-app/);
-    assert.match(manifest, new RegExp(`id: "${id}"`));
-    assert.match(manifest, new RegExp(`version: "${target.version}"`));
-    assert.match(manifest, new RegExp(`image: "${target.image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-    assert.match(manifest, new RegExp(`containerName: "${target.containerName}"`));
-  }
+  const result = spawnSync(process.execPath, ['--import', 'tsx', join(controlRoot, 'scripts', 'validate-app-sources.ts'), marketRoot],
+    { cwd: controlRoot, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  for (const id of ['postgresql', 'pihole', 'caddy']) assert.match(result.stdout, new RegExp(`ok    \\S+/system/${id}\\.yaml`));
 });

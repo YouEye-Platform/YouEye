@@ -20,8 +20,8 @@ var userListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all users",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
@@ -57,8 +57,8 @@ var userCreateCmd = &cobra.Command{
 	Short: "Create a new user",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		username := args[0]
 
@@ -126,8 +126,8 @@ var userDeleteCmd = &cobra.Command{
 	Short: "Delete a user",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
@@ -163,8 +163,8 @@ var userPasswordCmd = &cobra.Command{
 	Short: "Set or reset a user's password",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
@@ -205,8 +205,8 @@ var userInfoCmd = &cobra.Command{
 	Short: "Show user details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		users, err := controlClient.GetArray("/api/people")
 		if err != nil {

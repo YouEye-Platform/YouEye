@@ -4,7 +4,8 @@ import {
   evaluateAdmission, AdmissionLeaseStore, isResourceOwnership,
   type AdmissionPolicy, type AdmissionPrincipal, type AdmissionProjection,
 } from '../../shared/admission';
-import { AppManifestSchema } from '../src/lib/market/schema';
+import { parseApp } from '../src/lib/market/app-format/parse';
+import { appYAML } from './fixtures/app-format';
 
 const owner = '10000000-0000-4000-8000-000000000001';
 const allowed = '10000000-0000-4000-8000-000000000002';
@@ -21,11 +22,11 @@ const principal = (id: string, changes: Partial<AdmissionPrincipal> = {}): Admis
   id, active: true, deleted: false, groupIds: [], uiUserId: null, ...changes,
 });
 test('per-user manifest declaration requires UUID namespaces and cannot nominate owners or platform enforcement', () => {
-  const declaration = AppManifestSchema.shape.data_ownership;
-  assert.deepEqual(declaration.parse({ per_user: 'identity_uuid' }), { per_user: 'identity_uuid' });
+  const parse = (data_ownership: unknown) => parseApp(appYAML({ data_ownership }));
+  assert.deepEqual(parse({ per_user: 'identity_uuid' }).data_ownership, { per_user: 'identity_uuid' });
   for (const value of [{ per_user: 'username' }, { per_user: true },
     { per_user: 'identity_uuid', ownerId: owner }, { per_user: 'identity_uuid', enforcement: 'platform' }]) {
-    assert.equal(declaration.safeParse(value).success, false);
+    assert.throws(() => parse(value), /data_ownership/);
   }
 });
 test('all modes admit only active matching stable principals, with active owner inclusion', () => {

@@ -1,0 +1,74 @@
+schema: youeye.app.v1
+id: immich
+version: 3.1.0
+name: Immich
+subdomain: photos
+listing:
+  tagline: Self-hosted photo and video backup
+  description: Self-hosted photo and video management
+  long_description: |
+    High performance self-hosted photo and video management solution with automatic backup,
+    intelligent search, facial recognition, and shared albums.
+  release_notes: |
+    Immich 3.1.0 fresh-install manifest with immutable server, machine-learning,
+    PostgreSQL, and Valkey images. Uses the Immich 3 data layout and VectorChord
+    database stack, with native YouEye identity integration.
+  category: media
+  tags: [photos, videos, gallery, machine-learning]
+  icon: camera
+  icon_file: icon.svg
+  screenshots:
+    - {path: screenshots/admin-library.png, caption: Administrator photo library with a representative test image}
+    - {path: screenshots/user-library.png, caption: A separate standard user's empty personal photo library}
+  website: https://immich.app
+  developer: Immich
+  license: AGPL-3.0
+  source_code: https://github.com/immich-app/immich
+  support: https://discord.immich.app
+  docs: https://immich.app/docs
+image: ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+port: 2283
+health: {path: /api/server/ping, timeout: 180}
+internet: true
+database: {sidecar: postgres, name: immich, user: immich}
+data:
+  - /data
+env:
+  DB_HOSTNAME: ${sidecar.postgres.host}
+  DB_PORT: '5432'
+  DB_USERNAME: immich
+  DB_PASSWORD: ${secret.db_password}
+  DB_DATABASE_NAME: immich
+  REDIS_HOSTNAME: ${sidecar.valkey.host}
+  REDIS_PORT: '6379'
+  IMMICH_MACHINE_LEARNING_URL: http://${sidecar.ml.host}:3003
+  IMMICH_HOST: 0.0.0.0
+secrets:
+  admin_password: {length: 24}
+credentials:
+  - {label: Admin Account, username: admin@youeye.local, password: admin_password}
+sso:
+  callback: /auth/login
+  entry: /auth/login?autoLaunch=1
+  extra_callbacks: [/user-settings, 'app.immich:///oauth-callback']
+  role_claim: {claim: immich_role, admin_value: admin, default_value: user}
+sidecars:
+  # Immich migrated its vector backend from pgvecto.rs to VectorChord (server v1.133+). This
+  # purpose-built image (Postgres 14) bundles VectorChord + a pgvecto.rs compat layer. On a fresh
+  # install VectorChord is auto-selected, so DB_VECTOR_EXTENSION is intentionally unset.
+  - name: postgres
+    image: ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    data:
+      - /var/lib/postgresql/data
+    env:
+      POSTGRES_PASSWORD: ${secret.db_password}
+      POSTGRES_USER: immich
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: --data-checksums
+    health: {postgres: immich, timeout: 60}
+  - name: valkey
+    image: docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+  - name: ml
+    image: ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+    data:
+      - {path: /cache, kind: cache}

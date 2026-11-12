@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { manifestToMarketApp } from './catalog';
-import type { AppManifest, MarketApp } from './types';
-import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema } from './schema';
+import { loadApp } from './app-format/compile';
+import { fetchUrlApp } from './url-app';
+import type { AppManifest, FrozenAppSource, MarketApp } from './types';
 
 const STORE_PATH = statePath('direct-market-apps.json');
 
@@ -17,9 +17,23 @@ export interface DirectMarketApp {
   updatedAt: string;
 }
 
+/** Stored entries keep the app source; the model is compiled from it on every read. */
+interface StoredDirectMarketApp extends Omit<DirectMarketApp, 'manifest'> {
+  source: Pick<FrozenAppSource, 'manifest' | 'setups'>;
+}
+
 interface DirectMarketAppStore {
   schemaVersion: 1;
-  entries: Record<string, DirectMarketApp>;
+  entries: Record<string, StoredDirectMarketApp>;
+}
+
+function compileEntry(entry: StoredDirectMarketApp): DirectMarketApp | null {
+  try {
+    const { source, ...rest } = entry;
+    return { ...rest, manifest: loadApp(source) };
+  } catch {
+    return null;
+  }
 }
 
 function sourceIdFor(url: string): string {
@@ -32,35 +46,41 @@ async function loadStore(): Promise<DirectMarketAppStore> {
 
 export async function saveDirectMarketApp(input: {
   manifestUrl: string;
-  manifestText: string;
   manifest: AppManifest;
 }): Promise<DirectMarketApp> {
   const manifestUrl = new URL(input.manifestUrl).toString();
+  const frozen = input.manifest.frozen;
+  if (!frozen) throw new Error('Added app has no manifest source');
   const sourceId = sourceIdFor(manifestUrl);
   const store = await loadStore();
   const existing = store.entries[sourceId];
   const now = new Date().toISOString();
-  const entry: DirectMarketApp = {
+  const entry: StoredDirectMarketApp = {
     sourceId,
     manifestUrl,
-    manifestDigest: createHash('sha256').update(input.manifestText).digest('hex'),
-    manifest: input.manifest,
+    manifestDigest: frozen.digest,
+    source: { manifest: frozen.manifest, setups: frozen.setups },
     addedAt: existing?.addedAt ?? now,
     updatedAt: now,
   };
   store.entries[sourceId] = entry;
   await writeJSON(STORE_PATH, store);
-  return entry;
+  const { source: _source, ...rest } = entry;
+  return { ...rest, manifest: input.manifest };
 }
 
 export async function listDirectMarketApps(): Promise<DirectMarketApp[]> {
   const store = await loadStore();
-  return Object.values(store.entries).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return Object.values(store.entries)
+    .map(compileEntry)
+    .filter((entry): entry is DirectMarketApp => entry !== null)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export async function getDirectMarketApp(sourceId: string, appId?: string): Promise<DirectMarketApp | null> {
   if (!sourceId.startsWith('direct:')) return null;
-  const entry = (await loadStore()).entries[sourceId] ?? null;
+  const stored = (await loadStore()).entries[sourceId];
+  const entry = stored ? compileEntry(stored) : null;
   if (entry && appId && entry.manifest.metadata.id !== appId) return null;
   return entry;
 }
@@ -76,27 +96,16 @@ export async function removeDirectMarketApp(sourceId: string): Promise<boolean> 
 export async function refreshDirectMarketApp(sourceId: string): Promise<DirectMarketApp> {
   const current = await getDirectMarketApp(sourceId);
   if (!current) throw new Error('Added app source no longer exists');
-  const response = await fetch(current.manifestUrl, {
-    headers: { Accept: 'text/yaml, application/yaml, text/plain', 'User-Agent': 'YouEye-Market/1.0' },
-    redirect: 'error',
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`Added app manifest returned HTTP ${response.status}`);
-  if (response.headers.get('content-type')?.toLowerCase().includes('text/html')) {
-    throw new Error('Added app manifest returned an HTML document');
+  let manifest: AppManifest;
+  try {
+    manifest = await fetchUrlApp(current.manifestUrl);
+  } catch (error) {
+    throw new Error(`Added app manifest no longer validates: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const declared = Number(response.headers.get('content-length') || '0');
-  if (declared > 1024 * 1024) throw new Error('Added app manifest exceeds 1 MiB');
-  const manifestText = await response.text();
-  if (manifestText.length === 0 || manifestText.length > 1024 * 1024) {
-    throw new Error('Added app manifest is empty or exceeds 1 MiB');
-  }
-  const parsed = AppManifestSchema.safeParse(parseYAML(manifestText, { maxAliasCount: 0 }));
-  if (!parsed.success) throw new Error('Added app manifest no longer validates');
-  if (parsed.data.metadata.id !== current.manifest.metadata.id) {
+  if (manifest.metadata.id !== current.manifest.metadata.id) {
     throw new Error('Added app source changed its app identity');
   }
-  return saveDirectMarketApp({ manifestUrl: current.manifestUrl, manifestText, manifest: parsed.data });
+  return saveDirectMarketApp({ manifestUrl: current.manifestUrl, manifest });
 }
 
 export function directMarketAppToMarketApp(entry: DirectMarketApp): MarketApp {

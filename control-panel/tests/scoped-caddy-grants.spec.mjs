@@ -13,7 +13,7 @@ test('scoped app-token proxy routes deny unapproved app-token fallthrough', () =
   const caddy = read('src/lib/caddy/client.ts');
   const manager = read('src/lib/bridges/manager.ts');
   const caddyCa = read('src/lib/market/caddy-ca.ts');
-  const schema = read('src/lib/market/schema.ts');
+  const schema = read('src/lib/market/app-format/schema.ts');
   const repairRoute = read('src/app/api/setup/control-routes/route.ts');
 
   assert.match(caddy, /SCOPED_APP_GRANT_DENY_ROUTE_ID = 'app-grant-token-deny'/);
@@ -38,7 +38,9 @@ test('scoped app-token proxy routes deny unapproved app-token fallthrough', () =
 
   assert.match(manager, /injectCaddyRootCA/);
   assert.match(manager, /async function getProxyScopeSpec/);
-  assert.match(manager, /fetchManifestFromSource\(from, sourceMeta\?\.sourceId\)/);
+  // Scoped grants come from the installed app's frozen copy, never the live catalog.
+  assert.match(manager, /readInstalledAppManifest\(from\)/);
+  assert.doesNotMatch(manager, /fetchManifest/);
   assert.match(manager, /w\.appId === to && w\.proxy\?\.paths\?\.length/);
   assert.doesNotMatch(manager, /caddyGrant/);
   assert.match(manager, /accessMode: scopedGrant \? 'proxy' : 'network'/);
@@ -58,10 +60,9 @@ test('scoped app-token proxy routes deny unapproved app-token fallthrough', () =
   assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\$\{CONTAINER_TRUST_BUNDLE\}/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
 
-  assert.match(schema, /ProxyScopeSchema/);
-  assert.match(schema, /paths: z\.array\(z\.string\(\)\.min\(1\)\)\.min\(1\)/);
-  assert.match(schema, /methods: z\.array\(z\.enum\(\['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'\]\)\)\.optional\(\)\.default\(\['GET'\]\)/);
-  assert.match(schema, /proxy: ProxyScopeSchema\.optional\(\)/);
+  // Connection proxy scopes: paths + methods (GET unless declared), compiled per connection.
+  assert.match(schema, /const Methods = z\.array\(z\.enum\(\['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'\]\)\)\.min\(1\)/);
+  assert.match(schema, /proxy: xobject\(\{ paths: /);
 });
 
 test('bridge JSON stores use atomic temp-file rename writes', () => {

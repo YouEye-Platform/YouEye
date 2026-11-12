@@ -48,7 +48,8 @@ func (r NativeCoreRuntime) Validate() error {
 }
 
 func (r NativeCoreRuntime) Executor() NativeCoreExecutor {
-	return NativeCoreExecutor{Root: r.Root,
+	var e NativeCoreExecutor
+	e = NativeCoreExecutor{Root: r.Root,
 		AuthorizeAction: func(ctx context.Context, j CoreJournal, activation bool) error {
 			if err := r.Validate(); err != nil {
 				return err
@@ -92,18 +93,42 @@ func (r NativeCoreRuntime) Executor() NativeCoreExecutor {
 			if err := r.AuthorizePrevious(ctx, j); err != nil {
 				return err
 			}
+			refused := false
+			for _, step := range j.Steps {
+				refused = refused || (step.Name == "checkpoint" && step.State != "pending")
+			}
+			if refused {
+				// Recheck under cancel intent; nothing can start a checkpoint record now.
+				if err := e.VerifyCheckpointRefusal(ctx, j); err != nil {
+					return err
+				}
+			}
 			if err := r.Runner.SettlePreparationChildren(ctx, j.RequestID); err != nil {
 				return err
 			}
 			for _, step := range j.Steps {
 				if step.Name == "stage-host" && step.State != "pending" {
-					return r.Host.CancelCoreHost(ctx, j.RequestID)
+					if err := r.Host.CancelCoreHost(ctx, j.RequestID); err != nil {
+						return err
+					}
 				}
+			}
+			if refused {
+				// Last: CP admits app work again once this hold is gone.
+				barrier := CoreLifecycleBarrier{Root: filepath.Join(r.Checkpoint.DataRoot, "state", "app-updates")}
+				return barrier.ReleaseRefusedCheckpoint(ctx, CoreManager{Root: r.Root}, j.RequestID)
 			}
 			return nil
 		},
+		VerifyCheckpointRefusalAction: func(ctx context.Context, j CoreJournal) error {
+			if err := r.Validate(); err != nil {
+				return err
+			}
+			return r.Checkpoint.requireNoCheckpointRecord(j)
+		},
 		ExecuteAction: r.Runner.Start, ReconcileAction: r.Observe,
 	}
+	return e
 }
 
 func (r NativeCoreRuntime) RunAction(ctx context.Context, request, name, digest string) (CoreActionObservation, error) {
@@ -185,8 +210,11 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 			return CoreActionObservation{}, err
 		}
 		status, err := r.Host.Stage(ctx, options)
-		if err != nil || status.State != PhaseStaged {
-			return CoreActionObservation{}, fmt.Errorf("selected host stage has no complete receipt")
+		if err != nil {
+			return CoreActionObservation{}, fmt.Errorf("selected host stage has no complete receipt: %w", err)
+		}
+		if status.State != PhaseStaged {
+			return CoreActionObservation{}, fmt.Errorf("selected host stage has no complete receipt (state %s)", status.State)
 		}
 		// The slot written by an image update boots the release's Spine, even
 		// when the Spine itself did not change: the slot's own record (or its
@@ -206,7 +234,7 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 			return CoreActionObservation{}, err
 		}
 		if _, _, err := r.Services.PreflightCheckpoint(ctx, j.RequestID); err != nil {
-			return CoreActionObservation{}, err
+			return coreCheckpointPreflightFailure(err), nil
 		}
 		record, err := r.Checkpoint.Quiesce(ctx, j)
 		if err != nil {

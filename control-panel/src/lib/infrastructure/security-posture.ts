@@ -44,6 +44,7 @@ export async function repairUIEgressAcl(): Promise<void> {
     egress: [
       {
         action: 'reject',
+        state: 'enabled',
         protocol: 'tcp',
         destination: `${controlIP}/32`,
         destination_port: '3000,3001',
@@ -51,6 +52,7 @@ export async function repairUIEgressAcl(): Promise<void> {
       },
       {
         action: 'reject',
+        state: 'enabled',
         protocol: 'tcp',
         destination: `${pointerIP}/32`,
         destination_port: '4001,4002',

@@ -7,7 +7,23 @@
 
 import { listInstalledApps, listRetainedApps } from './metadata';
 import { getRoutes, removeRoute } from '../caddy/client';
-import type { OrphanResource } from './types';
+import type { InstallMetadata, OrphanResource } from './types';
+import { INSTALLATION_TAG, readInstanceConfig } from './instance-ownership';
+
+const DB_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+
+/** Exact names, installation ids and databases recorded by installed and retained apps. */
+async function recordedOwnership() {
+  const owned: InstallMetadata[] = [...await listInstalledApps(), ...await listRetainedApps()];
+  return {
+    containers: new Set(owned.flatMap((m) => [
+      ...m.containers.map((c) => c.containerName),
+      ...(m.retainedRoots?.roots ?? []).map((root) => root.retainedName),
+    ])),
+    installations: new Set(owned.map((m) => m.installationId).filter((id): id is string => Boolean(id))),
+    databases: new Set(owned.flatMap((m) => [m.appId, ...(m.databaseName ? [m.databaseName] : [])])),
+  };
+}
 
 // Known infrastructure containers/routes — never orphaned
 const INFRA_CONTAINERS = new Set([
@@ -94,17 +110,19 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     // PostgreSQL may be unavailable
   }
 
-  // 3. Orphaned containers (app-* that aren't tracked)
+  // 3. Orphaned containers: instances an install created (they carry an installation tag)
+  // that no install record names. Untagged instances are not ours and are never offered.
   try {
     const { incusRequest } = await import('../incus/server');
-    const resp = await incusRequest<string[]>('GET', '/1.0/instances');
-    const instancePaths: string[] = Array.isArray(resp.metadata) ? resp.metadata : [];
+    const resp = await incusRequest<Array<{ name?: string; config?: Record<string, string> }>>('GET', '/1.0/instances?recursion=1');
+    const instances = Array.isArray(resp.metadata) ? resp.metadata : [];
+    const installations = new Set(owned.map((m) => m.installationId).filter(Boolean));
 
-    for (const path of instancePaths) {
-      const name = path.split('/').pop() || '';
-      if (!name.startsWith('app-') && !name.startsWith('ye-app-')) continue;
-      if (INFRA_CONTAINERS.has(name)) continue;
-      if (installedContainers.has(name)) continue;
+    for (const instance of instances) {
+      const name = instance.name || '';
+      const installation = instance.config?.[INSTALLATION_TAG];
+      if (!installation || INFRA_CONTAINERS.has(name)) continue;
+      if (installedContainers.has(name) || installations.has(installation)) continue;
       orphans.push({
         type: 'container',
         identifier: name,
@@ -167,43 +185,36 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
       }
 
       case 'postgres-db': {
-        const { execShell } = await import('../incus/server');
-        await execShell(
-          'youeye-postgres',
-          `psql -U youeye -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${orphan.identifier}' AND pid <> pg_backend_pid();"`,
-          { timeout: 10_000 }
-        );
-        await execShell(
-          'youeye-postgres',
-          `psql -U youeye -c "DROP DATABASE IF EXISTS ${orphan.identifier}"`,
-          { timeout: 10_000 }
-        );
-        await execShell(
-          'youeye-postgres',
-          `psql -U youeye -c "DROP USER IF EXISTS ${orphan.identifier}"`,
-          { timeout: 10_000 }
-        );
+        const name = orphan.identifier;
+        if (!DB_IDENTIFIER.test(name) || isInfraDatabase(name) || ['postgres', 'youeye', 'youeye_ui'].includes(name)) {
+          throw new Error('Not an app database identifier');
+        }
+        if ((await recordedOwnership()).databases.has(name)) throw new Error('Database belongs to an installed app');
+        const { execCommand } = await import('../incus/server');
+        for (const sql of [
+          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${name}' AND pid <> pg_backend_pid()`,
+          `DROP DATABASE IF EXISTS "${name}"`,
+          `DROP ROLE IF EXISTS "${name}"`,
+        ]) {
+          const result = await execCommand('youeye-postgres', ['psql', '-U', 'youeye', '-v', 'ON_ERROR_STOP=1', '-c', sql], { timeout: 10_000 });
+          if (result.exitCode !== 0) throw new Error('Database cleanup failed');
+        }
         return { success: true };
       }
 
       case 'container': {
-        const { incusRequest: incReq } = await import('../incus/server');
-        try {
-          await incReq('PUT', `/1.0/instances/${orphan.identifier}/state`, {
-            action: 'stop',
-            force: true,
-            timeout: 30,
-          });
-          await new Promise((r) => setTimeout(r, 3000));
-        } catch {
-          // May already be stopped
+        // Re-check at the write boundary: only an installation-tagged instance that no
+        // install record names (by exact name or installation id) is deleted.
+        const config = await readInstanceConfig(orphan.identifier);
+        if (config === null) return { success: true };
+        const installation = config[INSTALLATION_TAG];
+        const recorded = await recordedOwnership();
+        if (!installation || INFRA_CONTAINERS.has(orphan.identifier)
+          || recorded.containers.has(orphan.identifier) || recorded.installations.has(installation)) {
+          throw new Error('Instance is not an orphan of a YouEye install');
         }
-        const result = await incReq('DELETE', `/1.0/instances/${orphan.identifier}`);
-        if (result.type === 'async' && result.operation) {
-          await incReq('GET', `${result.operation}/wait?timeout=30`, undefined, {
-            timeout: 40_000,
-          });
-        }
+        const { deleteOwnedInstance } = await import('./instance-ownership');
+        await deleteOwnedInstance(orphan.identifier, { appId: config['user.youeye.app_id'] ?? '', installationId: installation });
         return { success: true };
       }
 

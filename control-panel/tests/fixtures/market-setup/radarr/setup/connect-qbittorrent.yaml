@@ -1,0 +1,44 @@
+schema: youeye.setup.v1
+for: connect:qbittorrent
+steps:
+  - http:
+      method: DELETE
+      path: /api/v3/downloadclient/${item.id}
+      headers:
+        X-Api-Key: ${self.api_key}
+      for_each:
+        path: /api/v3/downloadclient
+        where: {name: qBittorrent}
+  - http:
+      method: POST
+      path: /api/v3/downloadclient
+      headers:
+        X-Api-Key: ${self.api_key}
+      body:
+        enable: true
+        protocol: torrent
+        priority: 1
+        name: qBittorrent
+        implementation: QBittorrent
+        configContract: QBittorrentSettings
+        tags: []
+        fields:
+          - name: host
+            value: ${peer.host}
+          - name: port
+            value: 8080
+          - name: username
+            value: admin
+          - name: password
+            value: ${peer.api_key}
+          - name: movieCategory
+            value: radarr
+      allow_failure: true
+  - http:
+      method: POST
+      path: /api/v3/rootfolder
+      headers:
+        X-Api-Key: ${self.api_key}
+      body:
+        path: /data/media/movies
+      allow_failure: true

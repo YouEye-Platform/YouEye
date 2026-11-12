@@ -61,13 +61,12 @@ test('install dialog submits an immediate manifest-defaulted account-login choic
   assert.match(engine, /resolveForwardAuth\(\s*manifest,\s*hasOwnAccountLogin,\s*forwardAuthChoice/s);
 });
 
-test('market browse separates integrations while preserving existing source variants', () => {
+test('market browse sections preserve existing source variants', () => {
   const market = read('src/app/market/page.tsx');
 
-  // Section state drives Apps / Installed / Updates / Integrations separation.
+  // Section state drives Apps / Installed / Updates / Added separation.
   assert.match(market, /const \[section, setSection\]/);
-  assert.match(market, /'apps' \| 'installed' \| 'updates' \| 'integrations'/);
-  assert.match(market, /Integrations/);
+  assert.match(market, /'apps' \| 'installed' \| 'updates' \| 'added'/);
   // Source variants are preserved: rows link to the app + its source.
   assert.match(market, /variantHref/);
   assert.match(market, /sourceId/);

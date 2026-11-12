@@ -29,7 +29,6 @@ const PUBLIC_ROUTES = [
   '/api/setup/check-dns',
   '/api/setup/profile',
   '/api/deploy/infrastructure',
-  '/api/ui-bridge',
   '/api/deploy/infrastructure/reconcile',
   '/api/host-ip/migrate',
   '/api/ping',

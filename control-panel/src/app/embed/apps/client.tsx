@@ -11,6 +11,7 @@ import {
   Languages, Camera, MessageCircle, Package,
 } from "lucide-react";
 import type { ComponentType } from "react";
+import { authenticatedFetch } from "@/lib/api-client";
 
 const ICON_MAP: Record<string, ComponentType<{ style?: React.CSSProperties }>> = {
   Server, Box, Cog, Monitor, Database, ShieldCheck, Globe, Shield,
@@ -137,7 +138,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
   const fetchStatuses = useCallback(async () => {
     try {
-      const res = await fetch("/api/ui-bridge/updates/status");
+      const res = await authenticatedFetch("/api/ui-bridge/updates/status");
       if (!res.ok) return;
       const json = await res.json();
       const map = new Map<string, UpdateStatus>();
@@ -193,7 +194,7 @@ const CATEGORY_LABELS: Record<string, string> = {
     }
 
     // Fire POST without awaiting — progress comes from polling /status
-    fetch(`/api/ui-bridge/updates/${component}`, { method: "POST" })
+    authenticatedFetch(`/api/ui-bridge/updates/${component}`, { method: "POST" })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Update failed" }));
@@ -549,7 +550,7 @@ function EditAppDialog({ app, onSaved, onClose }: {
       if (showSubdomain && subdomain.trim()) body.subdomain = subdomain.trim().toLowerCase();
       if (Object.keys(body).length === 0) { onClose(); return; }
 
-      const res = await fetch(`/api/ui-bridge/apps/${app.id}`, {
+      const res = await authenticatedFetch(`/api/ui-bridge/apps/${app.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

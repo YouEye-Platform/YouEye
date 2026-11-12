@@ -6,6 +6,8 @@
 import { incusRequest } from '../incus/server';
 import { applyStaticIP } from '../incus/static-ips';
 import type { OCIManifest } from './types';
+import { ownershipConfig, type InstanceOwner } from '../market/instance-ownership';
+import { retryImageFetch } from './image-fetch-retry';
 
 /**
  * Parse an OCI image reference into server URL and alias.
@@ -153,25 +155,31 @@ export async function startOCIContainer(containerName: string, timeoutSeconds = 
 
 /**
  * Deploy an OCI container from a manifest.
- * If the container already exists (e.g. leftover from a failed install),
- * it is stopped and deleted before redeploying with the new config.
+ *
+ * App containers (`owner` set) are created with the installation's ownership tags and never
+ * replace an existing instance: a same-name instance is refused and left untouched. Only the
+ * platform's own `youeye-*` system containers are replaced (stopped and deleted) on redeploy.
  */
 export async function deployOCIContainer(
   manifest: OCIManifest,
   hostIP: string,
   nicDevices?: Record<string, Record<string, string>>,
-  options?: { start?: boolean; retainedRuntime?: {
+  options?: { start?: boolean; owner?: InstanceOwner; signal?: AbortSignal; retainedRuntime?: {
     appId: string; installationId: string; ownerId: string;
     sourceName: string; retainedName: string; pool: string;
   } },
 ): Promise<void> {
   let runtimeExtensionDevices: Record<string, Record<string, string>> = {};
 
-  // Clean up any leftover container from a failed previous install
   if (options?.retainedRuntime && await containerExists(manifest.containerName)) {
     throw new Error('Retained adoption cannot replace an existing runtime');
   }
+  if (!options?.retainedRuntime && (options?.owner || !/^youeye-[a-z0-9-]+$/.test(manifest.containerName))
+    && await containerExists(manifest.containerName)) {
+    throw new Error(`An Incus instance named ${manifest.containerName} already exists; refusing to replace it`);
+  }
   if (!options?.retainedRuntime && await containerExists(manifest.containerName)) {
+    // Platform system container redeploy.
     // Capture only known Control Panel-managed extension devices before the
     // instance is deleted. Base eth0/root/volume/proxy devices are rebuilt from
     // the current manifest and are intentionally not carried forward.
@@ -197,6 +205,7 @@ export async function deployOCIContainer(
   // and YE-Wiki/spine/host-ip-migration.md for why.
   const config: Record<string, string> = {
     'boot.autostart': manifest.autostart === false ? 'false' : 'true',
+    ...(options?.owner ? ownershipConfig(options.owner) : {}),
   };
   for (const [key, value] of Object.entries(manifest.environment)) {
     config[`environment.${key}`] = value;
@@ -285,21 +294,30 @@ export async function deployOCIContainer(
     devices,
   };
 
-  const result = await incusRequest<Record<string, unknown>>(
-    'POST',
-    '/1.0/instances',
-    createPayload,
-    { timeout: 660_000 } // 11 min — image downloads can be slow
-  );
+  // A remote image fetch fails on brief DNS/registry hiccups; retry those. Incus
+  // fetches the image before it records the instance, so a failed fetch leaves
+  // nothing behind. If an instance does appear, never retry over it.
+  await retryImageFetch(async () => {
+    const result = await incusRequest<Record<string, unknown>>(
+      'POST',
+      '/1.0/instances',
+      createPayload,
+      { timeout: 660_000 } // 11 min — image downloads can be slow
+    );
 
-  if (result.error && result.error !== '') {
-    throw new Error(`Incus API error: ${result.error}`);
-  }
+    if (result.error && result.error !== '') {
+      throw new Error(`Incus API error: ${result.error}`);
+    }
 
-  // Wait for async operation (image download + container creation)
-  if (result.type === 'async' && result.operation) {
-    await waitForIncusOperation(result.operation, 1800);
-  }
+    // Wait for async operation (image download + container creation)
+    if (result.type === 'async' && result.operation) {
+      await waitForIncusOperation(result.operation, 1800);
+    }
+  }, {
+    signal: options?.signal,
+    label: `Image fetch for ${manifest.containerName}`,
+    beforeRetry: async () => !remoteImage ? false : !(await containerExists(manifest.containerName)),
+  });
 
   // Set static IP for system containers before starting (so first DHCP gives the right IP)
   try {

@@ -3,6 +3,7 @@ import { useTranslations as useInterfaceTranslations } from "next-intl";
 
 
 import { useEffect, useState, useCallback } from "react";
+import { authenticatedFetch } from "@/lib/api-client";
 
 const LANGUAGES = [
   { code: "en", native: "English", english: "English" },
@@ -22,7 +23,7 @@ export function LanguageEmbedClient() {
 
   const fetchLanguage = useCallback(async () => {
     try {
-      const res = await fetch("/api/ui-bridge/language");
+      const res = await authenticatedFetch("/api/ui-bridge/language");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setCurrentLang(data.language || "en");
@@ -39,7 +40,7 @@ export function LanguageEmbedClient() {
     setSaving(true);
     setStatus("idle");
     try {
-      const configRes = await fetch("/api/ui-bridge/config", {
+      const configRes = await authenticatedFetch("/api/ui-bridge/config", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language: code }),
@@ -49,7 +50,7 @@ export function LanguageEmbedClient() {
       setCurrentLang(code);
       setStatus("saved");
 
-      fetch("/api/ui-bridge/user/language", {
+      authenticatedFetch("/api/ui-bridge/user/language", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locale: code }),

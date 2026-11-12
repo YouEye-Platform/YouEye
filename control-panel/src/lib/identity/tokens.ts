@@ -1,4 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID } from 'crypto';
+import { RESERVED_ROLE_CLAIMS } from './reserved-claims';
 import {
   calculateJwkThumbprint,
   decodeProtectedHeader,
@@ -10,7 +11,7 @@ import {
   jwtVerify,
   type JWK,
 } from 'jose';
-import { getIdentitySecret, getSigningSecret, getUserById, getIdentitySessionById, isAccessTokenRevoked, isUserTokenInvalidated, setIdentitySecretIfAbsent, getOAuthSigningKeySnapshot, rotateOAuthSigningKey, type IdentityUser } from './store';
+import { getIdentitySecret, getSigningSecret, getUserById, getIdentitySessionById, isAccessTokenRevoked, isUserTokenInvalidated, setIdentitySecretIfAbsent, getOAuthSigningKeySnapshot, rotateOAuthSigningKey, getClient, type IdentityUser, type IdentityRoleClaim } from './store';
 import { getIdentityConfig } from './config';
 import { getClientIssuer } from './issuer';
 
@@ -137,9 +138,25 @@ export async function rotateOAuthKey(): Promise<string> {
   return String((await publicJwkFromPem(replacement)).kid);
 }
 
-function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
+/** A YouEye ID admin: the `is_admin` flag or membership of the `admin` group. */
+export function isIdentityAdmin(user: IdentityUser): boolean {
+  return Boolean(user.is_admin) || (user.groups || []).includes('admin');
+}
+
+/**
+ * The app's role claim (manifest `sso.role_claim`, stored on its OAuth client), when the granted scope asks for it:
+ * `admin_value` for YouEye ID admins, `default_value` for everyone else (a list value is sent as a JSON array).
+ */
+export function roleClaims(user: IdentityUser, scope: string, roleClaim: IdentityRoleClaim | null | undefined): Record<string, unknown> {
+  if (!roleClaim || RESERVED_ROLE_CLAIMS.has(roleClaim.claim.toLowerCase())
+    || !scope.split(/\s+/).includes(roleClaim.claim)) return {};
+  const value = isIdentityAdmin(user) ? roleClaim.admin_value : roleClaim.default_value;
+  return { [roleClaim.claim]: Array.isArray(value) ? [...value] : value };
+}
+
+function oauthClaims(user: IdentityUser, scope: string, roleClaim: IdentityRoleClaim | null | undefined): Record<string, unknown> {
   const groups = Array.from(new Set(user.groups || []));
-  const isAdmin = user.is_admin || groups.includes('admin');
+  const isAdmin = isIdentityAdmin(user);
   const claims: Record<string, unknown> = {
     preferred_username: user.username,
 	name: user.name,
@@ -152,14 +169,8 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
     email_verified: true,
     groups,
     is_admin: isAdmin,
+    ...roleClaims(user, scope, roleClaim),
   };
-
-  for (const requestedScope of scope.split(/\s+/).filter(Boolean)) {
-    if (requestedScope.endsWith('_role')) {
-      claims[requestedScope] = isAdmin ? 'admin' : 'user';
-    }
-  }
-
   return claims;
 }
 
@@ -189,7 +200,8 @@ export async function createIdToken(user: IdentityUser, clientId: string, scope 
   authorizedAt = Math.floor(Date.now() / 1000)): Promise<string> {
   const pem = await getOAuthPrivateKeyPem();
   const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
-  const claims = { ...oauthClaims(user, scope), token_use: 'id', ...(nonce ? { nonce } : {}), ...(sessionId ? { sid: sessionId } : {}) };
+  const client = await getClient(clientId);
+  const claims = { ...oauthClaims(user, scope, client?.role_claim), token_use: 'id', ...(nonce ? { nonce } : {}), ...(sessionId ? { sid: sessionId } : {}) };
   return new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid), typ: 'JWT' })
     .setSubject(user.id)

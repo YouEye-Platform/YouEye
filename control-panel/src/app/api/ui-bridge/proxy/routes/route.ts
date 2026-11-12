@@ -8,11 +8,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { getRoutes } from '@/lib/caddy/client';
 
 export async function GET(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

@@ -14,7 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 
 export const dynamic = 'force-dynamic';
@@ -30,7 +30,7 @@ interface NotificationPayload {
 }
 
 export async function POST(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

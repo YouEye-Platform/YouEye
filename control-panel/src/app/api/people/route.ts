@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { createUser, listUsers } from '@/lib/identity/provider';
 import { validateIdentityPassword } from '@/lib/identity/password-policy';
+import { validateIdentityUsername } from '@/lib/identity/username-policy';
 
 export async function GET(request: NextRequest) {
   try {
@@ -70,6 +71,8 @@ export async function POST(request: NextRequest) {
     if (!username || !firstName || !email || !password || !repeatPassword) {
       return NextResponse.json({ error: 'First name, username, email, password, and repeat password are required' }, { status: 400 });
     }
+	const usernameError = validateIdentityUsername(username);
+	if (usernameError) return NextResponse.json({ error: usernameError }, { status: 400 });
 	if (password !== repeatPassword) return NextResponse.json({ error: 'Passwords do not match' }, { status: 400 });
 	if (password !== undefined) {
 	  const passwordError = validateIdentityPassword(password);

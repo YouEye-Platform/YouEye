@@ -3,7 +3,7 @@
  *
  * POST /api/suggestions/regenerate
  *
- * Scans all installed apps, fetches their manifests, and generates
+ * Scans all installed apps, reads their frozen installed manifests, and generates
  * connection suggestions for any that don't already have them.
  * Used to backfill suggestions for apps installed before the
  * suggestions engine existed.
@@ -11,7 +11,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
-import { fetchManifest } from '@/lib/market/catalog';
+import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 import { generateSuggestionsForApp } from '@/lib/bridges/suggestions';
 import { requireAdmin } from '@/lib/auth/rbac';
 
@@ -25,7 +25,7 @@ export async function POST() {
 
   for (const app of installed) {
     try {
-      const manifest = await fetchManifest(app.appId);
+      const manifest = await readInstalledAppManifest(app.appId);
       const suggestions = await generateSuggestionsForApp(manifest);
       results.push({ appId: app.appId, generated: suggestions.length });
       totalGenerated += suggestions.length;

@@ -207,6 +207,9 @@ export async function updateAppManifest(
 
   const [existing] = await db.select({ manifest: apps.manifest }).from(apps).where(eq(apps.id, appId)).limit(1);
   if (existing?.manifest?.integration === 'native') manifest = { ...manifest, integration: 'native' };
+  // The installed app's frozen copy (set by the Control Panel's registration) survives refreshes
+  // from the app's live /api/manifest, which never carries one.
+  if (existing?.manifest?.frozen && !manifest.frozen) manifest = { ...manifest, frozen: existing.manifest.frozen };
   const version = typeof manifest.version === "string" ? manifest.version : undefined;
 
   await db
@@ -428,7 +431,10 @@ export async function fetchAppManifest(
 
     if (!response.ok) return null;
 
-    return await response.json();
+    const manifest = await response.json();
+    // An app cannot supply its own frozen copy; only the Control Panel's registration does.
+    if (manifest && typeof manifest === "object" && !Array.isArray(manifest)) delete manifest.frozen;
+    return manifest;
   } catch {
     return null;
   }

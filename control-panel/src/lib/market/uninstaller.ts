@@ -1,15 +1,14 @@
 /**
- * Unified app uninstaller for the Market (v2 app engine).
- * Handles all uninstall patterns driven by manifest + metadata.
- * Supports both OCI and LXD containers (determined by container.type).
- *
- * Cleanup includes: containers, Caddy routes, identity SSO,
- * Pi-Hole DNS, shared databases, and volume data.
+ * App uninstaller for the Market. It decides only from the app's install.json (and acts only
+ * on the exact resources recorded there): containers by exact name and only when tagged with
+ * the installation id, routes by exact hostname/upstream, the app's own database and role,
+ * volumes by ownership tags, the generated CA directory and the app's secrets.
+ * A failed deletion keeps install.json with `cleanupPending: true`; the next uninstall retries.
  */
 
-import { execCommand, incusRequest } from '../incus/server';
+import { execCommand } from '../incus/server';
 import { containerExists } from '../infrastructure/oci-deployer';
-import { getRoutes, removeRoute, removeAppRoutes } from '../caddy/client';
+import { getRoutes, removeRoute } from '../caddy/client';
 import { readInstallMetadata, saveInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from './metadata';
 import { getInstalledApp, removeInstalledApp } from './installed-apps';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
@@ -24,7 +23,9 @@ import {
   withAppNetworkOperationLock,
 } from '../incus/app-network';
 import { archivePointerManagedAppIfPresent, readPointerManagedApp } from '@/lib/pointer/managed-apps';
-import { readSecret } from '@/lib/infrastructure/secrets';
+import { deleteAllAppSecrets, readAppSecret } from '@/lib/infrastructure/secrets';
+import { removeCaddyTrustBundle } from './caddy-ca';
+import { deleteOwnedInstance } from './instance-ownership';
 import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import { deleteAppStorage, verifyAppStorageRemoval } from './storage';
 import { withAppInventory, withAppLifecycle } from './update-admission';
@@ -33,50 +34,24 @@ import { quiesceAppCredentialRuntime } from '../apps/service-credential-probe';
 
 const POSTGRES_CONTAINER = 'youeye-postgres';
 
-// ─── Container Metadata Helpers ──────────────────────────
-
-interface ContainerMeta {
-  name: string;
-  containerName: string;
-  type: string;
-}
-
-/**
- * Normalize metadata.containers to the v2 object format.
- * Handles legacy format where containers was a string array.
- */
-function normalizeContainerMeta(
-  containers: Array<ContainerMeta | string>
-): ContainerMeta[] {
-  if (!containers || containers.length === 0) return [];
-  // Legacy format: string[]
-  if (typeof containers[0] === 'string') {
-    return (containers as string[]).map((name) => ({
-      name,
-      containerName: name,
-      type: 'oci',
-    }));
-  }
-  return containers as ContainerMeta[];
-}
-
 // ─── Unified Uninstall ────────────────────────────────────
 
 /**
  * Fully uninstall any app (Market-installed or native):
- * 1. Stop and delete all containers
- * 2. Remove Caddy routes
+ * 0. Stop its containers (credential revocation comes before anything else)
+ * 1. Delete its connections (connect files' `remove:` steps are attempted first; see below), then
+ *    delete its containers (exact recorded names, installation-tagged only)
+ * 2. Remove Caddy routes (exact hostname / upstream)
  * 3. Clean up SSO (identity provider + application)
  * 4. Remove Pi-Hole DNS entries
- * 5. Drop shared database (if applicable)
- * 6. Remove volume data (if deleteData requested)
- * 7. Remove install metadata
+ * 5. Remove the generated CA directory
+ * 6. Delete data (unless keepData): the app's database and role, its volumes and its secrets
+ * 7. Remove install metadata (kept with cleanupPending when anything failed)
  * 8. Post-uninstall verification
  */
 export async function uninstallApp(
   appId: string,
   options: {
-    dropSharedDatabase?: boolean;
     keepData?: boolean;
     preserveAdmission?: boolean;
     /** Internal paired restore only; validated before any runtime deletion. */
@@ -90,7 +65,6 @@ export async function uninstallApp(
 async function uninstallAppLocked(
   appId: string,
   options: {
-    dropSharedDatabase?: boolean;
     keepData?: boolean;
     preserveAdmission?: boolean;
     preserveManagedAI?: RestoredManagedAI;
@@ -107,14 +81,14 @@ async function uninstallAppLocked(
       throw new Error('Cannot replace a different managed AI installation during restore');
     }
     assertRestoredManagedAI(appId, options.preserveManagedAI,
-      await readPointerManagedApp(aiExternalInstallationId), await readSecret(`app-${appId}`, 'pointer_api_key'));
+      await readPointerManagedApp(aiExternalInstallationId), await readAppSecret(appId, 'pointer_api_key'));
   }
   if (metadata) {
     metadata.serviceCredentialState = 'pending';
     metadata.enabled = false;
     metadata.desiredState = 'stopped';
     await saveInstallMetadata(metadata);
-    for (const container of normalizeContainerMeta(metadata.containers)) {
+    for (const container of metadata.containers) {
       if (await containerExists(container.containerName)) await quiesceAppCredentialRuntime([container.containerName]);
     }
   }
@@ -122,7 +96,6 @@ async function uninstallAppLocked(
   if (!metadata) {
     const scanned = await cleanupAppByScan(appId, {
       keepData: options.keepData ?? true,
-      dropDatabase: options.dropSharedDatabase ?? false,
     });
     const verification = await verifyUninstall(
       appId,
@@ -132,7 +105,7 @@ async function uninstallAppLocked(
       undefined,
       undefined,
       [],
-      options.dropSharedDatabase ?? false,
+      false,
       options.keepData ?? true,
     );
     const success = scanned.unresolved.length === 0
@@ -147,8 +120,9 @@ async function uninstallAppLocked(
 
   const errors: string[] = [];
   const keepData = options.keepData ?? true;
-  const dropDb = options.dropSharedDatabase === true
-    && metadata.databaseMode !== 'none' && metadata.databaseMode !== 'own';
+  // Delete-data removes the shared-Postgres database and role only when this installation
+  // created them (a database it found, or one another installation made, is never dropped).
+  const dropDb = !keepData && metadata.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true;
   const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
   await verifyAdmissionCleanup(metadata, keepData, options.preserveAdmission === true);
   if (keepData) {
@@ -172,21 +146,15 @@ async function uninstallAppLocked(
     }
   }
 
-  // Normalize containers to v2 object format (handles legacy string[] format)
-  const containers = normalizeContainerMeta(metadata.containers);
+  const containers = metadata.containers;
   const containerNames = containers.map((c) => c.containerName);
+  const owner = metadata.installationId ? { appId, installationId: metadata.installationId } : undefined;
 
-  // 1. Stop and delete all containers
-  for (const c of containers) {
-    try {
-      await stopAndDeleteContainer(c.containerName);
-    } catch {
-      errors.push(`Container ${c.containerName} cleanup or verification failed`);
-    }
-  }
-
-  // 1b. Clean up bridge records and scoped secondary NIC grants before the
-  // target primary bridge can be deleted.
+  // 1. Delete the app's connections before its containers: deleting one attempts the consumer's
+  // connect file `remove:` steps (non-fatal), then removes the scoped secondary NIC grants, which
+  // must go before the target primary bridge can be deleted. This app's containers were stopped at
+  // the start (credential quiescence), so steps that run in it or call it fail and are logged;
+  // steps that run in the other app still do.
   try {
     const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
     const bridges = await getBridgesForApp(appId);
@@ -196,6 +164,21 @@ async function uninstallAppLocked(
     if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
   } catch {
     errors.push('Explicit integration cleanup or verification failed');
+  }
+  try {
+    const { forgetSuggestionsForApp } = await import('../bridges/suggestions');
+    await forgetSuggestionsForApp(appId);
+  } catch {
+    console.warn(`[Market] Connection suggestions for ${appId} could not be cleared`);
+  }
+
+  // 1b. Stop and delete the recorded containers, only when tagged with this installation.
+  for (const c of containers) {
+    try {
+      await deleteOwnedInstance(c.containerName, owner);
+    } catch {
+      errors.push(`Container ${c.containerName} cleanup or verification failed`);
+    }
   }
 
   // 1c. Remove Control-owned proxy and Caddy attachments. Retain the bridge
@@ -232,11 +215,8 @@ async function uninstallAppLocked(
       }
       if (!caddyRemoved) caddyRemoved = true; // No route found = already clean
 
-      // Also remove multi-entrance routes (app-{appId}-* pattern)
-      await removeAppRoutes(appId);
       const remaining = await getRoutes();
       if (remaining.some((route) => route.hostname === hostname
-        || route.id.startsWith(`app-${appId}-`)
         || containers.some((container) => route.upstream === container.containerName))) {
         throw new Error('one or more app routes remain');
       }
@@ -274,7 +254,15 @@ async function uninstallAppLocked(
     }
   }
 
-  // 5. Drop shared database if applicable
+  // 5. The generated CA directory holds no app data and is regenerated on install; a leftover
+  // copy would block the next install's preflight.
+  try {
+    await removeCaddyTrustBundle(appId);
+  } catch {
+    errors.push('Generated CA directory cleanup failed');
+  }
+
+  // 5b. Drop the app's own shared database and role (delete-data only)
   if (dropDb) {
     try {
       await dropSharedPostgresDatabase(
@@ -286,12 +274,17 @@ async function uninstallAppLocked(
     }
   }
 
-  // 6. Remove volume data if not keeping
+  // 6. Remove volume data and secrets if not keeping
   if (!keepData) {
     try {
       await deleteAppStorage(metadata.storageVolumes ?? []);
     } catch {
       errors.push('App data cleanup or verification failed');
+    }
+    try {
+      await deleteAllAppSecrets(appId);
+    } catch {
+      errors.push('App secrets cleanup failed');
     }
   }
 
@@ -366,12 +359,28 @@ async function uninstallAppLocked(
     || verification.warnings.length > 0) {
     errors.push(`Post-uninstall verification failed: ${verification.warnings.join('; ') || 'one or more cleanup postconditions are false'}`);
   }
+  if (errors.length > 0) await markCleanupPending(appId, errors);
 
   return {
     success: errors.length === 0,
     errors,
     verification,
   };
+}
+
+/**
+ * Keep install.json as the recovery map with `cleanupPending: true` so the next uninstall or
+ * cleanup retries exactly the recorded resources.
+ */
+async function markCleanupPending(appId: string, errors: string[]): Promise<void> {
+  try {
+    const current = await readInstallMetadata(appId);
+    if (!current || current.cleanupPending) return;
+    current.cleanupPending = true;
+    await saveInstallMetadata(current);
+  } catch {
+    errors.push('Failed to persist cleanup_pending on install metadata');
+  }
 }
 
 // ─── Dashboard Deregistration ────────────────────────────
@@ -398,44 +407,6 @@ export async function deregisterAppFromUI(appId: string, keepData = false): Prom
   if (!response.ok && response.status !== 404) {
     throw new Error(`YE-UI unregister failed with HTTP ${response.status}`);
   }
-}
-
-// ─── Container Management ─────────────────────────────────
-
-async function stopAndDeleteContainer(name: string): Promise<void> {
-  if (!(await containerExists(name))) return;
-
-  // Force stop
-  try {
-    const stopped = await incusRequest('PUT', `/1.0/instances/${name}/state`, {
-      action: 'stop',
-      force: true,
-      timeout: 30,
-    });
-    if (stopped.type === 'error' && stopped.error_code !== 404 && stopped.status_code !== 404) {
-      throw new Error('container stop failed');
-    }
-    if (stopped.type === 'async' && stopped.operation) {
-      const waited = await incusRequest('GET', `${stopped.operation}/wait?timeout=30`, undefined, { timeout: 40_000 });
-      if (waited.type === 'error') throw new Error('container stop wait failed');
-    }
-  } catch (error) {
-    if (await containerExists(name)) throw error;
-    return;
-  }
-
-  // Delete
-  const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
-  if (result.type === 'error' && result.error_code !== 404 && result.status_code !== 404) {
-    throw new Error('container delete failed');
-  }
-  if (result.type === 'async' && result.operation) {
-    const waited = await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, {
-      timeout: 40_000,
-    });
-    if (waited.type === 'error') throw new Error('container delete wait failed');
-  }
-  if (await containerExists(name)) throw new Error('container remains after delete');
 }
 
 // ─── Pi-Hole DNS Cleanup ──────────────────────────────────

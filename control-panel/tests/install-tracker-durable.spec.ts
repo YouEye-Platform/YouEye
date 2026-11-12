@@ -167,3 +167,54 @@ test('insecure durable operation directory fails closed', async () => {
   );
   await chmod(root, 0o700);
 });
+
+const imageDnsFailure = () => new Error('App installation failed (installer stage failed); rollback verified clean', {
+  cause: new Error('Operation failed: Failed getting remote image info: Failed to run: skopeo --insecure-policy inspect '
+    + 'docker://docker.io/docuseal/docuseal@sha256:' + '0'.repeat(64) + ' --no-tags: exit status 1 (Get '
+    + '"https://production.cloudfront.docker.com/registry-v2/blob?Expires=1700000000&Signature=unsafe-signature&Key-Pair-Id=K1": '
+    + 'dial tcp: lookup production.cloudfront.docker.com: i/o timeout) Bearer unsafe-bearer password=unsafe-password'),
+});
+
+test('well-known install failures map to short safe messages; unknown causes stay generic', () => {
+  assert.equal(tracker.sensitivitySafeInstallError(imageDnsFailure()),
+    'Downloading the app image failed (network/DNS timeout); try again');
+  assert.equal(tracker.sensitivitySafeInstallError(new Error('App installation failed', {
+    cause: new Error('Operation failed: Failed getting remote image info: Failed to run: skopeo inspect docker://ghcr.io/x/y:1: manifest unknown'),
+  })), 'The app image is not available from its registry');
+  const busy = new Error('Another operation on this app is in progress; try again in a moment');
+  busy.name = 'AppLifecycleBusyError';
+  assert.equal(tracker.sensitivitySafeInstallError(new Error('wrapped', { cause: busy })),
+    'Another operation on this app is in progress; try again in a moment');
+  assert.equal(tracker.sensitivitySafeInstallError(new Error('App update executor lock is busy')),
+    'Another operation on this app is in progress; try again in a moment');
+  assert.equal(tracker.sensitivitySafeInstallError(new Error('Installation cancelled by user')),
+    'Installation was cancelled');
+  assert.match(tracker.sensitivitySafeInstallError(new Error('Postgres said password=unsafe-value')),
+    /^Installation failed; use the supported Health/);
+  // A DNS-looking failure without image context is not claimed to be an image download.
+  assert.match(tracker.sensitivitySafeInstallError(new Error('lookup id.example: i/o timeout')),
+    /^Installation failed; use the supported Health/);
+});
+
+test('known safe messages reach the durable record; other terminal errors stay generic', () => {
+  tracker.startTracking('busy-app', 'Busy App');
+  tracker.finishTracking('busy-app', 'Another operation on this app is in progress; try again in a moment');
+  assert.equal(tracker.getTrackedInstall('busy-app')?.error,
+    'Another operation on this app is in progress; try again in a moment');
+});
+
+test('the full cause chain is logged once, redacted and without URL query strings', () => {
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  try { tracker.logOperationFailure('Install of docuseal', imageDnsFailure()); }
+  finally { console.error = original; }
+  assert.equal(lines.length, 1);
+  const [line] = lines;
+  assert.match(line, /Install of docuseal failed: App installation failed .* <cause> Operation failed: Failed getting remote image info/);
+  assert.match(line, /i\/o timeout/);
+  assert.match(line, /https:\/\/production\.cloudfront\.docker\.com\/registry-v2\/blob"/);
+  for (const forbidden of ['unsafe-signature', 'Expires=', 'Key-Pair-Id', 'unsafe-bearer', 'unsafe-password']) {
+    assert.equal(line.includes(forbidden), false, `log leaked ${forbidden}`);
+  }
+});

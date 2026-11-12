@@ -299,6 +299,47 @@ func (b CoreLifecycleBarrier) releaseCompleted(m CoreManager, requestID string, 
 	return syncDirectory(b.Root)
 }
 
+// ReleaseRefusedCheckpoint releases the hold of a request whose checkpoint was refused in its read-only preflight.
+// The caller (native cancellation) has verified that refusal and that no checkpoint record exists; this checks the
+// coordinator's published cancel intent, the failed checkpoint and the unchanged installed receipt under the
+// lifecycle lock. Only this request's own reservation is removed; a missing one is already released.
+func (b CoreLifecycleBarrier) ReleaseRefusedCheckpoint(ctx context.Context, m CoreManager, requestID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	// Wait out ordinary readers: they only check the reservation and leave.
+	unlock, err := b.lockFile(ctx, "core-lifecycle.flock", syscall.LOCK_EX, true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	r, err := b.Read()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	j, err := m.Read()
+	if err != nil {
+		return err
+	}
+	receipt, err := m.ReadReceipt()
+	if err != nil {
+		return err
+	}
+	refused := false
+	for _, step := range j.Steps {
+		refused = refused || (step.Name == "checkpoint" && step.State == "failed")
+	}
+	if r.RequestID != requestID || j.RequestID != requestID || r.ManifestSHA256 != j.ManifestSHA256 || j.Phase != "cancelling" || !refused || !corePreparationOnly(j) || !reflect.DeepEqual(receipt, j.Previous) {
+		return fmt.Errorf("System lifecycle is not a verified refused checkpoint")
+	}
+	if err := os.Remove(filepath.Join(b.Root, "core-reservation.json")); err != nil {
+		return err
+	}
+	return syncDirectory(b.Root)
+}
+
 func (b CoreLifecycleBarrier) checkQuiescent() error {
 	if err := b.checkNativeMaintenance(); err != nil {
 		return err

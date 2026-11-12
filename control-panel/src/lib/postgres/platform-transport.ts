@@ -3,19 +3,47 @@ import postgres from 'postgres';
 type Pool = ReturnType<typeof postgres>;
 export interface PlatformDatabaseCredentials { host: string; port: string; user: string; password: string; database: string }
 
-/** Each process has a bounded pool; failures never replay a command. */
-export function createPlatformDatabase(credentials: () => Promise<PlatformDatabaseCredentials>) {
+export interface PlatformDatabaseOptions {
+  /** Callers queued behind the one connection before new ones are refused. */
+  maxQueue?: number;
+  /** How long a queued caller waits for the connection before failing. */
+  waitTimeoutMs?: number;
+  /** Driver factory; tests substitute a fake. */
+  driver?: (options: postgres.Options<Record<string, never>>) => Pool;
+}
+
+/** Plenty for a browser burst (one forward-auth check per asset) on top of normal traffic. */
+export const PLATFORM_DATABASE_MAX_QUEUE = 4096;
+export const PLATFORM_DATABASE_WAIT_TIMEOUT_MS = 15_000;
+
+/**
+ * Each process owns exactly one connection (CP and ID: two in total), so callers
+ * are serialised and queue for it. Multi-statement commands rely on running whole
+ * on that one connection. The queue is deep enough for bursts; a caller that cannot
+ * get the connection within the wait timeout fails with a clear error instead of
+ * queueing forever. Failures never replay a command.
+ */
+export function createPlatformDatabase(
+  credentials: () => Promise<PlatformDatabaseCredentials>,
+  options: PlatformDatabaseOptions = {},
+) {
+  const maxQueue = options.maxQueue ?? PLATFORM_DATABASE_MAX_QUEUE;
+  const waitTimeoutMs = options.waitTimeoutMs ?? PLATFORM_DATABASE_WAIT_TIMEOUT_MS;
+  const driver = options.driver ?? postgres;
   const state: { pool?: Promise<Pool>; active: number; waiting: Array<() => void> } = { active: 0, waiting: [] };
   async function admit(): Promise<() => void> {
     if (state.active >= 1) {
-      if (state.waiting.length >= 64) throw new Error('Platform database is busy');
+      if (state.waiting.length >= maxQueue) {
+        throw new Error(`Platform database is busy (${state.waiting.length} commands already queued)`);
+      }
       await new Promise<void>((resolve, reject) => {
         const ready = () => { clearTimeout(timer); resolve(); };
         const timer = setTimeout(() => {
           const index = state.waiting.indexOf(ready);
           if (index >= 0) state.waiting.splice(index, 1);
-          reject(new Error('Platform database wait timed out'));
-        }, 15_000);
+          reject(new Error(`Platform database wait timed out after ${waitTimeoutMs / 1000} s `
+            + `(${state.waiting.length} commands still queued)`));
+        }, waitTimeoutMs);
         state.waiting.push(ready);
       });
     } else {
@@ -29,7 +57,7 @@ export function createPlatformDatabase(credentials: () => Promise<PlatformDataba
 
   async function pool(): Promise<Pool> {
     if (!state.pool) {
-      const pending = credentials().then(credentials => postgres({
+      const pending = credentials().then(credentials => driver({
         host: credentials.host, port: Number(credentials.port),
         username: credentials.user, password: credentials.password, database: credentials.database,
         max: 1, idle_timeout: 300, connect_timeout: 10, max_lifetime: 1800,

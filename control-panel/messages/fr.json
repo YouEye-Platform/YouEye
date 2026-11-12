@@ -2499,7 +2499,21 @@
     "m84d6732746f8": "Le canal n'a pas pu être modifié.",
     "m66de5771dc12": "Le canal de versions n'est pas disponible.",
     "m4d6bfb83f08f": "Le serveur de versions a refusé ou limité la requête. YouEye réessaie automatiquement ; vérifiez à nouveau dans quelques minutes.",
-    "ma28bdb69b7f1": "Branche {value0}"
+    "ma28bdb69b7f1": "Branche {value0}",
+    "m8977bde3d0f7": "Fichiers de configuration",
+    "m41a1b4787986": "Cette app se configure avec ces fichiers. Ils s'exécutent uniquement dans les propres conteneurs de l'app.",
+    "m3214819b16f1": "Configuration initiale",
+    "mfb7ed10de1ed": "Connexion avec YouEye ID",
+    "m18bac77ed792": "Changements d'adresse",
+    "m7c07160bf0db": "Connexion à {app}",
+    "m2514aaccdb83": "Autoriser l'exécution de ces fichiers de configuration d'une source ajoutée",
+    "m1d8034f00ca4": "Cette app a des fichiers de configuration. Vérifiez-les et autorisez-les pour continuer.",
+    "mcb476eaab560": "Le réglage de connexion avec YouEye ID n’a pas pu être modifié.",
+    "m8f71b12330db": "Activation de la connexion avec YouEye ID pour {app}… Cela peut prendre quelques minutes.",
+    "m709433447a43": "Désactivation de la connexion avec YouEye ID pour {app}…",
+    "m3bf590b2bb82": "Les utilisateurs se connectent à {app} avec leur YouEye ID.",
+    "m2f5875924e6c": "{app} utilise ses propres comptes. Activez cette option pour que les utilisateurs se connectent avec leur YouEye ID.",
+    "m70843fac04a3": "Connexion avec YouEye ID pour {app}"
   },
   "settingsNavigation": {
     "profile": "Profil",

@@ -13,51 +13,21 @@
  */
 
 import { NextRequest } from 'next/server';
-import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema } from '@/lib/market/schema';
 import { installApp } from '@/lib/market/engine';
-import { CONTAINER_DOMAIN } from '@/lib/market/constants';
-import { finishTracking, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent } from '@/lib/market/install-tracker';
+import { fetchUrlApp, UrlAppError, validateAppUrl } from '@/lib/market/url-app';
+import {
+  finishTracking, logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent,
+} from '@/lib/market/install-tracker';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { settingsService } from '@/lib/settings';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
-import type { InstallConfig, InstallEvent } from '@/lib/market/types';
+import type { AppManifest, InstallConfig, InstallEvent } from '@/lib/market/types';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
 export const dynamic = 'force-dynamic';
-
-const MAX_SIZE_BYTES = 1024 * 1024;
-const FETCH_TIMEOUT_MS = 5000;
-
-const PRIVATE_IP_PATTERNS = [
-  /^10\./, /^172\.(1[6-9]|2\d|3[0-1])\./, /^192\.168\./, /^127\./, /^0\./,
-  /^169\.254\./, /^::1$/, /^fc00:/, /^fe80:/, /^fd/, /^localhost$/i,
-];
-
-function isPrivateHostname(hostname: string): boolean {
-  for (const pattern of PRIVATE_IP_PATTERNS) {
-    if (pattern.test(hostname)) return true;
-  }
-  return (
-    hostname === 'localhost' ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith(`.${CONTAINER_DOMAIN}`) ||
-    hostname.endsWith('.incus') ||
-    hostname.endsWith('.test')
-  );
-}
-
-function validateUrl(url: string): string | null {
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { return 'Invalid URL format'; }
-  if (parsed.protocol !== 'https:') return 'Only HTTPS URLs are allowed';
-  if (isPrivateHostname(parsed.hostname)) return 'URL targets a private/internal address';
-  if (parsed.username || parsed.password) return 'URLs with credentials not allowed';
-  return null;
-}
 
 function validAppSubdomain(value: string): boolean {
   return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
@@ -79,7 +49,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; adoptRetainedData?: boolean };
+  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -133,64 +103,30 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate URL safety
-  const urlError = validateUrl(manifestUrl);
+  const urlError = validateAppUrl(manifestUrl);
   if (urlError) {
     return new Response(JSON.stringify({ error: urlError }), {
       status: 400, headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  // Fetch and parse manifest
-  let manifest;
-  let yamlText = '';
+  // Fetch and parse the app (manifest + setup files) with the one app-format parser
+  let manifest: AppManifest;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(manifestUrl, {
-      signal: controller.signal,
-      redirect: 'error',
-      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
-    });
-    clearTimeout(timeout);
+    manifest = await fetchUrlApp(manifestUrl);
+  } catch (error) {
+    const details = error instanceof UrlAppError ? error.details : [];
+    return new Response(JSON.stringify({
+      error: error instanceof UrlAppError ? error.message : 'Manifest fetch or verification failed',
+      ...(details.length ? { details } : {}),
+    }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
 
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: `Failed to fetch manifest: HTTP ${res.status}` }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (res.headers.get('content-type')?.toLowerCase().includes('text/html')) {
-      return new Response(JSON.stringify({ error: 'Manifest URL returned an HTML document' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    const contentLength = Number(res.headers.get('content-length') || '0');
-    if (contentLength > MAX_SIZE_BYTES) {
-      return new Response(JSON.stringify({ error: 'Manifest exceeds 1MB size limit' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    yamlText = await res.text();
-    if (yamlText.length > MAX_SIZE_BYTES) {
-      return new Response(JSON.stringify({ error: 'Manifest exceeds 1MB size limit' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    const raw = parseYAML(yamlText, { maxAliasCount: 0 });
-    const result = AppManifestSchema.safeParse(raw);
-    if (!result.success) {
-      const errors = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`);
-      return new Response(JSON.stringify({ error: 'Invalid manifest', details: errors }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    manifest = result.data;
-  } catch {
-    return new Response(JSON.stringify({ error: 'Manifest fetch or verification failed' }), {
-      status: 400, headers: { 'Content-Type': 'application/json' },
-    });
+  if (manifest.setups.length > 0 && body.allowSetup !== true) {
+    return new Response(JSON.stringify({
+      error: 'This app runs setup files inside its containers; confirm them before installing (allowSetup)',
+      setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
+    }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
   const subdomain = requestedSubdomain
@@ -210,7 +146,7 @@ export async function POST(request: NextRequest) {
   console.log(`[Market] URL install started from ${sourceHost} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'} — subdomain: ${subdomain}.${domain}`);
 
   const appName = manifest.metadata?.name || manifest.metadata.id;
-  const directEntry = await saveDirectMarketApp({ manifestUrl, manifestText: yamlText, manifest });
+  const directEntry = await saveDirectMarketApp({ manifestUrl, manifest });
   const config: InstallConfig = {
     appId: manifest.metadata.id,
     admissionActorId: actorId || undefined,
@@ -226,8 +162,9 @@ export async function POST(request: NextRequest) {
   };
 
   // Start tracking this install for reconnection support
+  let abortController: AbortController;
   try {
-    startTracking(config.appId, appName);
+    abortController = startTracking(config.appId, appName);
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : 'Install operation could not start' }),
@@ -249,7 +186,10 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        await installApp(manifest, config, onEvent);
+        await withUserOperationLockWait(
+          () => installApp(manifest, config, onEvent, abortController.signal),
+          { signal: abortController.signal },
+        );
         baseInstallComplete = true;
 
         // After install, update metadata to track URL source
@@ -267,13 +207,13 @@ export async function POST(request: NextRequest) {
           appId: config.appId,
         }).catch(() => { /* best effort */ });
       } catch (err) {
+        logOperationFailure(`URL install of ${config.appId}`, err);
         const errorMsg = sensitivitySafeInstallError(err);
         if (baseInstallComplete) {
           const { uninstallApp } = await import('@/lib/market/uninstaller');
-          const rollback = await uninstallApp(config.appId, {
-            keepData: false,
-            dropSharedDatabase: true,
-          }).catch(() => null);
+          const rollback = await withUserOperationLockWait(
+            () => uninstallApp(config.appId, { keepData: false }),
+          ).catch(() => null);
           if (!rollback?.success) {
             onEvent({
               step: 0,

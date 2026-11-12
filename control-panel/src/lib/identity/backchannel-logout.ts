@@ -1,6 +1,6 @@
 import { createLogoutToken } from './tokens';
 import { getIdentityConfig } from './config';
-import { getContainerIP } from '@/lib/incus/container-ip';
+import { appContainerAddress } from '@/lib/incus/app-network';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import {
   enqueueLogoutDelivery,
@@ -69,8 +69,9 @@ export async function deliverDueLogouts(): Promise<void> {
           }
           const container = metadata.containers?.find(item => item.primary) || metadata.containers?.[0];
           if (!container) throw new Error('Managed app has no primary container');
-          const ip = await getContainerIP(container.containerName);
-          if (!ip) throw new Error('Managed app is not reachable');
+          // The host-side, checked address on the app's own network: a container-reported one
+          // could point the logout POST at any other service (Caddy's admin API, say).
+          const ip = await appContainerAddress(container.containerName, appId);
           deliveryUrl = `http://${ip}:${container.port || 3000}${destination.pathname}`;
         }
         const response = await fetch(deliveryUrl, {

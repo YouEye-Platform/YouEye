@@ -29,8 +29,9 @@ func TestCheckContainerSystemdUsesControlContainer(t *testing.T) {
 }
 
 func TestCheckCaddyAdminInContainerUsesExecCurl(t *testing.T) {
-	oldRun := doctorRunCommand
-	t.Cleanup(func() { doctorRunCommand = oldRun })
+	oldRun, oldIP := doctorRunCommand, doctorSystemIP
+	t.Cleanup(func() { doctorRunCommand, doctorSystemIP = oldRun, oldIP })
+	doctorSystemIP = func(string) (string, error) { return "10.84.40.13", nil }
 
 	var got []string
 	doctorRunCommand = func(name string, args ...string) (string, error) {
@@ -39,6 +40,9 @@ func TestCheckCaddyAdminInContainerUsesExecCurl(t *testing.T) {
 	}
 
 	check := checkCaddyAdminInContainer("youeye-caddy")
+	if !strings.Contains(strings.Join(got, " "), "http://10.84.40.13:2019/config/") {
+		t.Fatalf("admin API not checked on the static address: %q", strings.Join(got, " "))
+	}
 	if check.Status != doctorOK {
 		t.Fatalf("status = %s, want ok", check.Status)
 	}

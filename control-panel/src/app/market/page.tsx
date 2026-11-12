@@ -18,7 +18,6 @@ import {
   Package,
   Plus,
   Search,
-  Sparkles,
   Store,
 } from 'lucide-react';
 import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration, MarketBundle } from '@/lib/market/types';
@@ -82,7 +81,7 @@ function variantHref(app: MarketApp): string {
   return app.sourceId ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}` : `/market/${app.id}`;
 }
 
-type Section = 'apps' | 'installed' | 'updates' | 'integrations' | 'added';
+type Section = 'apps' | 'installed' | 'updates' | 'added';
 
 /* ─────────────────────────── page ─────────────────────────── */
 
@@ -208,7 +207,6 @@ export default function MarketPage() {
   const healthOf = (app: MarketApp) => statuses[app.id]?.healthStatus;
   const isInstalled = (app: MarketApp) => statusOf(app) !== 'not-installed';
   const hasUpdate = (app: MarketApp) => !!statuses[app.id]?.updateAvailable;
-  const kindOf = (app: MarketApp) => (app.itemKind === 'integration' ? 'integration' : 'app');
 
   const matchesSearch = (app: MarketApp) => {
     const q = search.trim().toLowerCase();
@@ -221,14 +219,12 @@ export default function MarketPage() {
   };
 
   const visible = apps.filter(matchesSearch);
-  const realApps = visible.filter((a) => kindOf(a) === 'app');
-  const integrations = visible.filter((a) => kindOf(a) === 'integration');
+  const realApps = visible;
 
   const counts = {
     apps: realApps.length,
     installed: realApps.filter(isInstalled).length,
     updates: realApps.filter(hasUpdate).length,
-    integrations: integrations.length,
     added: realApps.filter((app) => app.sourceId?.startsWith('direct:')).length,
   };
 
@@ -295,7 +291,6 @@ export default function MarketPage() {
   const sectionApps = (() => {
     if (section === 'installed') return dedupe(realApps.filter(isInstalled));
     if (section === 'updates') return dedupe(realApps.filter(hasUpdate));
-    if (section === 'integrations') return dedupe(integrations);
     if (section === 'added') return dedupe(realApps.filter((app) => app.sourceId?.startsWith('direct:')));
     return dedupe(realApps);
   })();
@@ -373,8 +368,6 @@ export default function MarketPage() {
         <button type="button" className={pill(section === 'updates')} onClick={() => setSection('updates')}>
           <Download className="h-3.5 w-3.5" /> {" "}{translateInterface("m22e2bada8f1c")}{counts.updates > 0 && <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{counts.updates}</span>}
         </button>
-        <button type="button" className={pill(section === 'integrations')} onClick={() => setSection('integrations')}>
-          <Sparkles className="h-3.5 w-3.5" /> {translateInterface("m090512d93fcc")}</button>
         <button type="button" className={pill(section === 'added')} onClick={() => setSection('added')}>
           <Plus className="h-3.5 w-3.5" /> {translateInterface("m6b02e0d363a4")}{counts.added > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.added}</span>}
         </button>

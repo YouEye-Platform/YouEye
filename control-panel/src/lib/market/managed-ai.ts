@@ -1,7 +1,7 @@
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { randomUUID } from 'crypto';
 import type { AppManifest, InstallConfig, InstallMetadata } from './types';
-import { fetchManifestFromSource } from './catalog';
+import { readInstalledAppManifest } from './frozen-manifest';
 import { buildCanonicalContext, resolveEnvMapping } from './platform-env';
 import { enforceConfigFilePermissions, writeConfigFileToStorage } from './config-writer';
 import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
@@ -13,7 +13,7 @@ import {
   removeSystemProxyServiceDevices,
 } from '@/lib/incus/app-network';
 import { execCommand, incusRequest } from '@/lib/incus/server';
-import { deleteSecret, readSecret, writeSecret } from '@/lib/infrastructure/secrets';
+import { deleteAppSecret, readAppSecret, writeAppSecret } from '@/lib/infrastructure/secrets';
 import {
   acknowledgePointerCredential,
   archivePointerManagedApp,
@@ -27,10 +27,6 @@ import {
 } from '@/lib/pointer/managed-apps';
 import type { PointerLifecycleActor } from '@/lib/identity/tokens';
 import { withAppLifecycle } from './update-admission';
-
-function secretScope(appId: string) {
-  return `app-${appId}`;
-}
 
 function managedAIIconUrl(manifest: AppManifest): string | undefined {
   const value = manifest.metadata.iconUrl;
@@ -76,7 +72,7 @@ function connectionFromInstallation(
 }
 
 async function fetchInstalledAIManifest(meta: InstallMetadata): Promise<AppManifest> {
-  const manifest = await fetchManifestFromSource(meta.appId, meta.sourceId);
+  const manifest = await readInstalledAppManifest(meta.appId);
   if (manifest.capabilities?.ai_api !== true) {
     throw new Error('This application does not declare AI Settings support');
   }
@@ -86,7 +82,7 @@ async function fetchInstalledAIManifest(meta: InstallMetadata): Promise<AppManif
 export async function installedAppSupportsManagedAI(appId: string): Promise<boolean> {
   const meta = await readInstallMetadata(appId);
   if (!meta) throw new Error(`Unknown installed app: ${appId}`);
-  const manifest = await fetchManifestFromSource(meta.appId, meta.sourceId);
+  const manifest = await readInstalledAppManifest(meta.appId);
   return manifest.capabilities?.ai_api === true;
 }
 
@@ -251,7 +247,7 @@ async function enableManagedAILocked(
   if (!meta) throw new Error(`Unknown installed app: ${appId}`);
   const manifest = await fetchInstalledAIManifest(meta);
   if (meta.aiConnection) {
-    const credential = await readSecret(secretScope(appId), 'pointer_api_key');
+    const credential = await readAppSecret(appId, 'pointer_api_key');
     if (!credential) throw new Error('The protected application AI credential needs recovery');
     let installation = await readPointerManagedApp(meta.aiConnection.externalInstallationId, actor);
     if (installation.routingOwner?.externalSubject !== actor.id) {
@@ -298,8 +294,8 @@ async function enableManagedAILocked(
     provisioned = true;
     const delivery = ensured.credentialDelivery;
     if (!delivery?.credential) throw new Error('Pointer did not provide the application credential');
-    await writeSecret(secretScope(appId), 'pointer_api_key', delivery.credential);
-    if (await readSecret(secretScope(appId), 'pointer_api_key') !== delivery.credential) {
+    await writeAppSecret(appId, 'pointer_api_key', delivery.credential);
+    if (await readAppSecret(appId, 'pointer_api_key') !== delivery.credential) {
       throw new Error('The protected application credential did not read back exactly');
     }
     await acknowledgePointerCredential({ actor, externalInstallationId, deliveryId: delivery.id });
@@ -312,7 +308,7 @@ async function enableManagedAILocked(
     return connection;
   } catch (error) {
     if (provisioned) await archivePointerManagedApp(externalInstallationId, actor).catch(() => undefined);
-    await deleteSecret(secretScope(appId), 'pointer_api_key').catch(() => undefined);
+    await deleteAppSecret(appId, 'pointer_api_key').catch(() => undefined);
     await removeSystemProxyServiceDevices(appId, ['pointer-inference-proxy']).catch(() => undefined);
     delete meta.aiConnectionPending;
     await saveInstallMetadata(meta).catch(() => undefined);

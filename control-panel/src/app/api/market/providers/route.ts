@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
-import { fetchManifest } from '@/lib/market/catalog';
+import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,9 +48,9 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Fallback: check manifest from catalog (for apps installed before provides support)
+      // Fallback: the installed app's frozen copy (never the live catalog)
       try {
-        const manifest = await fetchManifest(meta.appId);
+        const manifest = await readInstalledAppManifest(meta.appId);
         const manifestProvides = manifest.provides ?? [];
         for (const p of manifestProvides) {
           if (!type || p.type === type) {
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     for (const p of providers) {
       if (p.name === p.appId) {
         try {
-          const manifest = await fetchManifest(p.appId);
+          const manifest = await readInstalledAppManifest(p.appId);
           p.name = manifest.metadata.name;
         } catch {
           // Keep appId as name

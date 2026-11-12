@@ -1,0 +1,25 @@
+schema: youeye.setup.v1
+for: url-change
+steps:
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'config:system:set', trusted_domains, '0', --value=localhost]
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'config:system:set', trusted_domains, '1', '--value=${app.fqdn}']
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'config:system:set', overwritehost, '--value=${app.fqdn}']
+  - exec:
+      run: [runuser, -u, www-data, --, php, /var/www/html/occ, 'config:system:set', overwriteprotocol, --value=https]
+  - exec:
+      run:
+        - runuser
+        - -u
+        - www-data
+        - --
+        - php
+        - /var/www/html/occ
+        - config:system:set
+        - overwrite.cli.url
+        - --value=https://${app.fqdn}
+  - exec:
+      container: valkey
+      run: [valkey-cli, FLUSHALL]

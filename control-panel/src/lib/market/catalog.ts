@@ -4,24 +4,30 @@ import { describeReleaseError } from '../releases/channel-index';
 import { releaseCacheFetch } from '../releases/cache';
 import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 /**
- * Catalog fetcher — pulls app manifests from the Market sources.
+ * Catalog fetcher — reads apps from the Market sources.
  *
- * - The official Market is the `market` product of the box's channel index;
- *   every file comes from its accepted `catalog.tar` (see catalog-release.ts).
- *   Its native-app entries are id-only (`- id: notes`, `integration: native`):
- *   the app's manifest is the `youeye-app.yaml` asset of that product's
- *   release on the same channel.
- * - Custom sources added by URL are read as raw files from their branch.
- *   Their entries have `path`, `file` or `repo` (manifest in another repo).
+ * Layout of a Market source (docs/app-manifest.md):
+ *   catalog.yaml                       youeye.catalog.v1: categories, curation, `native: [ids]`
+ *   apps/<id>/youeye-app.yaml          a container app (+ setup/*.yaml, icons, screenshots)
+ *   bundles/<id>/bundle.yaml           youeye.bundle.v1
+ *   system/<id>.yaml                   youeye.system-app.v1
+ *
+ * - The official Market is the `market` product of the box's channel index; every file comes
+ *   from its accepted `catalog.tar` (see catalog-release.ts) and the app list is discovered
+ *   from its folders. Native apps listed in `native:` come from their own product releases on
+ *   the same channel (`youeye-app.yaml` asset).
+ * - Custom sources added by URL are read as raw files from their branch. They cannot list
+ *   folders, so their generated `catalog.json` (youeye.catalog-index.v1) names the ids.
  */
 
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { createHash } from 'crypto';
-import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseStore, parseSystemManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, StoreDescriptor, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
-import { catalogEntryRef, buildMarketRawURL, getMarketSource, getMarketSources, isChannelMarketSource, parseMarketRepoURL, recordMarketSourceResolution, type MarketSource } from './source';
+import { fetchApp, loadApp } from './app-format/compile';
+import { parseBundle, parseCatalog, parseCatalogIndex, parseSystemApp, readYAML } from './app-format/parse';
+import { manifestDigest } from './app-format/digest';
+import type { AppManifest, Catalog, CatalogEntry, MarketApp, MarketBundle, MarketCategory, MarketCuration, SystemAppManifest } from './types';
+import { buildMarketRawURL, getMarketSource, getMarketSources, isChannelMarketSource, recordMarketSourceResolution, type MarketSource } from './source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -50,16 +56,6 @@ export interface ResolvedCatalogApp extends ManifestFetchResult {
   configuredSourceRepoUrls: string[];
 }
 
-export interface IntegrationManifestFetchResult {
-  manifest: IntegrationManifest;
-  reference: ManifestReference;
-}
-
-export interface UpdatePlanFetchResult {
-  migrations: MigrationSpec[];
-  references: ManifestReference[];
-}
-
 export interface SystemManifestFetchResult {
   manifest: SystemAppManifest;
   reference: ManifestReference;
@@ -79,6 +75,19 @@ export async function fetchFile(filePath: string, marketSource?: MarketSource): 
   return fetchRepoFile(source.organization, source.repository, filePath, sourceRef(source), source);
 }
 
+/** One file of a Market source, or null when it does not exist. */
+async function fetchOptionalFile(filePath: string, source: MarketSource): Promise<string | null> {
+  if (isChannelMarketSource(source)) {
+    const accepted = await readAcceptedCatalog() ?? await refreshOfficialCatalog();
+    return accepted.files.get(filePath)?.toString('utf8') ?? null;
+  }
+  const url = buildMarketRawURL(source, source.organization, source.repository, filePath, sourceRef(source));
+  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch ${source.organization}/${source.repository}/${filePath}: ${res.status}`);
+  return res.text();
+}
+
 /** A raw file of a repository on a custom source's host. */
 export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string, source: MarketSource): Promise<string> {
   const url = buildMarketRawURL(source, owner, repo, filePath, branch);
@@ -87,7 +96,7 @@ export async function fetchRepoFile(owner: string, repo: string, filePath: strin
   return res.text();
 }
 
-// ─── Cache ────────────────────────────────────────────────
+// ─── Catalog ──────────────────────────────────────────────
 
 let catalogCache: Catalog | null = null;
 let catalogCacheTime = 0;
@@ -95,8 +104,55 @@ const CACHE_TTL = 5 * 60 * 1000;
 
 const manifestCache = new Map<string, { manifest: AppManifest; reference?: ManifestReference; fetchedAt: number }>();
 
-function digestManifest(yamlText: string): string {
-  return `sha256:${createHash('sha256').update(yamlText).digest('hex')}`;
+/**
+ * Build a source's catalog from `catalog.yaml` and the ids found in its folders
+ * (`apps/<id>/youeye-app.yaml`, `bundles/<id>/bundle.yaml`, `system/<id>.yaml`).
+ */
+export function catalogFromFiles(catalogYaml: string, files: Iterable<string>): Catalog {
+  const document = parseCatalog(catalogYaml);
+  const apps: CatalogEntry[] = [];
+  const bundles: string[] = [];
+  const system: string[] = [];
+  for (const file of files) {
+    let match = /^apps\/([a-z][a-z0-9-]{0,31})\/youeye-app\.yaml$/.exec(file);
+    if (match) { apps.push({ id: match[1], integration: 'basic', path: `apps/${match[1]}` }); continue; }
+    match = /^bundles\/([a-z][a-z0-9-]{0,31})\/bundle\.yaml$/.exec(file);
+    if (match) { bundles.push(match[1]); continue; }
+    match = /^system\/([a-z][a-z0-9-]{0,31})\.yaml$/.exec(file);
+    if (match) system.push(match[1]);
+  }
+  for (const id of document.native ?? []) {
+    if (apps.some((app) => app.id === id)) throw new Error(`catalog.yaml lists native app "${id}" that also has an app folder`);
+    apps.push({ id, integration: 'native' });
+  }
+  const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
+  return {
+    apps: apps.sort(byId),
+    bundles: bundles.sort(),
+    system: system.sort(),
+    categories: (document.categories ?? []).map((category) => ({ ...category })),
+    curation: document.curation ? {
+      spotlight: document.curation.spotlight
+        ? { title: document.curation.spotlight.title, apps: [...document.curation.spotlight.apps] } : undefined,
+      collections: (document.curation.collections ?? []).map((collection) => ({ ...collection, apps: [...collection.apps] })),
+    } : undefined,
+  };
+}
+
+/** A custom source: `catalog.yaml` plus its generated `catalog.json` index of folder ids. */
+function catalogFromIndex(catalogYaml: string, indexJson: string): Catalog {
+  const index = parseCatalogIndex(indexJson);
+  return catalogFromFiles(catalogYaml, [
+    ...index.apps.map((id) => `apps/${id}/youeye-app.yaml`),
+    ...(index.bundles ?? []).map((id) => `bundles/${id}/bundle.yaml`),
+    ...(index.system ?? []).map((id) => `system/${id}.yaml`),
+  ]);
+}
+
+function acceptedCatalog(accepted: { files: Map<string, Buffer> }): Catalog {
+  const catalogYaml = accepted.files.get('catalog.yaml');
+  if (!catalogYaml) throw new Error('The Market catalog has no catalog.yaml');
+  return catalogFromFiles(catalogYaml.toString('utf8'), accepted.files.keys());
 }
 
 export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog> {
@@ -131,18 +187,18 @@ async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalo
       const accepted = await refreshOfficialCatalog();
       source.refresh_error = undefined;
       await recordMarketSourceResolution(source.id, { ok: true }).catch(() => {});
-      return parseCatalog(accepted.files.get('catalog.yaml')!.toString('utf8'));
+      return acceptedCatalog(accepted);
     } catch (error) {
       const message = describeReleaseError(error);
       source.refresh_error = message;
       await recordMarketSourceResolution(source.id, { error: message }).catch(() => {});
       const accepted = await readAcceptedCatalog().catch(() => null);
-      if (accepted) return parseCatalog(accepted.files.get('catalog.yaml')!.toString('utf8'));
+      if (accepted) return acceptedCatalog(accepted);
       throw error;
     }
   }
   try {
-    const catalog = parseCatalog(await fetchFile('catalog.yaml', source));
+    const catalog = catalogFromIndex(await fetchFile('catalog.yaml', source), await fetchFile('catalog.json', source));
     source.refresh_error = undefined;
     await recordMarketSourceResolution(source.id, { ok: true }).catch(() => {});
     return catalog;
@@ -156,10 +212,7 @@ async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalo
 
 // ─── Manifest Fetching ────────────────────────────────────
 
-/**
- * Fetch a manifest by app ID from the catalog.
- * Entry has `repo` (manifest in app's own repo) or `file` (manifest in Market).
- */
+/** Fetch an app by id from the default Market source. */
 export async function fetchManifest(appId: string): Promise<AppManifest> {
   const cached = manifestCache.get(appId);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
@@ -288,53 +341,6 @@ export async function fetchManifestReferenceFromSource(appId: string, sourceId?:
   return (await fetchManifestFromCatalogEntry(entry, source)).reference;
 }
 
-export async function fetchIntegrationManifestFromSource(integrationId: string, sourceId?: string): Promise<IntegrationManifest> {
-  const source = sourceId
-    ? (await getMarketSources()).find((s) => s.id === sourceId)
-    : await getMarketSource();
-  if (!source) throw new Error(`Market source "${sourceId}" not found`);
-
-  const catalog = await fetchCatalog(source);
-  const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
-  if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
-
-  const result = await fetchIntegrationManifestFromCatalogEntry(entry, source);
-  return result.manifest;
-}
-
-export async function fetchIntegrationManifestReferenceFromSource(integrationId: string, sourceId?: string): Promise<ManifestReference> {
-  const source = sourceId
-    ? (await getMarketSources()).find((s) => s.id === sourceId)
-    : await getMarketSource();
-  if (!source) throw new Error(`Market source "${sourceId}" not found`);
-
-  const catalog = await fetchCatalog(source);
-  const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
-  if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
-
-  return (await fetchIntegrationManifestFromCatalogEntry(entry, source)).reference;
-}
-
-export async function fetchUpdatePlanMigrationsFromSource(appId: string, sourceId?: string): Promise<UpdatePlanFetchResult> {
-  const source = sourceId
-    ? (await getMarketSources()).find((s) => s.id === sourceId)
-    : await getMarketSource();
-  if (!source) throw new Error(`Market source "${sourceId}" not found`);
-
-  const catalog = await fetchCatalog(source);
-  const entries = (catalog.updatePlans ?? []).filter((entry) => entry.appId === appId);
-  const migrations: MigrationSpec[] = [];
-  const references: ManifestReference[] = [];
-
-  for (const entry of entries) {
-    const result = await fetchUpdatePlanFromCatalogEntry(entry, source);
-    migrations.push(...result.migrations);
-    references.push(result.reference);
-  }
-
-  return { migrations, references };
-}
-
 type FileLocation = { owner: string; repo: string; ref: string } | null;
 
 /** Where a source's own files live: the official catalog.tar (null) or a custom repository at its branch. */
@@ -342,185 +348,119 @@ function sourceLocation(source: MarketSource): FileLocation {
   return isChannelMarketSource(source) ? null : { owner: source.organization, repo: source.repository, ref: sourceRef(source) };
 }
 
-function reference(source: MarketSource, location: FileLocation, filePath: string, yamlText: string): ManifestReference {
-  return {
-    path: filePath,
-    repo: location ? `${location.owner}/${location.repo}` : 'official',
-    branch: location?.ref ?? '',
-    digest: digestManifest(yamlText),
-  };
+/** The setup files in an app folder of the official catalog.tar (it can be listed). */
+async function officialSetupFiles(appPath: string): Promise<Record<string, string>> {
+  const accepted = await readAcceptedCatalog() ?? await refreshOfficialCatalog();
+  const prefix = `${appPath}/setup/`;
+  const setups: Record<string, string> = {};
+  for (const [name, bytes] of accepted.files) {
+    if (name.startsWith(prefix)) setups[name.slice(appPath.length + 1)] = bytes.toString('utf8');
+  }
+  return setups;
 }
 
 async function fetchManifestFromCatalogEntry(
   entry: CatalogEntry,
   source: MarketSource
 ): Promise<ManifestFetchResult> {
-  // Id-only native entries name a product of the box's channel index.
-  if (entry.integration === 'native' && !entry.repo && !entry.path && !entry.file) {
+  // Native apps name a product of the box's channel index.
+  if (entry.integration === 'native') {
     const selected = await resolveNativeProduct(entry.id);
-    const { manifest, contract } = await nativeManifestFromRelease(selected);
+    const { manifest } = await nativeManifestFromRelease(selected);
     return {
       manifest,
-      reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: digestManifest(contract.toString('utf8')), build: selected.build.build_version },
+      reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, build: selected.build.build_version },
     };
   }
+  if (!entry.path) throw new Error(`Catalog entry "${entry.id}" has no app folder`);
 
-  let location = sourceLocation(source);
+  const location = sourceLocation(source);
+  const manifestPath = `${entry.path}/youeye-app.yaml`;
+  const text = await fetchFile(manifestPath, source);
   let manifest: AppManifest;
-  let manifestPath: string;
-  let yamlText: string;
-  // For the per-app folder layout (`path:`), assets (icon.svg, screenshots/) are
-  // resolved relative to the app folder rather than the repo root.
-  let basePath: string | undefined;
-
-  if (entry.repo) {
-    if (!location) throw new Error(`Official catalog entry "${entry.id}" may not name a repository`);
-    const [owner, repoName] = entry.repo.split('/');
-    location = { owner, repo: repoName, ref: catalogEntryRef(entry, location.ref) };
-    manifestPath = entry.manifest || 'youeye-app.yaml';
-    yamlText = await fetchRepoFile(owner, repoName, manifestPath, location.ref, source);
-    manifest = parseManifest(yamlText);
-  } else if (entry.path) {
-    basePath = entry.path.replace(/\/+$/, '');
-    manifestPath = `${basePath}/${entry.manifest}`;
-    yamlText = await fetchFile(manifestPath, source);
-    manifest = parseManifest(yamlText);
-    // Co-located icon convention: apps/<id>/icon.svg unless the manifest declares its own.
-    if (!manifest.metadata.iconUrl) manifest.metadata.iconUrl = 'icon.svg';
-  } else if (entry.file) {
-    manifestPath = entry.file;
-    yamlText = await fetchFile(manifestPath, source);
-    manifest = parseManifest(yamlText);
+  if (isChannelMarketSource(source)) {
+    // Every file under setup/ is passed: files the app does not name are refused.
+    manifest = loadApp({ manifest: text, setups: await officialSetupFiles(entry.path) });
   } else {
-    throw new Error(`Catalog entry for "${entry.id}" has none of: path, file, repo`);
+    manifest = await fetchApp(text, (name) => fetchOptionalFile(`${entry.path}/${name}`, source));
   }
-
-  await resolveManifestPaths(manifest, source, location, basePath);
-  return { manifest, reference: reference(source, location, manifestPath, yamlText) };
-}
-
-async function fetchIntegrationManifestFromCatalogEntry(
-  entry: IntegrationCatalogEntry,
-  source: MarketSource
-): Promise<IntegrationManifestFetchResult> {
-  let location = sourceLocation(source);
-  let manifest: IntegrationManifest;
-  let manifestPath: string;
-  let yamlText: string;
-
-  if (entry.repo) {
-    if (!location) throw new Error(`Official catalog integration "${entry.id}" may not name a repository`);
-    const [owner, repoName] = entry.repo.split('/');
-    location = { owner, repo: repoName, ref: catalogEntryRef(entry, location.ref) };
-    manifestPath = entry.manifest || 'youeye-integration.yaml';
-    yamlText = await fetchRepoFile(owner, repoName, manifestPath, location.ref, source);
-    manifest = parseIntegrationManifest(yamlText);
-  } else if (entry.file) {
-    manifestPath = entry.file;
-    yamlText = await fetchFile(manifestPath, source);
-    manifest = parseIntegrationManifest(yamlText);
-  } else {
-    throw new Error(`Integration catalog entry for "${entry.id}" has neither repo nor file`);
-  }
-
-  await resolveManifestPaths(manifest as unknown as AppManifest, source, location);
-  return { manifest, reference: reference(source, location, manifestPath, yamlText) };
-}
-
-async function fetchUpdatePlanFromCatalogEntry(
-  entry: UpdatePlanCatalogEntry,
-  source: MarketSource
-): Promise<{ migrations: MigrationSpec[]; reference: ManifestReference }> {
-  const yamlText = await fetchFile(entry.file, source);
-  const plan = parseUpdatePlan(yamlText);
-  if (plan.appId !== entry.appId) {
-    throw new Error(`Update plan "${entry.id}" appId mismatch: catalog=${entry.appId}, plan=${plan.appId}`);
-  }
-  return { migrations: plan.migrations, reference: reference(source, sourceLocation(source), entry.file, yamlText) };
-}
-
-async function fetchSystemManifestFromCatalogEntry(
-  entry: SystemCatalogEntry,
-  source: MarketSource
-): Promise<SystemManifestFetchResult> {
-  const yamlText = await fetchFile(entry.file, source);
-  const manifest = parseSystemManifest(yamlText);
   if (manifest.metadata.id !== entry.id) {
-    throw new Error(`System manifest "${entry.id}" id mismatch: catalog=${entry.id}, manifest=${manifest.metadata.id}`);
+    throw new Error(`App folder "${entry.path}" holds app "${manifest.metadata.id}"`);
   }
-  return { manifest, reference: reference(source, sourceLocation(source), entry.file, yamlText) };
+
+  await resolveManifestPaths(manifest, source, location, entry.path);
+  return {
+    manifest,
+    reference: {
+      path: manifestPath,
+      repo: location ? `${location.owner}/${location.repo}` : 'official',
+      branch: location?.ref ?? '',
+      digest: manifest.frozen!.digest,
+    },
+  };
 }
 
-/**
- * Fetch a manifest from a repo URL (for custom/non-catalog installs).
- * Expects youeye-app.yaml at the repo root (or specified filename).
- */
-export async function fetchManifestFromRepo(
-  repoUrl: string,
-  manifestFile = 'youeye-app.yaml',
-  branch = DEFAULT_BRANCH,
-): Promise<AppManifest> {
-  const source = parseMarketRepoURL(repoUrl.includes('://') ? repoUrl : `https://github.com/${repoUrl}`, { branch });
-  const yamlText = await fetchRepoFile(source.organization, source.repository, manifestFile, source.branch, source);
-  const manifest = parseManifest(yamlText);
-  await resolveManifestPaths(manifest, source, sourceLocation(source));
-  return manifest;
+async function fetchSystemManifest(id: string, source: MarketSource): Promise<SystemManifestFetchResult> {
+  const filePath = `system/${id}.yaml`;
+  const text = await fetchFile(filePath, source);
+  const document = parseSystemApp(text);
+  if (document.id !== id) {
+    throw new Error(`System manifest "${filePath}" holds "${document.id}"`);
+  }
+  const location = sourceLocation(source);
+  return {
+    manifest: {
+      id: document.id,
+      version: document.version,
+      name: document.name,
+      image: document.image,
+      health: typeof document.health === 'string' ? document.health : document.health?.path,
+    },
+    reference: {
+      path: filePath,
+      repo: location ? `${location.owner}/${location.repo}` : 'official',
+      branch: location?.ref ?? '',
+      digest: manifestDigest(readYAML(text)),
+    },
+  };
 }
 
 // ─── Image Proxy ──────────────────────────────────────────
 
+/** Point the listing icon and screenshots (files in the app folder) at the image proxy. */
 export async function resolveManifestPaths(
   manifest: AppManifest,
   source: MarketSource,
   location: FileLocation,
-  /** App folder for the per-app layout (e.g. `apps/redlib`); relative assets resolve under it. */
+  /** App folder (e.g. `apps/redlib`); relative assets resolve under it. */
   basePath?: string
 ): Promise<void> {
   const relative = (asset: string) => basePath ? `${basePath.replace(/\/+$/, '')}/${asset}` : asset;
   const assetURL = (asset: string) => location
     ? proxyImageUrl(buildMarketRawURL(source, location.owner, location.repo, relative(asset), location.ref))
     : catalogImageUrl(relative(asset));
-  const present = (value: string) => value.startsWith('http') ? proxyImageUrl(value) : assetURL(value);
 
-  if (manifest.metadata.iconUrl) manifest.metadata.iconUrl = present(manifest.metadata.iconUrl);
+  if (manifest.metadata.iconUrl) manifest.metadata.iconUrl = assetURL(manifest.metadata.iconUrl);
   for (const screenshot of manifest.detail?.screenshots ?? []) {
-    if (screenshot.path) screenshot.path = present(screenshot.path);
+    if (screenshot.path) screenshot.path = assetURL(screenshot.path);
   }
 }
 
 // ─── MarketApp Conversion ─────────────────────────────────
 
+/** The install-time "YouEye ID sign-in" toggle of an app whose SSO needs a setup file. */
 function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['integrations']> {
-  const integrations: NonNullable<MarketApp['integrations']> = (manifest.integrations ?? []).map((integration) => ({
-    id: integration.id,
-    name: integration.name,
-    description: integration.description,
-    type: integration.type,
-    recommended: integration.recommended,
-    installByDefault: integration.installByDefault,
-    required: integration.required,
-    permissions: integration.permissions,
-  }));
-
-  const setupMethod = manifest.sso?.setup?.method;
-  const hasSetupSteps =
-    (setupMethod === 'api' && (manifest.sso?.setup?.api?.steps?.length ?? 0) > 0) ||
-    (setupMethod === 'cli' && (manifest.sso?.setup?.cli?.steps?.length ?? 0) > 0);
-
-  if (hasSetupSteps && !integrations.some((integration) => integration.id === 'youeye-id')) {
-    integrations.unshift({
-      id: 'youeye-id',
-      name: 'Identity Sign-In',
-      description: 'Configure this app to use the identity provider after the base app is installed.',
-      type: 'identity',
-      recommended: true,
-      installByDefault: true,
-      required: false,
-      permissions: ['identity:oauth-client:create'],
-    });
-  }
-
-  return integrations;
+  if (!manifest.sso || !manifest.setups.some((setup) => setup.for === 'sso')) return [];
+  return [{
+    id: 'youeye-id',
+    name: 'Identity Sign-In',
+    description: 'Configure this app to use the identity provider after the base app is installed.',
+    type: 'identity',
+    recommended: true,
+    installByDefault: true,
+    required: false,
+    permissions: ['identity:oauth-client:create'],
+  }];
 }
 
 export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
@@ -553,6 +493,7 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
     category: manifest.metadata.category,
     integration: manifest.integration,
     version: manifest.version,
+    requiresYouEye: manifest.requires?.youeye,
     defaultSubdomain: manifest.metadata.defaultSubdomain,
     supportsSSO: !!manifest.sso,
     website: manifest.metadata.website,
@@ -571,73 +512,18 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
         caption: s.caption,
       })),
     } : undefined,
-    installParams: manifest.installParams?.map((p) => ({
-      name: p.name,
-      label: p.label,
-      required: p.required,
-      description: p.description,
-      type: p.type,
-      default: p.default,
-      choices: p.choices,
-      validation: p.validation,
-    })),
+    setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
     integrations: getDisplayIntegrations(manifest),
-    entrances: manifest.entrances,
     forwardAuth: manifest.forwardAuth,
     capabilities,
     surfaces: manifest.surfaces,
   };
 }
 
-function integrationManifestToMarketApp(manifest: IntegrationManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
-  return {
-    id: manifest.metadata.id,
-    catalogKey: source ? `${source.id}:integration:${manifest.metadata.id}` : undefined,
-    itemKind: 'integration',
-    sourceId: source?.id,
-    sourceName: source?.name,
-    sourceRepoUrl: source?.repo_url,
-    manifestPath: reference?.path,
-    manifestRepo: reference?.repo,
-    manifestBranch: reference?.branch,
-    manifestDigest: reference?.digest,
-    name: manifest.metadata.name,
-    description: manifest.metadata.description,
-    icon: manifest.metadata.icon,
-    iconUrl: manifest.metadata.iconUrl,
-    category: manifest.metadata.category,
-    integration: 'basic',
-    version: manifest.version,
-    defaultSubdomain: '',
-    supportsSSO: !!manifest.sso,
-    website: manifest.metadata.website,
-    tags: manifest.metadata.tags,
-    detail: manifest.detail ? {
-      longDescription: manifest.detail.longDescription,
-      screenshots: manifest.detail.screenshots.map((s) => ({
-        url: s.path,
-        caption: s.caption,
-      })),
-    } : undefined,
-    target: manifest.target,
-    integrations: [{
-      id: manifest.metadata.id,
-      name: manifest.metadata.name,
-      description: manifest.metadata.description,
-      type: manifest.type,
-      recommended: manifest.recommended,
-      installByDefault: manifest.installByDefault,
-      required: manifest.required,
-      permissions: manifest.permissions,
-      hasUninstall: !!manifest.uninstall,
-    }],
-  };
-}
-
 function systemManifestToMarketApp(manifest: SystemAppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
   return {
-    id: manifest.metadata.id,
-    catalogKey: source ? `${source.id}:system:${manifest.metadata.id}` : undefined,
+    id: manifest.id,
+    catalogKey: source ? `${source.id}:system:${manifest.id}` : undefined,
     itemKind: 'system',
     sourceId: source?.id,
     sourceName: source?.name,
@@ -646,76 +532,20 @@ function systemManifestToMarketApp(manifest: SystemAppManifest, source?: MarketS
     manifestRepo: reference?.repo,
     manifestBranch: reference?.branch,
     manifestDigest: reference?.digest,
-    name: manifest.metadata.name,
-    description: manifest.metadata.description,
-    icon: manifest.metadata.icon,
-    iconUrl: manifest.metadata.iconUrl,
-    category: manifest.metadata.category,
+    name: manifest.name,
+    description: manifest.name,
+    icon: 'server',
+    category: 'infrastructure',
     integration: 'basic',
     version: manifest.version,
     defaultSubdomain: '',
     supportsSSO: false,
-    website: manifest.metadata.website,
-    tags: manifest.metadata.tags,
+    tags: [],
     system: {
       image: manifest.image,
-      containerName: manifest.containerName,
-      minPlatformVersion: manifest.minPlatformVersion,
       managedBy: 'control-panel',
     },
   };
-}
-
-function integrationItemToAppToggle(item: MarketApp): NonNullable<MarketApp['integrations']>[number] {
-  const integration = item.integrations?.[0];
-  return {
-    id: item.id,
-    name: item.name,
-    description: item.description,
-    type: integration?.type ?? 'addon',
-    recommended: integration?.recommended,
-    installByDefault: integration?.installByDefault,
-    required: integration?.required,
-    permissions: integration?.permissions,
-    itemKind: 'integration',
-    sourceId: item.sourceId,
-    sourceName: item.sourceName,
-    sourceRepoUrl: item.sourceRepoUrl,
-    manifestPath: item.manifestPath,
-    manifestRepo: item.manifestRepo,
-    manifestBranch: item.manifestBranch,
-    manifestDigest: item.manifestDigest,
-  };
-}
-
-function attachStandaloneIntegrations(items: MarketApp[]): MarketApp[] {
-  const integrationsByTarget = new Map<string, MarketApp[]>();
-  for (const item of items) {
-    if (item.itemKind !== 'integration' || !item.target?.appId) continue;
-    const key = `${item.sourceId || ''}:${item.target.appId}`;
-    integrationsByTarget.set(key, [...(integrationsByTarget.get(key) ?? []), item]);
-  }
-
-  return items.map((item) => {
-    if (item.itemKind === 'integration') return item;
-
-    const key = `${item.sourceId || ''}:${item.id}`;
-    const standalone = integrationsByTarget.get(key) ?? [];
-    if (standalone.length === 0) return item;
-
-    const standaloneToggles = standalone.map(integrationItemToAppToggle);
-    const standaloneIds = new Set(standaloneToggles.map((integration) => integration.id));
-    const hasStandaloneIdentity = standaloneToggles.some((integration) => integration.type === 'identity');
-    const embedded = (item.integrations ?? []).filter((integration) => (
-      !standaloneIds.has(integration.id) &&
-      !(hasStandaloneIdentity && integration.id === 'youeye-id')
-    ));
-
-    return {
-      ...item,
-      integrations: [...standaloneToggles, ...embedded],
-    };
-  });
 }
 
 // ─── Public API ───────────────────────────────────────────
@@ -724,21 +554,16 @@ export async function fetchAvailableApps(onWarning?: (warning: CatalogWarning) =
   const sources = await getMarketSources();
   const apps: MarketApp[] = [];
 
-  const results = await Promise.allSettled(sources.flatMap(async (source) => {
+  const results = await Promise.allSettled(sources.map(async (source) => {
     const catalog = await fetchCatalog(source);
     const reportFailure = (entry: { id: string }, error: unknown) => {
       console.warn(`[market] ${source.id}/${entry.id}: manifest unavailable`, error);
       onWarning?.({ sourceId: source.id, itemId: entry.id, message: `${source.name}: could not load ${entry.id}.` });
     };
-    const appItems = await loadCatalogEntries(catalog.apps, async (entry) => {
+    return loadCatalogEntries(catalog.apps, async (entry) => {
       const result = await fetchManifestFromCatalogEntry(entry, source);
       return manifestToMarketApp(result.manifest, source, result.reference);
     }, reportFailure);
-    const integrationItems = await loadCatalogEntries(catalog.integrations ?? [], async (entry) => {
-      const result = await fetchIntegrationManifestFromCatalogEntry(entry, source);
-      return integrationManifestToMarketApp(result.manifest, source, result.reference);
-    }, reportFailure);
-    return [...appItems, ...integrationItems];
   }));
 
   for (const [index, result] of results.entries()) {
@@ -751,14 +576,13 @@ export async function fetchAvailableApps(onWarning?: (warning: CatalogWarning) =
     }
   }
 
-  return attachStandaloneIntegrations(apps);
+  return apps;
 }
 
 /**
  * Fetch Market category metadata (pills, labels, icons, ordering, fallback tiles) from the
  * enabled sources. Categories are merged by id across sources in priority order — the first
- * source to declare a category id wins — and returned sorted by `order`. Data-driven:
- * adding/renaming a category is a `catalog.yaml` change only, no code change.
+ * source to declare a category id wins — and returned sorted by `order`.
  */
 export async function fetchCategories(): Promise<MarketCategory[]> {
   const sources = await getMarketSources();
@@ -776,9 +600,8 @@ export async function fetchCategories(): Promise<MarketCategory[]> {
 }
 
 /**
- * Fetch the Market curation (spotlight strip + collections) for the Market home. Curation
- * is an editorial layout owned by the primary market, so the first enabled source (priority
- * order) that declares a `curation:` section wins. Returns null if none is declared.
+ * Fetch the Market curation (spotlight strip + collections) for the Market home. The first
+ * enabled source (priority order) that declares a `curation:` section wins.
  */
 export async function fetchCuration(): Promise<MarketCuration | null> {
   const sources = await getMarketSources();
@@ -792,10 +615,8 @@ export async function fetchCuration(): Promise<MarketCuration | null> {
 }
 
 /**
- * Fetch the full bundle definitions across enabled Market sources. Reads each source's
- * catalog `bundles:` entries ({id, file}) and loads + validates the referenced
- * `bundles/<id>/bundle.yaml`. Deduped by bundle id in source-priority order. A bundle that
- * fails to load is logged and skipped (it never breaks the rest of the catalog response).
+ * Fetch the bundle definitions (`bundles/<id>/bundle.yaml`) across enabled Market sources,
+ * deduped by id in source-priority order. A bundle that fails to load is logged and skipped.
  */
 export async function fetchBundles(): Promise<MarketBundle[]> {
   const sources = await getMarketSources();
@@ -808,14 +629,26 @@ export async function fetchBundles(): Promise<MarketBundle[]> {
     } catch {
       continue; // a bad source must not sink bundles from the others
     }
-    for (const entry of catalog.bundles ?? []) {
-      if (seen.has(entry.id)) continue;
+    for (const id of catalog.bundles ?? []) {
+      if (seen.has(id)) continue;
+      const file = `bundles/${id}/bundle.yaml`;
       try {
-        const yamlText = await fetchFile(entry.file, source);
-        out.push(parseBundle(yamlText));
-        seen.add(entry.id);
+        const bundle = parseBundle(await fetchFile(file, source));
+        if (bundle.id !== id) throw new Error(`holds bundle "${bundle.id}"`);
+        out.push({
+          id: bundle.id,
+          name: bundle.name,
+          description: bundle.description,
+          icon: bundle.icon,
+          category: bundle.category,
+          setupSummary: bundle.summary,
+          members: [...bundle.members],
+          connections: (bundle.connections ?? []).map((connection) => ({ ...connection, scope: connection.scope ?? 'service' })),
+          storageGroups: [...(bundle.shared ?? [])],
+        });
+        seen.add(id);
       } catch (err) {
-        console.error(`[catalog] Failed to load bundle "${entry.id}" (${entry.file}):`, err);
+        console.error(`[catalog] Failed to load bundle "${id}" (${file}):`, err);
       }
     }
   }
@@ -828,28 +661,14 @@ export async function fetchBundle(id: string): Promise<MarketBundle | null> {
   return bundles.find((b) => b.id === id) ?? null;
 }
 
-/**
- * Fetch a source's `store.yaml` descriptor (new market layout), or null if the source has
- * none (legacy layout). Official stores keep un-namespaced app ids; third-party stores
- * namespace by their descriptor `id`. Best-effort: a missing/invalid store.yaml is not an error.
- */
-export async function fetchStoreDescriptor(marketSource?: MarketSource): Promise<StoreDescriptor | null> {
-  try {
-    const yamlText = await fetchFile('store.yaml', marketSource);
-    return parseStore(yamlText);
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
   const sources = await getMarketSources();
   const systemApps: MarketApp[] = [];
 
-  const results = await Promise.allSettled(sources.flatMap(async (source) => {
+  const results = await Promise.allSettled(sources.map(async (source) => {
     const catalog = await fetchCatalog(source);
-    return Promise.all((catalog.system ?? []).map(async (entry) => {
-      const result = await fetchSystemManifestFromCatalogEntry(entry, source);
+    return Promise.all((catalog.system ?? []).map(async (id) => {
+      const result = await fetchSystemManifest(id, source);
       return systemManifestToMarketApp(result.manifest, source, result.reference);
     }));
   }));
@@ -872,29 +691,6 @@ export function clearCatalogCache(): void {
 export async function refreshCatalog(): Promise<Catalog> {
   clearCatalogCache();
   return fetchCatalog();
-}
-
-export async function getNativeApps(): Promise<MarketApp[]> {
-  let catalog: Catalog;
-  try {
-    catalog = await fetchCatalog();
-  } catch {
-    const cached = await loadCatalogFromFile();
-    if (!cached) return [];
-    catalog = cached.catalog;
-  }
-
-  const nativeEntries = catalog.apps.filter(e => e.integration === 'native');
-  const nativeApps: MarketApp[] = [];
-
-  for (const entry of nativeEntries) {
-    try {
-      const manifest = await fetchManifest(entry.id);
-      nativeApps.push(manifestToMarketApp(manifest));
-    } catch {}
-  }
-
-  return nativeApps;
 }
 
 export async function getCatalogCacheAge(): Promise<string | null> {
@@ -928,7 +724,10 @@ async function loadCatalogFromFile(): Promise<CatalogCacheFile | null> {
   try {
     if (!existsSync(CATALOG_CACHE_PATH)) return null;
     const raw = await readFile(CATALOG_CACHE_PATH, 'utf-8');
-    return JSON.parse(raw);
+    const cached = JSON.parse(raw) as CatalogCacheFile;
+    // Only the current catalog shape (apps discovered from folders) is usable.
+    if (!Array.isArray(cached?.catalog?.apps) || !Array.isArray(cached.catalog.bundles) || !Array.isArray(cached.catalog.system)) return null;
+    return cached;
   } catch {
     return null;
   }

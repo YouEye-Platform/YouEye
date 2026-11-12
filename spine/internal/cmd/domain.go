@@ -27,8 +27,8 @@ var domainShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the current base domain",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/domain")
 		if err != nil {
@@ -59,8 +59,8 @@ var domainSetCmd = &cobra.Command{
 		"'youeye names import <bundle>' or 'youeye domain import <bundle>'.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		newDomain := strings.ToLower(strings.TrimSpace(args[0]))
 		if newDomain == "" {
@@ -105,8 +105,8 @@ var domainExportCmd = &cobra.Command{
 		"contains a DNS token that can edit records for the domain zone. Keep it secret\n" +
 		"(written 0600 when --output is used).",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		path := "/api/tls/domain/export"
 		if domainExportIncludeToken {
@@ -177,8 +177,8 @@ var domainImportCmd = &cobra.Command{
 		state := readPlatformYaml()
 		if state.SetupCompleted {
 			// Live switch: the platform is running — apply the bundle now.
-			if !requireCP() {
-				return nil
+			if err := requireCP(); err != nil {
+				return err
 			}
 			if !confirmURLChange(strings.ToLower(b.Domain), state.Domain, false, domainImportYes) {
 				return nil

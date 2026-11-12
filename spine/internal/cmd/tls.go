@@ -16,8 +16,8 @@ var tlsStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current TLS mode and certificate info",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/tls/status")
 		if err != nil {

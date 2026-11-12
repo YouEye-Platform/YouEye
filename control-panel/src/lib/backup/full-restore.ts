@@ -18,7 +18,6 @@ import { spineClient } from '@/lib/spine/client';
 import { execCommand, incusRequest, incusUploadFile } from '@/lib/incus/server';
 import {
   getRoutes,
-  removeAppRoutes,
   removeRoute,
   setConfig as setCaddyConfig,
 } from '@/lib/caddy/client';
@@ -287,7 +286,7 @@ function parseRestoredAppInventory(value: unknown): RestoredAppInventory[] {
 }
 
 async function removeCurrentApp(appId: string): Promise<void> {
-  const result = await uninstallApp(appId, { dropSharedDatabase: true, keepData: false });
+  const result = await uninstallApp(appId, { keepData: false });
   if (!result.success) throw new Error(`Could not clear the current ${appId} installation before server restore`);
 }
 
@@ -334,15 +333,14 @@ async function clearRestoredAppRegistration(app: RestoredAppInventory): Promise<
   // with no live install metadata for uninstallApp() to associate with the
   // app. Remove it using the independently validated core inventory before
   // the selected app's manifest-driven reinstall runs its collision preflight.
+  // Exact hostname only: another app's routes (e.g. `foo-bar` for `foo`) are never matched.
   for (const route of await getRoutes()) {
-    if ((hostname && route.hostname === hostname) || route.id.startsWith(`app-${app.appId}-`)) {
+    if (hostname && route.hostname === hostname) {
       await removeRoute(route.id);
     }
   }
-  await removeAppRoutes(app.appId);
   const remainingRoutes = await getRoutes();
-  if (remainingRoutes.some(route => (hostname && route.hostname === hostname)
-    || route.id.startsWith(`app-${app.appId}-`))) {
+  if (remainingRoutes.some(route => hostname && route.hostname === hostname)) {
     throw new Error(`Routing registration remains for ${app.appId}`);
   }
 

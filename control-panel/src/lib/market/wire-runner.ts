@@ -1,93 +1,149 @@
 /**
- * Connection wire-runner.
+ * Connection wiring.
  *
- * When an app→app connection is approved — by a bundle's auto-approve OR a user approving a
- * suggestion for two separately-installed apps — the consumer's `want.wire` recipe runs to
- * configure the apps to actually talk to each other (e.g. register Sonarr as an Application
- * in Prowlarr). This is a GENERAL capability: the recipe lives on the app's `want`, so it
- * works for individually-installed apps too; a bundle only *enables* the connection.
+ * When an app→app connection is approved (by a bundle or by the owner), the consumer's
+ * `connects[].setup` file (`for: connect:<app>`) configures the two apps to talk to each other,
+ * e.g. register Sonarr as an application in Prowlarr. It runs through the setup runner with
+ * `${peer.*}` (the connected app) and `${self.*}` (the consumer) values; only its `http` steps
+ * with `target: peer` reach the connected app, and only its primary container's API.
  *
- * API-key-only model: each app declares `apiKey: { file, pattern }` (how to read its key
- * from its running container); recipes call the apps' REST APIs with that key. No web-UI
- * auth is mutated. Recipes interpolate ${wire.from.*} / ${wire.to.*} (host, port, apiKey, url).
+ * Both apps' manifests come from their frozen installed copies, never the live catalog. An app's
+ * API key (`${peer.api_key}`, `${self.api_key}`) is the secret its frozen manifest's `api_key:`
+ * names, read from that app's own secret store.
  *
- * Non-fatal + idempotent: a wiring failure is logged and never breaks connection approval;
- * recipes re-assert config so re-running is safe.
+ * Non-fatal: a wiring failure is logged and never breaks connection approval; setup steps are
+ * idempotent, so re-running is safe.
  */
 
-import { fetchManifest } from './catalog';
+import { readAppSecret } from '@/lib/infrastructure/secrets';
+import { connectionInterface } from '@/lib/incus/connection-nic';
+import { loadBridges } from '../bridges/store';
+import { readFrozenUpdateManifest } from './frozen-manifest';
+import { describeErrorChainForLog } from './install-tracker';
 import { readInstallMetadata } from './metadata';
-import { runSteps } from './sso-engine';
-import { resolveVariables } from './variables';
-import { execShell } from '../incus/server';
-import { getContainerIP } from '../incus/container-ip';
+import { setupContainers } from './setup-context';
+import { runSetup, setupFor, type SetupTransport } from './setup-runner';
 import type { AppManifest, InstallMetadata, VariableContext } from './types';
 
-function containerOf(meta: InstallMetadata | null, appId: string): string {
-  return meta?.containers?.[0]?.containerName || `app-${appId}`;
+export interface WiringDeps {
+  readManifest(appId: string): Promise<AppManifest>;
+  readMetadata(appId: string): Promise<InstallMetadata | null>;
+  /** Whether the from→to connection is approved and active. */
+  isApproved(fromAppId: string, toAppId: string): Promise<boolean>;
+  /** One secret from an installed app's secret store (null when it has none by that name). */
+  readSecret(appId: string, name: string): Promise<string | null>;
+  transport?: SetupTransport;
 }
 
-/** Read an app's API key from its running container, per the manifest's `apiKey` declaration. */
-async function resolveApiKey(appId: string, manifest: AppManifest, container: string): Promise<string | undefined> {
-  const spec = manifest.apiKey;
-  if (!spec) return undefined;
-  try {
-    const { stdout } = await execShell(container, `cat ${spec.file}`, { timeout: 10_000 });
-    return new RegExp(spec.pattern).exec(stdout)?.[1];
-  } catch (err) {
-    console.warn(`[wire] Failed to read API key for ${appId} (${spec.file}):`, err);
-    return undefined;
+async function readSecrets(deps: WiringDeps, manifest: AppManifest, appId: string): Promise<Record<string, string>> {
+  const secrets: Record<string, string> = {};
+  for (const secret of manifest.secrets) {
+    const value = await deps.readSecret(appId, secret.name);
+    if (value) secrets[secret.name] = value;
   }
+  return secrets;
 }
 
-interface WireEndpoint { id: string; host: string; port?: number; apiKey?: string; url?: string }
+const defaultDeps: WiringDeps = {
+  readManifest: (appId) => readFrozenUpdateManifest(appId),
+  readMetadata: readInstallMetadata,
+  async isApproved(fromAppId, toAppId) {
+    return (await loadBridges()).some((bridge) => bridge.from === fromAppId && bridge.to === toAppId
+      && bridge.approved && bridge.active);
+  },
+  readSecret: readAppSecret,
+};
 
-async function resolveEndpoint(appId: string): Promise<WireEndpoint | null> {
-  const meta = await readInstallMetadata(appId);
-  if (!meta) return null;
-  const container = containerOf(meta, appId);
-  const host = (await getContainerIP(container)) || container;
-  let manifest: AppManifest | null = null;
-  try { manifest = await fetchManifest(appId); } catch { /* native/repo app — no manifest here */ }
-  const port = manifest?.containers?.[0]?.port;
-  const apiKey = manifest ? await resolveApiKey(appId, manifest, container) : undefined;
-  return { id: appId, host, port, apiKey, url: port ? `http://${host}:${port}` : `http://${host}` };
+interface Endpoint {
+  container: string;
+  port: number;
+  values: { host: string; url: string; api_key?: string };
 }
 
 /**
- * Run the wire recipe for a from→to connection, if the consumer (`from`) declares one for
- * `to`. Returns whether a recipe ran (and any error). Safe to call on every connection
- * approval — apps without a `want.wire` for the target are a no-op.
+ * An app's primary container as seen on `network`'s bridge (the peer's network for both ends):
+ * the peer on its own eth0, the consumer on its connection NIC (`iface`). The transport accepts
+ * only an address inside that network's lease (see `appContainerAddress`).
  */
-export async function runConnectionWiring(fromAppId: string, toAppId: string): Promise<{ ran: boolean; error?: string }> {
+async function endpoint(
+  appId: string, manifest: AppManifest, meta: InstallMetadata, deps: WiringDeps, network: string, iface?: string,
+): Promise<Endpoint> {
+  const primary = manifest.containers.find((spec) => spec.primary) ?? manifest.containers[0];
+  if (!primary?.port) throw new Error(`${appId} has no primary container port`);
+  const container = setupContainers(manifest, meta)[primary.name];
+  const io = deps.transport ?? (await import('./setup-transport')).incusSetupTransport;
+  const host = await io.address(container, network, iface);
+  let apiKey: string | undefined;
+  if (manifest.apiKey) {
+    apiKey = (await deps.readSecret(appId, manifest.apiKey.secret)) || undefined;
+    if (!apiKey) console.warn(`[wire] ${appId}: its API key secret "${manifest.apiKey.secret}" is missing`);
+  }
+  return {
+    container,
+    port: primary.port,
+    values: { host, url: `http://${host}:${primary.port}`, ...(apiKey ? { api_key: apiKey } : {}) },
+  };
+}
+
+/**
+ * Run the consumer's (`from`) connect setup for `to`, if it declares one: its `steps:` when the
+ * connection becomes active, its `remove:` steps (`options.remove`) before it is deactivated or
+ * deleted. Returns whether a setup ran (and any error); never throws. Apps without a setup file
+ * for the target are a no-op; a connection that is not approved and active is refused.
+ */
+export async function runConnectionWiring(
+  fromAppId: string,
+  toAppId: string,
+  deps: WiringDeps = defaultDeps,
+  options: { remove?: boolean } = {},
+): Promise<{ ran: boolean; error?: string }> {
+  const action = options.remove ? 'unwire' : 'wire';
   let fromManifest: AppManifest;
   try {
-    fromManifest = await fetchManifest(fromAppId);
+    fromManifest = await deps.readManifest(fromAppId);
   } catch {
     return { ran: false };
   }
-  const want = fromManifest.wants?.find((w) => w.appId === toAppId);
-  if (!want?.wire) return { ran: false };
+  const want = fromManifest.wants.find((w) => w.appId === toAppId);
+  if (!want?.setup) return { ran: false };
+  // Nothing to undo: skip the address lookups (the consumer may already be stopped for its uninstall).
+  if (options.remove && !(setupFor(fromManifest, `connect:${toAppId}`)?.remove?.length)) return { ran: false };
 
   try {
-    const [from, to] = await Promise.all([resolveEndpoint(fromAppId), resolveEndpoint(toAppId)]);
-    if (!from || !to) return { ran: false, error: 'endpoint not installed' };
-
-    const ctx: Partial<VariableContext> = { wire: { from, to } };
-
-    // CLI steps run in the provider (`to`) container — the app that typically needs a local
-    // config tweak (e.g. qBittorrent local-subnet auth bypass). Then the API steps.
-    const toContainer = containerOf(await readInstallMetadata(toAppId), toAppId);
-    for (const step of want.wire.cli?.steps ?? []) {
-      await execShell(toContainer, resolveVariables(step.exec, ctx), { timeout: step.timeout });
+    if (!(await deps.isApproved(fromAppId, toAppId))) {
+      return { ran: false, error: `connection ${fromAppId} → ${toAppId} is not approved` };
     }
-    await runSteps(want.wire.api?.steps ?? [], ctx);
-
-    console.log(`[wire] Wired ${fromAppId} → ${toAppId}`);
-    return { ran: true };
+    const [fromMeta, toMeta] = await Promise.all([deps.readMetadata(fromAppId), deps.readMetadata(toAppId)]);
+    if (!fromMeta || !toMeta) return { ran: false, error: 'endpoint not installed' };
+    const toManifest = await deps.readManifest(toAppId);
+    const [self, peer] = await Promise.all([
+      endpoint(fromAppId, fromManifest, fromMeta, deps, toAppId, connectionInterface(toAppId)),
+      endpoint(toAppId, toManifest, toMeta, deps, toAppId),
+    ]);
+    const variables: Partial<VariableContext> = {
+      app: {
+        id: fromAppId,
+        name: fromManifest.metadata.name,
+        subdomain: fromMeta.subdomain,
+        fqdn: `${fromMeta.subdomain}.${fromMeta.domain}`,
+        url: `https://${fromMeta.subdomain}.${fromMeta.domain}`,
+      } as VariableContext['app'],
+      secret: await readSecrets(deps, fromManifest, fromAppId),
+      self: self.values as VariableContext['self'],
+      peer: { id: toAppId, ...peer.values } as VariableContext['peer'],
+    };
+    const ran = await runSetup(fromManifest, `connect:${toAppId}`, {
+      appId: fromAppId,
+      containers: setupContainers(fromManifest, fromMeta),
+      variables,
+      peer: { appId: toAppId, container: peer.container, port: peer.port },
+      remove: options.remove,
+      transport: deps.transport,
+    });
+    if (ran) console.log(`[wire] ${options.remove ? 'Unwired' : 'Wired'} ${fromAppId} → ${toAppId}`);
+    return { ran };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[wire] Failed to wire ${fromAppId} → ${toAppId}:`, msg);
-    return { ran: false, error: msg };
+    console.error(`[wire] Failed to ${action} ${fromAppId} → ${toAppId}: ${describeErrorChainForLog(err)}`);
+    return { ran: false, error: `Could not ${action} ${fromAppId} → ${toAppId}` };
   }
 }

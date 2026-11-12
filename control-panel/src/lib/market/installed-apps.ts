@@ -16,9 +16,8 @@ import path from 'node:path';
 import { AppUpdateExecutorLock } from './update-executor-lock';
 import { isAppUpdateReserved } from './update-admission';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, fetchUpdatePlanMigrationsFromSource, resolveCatalogApp } from './catalog';
-import { parse as parseYAML } from 'yaml';
-import { describeUpdatePath, findApplicableMigrations, mergeMigrationSources } from './migration-planner';
+import { fetchCatalog, resolveCatalogApp } from './catalog';
+import { youeyeRequirementProblem } from './app-format/requires';
 import {
   catalogUpdateState,
   classifyAppUpdateRouting,
@@ -97,7 +96,6 @@ export interface InstalledApp {
     toVersion: string;
     idempotencyKey?: string;
     description?: string;
-    source?: 'manifest' | 'update-plan';
   }>;
 }
 
@@ -394,24 +392,13 @@ export async function migrateFromInstallJson(): Promise<number> {
 
 // ─── Update Detection ─────────────────────────────────────────
 
-async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
+/** The current manifest of an app added by URL (parsed by the one app-format parser). */
+async function fetchUrlAppManifest(sourceUrl: string): Promise<AppManifest | null> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(sourceUrl, {
-      signal: controller.signal,
-      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
-    });
-    clearTimeout(timeout);
-
-    if (!res.ok) return null;
-    const yamlText = await res.text();
-    if (yamlText.length > 1024 * 1024) return null;
-
-    const parsed = parseYAML(yamlText, { maxAliasCount: 0 });
-    return parsed?.version ?? null;
+    const { fetchUrlApp } = await import('./url-app');
+    return await fetchUrlApp(sourceUrl);
   } catch (err) {
-    console.warn('[installed-apps] Failed to fetch URL app version:', sourceUrl, err);
+    console.warn('[installed-apps] Failed to fetch URL app manifest:', sourceUrl, err);
     return null;
   }
 }
@@ -433,10 +420,9 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   const installed = Object.values(s.apps);
   const baselines = new Map(installed.map(app => [app.appId, structuredClone(app)]));
 
-  const entryMap = new Map<string, { path?: string; file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
-  for (const e of catalog?.apps ?? []) {
-    entryMap.set(e.id, e);
-  }
+  const entryMap = new Map((catalog?.apps ?? []).map((entry) => [entry.id, entry]));
+  const { getPlatformContext } = await import('./platform-env');
+  const platformVersion = (await getPlatformContext()).version;
 
   // Each installed app's update check is independent (per-app network fetches), so run them
   // in parallel rather than sequentially — N round-trips of latency collapse to ~1.
@@ -459,9 +445,10 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     if (recordedSourceIds.length > 0 || hasRecordedCatalogIdentity(app, installMeta ?? {}) || defaultEntry) {
       resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceIds);
       sourceManifest = resolvedCatalog.manifest;
-      catalogVersion = sourceManifest.version ?? resolvedCatalog.entry.latestVersion ?? null;
+      catalogVersion = sourceManifest.version ?? null;
     } else if (app.source === 'url' && app.sourceUrl) {
-      catalogVersion = await fetchUrlAppVersion(app.sourceUrl);
+      sourceManifest = await fetchUrlAppManifest(app.sourceUrl);
+      catalogVersion = sourceManifest?.version ?? null;
     }
 
     const routing = classifyAppUpdateRouting({
@@ -500,9 +487,11 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       candidate,
     });
     catalogVersion = availability.catalogVersion;
-    const hasUpdate = availability.updateAvailable;
+    // A version that needs a newer YouEye is never offered as an update.
+    const hasUpdate = availability.updateAvailable
+      && youeyeRequirementProblem(sourceManifest?.requires, platformVersion) === null;
     app.catalogVersion = availability.catalogVersion;
-    app.updateAvailable = availability.updateAvailable;
+    app.updateAvailable = hasUpdate;
     app.switchPending = availability.switchPending;
     app.candidateVersion = availability.candidateVersion;
     app.candidateBranch = availability.candidateBranch;
@@ -512,34 +501,7 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     app.migrationGates = [];
 
     if (hasUpdate && catalogVersion && app.installedVersion) {
-      try {
-        if (sourceManifest) {
-          const durablePlan = await fetchUpdatePlanMigrationsFromSource(
-            app.appId,
-            resolvedCatalog?.source.id || app.sourceId || installMeta?.sourceId || undefined,
-          );
-          const allMigrations = mergeMigrationSources(sourceManifest.update?.migrations || [], durablePlan.migrations);
-          const applicableMigrations = findApplicableMigrations(
-            allMigrations,
-            app.installedVersion,
-            catalogVersion,
-            installMeta?.appliedMigrations,
-          );
-
-          app.updatePath = describeUpdatePath(app.installedVersion, catalogVersion, applicableMigrations);
-          app.migrationsRequired = applicableMigrations.length;
-          app.migrationGates = applicableMigrations.map((migration) => ({
-            fromVersion: migration.fromVersion,
-            toVersion: migration.toVersion,
-            idempotencyKey: migration.idempotencyKey,
-            description: migration.description,
-            source: migration.source,
-          }));
-        }
-      } catch (err) {
-        console.warn('[installed-apps] Failed to compute migration preview:', app.appId, err);
-        app.updatePath = `${app.installedVersion} -> ${catalogVersion}`;
-      }
+      app.updatePath = `${app.installedVersion} -> ${catalogVersion}`;
     }
 
     return app;

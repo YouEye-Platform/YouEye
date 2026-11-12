@@ -18,9 +18,19 @@
 import { incusRequest as providerIncusRequest, execShell } from './server';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { sameIncusFields, sameIncusAcl } from './config-equality';
-import { getContainerIP } from './container-ip';
+import { getContainerIP, hostSideNICAddress } from './container-ip';
 import { getSystemStaticIP } from './static-ips';
-import { planCaddyAppNIC } from './app-network-caddy-nic';
+import {
+  caddyAppNICActivationScript,
+  caddyAppNICIsActive,
+  caddyAppNICReleaseScript,
+  planCaddyAppNIC,
+  CADDY_APP_ACL,
+  CADDY_APP_ACL_DESCRIPTION,
+  CADDY_APP_ACL_INGRESS,
+  type CaddyInstanceState,
+} from './app-network-caddy-nic';
+import { connectionInterface } from './connection-nic';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { parse as parseYaml } from 'yaml';
@@ -40,6 +50,7 @@ import {
   AppNetworkOperationConflictError,
   AppNetworkCapacityError,
   AppNetworkStateError,
+  checkAppAddress,
   cidrComplement,
   cidrContains,
   cidrOverlaps,
@@ -103,6 +114,7 @@ const OWNERSHIP_KIND_KEY = 'user.youeye.kind';
 const OWNERSHIP_APP_KEY = 'user.youeye.app_id';
 const OWNERSHIP_CIDR_KEY = 'user.youeye.cidr';
 const OWNERSHIP_OPERATION_KEY = 'user.youeye.operation_id';
+const OWNERSHIP_INSTALLATION_KEY = 'user.youeye.installation_id';
 const OWNERSHIP_KIND = 'app-network';
 const NETWORK_OBJECT_TIMEOUT_MS = 120_000;
 const NETWORK_INVENTORY_CONCURRENCY = 16;
@@ -851,7 +863,7 @@ async function bridgeExists(name: string): Promise<boolean> {
  */
 export async function createAppNetwork(
   appId: string,
-  options: { nat?: boolean; operationId?: string; requiredAddresses?: number } = {},
+  options: { nat?: boolean; operationId?: string; requiredAddresses?: number; installationId?: string } = {},
 ): Promise<{ bridgeName: string; subnet: number; subnetCIDR: string }> {
   await assertNoCriticalIssues(`Install ${appId}`);
   const observation = await observeAppNetworkState();
@@ -890,6 +902,8 @@ export async function createAppNetwork(
     [OWNERSHIP_APP_KEY]: appId,
     [OWNERSHIP_CIDR_KEY]: lease.cidr,
     [OWNERSHIP_OPERATION_KEY]: lease.operationId,
+    // The installation that owns the bridge (same tag as its instances and volumes).
+    ...(options.installationId ? { [OWNERSHIP_INSTALLATION_KEY]: options.installationId } : {}),
   };
 
   // Forward unresolved DNS queries to Pi-Hole. This is a hard invariant for
@@ -1137,17 +1151,74 @@ async function addCaddyToProvedAppNetwork(appId: string, bridgeName: string): Pr
   const devices = { ...metadata.devices };
   const { deviceName, device: expected } = planCaddyAppNIC(appId, bridgeName, devices);
   const ifName = expected.name;
-  if (!devices[deviceName]) {
+  await prepareCaddyAppAcl();
+  // A NIC attached before the ingress ACL existed gets it here (live update).
+  if (!sameIncusFields(devices[deviceName], expected)) {
     devices[deviceName] = expected;
     const patched = await incusRequest('PATCH', '/1.0/instances/youeye-caddy', { devices });
     await waitForIncusOperation(patched, `Attach Caddy to ${bridgeName}`);
   }
   const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', '/1.0/instances/youeye-caddy');
   const attached = assertIncusSuccess(readBack, 'Read back Caddy NICs').devices?.[deviceName];
-  if (!attached || attached.type !== 'nic' || attached.network !== bridgeName || attached.name !== ifName) {
-    throw new AppNetworkStateError(`Caddy NIC ${deviceName} did not read back on ${bridgeName}`);
+  if (!sameIncusFields(attached, expected)) {
+    throw new AppNetworkStateError(`Caddy NIC ${deviceName} did not read back on ${bridgeName} with its ingress policy`);
   }
+  await activateCaddyAppNIC(ifName, bridgeName);
   if (!readOnlyAudit.getStore()) console.log(`[app-network] Added Caddy NIC for ${bridgeName} (${appId})`);
+}
+
+/** Create or correct the shared ACL on Caddy's app NICs (see CADDY_APP_ACL). */
+async function prepareCaddyAppAcl(): Promise<void> {
+  const name = CADDY_APP_ACL;
+  const body = { description: CADDY_APP_ACL_DESCRIPTION, ingress: CADDY_APP_ACL_INGRESS, egress: [] as unknown[], config: {} };
+  const existing = await incusRequest<{ description?: string; config?: Record<string, string>; ingress?: Array<Record<string, string>>; egress?: Array<Record<string, string>> }>(
+    'GET', `/1.0/network-acls/${name}`, undefined, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
+  const exact = (acl: { description?: string; config?: Record<string, string>; ingress?: Array<Record<string, string>>; egress?: Array<Record<string, string>> }) =>
+    acl.description === body.description
+    && sameIncusFields(acl.config ?? {}, {})
+    && (acl.egress ?? []).length === 0
+    && JSON.stringify(canonicalAclRules(acl.ingress ?? [])) === JSON.stringify(canonicalAclRules(CADDY_APP_ACL_INGRESS));
+  if (existing.type === 'error' && (existing.status_code === 404 || existing.error_code === 404)) {
+    const created = await incusRequest('POST', '/1.0/network-acls', { name, ...body }, { timeout: 120_000 });
+    await waitForIncusOperation(created, `Create Caddy app ACL ${name}`, 180);
+  } else if (!exact(assertIncusSuccess(existing, `Read Caddy app ACL ${name}`))) {
+    const replaced = await incusRequest('PUT', `/1.0/network-acls/${name}`, body, { timeout: 120_000 });
+    await waitForIncusOperation(replaced, `Replace Caddy app ACL ${name}`, 180);
+  } else {
+    return;
+  }
+  const readBack = await incusRequest<{ description?: string; config?: Record<string, string>; ingress?: Array<Record<string, string>>; egress?: Array<Record<string, string>> }>(
+    'GET', `/1.0/network-acls/${name}`, undefined, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
+  if (!exact(assertIncusSuccess(readBack, `Read back Caddy app ACL ${name}`))) {
+    throw new AppNetworkStateError(`Caddy app ACL ${name} did not read back exactly`);
+  }
+}
+
+async function readCaddyState(): Promise<CaddyInstanceState> {
+  return assertIncusSuccess(
+    await incusRequest<CaddyInstanceState>('GET', '/1.0/instances/youeye-caddy/state'),
+    'Read Caddy network state',
+  );
+}
+
+/**
+ * Caddy is an OCI container: Incus configures only the NICs present when it
+ * starts, so a hot-plugged app NIC stays DOWN without an address (every request
+ * to the app gets 502). Bring it up with a DHCP address now. A stopped Caddy
+ * configures all its NICs when it starts, so there is nothing to do then.
+ */
+async function activateCaddyAppNIC(ifName: string, bridgeName: string): Promise<void> {
+  const state = await readCaddyState();
+  if (state.status !== 'Running' || caddyAppNICIsActive(state, ifName)) return;
+  // The audit proves only that no action is needed; activation is a repair.
+  if (readOnlyAudit.getStore()) throw new Error('Network audit requires a fresh admitted repair');
+  const activation = await execShell('youeye-caddy', caddyAppNICActivationScript(ifName), { timeout: 45_000 });
+  if (activation.exitCode !== 0 || !caddyAppNICIsActive(await readCaddyState(), ifName)) {
+    throw new AppNetworkStateError(
+      `Caddy NIC ${ifName} on ${bridgeName} did not come up with an address (exit ${activation.exitCode})`,
+    );
+  }
+  console.log(`[app-network] Caddy NIC ${ifName} is up on ${bridgeName}`);
 }
 
 /**
@@ -1158,6 +1229,20 @@ export async function removeCaddyFromAppNetwork(appId: string): Promise<void> {
 
   const res = await incusRequest<IncusInstanceWritable>('GET', '/1.0/instances/youeye-caddy');
   const metadata = assertIncusSuccess(res, 'Read Caddy NICs');
+  const ifName = metadata.devices?.[deviceName]?.name;
+  if (ifName) {
+    // Symmetric with activation: stop the DHCP client that renews this NIC's
+    // address before the interface goes away. Best effort: a stopped Caddy has
+    // no client, and the device removal below is what must be proved.
+    try {
+      const state = await readCaddyState();
+      if (state.status === 'Running') {
+        await execShell('youeye-caddy', caddyAppNICReleaseScript(ifName), { timeout: 15_000 });
+      }
+    } catch (error) {
+      console.warn(`[app-network] Could not stop the DHCP client for Caddy NIC ${ifName}: ${safeNetworkFailure(error)}`);
+    }
+  }
   if (metadata.devices?.[deviceName]) {
     // The exact RFC 7396 intent is an explicit null for this one device.
     // Incus 7.2's typed instance PATCH cannot carry that nested null through
@@ -1655,6 +1740,33 @@ export async function removeProxyDevices(containerName: string): Promise<void> {
   }
 }
 
+// ─── Checked container addresses ────────────────────────────
+
+/**
+ * A container's IPv4 address on app `appId`'s bridge (its NIC `iface`, default eth0), from
+ * host-side data only (`hostSideNICAddress`: the NIC's fixed address or its DHCP lease, never
+ * what the container reports), and accepted only when `checkAppAddress` does: inside that app's
+ * lease CIDR and not the gateway. Used for every address the platform sends to: setup-runner
+ * URLs, connection ACLs, events, back-channel logout and Caddy upstreams.
+ * `allowStopped` accepts the lease of a stopped container (Incus keeps the NIC's reservation).
+ */
+export async function appContainerAddress(
+  containerName: string,
+  appId: string,
+  iface = 'eth0',
+  options: { allowStopped?: boolean } = {},
+): Promise<string> {
+  const lease = await getAppNetworkLease(appId);
+  if (!lease) throw new AppNetworkStateError(`${appId} has no app network`);
+  const nic = await hostSideNICAddress(containerName, iface, options);
+  if (!nic) throw new AppNetworkStateError(`${containerName} is not running or has no ${iface}`);
+  if (nic.network !== lease.bridgeName) {
+    throw new AppNetworkStateError(`${containerName}'s ${iface} is not on ${appId}'s network`);
+  }
+  if (!nic.address) throw new AppNetworkStateError(`no IP address for ${containerName}`);
+  return checkAppAddress(nic.address, lease);
+}
+
 // ─── Cross-App NIC Permissions ──────────────────────────────
 
 function integrationAclName(containerName: string, targetAppId: string): string {
@@ -1662,42 +1774,99 @@ function integrationAclName(containerName: string, targetAppId: string): string 
   return `ye-grant-${safe}`;
 }
 
-async function prepareIntegrationAcl(containerName: string, targetAppId: string): Promise<string> {
+function integrationAclBody(containerName: string, targetAppId: string, targetAddress: string) {
+  const peer = `${targetAddress}/32`;
+  // Incus rejects a rule without an explicit state (see buildAppEgressRules).
+  return {
+    description: `Scoped secondary-NIC integration from ${containerName} to ${targetAppId}`,
+    egress: [{
+      action: 'allow',
+      state: 'enabled',
+      destination: peer,
+      description: `Explicit integration path to ${targetAppId}`,
+    }],
+    ingress: [{
+      action: 'allow',
+      state: 'enabled',
+      source: peer,
+      description: `Calls back from ${targetAppId}`,
+    }],
+  };
+}
+
+function sameIntegrationAcl(
+  observed: { egress?: Array<Record<string, string>>; ingress?: Array<Record<string, string>> },
+  expected: ReturnType<typeof integrationAclBody>,
+): boolean {
+  return JSON.stringify(canonicalAclRules(observed.egress ?? [])) === JSON.stringify(canonicalAclRules(expected.egress))
+    && JSON.stringify(canonicalAclRules(observed.ingress ?? [])) === JSON.stringify(canonicalAclRules(expected.ingress));
+}
+
+/**
+ * The ACL of a connection NIC: traffic only to and from the target app's primary container
+ * address (Incus ACLs are stateful, so replies need no rule). Ingress from it is allowed because
+ * the target may call the consumer back on this NIC (Prowlarr → Sonarr); everything else on the
+ * target's network is rejected both ways.
+ */
+async function prepareIntegrationAcl(containerName: string, targetAppId: string, targetAddress: string): Promise<string> {
   const lease = await getAppNetworkLease(targetAppId);
   if (!lease || lease.state !== 'active') {
     throw new AppNetworkStateError(`Target app ${targetAppId} has no active network lease`);
   }
   const name = integrationAclName(containerName, targetAppId);
-  const egress = [{
-    action: 'allow',
-    destination: lease.cidr,
-    description: `Explicit integration path to ${targetAppId}`,
-  }];
+  const { description, egress, ingress } = integrationAclBody(containerName, targetAppId, targetAddress);
   const existing = await incusRequest('GET', `/1.0/network-acls/${name}`);
   if (existing.type === 'error' && (existing.error_code === 404 || existing.status_code === 404)) {
-    const created = await incusRequest('POST', '/1.0/network-acls', {
-      name,
-      description: `Scoped secondary-NIC integration from ${containerName} to ${targetAppId}`,
-      egress,
-      ingress: [],
-    });
+    const created = await incusRequest('POST', '/1.0/network-acls', { name, description, egress, ingress });
     await waitForIncusOperation(created, `Create integration ACL ${name}`);
   } else {
     assertIncusSuccess(existing, `Read integration ACL ${name}`);
-    const updated = await incusRequest('PUT', `/1.0/network-acls/${name}`, {
-      description: `Scoped secondary-NIC integration from ${containerName} to ${targetAppId}`,
-      egress,
-      ingress: [],
-      config: {},
-    });
+    const updated = await incusRequest('PUT', `/1.0/network-acls/${name}`, { description, egress, ingress, config: {} });
     await waitForIncusOperation(updated, `Update integration ACL ${name}`);
   }
-  const readBack = await incusRequest<{ egress?: Array<Record<string, string>> }>('GET', `/1.0/network-acls/${name}`);
-  const observed = assertIncusSuccess(readBack, `Read back integration ACL ${name}`).egress ?? [];
-  if (JSON.stringify(canonicalAclRules(observed)) !== JSON.stringify(canonicalAclRules(egress))) {
+  const readBack = await incusRequest<{ egress?: Array<Record<string, string>>; ingress?: Array<Record<string, string>> }>(
+    'GET', `/1.0/network-acls/${name}`);
+  const observed = assertIncusSuccess(readBack, `Read back integration ACL ${name}`);
+  if (!sameIntegrationAcl(observed, { description, egress, ingress })) {
     throw new AppNetworkStateError(`Integration ACL ${name} did not read back exactly`);
   }
   return name;
+}
+
+/**
+ * Point an existing connection's ACL at the target's current address. A target keeps its
+ * address while its NIC exists (`security.ipv4_filtering` makes Incus reserve one per NIC, kept
+ * across restarts and in-place rebuilds), but a recreated target gets a new one. Run on
+ * re-activation, after an app starts, and on every reconcile pass. Only ever replaces an ACL that
+ * exists on a connection NIC that exists: it never creates one, so it cannot race a revocation
+ * into a leftover. Returns true when the ACL changed; false when nothing needed or could be done
+ * (no connection, or the target's address is unknown: stopped with an expired lease).
+ */
+export async function refreshBridgeAccess(
+  containerName: string,
+  targetAppId: string,
+  targetContainerName: string,
+): Promise<boolean> {
+  const name = integrationAclName(containerName, targetAppId);
+  const instance = await incusRequest<{ expanded_devices?: Record<string, Record<string, string>> }>(
+    'GET', `/1.0/instances/${containerName}`);
+  if (instance.type === 'error') return false;
+  if (instance.metadata?.expanded_devices?.[`net-${targetAppId}`]?.['security.acls'] !== name) return false;
+  const acl = await incusRequest<{ egress?: Array<Record<string, string>>; ingress?: Array<Record<string, string>> }>(
+    'GET', `/1.0/network-acls/${name}`);
+  if (acl.type === 'error') return false;
+  let targetAddress: string;
+  try {
+    targetAddress = await appContainerAddress(targetContainerName, targetAppId, 'eth0', { allowStopped: true });
+  } catch {
+    return false;
+  }
+  const expected = integrationAclBody(containerName, targetAppId, targetAddress);
+  if (sameIntegrationAcl(assertIncusSuccess(acl, `Read integration ACL ${name}`), expected)) return false;
+  const updated = await incusRequest('PUT', `/1.0/network-acls/${name}`, { ...expected, config: {} });
+  await waitForIncusOperation(updated, `Refresh integration ACL ${name}`);
+  console.log(`[app-network] Connection ${containerName} → ${targetAppId} now targets ${targetAddress}`);
+  return true;
 }
 
 /**
@@ -1711,6 +1880,7 @@ async function prepareIntegrationAcl(containerName: string, targetAppId: string)
 export async function grantBridgeAccess(
   containerName: string,
   targetAppId: string,
+  targetContainerName: string,
 ): Promise<void> {
   const targetBridge = await getAppBridgeName(targetAppId);
   if (!targetBridge) {
@@ -1737,20 +1907,22 @@ export async function grantBridgeAccess(
       `Target app ${targetAppId} has no free /${parseCIDR(lease.cidr).prefix} attachment address`,
     );
   }
-  const aclName = await prepareIntegrationAcl(containerName, targetAppId);
+  // A stopped target keeps its reserved address; its lease names it until the lease expires.
+  const targetAddress = await appContainerAddress(targetContainerName, targetAppId, 'eth0', { allowStopped: true });
+  const aclName = await prepareIntegrationAcl(containerName, targetAppId, targetAddress);
   const res = await incusRequest<{
     devices: Record<string, Record<string, string>>;
   }>('GET', `/1.0/instances/${containerName}`);
   const metadata = assertIncusSuccess(res, `Read integration source ${containerName}`);
   const devices = { ...metadata.devices };
-  const ifName = `eth-${targetAppId.substring(0, 11)}`;
+  const ifName = connectionInterface(targetAppId);
   const expectedDevice = {
     type: 'nic',
     network: targetBridge,
     name: ifName,
     'security.acls': aclName,
     'security.acls.default.egress.action': 'reject',
-    'security.acls.default.ingress.action': 'allow',
+    'security.acls.default.ingress.action': 'reject',
     'security.mac_filtering': 'true',
     'security.ipv4_filtering': 'true',
   };
@@ -1768,21 +1940,27 @@ export async function grantBridgeAccess(
 
   try {
     await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Incus brings up only the NICs present at start in an OCI container, so a hot-plugged one needs a DHCP
+    // client: busybox udhcpc with an address-only hook (as for Caddy's app NICs), else dhclient.
     const activation = await execShell(
       containerName,
-      `ip link set ${ifName} up && (dhclient ${ifName} 2>/dev/null || udhcpc -i ${ifName} 2>/dev/null)`,
-      { timeout: 15_000 },
+      `if command -v udhcpc >/dev/null 2>&1; then\n${caddyAppNICActivationScript(ifName)}\n` +
+      `else ip link set ${ifName} up && dhclient ${ifName}; fi`,
+      { timeout: 30_000 },
     );
     if (activation.exitCode !== 0) throw new Error('DHCP activation failed');
-    const dns = await execShell(
+    // Name lookups on the peer network are a convenience (connections use addresses); only systemd-resolved
+    // containers get them.
+    await execShell(
       containerName,
+      `command -v resolvectl >/dev/null 2>&1 || exit 0; ` +
       `GATEWAY=$(ip -4 route | grep "dev ${ifName}" | grep via | awk '{print $3}' | head -1); ` +
       `[ -z "$GATEWAY" ] && GATEWAY=$(ip -4 addr show ${ifName} | grep inet | awk '{print $2}' | cut -d/ -f1 | awk -F. '{print $1"."$2"."$3".1"}'); ` +
       `test -n "$GATEWAY" && resolvectl dns ${ifName} "$GATEWAY" && resolvectl domain ${ifName} ~youeye`,
       { timeout: 10_000 },
-    );
-    if (dns.exitCode !== 0) throw new Error('DNS scope configuration failed');
-  } catch {
+    ).catch(() => undefined);
+  } catch (error) {
+    console.error(`[app-network] Activating ${deviceName} on ${containerName} failed: ${error instanceof Error ? error.message : String(error)}`);
     await revokeBridgeAccess(containerName, targetAppId).catch(() => undefined);
     throw new Error(`Failed to activate scoped integration NIC ${deviceName}`);
   }
@@ -1800,19 +1978,24 @@ export async function revokeBridgeAccess(
   const res = await incusRequest<{
     devices: Record<string, Record<string, string>>;
   }>('GET', `/1.0/instances/${containerName}`);
-  const metadata = assertIncusSuccess(res, `Read integration source ${containerName}`);
-  const devices = { ...metadata.devices };
-  if (devices[deviceName]) {
-    delete devices[deviceName];
-    const updated = await incusRequest('PUT', `/1.0/instances/${containerName}`, {
-      ...metadata,
-      devices,
-    });
-    await waitForIncusOperation(updated, `Revoke ${containerName} access to ${targetAppId}`);
-  }
-  const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${containerName}`);
-  if (assertIncusSuccess(readBack, `Read back integration NIC removal on ${containerName}`).devices?.[deviceName]) {
-    throw new AppNetworkStateError(`Integration NIC ${deviceName} still exists on ${containerName}`);
+  // The source app's container is deleted first when it is uninstalled: its NIC went with it, and only the
+  // ACL is left to remove.
+  const sourceGone = res.type === 'error' && (res.error_code === 404 || res.status_code === 404);
+  if (!sourceGone) {
+    const metadata = assertIncusSuccess(res, `Read integration source ${containerName}`);
+    const devices = { ...metadata.devices };
+    if (devices[deviceName]) {
+      delete devices[deviceName];
+      const updated = await incusRequest('PUT', `/1.0/instances/${containerName}`, {
+        ...metadata,
+        devices,
+      });
+      await waitForIncusOperation(updated, `Revoke ${containerName} access to ${targetAppId}`);
+    }
+    const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${containerName}`);
+    if (assertIncusSuccess(readBack, `Read back integration NIC removal on ${containerName}`).devices?.[deviceName]) {
+      throw new AppNetworkStateError(`Integration NIC ${deviceName} still exists on ${containerName}`);
+    }
   }
   const aclName = integrationAclName(containerName, targetAppId);
   const acl = await incusRequest('GET', `/1.0/network-acls/${aclName}`);
@@ -1969,6 +2152,9 @@ async function stopWorkloadsAfterObservationFailure(error: unknown): Promise<str
  * ownership is proved by the lease and Incus metadata. Ambiguous or corrupt
  * state is never adopted or deleted automatically.
  */
+/** Wait before a second look when the first app-network observation fails (see reconcileAppNetworks). */
+const APP_NETWORK_REOBSERVE_MS = 3_000;
+
 export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult> {
   const repaired: string[] = [];
   const unresolved: string[] = [];
@@ -1978,7 +2164,14 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
   try {
     const { getAllActiveInstalls } = await import('../market/install-tracker');
     activeInstalls = new Set(getAllActiveInstalls().map((operation) => operation.appId));
-    observation = await observeAppNetworkState();
+    try {
+      observation = await observeAppNetworkState();
+    } catch {
+      // An uninstall deleting a bridge in the same second leaves a half-changed view; look once more before
+      // raising a critical issue (which blocks installs and may stop workloads).
+      await new Promise((resolve) => setTimeout(resolve, APP_NETWORK_REOBSERVE_MS));
+      observation = await observeAppNetworkState();
+    }
     await resolveIssue(`${NETWORK_ISSUE_PREFIX}.state`);
   } catch (error) {
     const message = safeNetworkFailure(error);
@@ -2092,7 +2285,7 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
                 );
               }
               const { cleanupAppByScan } = await import('../market/reconciler');
-              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData: true, dropDatabase: false });
+              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData: true });
               repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
               if (cleanup.unresolved.length > 0) {
                 throw new Error(cleanup.unresolved.join('; '));

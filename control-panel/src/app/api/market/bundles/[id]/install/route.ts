@@ -12,6 +12,7 @@ import { fetchBundle } from '@/lib/market/catalog';
 import { installBundle } from '@/lib/market/bundle-installer';
 import { requireAdmin } from '@/lib/auth/rbac';
 import type { InstallEvent } from '@/lib/market/types';
+import { logOperationFailure, sensitivitySafeInstallError } from '@/lib/market/install-tracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   try {
     bundle = await fetchBundle(id);
   } catch (err) {
-    return new Response(JSON.stringify({ error: `Failed to load bundle: ${err}` }), {
+    logOperationFailure(`Loading bundle ${id}`, err);
+    return new Response(JSON.stringify({ error: 'The bundle could not be loaded' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -53,8 +55,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
         const result = await installBundle(theBundle, (e) => send(e), abortController.signal);
         send({ step: 0, totalSteps: 0, status: 'success', message: 'done', detail: JSON.stringify(result) });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        send({ step: 0, totalSteps: 0, status: 'error', message: `Bundle install failed: ${msg}` });
+        logOperationFailure(`Bundle ${theBundle.id} install`, err);
+        send({ step: 0, totalSteps: 0, status: 'error', message: `Bundle install failed: ${sensitivitySafeInstallError(err)}` });
       } finally {
         controller.close();
       }

@@ -6,7 +6,10 @@ import {
   removeInstallMetadata,
   removeInstallMetadataRecord,
 } from './metadata';
-import { addAppRoutes, addRoute, getRoutes, removeAppRoutes, removeRoute, resolveCaddyUpstreamDial, type EntranceConfig } from '@/lib/caddy/client';
+import { addRoute, getRoutes, removeRoute, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
+import { deleteOwnedInstance } from './instance-ownership';
+import { removeCaddyTrustBundle } from './caddy-ca';
+import { deleteAllAppSecrets } from '@/lib/infrastructure/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { execCommand, incusRequest } from '@/lib/incus/server';
 import { observeIssue, resolveIssue, recordTimelineEvent } from '@/lib/health/issues';
@@ -16,10 +19,10 @@ import { readReconfigureJournal } from '@/lib/reconfigure/journal';
 import { settingsService } from '@/lib/settings';
 import { repairRouteForCurrentDomain } from '@/lib/reconfigure/route-repair';
 import { deleteAppStorage } from './storage';
-import { AppLifecycleAdmissionError, withAppLifecycle } from './update-admission';
-import { pushConnectionsToUI } from '../bridges/manager';
+import { AppLifecycleAdmissionError, withAppInventory, withAppLifecycle } from './update-admission';
+import { pushConnectionsToUI, refreshConnectionGrants } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
-import { hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
+import { appContainerAddress, hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
 import {
   getAllActiveInstalls,
   getTrackedInstall,
@@ -236,14 +239,16 @@ export async function reconcileApps(): Promise<ReconcileResult> {
     }
   }
 
+  // Exact names only: an `app-*` instance no install record names is reported, never
+  // attributed to an app by parsing its name (`app-foo-bar` is not `foo`'s).
   for (const name of Array.from(appInstanceNames)) {
-    const appId = name.replace(/^app-/, '').replace(/^ye-app-/, '');
-    if (!metadataById.has(appId)) {
-      unresolved.push(`orphan-container:${name}`);
-    }
+    unresolved.push(`orphan-container:${name}`);
   }
 
   await reconcileRoutes(reconcilableMetadataById, repaired, unresolved);
+
+  // A recreated or restored peer has a new address: point connection ACLs at the current ones.
+  for (const bridgeId of await refreshConnectionGrants()) unresolved.push(`connection-grant:${bridgeId}`);
 
   if (unresolved.length > 0) {
     await observeIssue({
@@ -293,16 +298,22 @@ async function stopInstance(name: string): Promise<void> {
   }
 }
 
+/**
+ * Clean up an app from its install.json alone: the exact recorded instances (only when tagged
+ * with its installation id), routes by exact hostname or recorded upstream, and — with
+ * delete-data — its database and role, volumes, secrets and generated CA directory.
+ * No name-prefix matching: cleaning up `foo` never touches `foo-bar`.
+ */
 export async function cleanupAppByScan(
   appId: string,
-  options: { keepData?: boolean; dropDatabase?: boolean } = {},
+  options: { keepData?: boolean } = {},
 ): Promise<ReconcileResult> {
   return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
 }
 
 async function cleanupAppByScanUnderLifecycle(
   appId: string,
-  options: { keepData?: boolean; dropDatabase?: boolean },
+  options: { keepData?: boolean },
 ): Promise<ReconcileResult> {
   if (!/^[a-z0-9-]+$/.test(appId)) {
     throw new Error(`Invalid app ID for cleanup: ${appId}`);
@@ -316,24 +327,24 @@ async function cleanupAppByScanUnderLifecycle(
   const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
   await verifyAdmissionCleanup(recoveryMetadata, options.keepData !== false);
   const interruptedInstall = recoveryMetadata?.lifecycleState === 'installing';
-  const prefixes = new Set([`app-${appId}`, `ye-app-${appId}`, appId]);
   const instances = await listInstances();
-  const recordedInstances = new Set((recoveryMetadata?.containers ?? [])
+  const owner = recoveryMetadata.installationId
+    ? { appId, installationId: recoveryMetadata.installationId }
+    : undefined;
+  const matchingInstances = [...new Set((recoveryMetadata.containers ?? [])
     .map((container) => typeof container === 'string' ? container : container.containerName)
-    .filter(Boolean));
-  const matchingInstances = [...new Set([
-    ...instances.filter((name) => [...prefixes].some((prefix) => name === prefix || name.startsWith(`${prefix}-`))),
-    ...instances.filter((name) => recordedInstances.has(name)),
-  ])];
+    .filter((name): name is string => Boolean(name) && instances.includes(name)))];
   const matchingIPs = new Set<string>();
   for (const name of matchingInstances) {
     const ip = await getContainerIP(name);
     if (ip) matchingIPs.add(ip);
   }
+  const hostname = recoveryMetadata.subdomain && recoveryMetadata.domain
+    ? `${recoveryMetadata.subdomain}.${recoveryMetadata.domain}` : null;
 
   for (const name of matchingInstances) {
     try {
-      await deleteInstance(name);
+      await deleteOwnedInstance(name, owner);
       repaired.push(`instance:${name}`);
     } catch {
       unresolved.push(`instance:${name}:${SAFE_FAILURE}`);
@@ -344,13 +355,12 @@ async function cleanupAppByScanUnderLifecycle(
   try {
     const routes = await getRoutes();
     for (const route of routes) {
-      if (route.id.startsWith(`app-${appId}-`)
+      if ((hostname && route.hostname === hostname)
         || matchingInstances.includes(route.upstream)
         || matchingIPs.has(route.upstream)) {
         await removeRoute(route.id);
       }
     }
-    await removeAppRoutes(appId);
     repaired.push(`routes:${appId}`);
   } catch {
     unresolved.push(`routes:${appId}:${SAFE_FAILURE}`);
@@ -423,8 +433,10 @@ async function cleanupAppByScanUnderLifecycle(
     }
   }
 
-  const shouldDropDatabase = options.dropDatabase
-    || (interruptedInstall && recoveryMetadata.databaseMode === 'shared');
+  // The shared database and role this installation created go with delete-data (and with an
+  // interrupted install); one the record does not mark as created here is never dropped.
+  const shouldDropDatabase = recoveryMetadata.databaseMode === 'shared' && recoveryMetadata.sharedDatabaseCreated === true
+    && (options.keepData === false || (interruptedInstall && !recoveryMetadata.recoveryPreserveData));
   if (shouldDropDatabase && !recoveryMetadata) {
     unresolved.push(`database-ownership:${appId}:install metadata is required for destructive database cleanup`);
   } else if (shouldDropDatabase) {
@@ -448,6 +460,19 @@ async function cleanupAppByScanUnderLifecycle(
     } catch {
       unresolved.push(`storage:${appId}:${SAFE_FAILURE}`);
     }
+    try {
+      await deleteAllAppSecrets(appId);
+      repaired.push(`secrets:${appId}`);
+    } catch {
+      unresolved.push(`secrets:${appId}:${SAFE_FAILURE}`);
+    }
+  }
+
+  try {
+    await removeCaddyTrustBundle(appId);
+    repaired.push(`ca:${appId}`);
+  } catch {
+    unresolved.push(`ca:${appId}:${SAFE_FAILURE}`);
   }
 
   try {
@@ -472,7 +497,7 @@ async function cleanupAppByScanUnderLifecycle(
     if (dependenciesAfterCleanup.includes(name)) unresolved.push(`verify-instance:${name}`);
   }
   const routesAfterCleanup = await getRoutes();
-  if (routesAfterCleanup.some((route) => route.id.startsWith(`app-${appId}-`)
+  if (routesAfterCleanup.some((route) => (hostname && route.hostname === hostname)
     || matchingInstances.includes(route.upstream)
     || matchingIPs.has(route.upstream))) {
     unresolved.push(`verify-routes:${appId}`);
@@ -505,7 +530,7 @@ async function cleanupAppByScanUnderLifecycle(
     if (remainingInstances.includes(name)) unresolved.push(`verify-instance:${name}`);
   }
   const remainingRoutes = await getRoutes();
-  if (remainingRoutes.some((route) => route.id.startsWith(`app-${appId}-`)
+  if (remainingRoutes.some((route) => (hostname && route.hostname === hostname)
     || matchingInstances.includes(route.upstream)
     || matchingIPs.has(route.upstream))) {
     unresolved.push(`verify-routes:${appId}`);
@@ -559,23 +584,24 @@ async function reconcileRoutes(
     return;
   }
 
+  // A route whose upstream is an `app-*` container no install record names is stale. Only that
+  // exact route is removed; the app is never inferred from a name prefix.
+  const recordedNames = (records: Iterable<InstallMetadata>) => new Set([...records].flatMap((record) =>
+    normalizeContainers(record.containers, record.appId)));
+  const recorded = recordedNames(metadataById.values());
   for (const route of routes) {
     const upstream = String((route as { upstream?: string }).upstream ?? '');
-    const match = upstream.match(/^(app|ye-app)-([a-z0-9-]+)/);
-    if (!match) continue;
-    const appId = match[2];
-    if (metadataById.has(appId)) continue;
+    const containerName = upstream.split('.')[0];
+    if (!/^(app|ye-app)-[a-z0-9-]+$/.test(containerName) || recorded.has(containerName)) continue;
     try {
-      await withAppLifecycle(appId, async () => {
-        if (await readInstallMetadata(appId)) return;
-        await removeAppRoutes(appId);
-        repaired.push(`stale-route:${appId}`);
-      }, {
-        resources: [{ kind: 'container', scope: 'incus', name: upstream.split('.')[0], ownerAppId: appId, mutable: true }],
+      await withAppInventory(async () => {
+        if (recordedNames(await listInstalledApps()).has(containerName)) return;
+        await removeRoute(route.id);
+        repaired.push(`stale-route:${route.id}`);
       });
     } catch (error) {
       if (admissionExcluded(error)) continue;
-      unresolved.push(`stale-route:${appId}:${SAFE_FAILURE}`);
+      unresolved.push(`stale-route:${route.id}:${SAFE_FAILURE}`);
     }
   }
 
@@ -607,9 +633,7 @@ async function reconcileRoutes(
 
 function routesPresent(meta: InstallMetadata, routes: Awaited<ReturnType<typeof getRoutes>>): boolean {
   const hostname = `${meta.subdomain}.${meta.domain}`;
-  const entrances = (meta.entrances ?? []).filter((entrance) => entrance.protocol !== 'tcp' && entrance.authLevel !== 'internal');
-  if (entrances.length === 0) return routes.some((route) => route.hostname === hostname);
-  return entrances.every((entrance) => routes.some((route) => route.id === `app-${meta.appId}-${entrance.name}`));
+  return routes.some((route) => route.hostname === hostname);
 }
 
 async function recreateRoutes(meta: InstallMetadata): Promise<void> {
@@ -619,17 +643,10 @@ async function recreateRoutes(meta: InstallMetadata): Promise<void> {
   const { bindInstalledAdmission, admissionForwardAuth } = await import('@/lib/admission/lifecycle');
   await bindInstalledAdmission(meta);
   const forwardAuth = await admissionForwardAuth();
-  const entrances = (meta.entrances ?? []) as EntranceConfig[];
-  if (entrances.length > 0) {
-    await addAppRoutes(meta.appId, hostname, entrances, primary.containerName, forwardAuth, meta.usePerAppBridge ? 'reconcile' : undefined);
-    return;
-  }
 
   let upstream = primary.containerName;
   if (meta.usePerAppBridge) {
-    const ip = await getContainerIP(primary.containerName);
-    if (!ip) throw new Error(`container address unavailable for ${primary.containerName}`);
-    upstream = ip;
+    upstream = await appContainerAddress(primary.containerName, meta.appId);
   }
   await addRoute({ hostname, path: '/*', upstream, port: primary.port || 3000, forwardAuth });
 }
@@ -646,18 +663,6 @@ async function forwardAuthConfig(): Promise<{ upstreamDial: string; uri: string;
 async function listInstances(): Promise<string[]> {
   const resp = await incusRequest<Array<{ name?: unknown }>>('GET', '/1.0/instances?recursion=1');
   return (resp.metadata ?? []).map((instance) => String(instance.name ?? '')).filter(Boolean);
-}
-
-async function deleteInstance(name: string): Promise<void> {
-  try {
-    await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 30 });
-  } catch {
-    console.warn(`[reconcile] Could not confirm stop for ${name}; delete verification will decide the result`);
-  }
-  const result = await incusRequest<{ operation?: string; type?: string }>('DELETE', `/1.0/instances/${name}`);
-  if (result.type === 'async' && result.operation) {
-    await incusRequest('GET', `${result.operation}/wait?timeout=60`, undefined, { timeout: 70_000 });
-  }
 }
 
 function normalizeContainers(containers: Array<ContainerMeta | string> | undefined, appId: string): string[] {

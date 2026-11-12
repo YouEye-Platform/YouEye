@@ -1,10 +1,9 @@
 import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { parse as parseYaml } from 'yaml';
-import { AppManifestSchema } from '../src/lib/market/schema';
+import { loadApp } from '../src/lib/market/app-format/compile';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
 const read = (filename: string) => englishInterfaceSource(readFileSync(path.join(root, filename), 'utf8'));
@@ -14,12 +13,12 @@ test('Market AI provisioning is actor-routed, one-time delivered, and rollback-s
   const pointer = read('src/lib/pointer/managed-apps.ts');
   const tracker = read('src/lib/market/install-tracker.ts');
   assert.match(pointer, /routingOwner: 'actor'/);
-  assert.match(engine, /writeSecret\(secretsPath, 'pointer_api_key'/);
+  assert.match(engine, /writeAppSecret\(manifest\.metadata\.id, 'pointer_api_key'/);
   assert.match(engine, /protectedReadBack !== delivery\.credential/);
   assert.match(engine, /acknowledgePointerCredential/);
   assert.match(engine, /readPointerManagedApp\(externalInstallationId, actor\)/);
   assert.match(engine, /archivePointerManagedApp\(ctx\.aiExternalInstallationId\)/);
-  assert.match(engine, /\/var\/lib\/youeye\/secrets\/app-\$\{ctx\.appId\}/);
+  assert.match(engine, /deleteAllAppSecrets\(ctx\.appId\)/);
   assert.match(engine, /removeSystemProxyDevices/);
   assert.doesNotMatch(engine, /credential:\s*delivery\.credential/);
   assert.match(pointer, /setExpirationTime|createPointerLifecycleAssertion/);
@@ -67,19 +66,23 @@ test('app AI controls require an administrator, CSRF, explicit takeover, and ide
   assert.match(identityTokens, /return user\?\.is_active \? user : null/);
 });
 
-test('OpenWebUI declares the exact Pointer, OIDC, persistence, and pinned-image contract', () => {
+test('OpenWebUI declares the exact Pointer, OIDC, persistence, and pinned-image contract', (t) => {
   const manifestPath = path.join(process.env.MARKET_ROOT || path.resolve(root, '../../YE-AppMarket'), 'apps/open-webui/youeye-app.yaml');
-  const manifest = AppManifestSchema.parse(parseYaml(readFileSync(manifestPath, 'utf8')));
+  if (!existsSync(manifestPath)) {
+    t.skip('YE-AppMarket repo not checked out beside YouEye (set MARKET_ROOT)');
+    return;
+  }
+  const manifest = loadApp({ manifest: readFileSync(manifestPath, 'utf8') });
   assert.equal(manifest.metadata.id, 'open-webui');
   assert.equal(manifest.capabilities?.ai_api, true);
   assert.equal(manifest.sso?.callback_path, '/oauth/oidc/callback');
   assert.match(manifest.containers[0].image, /^ghcr\.io\/open-webui\/open-webui@sha256:[0-9a-f]{64}$/);
-  assert.equal(manifest.env_mapping.OPENAI_API_BASE_URL, '${ai.openaiBaseUrl}');
-  assert.equal(manifest.env_mapping.OPENAI_API_KEY, '${ai.apiKey}');
-  assert.equal(manifest.env_mapping.DEFAULT_MODELS, '${ai.defaultModel}');
+  assert.equal(manifest.env_mapping.OPENAI_API_BASE_URL, '${ai.openai_base_url}');
+  assert.equal(manifest.env_mapping.OPENAI_API_KEY, '${ai.api_key}');
+  assert.equal(manifest.env_mapping.DEFAULT_MODELS, '${ai.default_model}');
   // Published catalogs use the default model; catalogs that opt into the
   // separate utility model use the same supported Pointer credential contract.
-  assert.ok(['${ai.defaultModel}', '${ai.utilityModel}'].includes(manifest.env_mapping.TASK_MODEL_EXTERNAL));
+  assert.ok(['${ai.default_model}', '${ai.utility_model}'].includes(manifest.env_mapping.TASK_MODEL_EXTERNAL));
   assert.equal(manifest.env_mapping.OPENID_PROVIDER_URL, '${sso.discovery_url}');
   assert.equal(manifest.env_mapping.ENABLE_OLLAMA_API, 'false');
 });

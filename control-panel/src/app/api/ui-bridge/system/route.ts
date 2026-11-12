@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateBridgeToken } from '@/lib/ui-bridge/auth';
+import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { spineClient } from '@/lib/spine/client';
 import type { SpineMetricsResponse } from '@/lib/spine/client';
 import { incusRequest, getServerInfo } from '@/lib/incus/server';
@@ -63,7 +63,7 @@ async function getHostInfo(): Promise<HostInfo> {
 }
 
 export async function GET(request: NextRequest) {
-  const authError = await validateBridgeToken(request);
+  const authError = await requireEmbedAdmin(request);
   if (authError) return authError;
 
   try {

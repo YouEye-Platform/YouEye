@@ -1,0 +1,68 @@
+schema: youeye.app.v1
+id: nextcloud
+version: 34.0.2
+name: Nextcloud
+subdomain: cloud
+listing:
+  tagline: Your files, contacts and calendars at home
+  description: Cloud storage, collaboration, and file sharing
+  long_description: |
+    Nextcloud is a suite of client-server software for creating and using file hosting services.
+    Features file sync, calendars, contacts, mail, talk, office document editing, and hundreds
+    of community apps.
+  release_notes: |
+    Nextcloud 34.0.2 fresh-install manifest with immutable Nextcloud and Valkey
+    images. The official entrypoint owns first-install configuration while
+    YouEye supplies trusted-domain, public URL, SMTP, and identity settings.
+  category: productivity
+  tags: [cloud, storage, files, collaboration, office]
+  icon: cloud
+  icon_file: icon.svg
+  screenshots:
+    - {path: screenshots/admin-files.png, caption: Administrator file workspace with representative acceptance data}
+    - {path: screenshots/user-files.png, caption: A separate standard user's isolated Nextcloud file workspace}
+  website: https://nextcloud.com
+  developer: Nextcloud GmbH
+  license: AGPL-3.0
+  source_code: https://github.com/nextcloud/server
+  support: https://help.nextcloud.com
+  docs: https://docs.nextcloud.com
+image: docker.io/library/nextcloud@sha256:3323e178371b1b0d03f9b3fdbe1831ff78335f07f25116d0d598048ce459e329
+port: 80
+health: {path: /status.php, timeout: 300}
+internet: true
+database: postgres
+data:
+  - /var/www/html
+env:
+  POSTGRES_HOST: ${database.host}
+  POSTGRES_DB: ${database.name}
+  POSTGRES_USER: ${database.user}
+  POSTGRES_PASSWORD: ${database.password}
+  NEXTCLOUD_ADMIN_USER: admin
+  NEXTCLOUD_ADMIN_PASSWORD: ${secret.admin_password}
+  NEXTCLOUD_TRUSTED_DOMAINS: ${app.fqdn} localhost
+  NEXTCLOUD_TRUSTED_PROXIES: 10.76.0.0/16
+  OVERWRITEPROTOCOL: https
+  OVERWRITEHOST: ${app.fqdn}
+  OVERWRITECLIURL: https://${app.fqdn}
+  REDIS_HOST: ${sidecar.valkey.host}
+  REDIS_PORT: '6379'
+secrets:
+  admin_password: {length: 24}
+credentials:
+  - {label: Admin Account, username: admin, password: admin_password}
+sso:
+  callback: /apps/user_oidc/code
+  entry: /apps/user_oidc/login/1
+smtp:
+  env:
+    SMTP_HOST: ${smtp.host}
+    SMTP_PORT: ${smtp.port}
+    SMTP_NAME: ${smtp.user}
+    SMTP_PASSWORD: ${smtp.password}
+    MAIL_FROM_ADDRESS: ${smtp.from}
+    SMTP_SECURE: tls
+sidecars:
+  - name: valkey
+    image: docker.io/valkey/valkey@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec

@@ -966,17 +966,21 @@ function permissionDescription(permission: Permission) {
   const [healthPolicyPending, setHealthPolicyPending] = useState(false);
   const [healthPolicyError, setHealthPolicyError] = useState<string | null>(null);
   const [aiSupported, setAISupported] = useState(false);
+  const [signIn, setSignIn] = useState<{ available: boolean; enabled: boolean } | null>(null);
+  const [signInPending, setSignInPending] = useState<boolean | null>(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const drawerApp = drawerApps.find((app) => app.id === appId);
   const unifiedApp = unifiedApps.find((app) => app.id === appId);
   const title = drawerApp?.name || unifiedApp?.displayName || appId;
 
   const load = useCallback(async () => {
-      const [drawerRes, unifiedRes, permissionRes, identityPermissionRes, aiRes] = await Promise.all([
+      const [drawerRes, unifiedRes, permissionRes, identityPermissionRes, aiRes, signInRes] = await Promise.all([
         hasUserContext ? fetch(uiSettingsApi("apps/drawer")) : Promise.resolve(null),
         fetch("/api/apps/unified"),
         hasUserContext ? fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)) : Promise.resolve(null),
         hasUserContext ? fetch(identityConsentApi(appId)) : Promise.resolve(null),
         isAdmin ? fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, { cache: "no-store" }) : Promise.resolve(null),
+        isAdmin ? fetch(`/api/market/app/${encodeURIComponent(appId)}/sign-in`, { cache: "no-store" }) : Promise.resolve(null),
       ]);
       if (drawerRes?.ok) setDrawerApps((await drawerRes.json()).apps || []);
       if (unifiedRes.ok) setUnifiedApps((await unifiedRes.json()).apps || []);
@@ -985,6 +989,8 @@ function permissionDescription(permission: Permission) {
       setPermissions([...identityPermissions, ...uiPermissions]);
       const aiPayload = aiRes ? await aiRes.json().catch(() => null) : null;
       setAISupported(Boolean(aiPayload?.supported));
+      const signInPayload = signInRes?.ok ? await signInRes.json().catch(() => null) : null;
+      setSignIn(signInPayload?.available ? { available: true, enabled: Boolean(signInPayload.enabled) } : null);
       setLoading(false);
   }, [appId, hasUserContext, isAdmin]);
 
@@ -1054,6 +1060,26 @@ function permissionDescription(permission: Permission) {
       setHealthPolicyError(error instanceof Error ? error.message : translateInterface("m53862be8135a"));
     } finally {
       setHealthPolicyPending(false);
+    }
+  }
+
+  async function setYouEyeSignIn(enabled: boolean) {
+    setSignInPending(enabled);
+    setSignInError(null);
+    try {
+      const csrfToken = await fetchCSRFToken(translateInterface);
+      const response = await fetch(`/api/market/app/${encodeURIComponent(appId)}/sign-in`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ enabled }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || translateInterface("mcb476eaab560"));
+      setSignIn({ available: true, enabled: Boolean(body.enabled) });
+    } catch (error) {
+      setSignInError(error instanceof Error ? error.message : translateInterface("mcb476eaab560"));
+    } finally {
+      setSignInPending(null);
     }
   }
 
@@ -1210,6 +1236,28 @@ function permissionDescription(permission: Permission) {
                 disabled={healthPolicyPending}
                 onCheckedChange={setAutomaticRecovery}
                 aria-label={translateInterface("m73999e808689", { value0: String(title) })}
+              />
+            </div>
+          )}
+          {isAdmin && signIn?.available && (
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{translateInterface("mfb7ed10de1ed")}</p>
+                  <Badge variant={signIn.enabled ? "default" : "secondary"}>{signIn.enabled ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</Badge>
+                </div>
+                <p className="mt-1 text-[13px] text-muted-foreground">
+                  {signInPending !== null
+                    ? <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" />{signInPending ? translateInterface("m8f71b12330db", { app: title }) : translateInterface("m709433447a43", { app: title })}</span>
+                    : signIn.enabled ? translateInterface("m3bf590b2bb82", { app: title }) : translateInterface("m2f5875924e6c", { app: title })}
+                </p>
+                {signInError ? <p className="mt-1 text-[13px] text-destructive">{signInError}</p> : null}
+              </div>
+              <Switch
+                checked={signInPending ?? signIn.enabled}
+                disabled={signInPending !== null}
+                onCheckedChange={(enabled) => void setYouEyeSignIn(enabled)}
+                aria-label={translateInterface("m70843fac04a3", { app: title })}
               />
             </div>
           )}

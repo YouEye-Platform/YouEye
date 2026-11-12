@@ -82,10 +82,10 @@ func (r CoreSystemdRunner) SettlePreparationChildren(ctx context.Context, reques
 	if err != nil || j.RequestID != request || j.Phase != "cancelling" || len(j.RecoverySteps) > 0 {
 		return fmt.Errorf("exact unactivated cancellation required")
 	}
-	for _, step := range j.Steps {
-		if step.State != "pending" && step.Name != "verify-members" && step.Name != "stage-host" {
-			return fmt.Errorf("activation effects require paired recovery")
-		}
+	// A failed checkpoint is admitted only after its preflight refusal was verified
+	// (CoreManager.cancelLocked). Its child is settled here like the others.
+	if !corePreparationOnly(j) {
+		return fmt.Errorf("activation effects require paired recovery")
 	}
 	for _, step := range j.Steps {
 		if step.State == "pending" {

@@ -11,7 +11,7 @@ function fixture() {
   const mocks: Record<string, unknown> = {
     'fs/promises': { readFile: async () => 'fixture-token' },
     '@/lib/incus/container-ip': { getContainerIP: async () => '192.0.2.10' },
-    '../bridges/manager': { pushConnectionsToUI: async (id: string) => { if (!registered.has(id)) throw Error('UI app absent'); projected.push(id); } },
+    '../bridges/manager': { refreshConnectionGrants: async () => [], pushConnectionsToUI: async (id: string) => { if (!registered.has(id)) throw Error('UI app absent'); projected.push(id); } },
     '@/lib/incus/server': { execCommand: async (_container: string, argv: string[]) => {
       const query = argv.at(-1)!; sql.push(query);
       if (query.includes('json_agg')) return { exitCode: 0, stdout: batchBroken ? '{}' : JSON.stringify([...registered].map(id => ({ id, connections: null }))) };

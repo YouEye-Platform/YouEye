@@ -121,7 +121,9 @@ export function planAppUpdateInventory(
         'This update changes the app container topology. A compatible recovery declaration is required.');
     }
   }
-  const storageDefinition = (manifest: AppManifest) => JSON.stringify(manifest.containers.map(c =>
+  // Containers are matched by name; their deploy order is not storage topology.
+  const byName = (manifest: AppManifest) => [...manifest.containers].sort((a, b) => a.name.localeCompare(b.name));
+  const storageDefinition = (manifest: AppManifest) => JSON.stringify(byName(manifest).map(c =>
     ({ name: c.name, volumes: c.volumes })));
   if (storageDefinition(oldManifest) !== storageDefinition(targetManifest)) {
     reject('unsupported-storage-topology-change',
@@ -225,7 +227,7 @@ export function planAppUpdateInventory(
       reject('volume-recovery-unavailable', 'The app storage location does not support a verified restore point.');
     }
     if (volume.readOnly && sharedGroup) {
-      const definitions = (manifest: AppManifest) => JSON.stringify(manifest.containers.map(c =>
+      const definitions = (manifest: AppManifest) => JSON.stringify(byName(manifest).map(c =>
         ({ name: c.name, volumes: c.volumes.filter(v => v.storageGroup === sharedGroup) })));
       if (definitions(oldManifest) !== definitions(targetManifest)) {
         reject('shared-input-definition-changed', 'A read-only shared input changes definition during this update.');

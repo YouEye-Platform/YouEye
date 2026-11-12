@@ -1,0 +1,49 @@
+schema: youeye.app.v1
+id: audiobookshelf
+version: 2.36.0
+name: Audiobookshelf
+subdomain: audiobooks
+listing:
+  tagline: Your audiobooks and podcasts, on your server
+  description: Audiobook and podcast server with progress tracking
+  long_description: |
+    Audiobookshelf is a self-hosted audiobook and podcast server. Features include per-user
+    progress tracking, chapter support, bookmarks, sleep timer, playback speed control,
+    and companion apps for Android and iOS. Import your audiobook collection and listen from
+    anywhere.
+  release_notes: |
+    Audiobookshelf 2.36.0 strengthens authentication and access control. It
+    fixes OIDC callback validation, prevents refresh tokens from being accepted
+    as API credentials, protects per-item bulk downloads, and prevents deletion
+    of the root account. It also adds administrator controls for active sessions.
+  category: media
+  tags: [audiobooks, podcasts, media, streaming]
+  icon: headphones
+  icon_file: icon.svg
+  screenshots:
+    - path: screenshots/platform-admin-player-2.36.0.png
+      caption: Platform administrator playing the accepted public-domain audiobook
+    - path: screenshots/standard-user-player-2.36.0.png
+      caption: Standard user playing the shared public-domain audiobook
+  website: https://www.audiobookshelf.org
+  developer: Audiobookshelf project and contributors
+  license: GPL-3.0
+  source_code: https://github.com/advplyr/audiobookshelf
+  support: https://github.com/advplyr/audiobookshelf/issues
+  docs: https://www.audiobookshelf.org/docs/
+image: docker.io/advplyr/audiobookshelf@sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e
+port: 80
+health: /healthcheck
+internet: true
+data:
+  - {path: /config, kind: config}
+  - {path: /audiobooks, kind: media}
+  - {path: /podcasts, kind: media}
+  - /metadata
+secrets:
+  admin_password: {length: 24}
+credentials:
+  - {label: Admin Account, username: admin, password: admin_password}
+sso:
+  callback: /auth/openid/callback
+  extra_callbacks: ['audiobookshelf://oauth']

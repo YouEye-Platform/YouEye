@@ -1,0 +1,69 @@
+schema: youeye.setup.v1
+for: sso
+steps:
+  - sleep: 10
+  - http:
+      method: POST
+      path: /init
+      body:
+        newRoot:
+          username: admin
+          password: ${secret.admin_password}
+      allow_failure: true
+  - http:
+      method: POST
+      path: /login
+      body:
+        username: admin
+        password: ${secret.admin_password}
+      save: {bearerToken: user.token}
+  - http:
+      method: PATCH
+      path: /api/auth-settings
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      body:
+        authActiveAuthMethods: [local, openid]
+        # Split-channel OIDC. Front-channel (authorize/logout) stays EXTERNAL — the
+        # user's browser reaches Caddy on the public domain. Back-channel (issuer/
+        # token/userinfo/jwks) rides the INTERNAL identity DNAT ${identity.internal_url}
+        # = http://<app-gw>:3002 → youeye-control:3001: domain-free, CA-free, survives
+        # full network isolation. ABS is a Node app and cannot resolve id.<domain>
+        # server-side (dual-stack dns.lookup ENOTFOUND), so the back-channel MUST be
+        # internal. ${sso.issuer} is the clientId-derived internal authority that the CP
+        # discovery doc + id_token `iss` both emit, so ABS's `iss === issuer` check passes
+        # even under full isolation (no network fetch — explicit endpoints, string compare).
+        authOpenIDIssuerURL: ${sso.issuer}
+        authOpenIDAuthorizationURL: ${sso.authorize_url}
+        # No trailing slash — the canonical CP routes are /token and /userinfo;
+        # a trailing slash 308-redirects (relative, internal) and adds a round-trip.
+        authOpenIDTokenURL: ${identity.internal_url}/application/o/token
+        authOpenIDUserInfoURL: ${identity.internal_url}/application/o/userinfo
+        authOpenIDJwksURL: ${identity.internal_url}/oauth/jwks
+        authOpenIDLogoutURL: ${identity.external_url}/application/o/youeye-app-audiobookshelf/end-session/
+        # ABS builds the redirect_uri as `${authOpenIDSubfolderForRedirectURLs}/auth/openid/callback`
+        # (server/auth/OidcAuthStrategy.js). Unset => literal "undefined" segment => the IdP rejects
+        # the redirect_uri. Empty string yields the correct `/auth/openid/callback`.
+        authOpenIDSubfolderForRedirectURLs: ''
+        authOpenIDClientID: ${sso.client_id}
+        authOpenIDClientSecret: ${sso.client_secret}
+        authOpenIDButtonText: Login with ${identity.name}
+        authOpenIDAutoLaunch: false
+        authOpenIDAutoRegister: true
+        authOpenIDMatchExistingBy: email
+        authOpenIDGroupClaim: ''
+remove:
+  - http:
+      method: POST
+      path: /login
+      body:
+        username: admin
+        password: ${secret.admin_password}
+      save: {bearerToken: user.token}
+  - http:
+      method: PATCH
+      path: /api/auth-settings
+      headers:
+        Authorization: Bearer ${vars.bearerToken}
+      body:
+        authActiveAuthMethods: [local]

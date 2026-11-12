@@ -6,6 +6,7 @@ import {useLocale} from "next-intl";
 
 import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback } from "react";
+import { authenticatedFetch } from "@/lib/api-client";
 
 interface TLSStatus {
   mode: "internal" | "acme" | "manual";
@@ -148,7 +149,7 @@ export function TlsEmbedClient() {
   const fetchStatus = useCallback(async () => {
     try {
       setError("");
-      const res = await fetch("/api/tls/status");
+      const res = await authenticatedFetch("/api/tls/status");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStatus(data);
@@ -177,7 +178,7 @@ export function TlsEmbedClient() {
     setAcmeLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/tls/acme", {
+      const res = await authenticatedFetch("/api/tls/acme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: acmeDomain.trim(), includeWildcard: acmeWildcard }),
@@ -199,7 +200,7 @@ export function TlsEmbedClient() {
     setError("");
     setAcmeStep("verifying");
     try {
-      const res = await fetch("/api/tls/acme", {
+      const res = await authenticatedFetch("/api/tls/acme", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId: acmeOrderId }),
@@ -225,7 +226,7 @@ export function TlsEmbedClient() {
     setUploadLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/tls/upload", {
+      const res = await authenticatedFetch("/api/tls/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -253,7 +254,7 @@ export function TlsEmbedClient() {
     setReverting(true);
     setError("");
     try {
-      const res = await fetch("/api/tls/status", { method: "DELETE" });
+      const res = await authenticatedFetch("/api/tls/status", { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || translateInterface("m6ee282348d7c"));
       setSuccess(data.message || translateInterface("mf820d9da0b90"));

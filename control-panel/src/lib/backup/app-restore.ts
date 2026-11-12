@@ -6,7 +6,7 @@
  * 2. Read backup-meta.json — validate app ID
  * 3. Read frozen manifest + install.json from staging
  * 4. Uninstall current app if it exists
- * 5. Restore secrets to /var/lib/youeye/app-{appId}/
+ * 5. Restore secrets to /var/lib/youeye/app-{appId}/secrets/
  * 6. Restore database from dump
  * 7. Reinstall app via engine (restoreMode)
  * 8. Call Spine to restore volume data
@@ -14,7 +14,7 @@
  * 10. Health check
  */
 
-import { readFile, writeFile, mkdir, rm, readdir } from 'fs/promises';
+import { readFile, mkdir, rm, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -24,7 +24,6 @@ import { containerState, waitForOperation } from '@/lib/incus/snapshot';
 import { readInstallMetadata, removeInstallMetadataRecord } from '@/lib/market/metadata';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { installApp } from '@/lib/market/engine';
-import { fetchManifest } from '@/lib/market/catalog';
 import { getContainerName } from '@/lib/market/engine-helpers';
 import type { AppManifest, InstallConfig } from '@/lib/market/types';
 import { addRoute } from '@/lib/caddy/client';
@@ -50,10 +49,9 @@ import { readAppRestoreIntent } from './app-restore-intent';
 import { getAdmissionPolicy } from '@/lib/admission/store';
 import { readRestoredManagedAI } from '@/lib/market/restored-managed-ai';
 import { resolveOwnPostgresRestore } from './own-postgres-restore';
-import { readSecret } from '@/lib/infrastructure/secrets';
+import { appSecretNameFromFile, readAppSecret, writeAppSecret } from '@/lib/infrastructure/secrets';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
-const YOUEYE_DATA_DIR = '/var/lib/youeye';
 const RESTORE_CONTAINER_STATE_ATTEMPTS = 5;
 const RESTORE_CONTAINER_STATE_DELAY_MS = 1500;
 
@@ -193,18 +191,24 @@ async function restoreAppOnce(
     const admissionBackup = await validateAppAdmissionRestore(JSON.parse(await readFile(admissionPath, 'utf8')), appId);
     const restoredIntent = readAppRestoreIntent(backedUpInstallMeta, admissionBackup.policy, await getAdmissionPolicy(appId));
     // Database restore must use the exact secret filename that reinstall reads.
-    let manifest;
+    // The backed-up registration carries the app's frozen source; the model is rebuilt from it.
+    // A backup without it is refused: the live catalog may describe a different app version.
     const manifestPath = path.join(stagingDir, 'manifest.json');
-    if (existsSync(manifestPath)) {
-      manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
-    } else {
-      manifest = await fetchManifest(appId);
+    if (!existsSync(manifestPath)) {
+      throw new Error('Backup has no installed app manifest (manifest.json); it cannot be restored');
+    }
+    const { appFromFrozenRegistration } = await import('@/lib/market/frozen-manifest');
+    const manifest = appFromFrozenRegistration(JSON.parse(await readFile(manifestPath, 'utf-8')));
+    if (manifest.metadata.id !== appId) throw new Error('Backup manifest names another app');
+    const backedUpDigest = backedUpInstallMeta?.manifestDigest;
+    if (typeof backedUpDigest === 'string' && manifest.frozen?.digest !== backedUpDigest) {
+      throw new Error('Backup manifest does not match the backed-up install record');
     }
 
     const ownDumpPath = path.join(stagingDir, 'databases', `${appId}-own.sql`);
     const ownPostgresRestore = existsSync(ownDumpPath) ? resolveOwnPostgresRestore(manifest, appId) : null;
     if (existsSync(ownDumpPath)) {
-      const backupSection = (manifest as Record<string, unknown>).backup as { ownPostgres?: { container?: string; database?: string; user?: string } } | undefined;
+      const backupSection = manifest.backup;
       if (!backupSection?.ownPostgres?.container || !backupSection.ownPostgres.database) {
         throw new Error('Backup is missing own-database restore metadata');
       }
@@ -228,11 +232,9 @@ async function restoreAppOnce(
       rollbackArchive = path.join(rollbackDirectory, rollbackFiles[0]);
     }
     if (currentMeta) {
-      // The current installation owns the resources being removed; an older
-      // archive may declare a different database mode. Preserve legacy mode
-      // inference while explicit own/none installations have no shared drop.
-      const dropSharedDatabase = currentMeta.databaseMode !== 'none' && currentMeta.databaseMode !== 'own';
-      const removal = await uninstallApp(appId, { dropSharedDatabase, keepData: false,
+      // The current installation owns the resources being removed (its install.json decides
+      // which database and role delete-data drops).
+      const removal = await uninstallApp(appId, { keepData: false,
         preserveAdmission: true, preserveManagedAI: backedUpAI });
       if (!removal.success) {
         throw new Error(`Could not clear the current ${appId} installation before restore`);
@@ -284,6 +286,7 @@ async function restoreAppOnce(
 
     // Check for shared database dump
     const sharedDumpPath = path.join(stagingDir, 'databases', `${appId}-shared.sql`);
+    let restoredSharedDatabase = false;
     if (existsSync(sharedDumpPath)) {
       const database = typeof backedUpInstallMeta?.databaseName === 'string'
         ? backedUpInstallMeta.databaseName
@@ -292,6 +295,7 @@ async function restoreAppOnce(
         ? backedUpInstallMeta.databaseUser
         : appId;
       await restoreSharedDatabase(appId, database, user, sharedDumpPath, manifest, onEvent, step, totalSteps);
+      restoredSharedDatabase = true;
     }
 
     // Check for own database dump
@@ -368,6 +372,7 @@ async function restoreAppOnce(
           skipSecrets: true,
           skipDatabase: true,
           skipConfigFiles: true,
+          sharedDatabaseCreated: restoredSharedDatabase,
           deferServiceCredentialReadiness: true,
           restoredManagedAI: backedUpAI,
           restoredIdentity: restoredIntent.admission,
@@ -392,13 +397,13 @@ async function restoreAppOnce(
 
     let postInstallOwnDatabaseRestore = false;
     if (existsSync(ownDumpPath)) {
-      const backupSection = (manifest as Record<string, unknown>).backup as { ownPostgres?: { container?: string; database?: string; user?: string } } | undefined;
+      const backupSection = manifest.backup;
       if (!backupSection?.ownPostgres?.container || !backupSection.ownPostgres.database) {
         throw new Error('Backup is missing own-database restore metadata');
       }
       if (!ownPostgresRestore) throw new Error('Application database restore identity is unavailable');
       const { container, database, user, adminUser, passwordFile } = ownPostgresRestore;
-      const password = passwordFile ? await readSecret(`app-${appId}`, passwordFile) : undefined;
+      const password = passwordFile ? await readAppSecret(appId, passwordFile) : undefined;
       if (passwordFile && !password) throw new Error('Restored application database owner credential is unavailable');
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(container) || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database)) {
         throw new Error('Backup contains invalid own-database restore metadata');
@@ -537,7 +542,7 @@ async function restoreAppOnce(
       throw new Error(`Restore failed and ${appId} was returned to its previous state: ${error}`);
     }
     if (installedDuringRestore) {
-      await uninstallApp(appId, { dropSharedDatabase: true, keepData: false }).catch(() => undefined);
+      await uninstallApp(appId, { keepData: false }).catch(() => undefined);
     }
     throw error;
   } finally {
@@ -568,18 +573,13 @@ async function restoreSharedDatabase(
   totalSteps: number
 ): Promise<void> {
   // Read the password from restored secrets
-  let dbPassword = '';
-  const secretsDir = path.join(YOUEYE_DATA_DIR, `app-${appId}`);
-  const passwordFile = path.join(secretsDir, resolveSharedDatabasePasswordFile(manifest));
-  if (existsSync(passwordFile)) {
-    dbPassword = (await readFile(passwordFile, 'utf-8')).trim();
-  }
+  const secretName = appSecretNameFromFile(resolveSharedDatabasePasswordFile(manifest));
+  let dbPassword = await readAppSecret(appId, secretName) ?? '';
 
   if (!dbPassword) {
     const { generatePassword } = await import('@/lib/infrastructure/secrets');
     dbPassword = generatePassword(32);
-    await mkdir(secretsDir, { recursive: true });
-    await writeFile(passwordFile, dbPassword, { mode: 0o600 });
+    await writeAppSecret(appId, secretName, dbPassword);
   }
 
   await replacePlatformAppDatabase({

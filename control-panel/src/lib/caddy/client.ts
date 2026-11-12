@@ -4,8 +4,11 @@
  * Communicates with Caddy's admin API (port 2019).
  * Used server-side to manage reverse proxy routes and TLS.
  * 
- * Security: The Caddy admin API is only accessible via Incus internal network.
- * Port 2019 is NOT exposed to the host, preventing unauthorized access.
+ * Security: the admin API listens only on Caddy's static incusbr0 address
+ * (`caddyAdminAddress`), never on 0.0.0.0. Caddy also has a NIC on every app
+ * bridge; those NICs carry an ingress ACL that admits only TCP 80/443, and app
+ * egress rejects the incusbr0 address, so no app can reach port 2019.
+ * Port 2019 is NOT exposed to the host.
  */
 
 import type {
@@ -23,6 +26,7 @@ import https from 'node:https';
 import { rootCertificates } from 'node:tls';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { getContainerIP } from '@/lib/incus/container-ip';
+import { getSystemStaticIP } from '@/lib/incus/static-ips';
 import { incusDownloadFile } from '@/lib/incus/server';
 import { waitForIncusReady } from '@/lib/incus/readiness';
 import { isUsableIPv4 } from '@/lib/incus/ipv4';
@@ -41,16 +45,24 @@ const REQUEST_TIMEOUT = 10000;
 const configRevisions = new WeakMap<object, string>();
 
 /**
- * Resolve Caddy admin URL from environment, deterministic system IP, or
- * container DNS fallback.
+ * The one address Caddy's admin API listens on: Caddy's static incusbr0 IP.
+ * App networks never reach it (see the file comment). `CADDY_ADMIN_URL`
+ * overrides it for tests and development.
+ */
+export async function caddyAdminAddress(): Promise<string> {
+  if (process.env.CADDY_ADMIN_URL) return new URL(process.env.CADDY_ADMIN_URL).host;
+  const ip = await getSystemStaticIP('youeye-caddy');
+  if (!ip) throw new Error('Caddy has no static incusbr0 address');
+  return `${ip}:2019`;
+}
+
+/**
+ * Resolve the Caddy admin URL: the static admin address, or the container DNS
+ * name (a host record for the same address) when incusbr0 cannot be read.
  */
 async function getCaddyUrl(): Promise<string> {
-  if (process.env.CADDY_ADMIN_URL) return process.env.CADDY_ADMIN_URL;
-
-  const caddyIP = await getContainerIP('youeye-caddy').catch(() => null);
-  if (caddyIP) return `http://${caddyIP}:2019`;
-
-  return DEFAULT_CADDY_URL;
+  const address = await caddyAdminAddress().catch(() => null);
+  return address ? `http://${address}` : DEFAULT_CADDY_URL;
 }
 
 /**
@@ -159,20 +171,30 @@ export async function getConfig(): Promise<CaddyConfig> {
 }
 
 /**
+ * Pin Caddy's admin listener to its static incusbr0 address on a box whose saved config still listens elsewhere
+ * (installed before the admin API was locked down). Route updates patch paths and never rewrite `admin`, so
+ * without this an updated box keeps listening on 0.0.0.0. One full write persists through `--resume`.
+ * Returns whether it rewrote the config.
+ */
+export async function ensureAdminListenerPinned(): Promise<boolean> {
+  const config = await getConfig();
+  if (config.admin?.listen === await caddyAdminAddress()) return false;
+  await setConfig(config);
+  return true;
+}
+
+/**
  * Set the full Caddy configuration.
  * Caddy's --resume flag auto-saves to /config/caddy/autosave.json,
  * so config survives container restarts without manual persistence.
  */
 export async function setConfig(config: CaddyConfig): Promise<void> {
-  // Ensure admin config allows API access from any origin.
-  // Caddy's default origins check rejects requests when the Origin header
-  // doesn't match. Setting enforce_origin: false and clearing origins
-  // prevents 403 errors from control panel API calls.
+  // Every write pins the admin listener to Caddy's static incusbr0 address,
+  // which also converges boxes whose saved config still listens on 0.0.0.0.
+  // Caddy's origin check rejects the CP's requests (no matching Origin), so it
+  // stays off; the listen address is what limits who can reach the API.
   const prepared = structuredClone(config);
-  if (!prepared.admin) {
-    prepared.admin = { listen: '0.0.0.0:2019' };
-  }
-  prepared.admin.enforce_origin = false;
+  prepared.admin = { ...prepared.admin, listen: await caddyAdminAddress(), enforce_origin: false };
   delete prepared.admin.origins;
 
   await setConfigExact(prepared, configRevisions.has(config) ? config : await getConfig());
@@ -931,11 +953,8 @@ export function generateInitialConfig(hosts: string[]): CaddyConfig {
   // Filter out invalid hosts (IPs and local domains get self-signed anyway)
   const validHosts = hosts.filter(h => !isIPAddress(h) && h !== 'localhost');
 
+  // `admin` is set by setConfig (the static admin address).
   return {
-    admin: {
-      listen: '0.0.0.0:2019',
-      enforce_origin: false,
-    },
     apps: {
       http: {
         servers: {
@@ -2073,126 +2092,6 @@ export async function removeForwardAuthFromRoute(hostname: string): Promise<void
 
   if (modified) {
     await setConfig(config);
-  }
-}
-
-// ─── Multi-Entrance Routing ──────────────────────────────
-
-export interface EntranceConfig {
-  name: string;
-  path: string;
-  port: number;
-  container?: string;
-  protocol?: 'http' | 'tcp';
-  authLevel?: 'private' | 'public' | 'internal' | 'none';
-  stripPath?: boolean;
-}
-
-/**
- * Add multiple routes for an app with multiple entrances.
- * When appBridgeName is set, resolves container IPs instead of using DNS names
- * (DNS doesn't cross per-app bridges).
- */
-export async function addAppRoutes(
-  appId: string,
-  hostname: string,
-  entrances: EntranceConfig[],
-  primaryContainer: string,
-  forwardAuthConfig?: { upstreamDial: string; uri: string; copyHeaders: string[] },
-  appBridgeName?: string,
-): Promise<void> {
-  for (const entrance of entrances) {
-    if (entrance.protocol === 'tcp') continue;
-    if (entrance.authLevel === 'internal') continue;
-
-    const containerName = entrance.container
-      ? `app-${appId}-${entrance.container}`
-      : primaryContainer;
-
-    // For per-app bridge apps, use container IP (DNS doesn't cross bridges)
-    let resolvedUpstream: string;
-    if (appBridgeName) {
-      const { getContainerIP } = await import('../incus/container-ip');
-      const ip = await getContainerIP(containerName);
-      resolvedUpstream = ip || await resolveCaddyUpstream(containerName);
-    } else {
-      resolvedUpstream = await resolveCaddyUpstream(containerName);
-    }
-
-    const handlers: any[] = [];
-
-    // Public end-user exposure is an administrator-owned policy. A manifest's
-    // entrance label cannot bypass the authoritative gate.
-    if (forwardAuthConfig) {
-      handlers.push({ handler: 'headers', request: { delete: [
-        'X-YouEye-App', 'X-YouEye-User', 'X-YouEye-Uid', 'X-YouEye-Username',
-        'X-YouEye-Groups', 'X-YouEye-Email', 'X-YouEye-Name',
-      ] } });
-      handlers.push(buildForwardAuthHandler(
-        forwardAuthConfig.upstreamDial,
-        forwardAuthConfig.uri,
-        forwardAuthConfig.copyHeaders,
-      ));
-    }
-
-    // Path stripping
-    if (entrance.stripPath && entrance.path !== '/') {
-      handlers.push({
-        handler: 'rewrite',
-        strip_path_prefix: entrance.path,
-      });
-    }
-
-    // Reverse proxy
-    handlers.push({
-      handler: 'reverse_proxy',
-      upstreams: [{ dial: `${resolvedUpstream}:${entrance.port}` }],
-    });
-
-    const match: { host?: string[]; path?: string[] } = { host: [hostname] };
-    if (entrance.path !== '/') {
-      match.path = [`${entrance.path}/*`];
-    }
-
-    const cfg = await getConfig();
-    if (!cfg?.apps?.http?.servers) {
-      throw new Error('Caddy has no HTTP server available for app routes');
-    }
-    const serverName = Object.keys(cfg.apps.http.servers)[0];
-    const server = cfg.apps.http.servers[serverName];
-    server.routes = server.routes || [];
-
-    // Remove existing route with same ID if present
-    const routeId = `app-${appId}-${entrance.name}`;
-    server.routes = server.routes.filter((r: any) => r['@id'] !== routeId);
-    server.routes.push({
-      '@id': routeId,
-      match: [match],
-      handle: handlers,
-      terminal: true,
-    });
-    await setConfig(cfg);
-  }
-}
-
-/**
- * Remove all routes for an app (by ID prefix).
- */
-export async function removeAppRoutes(appId: string): Promise<void> {
-  const cfg = await getConfig();
-  if (!cfg?.apps?.http?.servers) return;
-
-  let modified = false;
-  for (const server of Object.values(cfg.apps.http.servers)) {
-    const before = (server.routes || []).length;
-    server.routes = (server.routes || []).filter(
-      (r: any) => !r['@id']?.startsWith(`app-${appId}-`)
-    );
-    if ((server.routes || []).length !== before) modified = true;
-  }
-
-  if (modified) {
-    await setConfig(cfg);
   }
 }
 

@@ -9,6 +9,7 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 | [Getting Started](getting-started.md) | Installation, first login, and initial setup |
 | [Dashboard](dashboard.md) | Widgets, animated backgrounds, edit mode, and personalization |
 | [Apps](apps.md) | Native apps, Market, and app management |
+| [Market](market.md) | How the Market works: catalog, install, sign-in, connections, updates, uninstall |
 | [Household app access](app-admission.md) | App admission, revocation, persistent ownership and restore contract |
 | [Settings](settings.md) | Profile, appearance, language, users, and system configuration |
 | [Timeline collection](timeline-collection.md) | Consent intervals, exact encryption secrets and producer contracts |

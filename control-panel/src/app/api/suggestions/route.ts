@@ -7,13 +7,13 @@
 
 import { NextResponse } from 'next/server';
 import { listSuggestions, dismissSuggestion, removeSuggestion } from '@/lib/bridges/suggestions';
-import { createBridge, activateBridge, resolveBridgeMappings, detectBridgeDependencies } from '@/lib/bridges/manager';
-import { runConnectionWiring } from '@/lib/market/wire-runner';
+import { createBridge, activateBridge, resolveBridgeMappings } from '@/lib/bridges/manager';
 import { updateBridge } from '@/lib/bridges/store';
 import { readInstallMetadata } from '@/lib/market/metadata';
-import { fetchManifest } from '@/lib/market/catalog';
+import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { settingsService } from '@/lib/settings';
 import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 
 export async function GET() {
   const auth = await requireAuth();
@@ -58,18 +58,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      // Build env mappings from manifest
-      let envMappings: { container: string; key: string; template: string }[] = [];
-      try {
-        const manifest = await fetchManifest(suggestion.fromAppId);
-        if (manifest.env_mapping) {
-          envMappings = detectBridgeDependencies(manifest.env_mapping, suggestion.fromAppId)
-            .filter(d => d.targetAppId === suggestion.targetAppId)
-            .flatMap(d => d.envMappings);
-        }
-      } catch {
-        // Proceed without env mappings
-      }
+      const envMappings: { container: string; key: string; template: string }[] = [];
 
       const bridge = await createBridge({
         from: suggestion.fromAppId,
@@ -92,25 +81,23 @@ export async function POST(request: Request) {
         // Get target port from manifest wants
         let targetPort = 8080;
         try {
-          const manifest = await fetchManifest(suggestion.fromAppId);
+          const manifest = await readFrozenUpdateManifest(suggestion.fromAppId);
           const want = manifest.wants?.find((w) => w.appId === suggestion.targetAppId);
           if (want?.defaultPort) targetPort = want.defaultPort;
         } catch { /* use default */ }
 
         const resolved = await resolveBridgeMappings(envMappings, targetContainer, targetPort, targetSub, domain);
         await updateBridge(bridge.id, { envMappings: resolved });
+        // Activation also runs the consumer's connect setup file (non-fatal).
         await activateBridge(bridge.id);
-
-        // Run the app-config wire recipe (if the consumer declares one) so an individually
-        // approved connection is functionally configured, not just network-bridged. Non-fatal.
-        await runConnectionWiring(suggestion.fromAppId, suggestion.targetAppId);
       }
 
       // Remove the suggestion
       await removeSuggestion(sid);
       return NextResponse.json({ ok: true, bridgeId: bridge.id });
     } catch (err) {
-      return NextResponse.json({ error: `Failed to approve: ${err}` }, { status: 500 });
+      logOperationFailure(`Approving connection ${suggestion.fromAppId} → ${suggestion.targetAppId}`, err);
+      return NextResponse.json({ error: 'The connection could not be set up' }, { status: 500 });
     }
   }
 

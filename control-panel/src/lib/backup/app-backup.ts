@@ -107,12 +107,7 @@ async function backupAppUnderLifecycle(
       manifestVersion = manifest.version || manifestVersion;
 
       // Extract backup section
-      if (manifest && 'backup' in manifest) {
-        const raw = (manifest as Record<string, unknown>).backup;
-        if (raw && typeof raw === 'object') {
-          backupSection = raw as ManifestBackupSection;
-        }
-      }
+      if (manifest.backup) backupSection = manifest.backup as ManifestBackupSection;
     } catch (error) {
       throw new Error(`Could not freeze the installed manifest for ${appId}: ${error}`);
     }
@@ -157,16 +152,10 @@ async function backupAppUnderLifecycle(
 
     // Shared PostgreSQL dump
     const manifest = frozenManifest;
-    const features = manifest
-      ? (manifest as Record<string, unknown>).features as Record<string, unknown> | undefined
-      : undefined;
 
-    if (features?.requiresSharedPostgres || typeof installMeta.databaseName === 'string') {
+    if (typeof installMeta.databaseName === 'string') {
       try {
-        const manifestDatabase = (manifest as Record<string, unknown>).database as Record<string, unknown> | undefined;
-        const database = typeof installMeta.databaseName === 'string'
-          ? installMeta.databaseName
-          : typeof manifestDatabase?.name === 'string' ? manifestDatabase.name : appId;
+        const database = installMeta.databaseName;
         const dump = await dumpPostgresDatabase({
           container: PLATFORM_POSTGRES_CONTAINER,
           database,

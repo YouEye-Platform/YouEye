@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 import { platformCommand } from '@/lib/postgres/platform';
+import { clearForwardAuthCaches } from './forward-auth-cache';
 import { requireIdentityPassword } from './password-policy';
+import { requireIdentityUsername } from './username-policy';
 import { ADMISSION_COPY_SCHEMA_SQL } from '@/lib/copy/admission-schema';
 import { ADMISSION_SCHEMA_SQL } from '@/lib/admission/schema';
 import { runCoreSchemaOnce } from '@/lib/updates/core-schema';
@@ -26,7 +28,11 @@ export interface IdentityClient {
   post_logout_redirect_uris: string[];
   backchannel_logout_uri: string | null;
   scopes: string[];
+  /** Per-app role claim (manifest `sso.role_claim`), added to tokens and userinfo when requested as a scope. */
+  role_claim: IdentityRoleClaim | null;
 }
+
+export interface IdentityRoleClaim { claim: string; admin_value: string | string[]; default_value: string | string[] }
 
 export interface IdentityAppConsent {
   user_id: string;
@@ -176,6 +182,7 @@ async function initializeIdentitySchema(): Promise<void> {
     );
     ALTER TABLE identity_clients ADD COLUMN IF NOT EXISTS post_logout_redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE identity_clients ADD COLUMN IF NOT EXISTS backchannel_logout_uri text;
+    ALTER TABLE identity_clients ADD COLUMN IF NOT EXISTS role_claim jsonb;
     CREATE TABLE IF NOT EXISTS identity_auth_codes (
       code text PRIMARY KEY,
       client_id text NOT NULL REFERENCES identity_clients(client_id) ON DELETE CASCADE,
@@ -368,6 +375,7 @@ export async function claimApplianceOwner(input: {
   lastName?: string;
   email: string;
 }): Promise<IdentityUser | null> {
+  requireIdentityUsername(input.username);
   await ensureIdentitySchema();
   requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
@@ -649,6 +657,8 @@ async function createIdentityUserUnderLifecycle(input: {
   isAdmin?: boolean;
   isActive?: boolean;
 }): Promise<IdentityUser> {
+  // Every user-creation path (People, the identity users API, the embed bridge) comes here.
+  requireIdentityUsername(input.username);
   await ensureIdentitySchema();
   requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
@@ -783,11 +793,12 @@ export async function ensureClient(input: {
   postLogoutRedirectUris?: string[];
   backchannelLogoutUri?: string | null;
   scopes: string[];
+  roleClaim?: IdentityRoleClaim | null;
 }): Promise<IdentityClient> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityClient>(`
-    INSERT INTO identity_clients (client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes)
-    VALUES (${sql(input.clientId)}, ${sql(input.clientSecret)}, ${sql(input.name)}, ${sqlJson(input.redirectUris)}, ${sqlJson(input.postLogoutRedirectUris || [])}, ${sql(input.backchannelLogoutUri ?? null)}, ${sqlJson(input.scopes)})
+    INSERT INTO identity_clients (client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes, role_claim)
+    VALUES (${sql(input.clientId)}, ${sql(input.clientSecret)}, ${sql(input.name)}, ${sqlJson(input.redirectUris)}, ${sqlJson(input.postLogoutRedirectUris || [])}, ${sql(input.backchannelLogoutUri ?? null)}, ${sqlJson(input.scopes)}, ${input.roleClaim ? sqlJson(input.roleClaim) : 'NULL'})
     ON CONFLICT (client_id) DO UPDATE SET
       client_secret = EXCLUDED.client_secret,
       name = EXCLUDED.name,
@@ -795,8 +806,9 @@ export async function ensureClient(input: {
       post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris,
       backchannel_logout_uri = ${sql(input.backchannelLogoutUri ?? null)},
       scopes = EXCLUDED.scopes,
+      role_claim = EXCLUDED.role_claim,
       updated_at = now()
-    RETURNING client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes
+    RETURNING client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes, role_claim
   `);
   if (input.clientId === 'youeye-ui' || input.clientId === 'youeye-control') {
     await psql(`INSERT INTO admission_clients (client_id, platform_access)
@@ -808,7 +820,7 @@ export async function ensureClient(input: {
 export async function getClient(clientId: string): Promise<IdentityClient | null> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityClient>(`
-    SELECT client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes
+    SELECT client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes, role_claim
     FROM identity_clients
     WHERE client_id = ${sql(clientId)}
     LIMIT 1
@@ -906,6 +918,7 @@ export async function revokeIdentitySession(sessionId: string): Promise<void> {
   await ensureIdentitySchema();
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return;
   await psql(`UPDATE identity_sessions SET revoked_at = COALESCE(revoked_at, now()) WHERE id = ${sql(sessionId)}::uuid`);
+  clearForwardAuthCaches();
 }
 
 export async function listSessionLogoutClients(sessionId: string): Promise<Array<{ client_id: string; uri: string; user_id: string }>> {
@@ -974,6 +987,7 @@ export async function revokeAllIdentitySessions(userId: string): Promise<number>
       RETURNING id
     ) SELECT json_build_array(json_build_object('count', count(*)::int))::text FROM revoked
   `);
+  clearForwardAuthCaches();
   return rows[0]?.count || 0;
 }
 

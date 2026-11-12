@@ -18,8 +18,8 @@ var containerMgmtListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all containers",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/apps/unified")
 		if err != nil {
@@ -75,8 +75,8 @@ var containerMgmtExecCmd = &cobra.Command{
 	Args:               cobra.MinimumNArgs(1),
 	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 
 		container := args[0]
@@ -121,8 +121,8 @@ var containerMgmtLogsCmd = &cobra.Command{
 	Short: "View container logs",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !requireCP() {
-			return nil
+		if err := requireCP(); err != nil {
+			return err
 		}
 		data, err := controlClient.Get("/api/incus/" + args[0] + "/logs")
 		if err != nil {
