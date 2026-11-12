@@ -13,7 +13,7 @@ import (
 func TestIndependentCopyIdentityPairRecoversAnInterruptedWrite(t *testing.T) {
 	selection, root := copyFixture(t)
 	m := CoreManager{Root: filepath.Join(root, "core")}
-	source := appliance.StateRecord{SchemaVersion: 2, Lifecycle: appliance.LifecycleConfigured, InstallIDRef: "install:source", DeviceIDRef: "device:source", DiskLayoutVersion: 3, StatePartUUID: "state", DataPartUUID: "data", ParentDiskID: "disk:source", DataSchemaVersion: 1, Slots: appliance.SlotState{Current: "A", CurrentImageVersion: "1.0.0"}, RecoveryVersion: "1"}
+	source := appliance.StateRecord{SchemaVersion: 2, Lifecycle: appliance.LifecycleConfigured, InstallIDRef: "install:source", DeviceIDRef: "device:source", DiskLayoutVersion: 1, StatePartUUID: "state", DataPartUUID: "data", ParentDiskID: "disk:source", DataSchemaVersion: 1, Slots: appliance.SlotState{Current: "A", CurrentImageVersion: "1.0.0"}, RecoveryVersion: "1"}
 	statePath, dataPath := filepath.Join(root, "state", "appliance-state.json"), filepath.Join(root, "data", ".youeye-data-schema.json")
 	if err := appliance.WriteStateAtomic(statePath, source); err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestIndependentCopyIdentityPairRecoversAnInterruptedWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := CoreCopyRequest{RequestID: "copy-pair", SourceHardware: "smbios:11111111-1111-1111-1111-111111111111", DestinationHardware: "smbios:22222222-2222-2222-2222-222222222222", SourceReceiptSHA256: CoreReceiptDigest(receipt), ManifestSHA256: receipt.ManifestSHA256}
-	obs := CopyDiskObservation{Hardware: req.DestinationHardware, Manifest: appliance.Manifest{DiskLayoutVersion: 3, StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1}, Partitions: appliance.PartitionContract{StatePartUUID: "state", DataPartUUID: "data", StateParentID: "destination-disk"}}
+	obs := CopyDiskObservation{Hardware: req.DestinationHardware, Manifest: appliance.Manifest{DiskLayoutVersion: 1, StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1}, Partitions: appliance.PartitionContract{StatePartUUID: "state", DataPartUUID: "data", StateParentID: "destination-disk"}}
 	observe := func() (CopyDiskObservation, error) { return obs, nil }
 	if _, err = m.PrepareIndependentCopyIdentity(req, statePath, dataPath, observe); err == nil {
 		t.Fatal("unadmitted copy changed identity")

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-script="$root/appliance/scripts/youeye-appliance-bless"
+script="$(cd -- "$(dirname -- "$0")" && pwd)/bless.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 
@@ -83,7 +83,7 @@ run_bless() {
     FAIL_BLESS="${5:-0}" \
 	FAIL_COMMIT="${6:-0}" \
 	UPDATE_TRIAL="${7:-0}" \
-	YOUEYE_UPDATE_HEALTH_GRACE_ATTEMPTS="${8:-24}" \
+	YOUEYE_UPDATE_HEALTH_GRACE_ATTEMPTS="${8:-24}" YOUEYE_BLESS_HEALTH_WAIT_SECONDS="${YOUEYE_BLESS_HEALTH_WAIT_SECONDS:-0}" YOUEYE_BLESS_TRIAL_HEALTH_WAIT_SECONDS=0 \
 		"$script"
 }
 

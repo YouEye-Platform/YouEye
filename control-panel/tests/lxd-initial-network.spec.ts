@@ -53,7 +53,7 @@ function fixture(mode = 'normal', system = true) {
     },
     './oci-deployer': { containerExists: async () => false },
     '../releases/core-release': {
-      selectedCoreRole: () => ({ release: { tag: 'youeye-v0.1.0-rc.1' }, member: { build_version: '0.1.0-rc.1', artifact: { name: 'ui-standalone.tar', sha256: 'a'.repeat(64), size_bytes: 1 } } }),
+      selectedCoreRole: () => ({ release: { tag: 'youeye-v0.1.0-dev.1' }, member: { build_version: '0.1.0-dev.1', artifact: { name: 'ui-standalone.tar', sha256: 'a'.repeat(64), size_bytes: 1 } } }),
       canonicalReleaseRepository: (repository: string) => repository,
       releaseAssetURL: (repository: string, tag: string, blob: { name: string }) => `${repository}/releases/download/${tag}/${blob.name}`,
     },

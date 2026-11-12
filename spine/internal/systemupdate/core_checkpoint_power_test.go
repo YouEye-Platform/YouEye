@@ -140,8 +140,9 @@ func TestCoreRecoveryObservesOldHostDNSWithoutInventingAStart(t *testing.T) {
 			ctx := context.Background()
 			m, _, target := coreJournalFixture(t)
 			if mode != "no-host-transition" {
+				// A host part change (not Spine, which applies without a restart).
 				for i := range target.Members {
-					if target.Members[i].Role == "spine" {
+					if target.Members[i].Role == "system-root" {
 						target.Members[i].Artifact.SHA256 = strings.Repeat("f", 64)
 					}
 				}

@@ -210,7 +210,8 @@ export interface CoreUpdateStatus {
   selection?: { repository: string; channel: string };
   installed?: {
     manifest_sha256: string;
-    release: { version: string; tag: string; sequence: number; source_tree: string };
+    /** `version` is the release name (display); `build` the build version it carries. */
+    release: { version: string; build?: string; tag: string; sequence: number; source_tree: string };
     members?: { role: string; version: string; source_tree: string; sha256: string }[];
     accepted_at: string;
     machine_bound: boolean;
@@ -220,7 +221,7 @@ export interface CoreUpdateStatus {
 }
 
 export interface CoreUpdateCandidate {
-  release: { version: string; tag: string; sequence: number; source_tree?: string };
+  release: { version: string; build?: string; tag: string; sequence: number; source_tree?: string };
   manifest_sha256: string;
   restart_required: boolean;
   /** The channel head is older than the installed version; the box waits for it to catch up. */
@@ -434,6 +435,11 @@ export class SpineClient {
   /** Ask Spine to follow another channel of the same repository. */
   async setReleaseChannel(channel: string): Promise<SpineReleaseChannel> {
     return this.request('/api/releases/channel', 'PUT', { channel });
+  }
+
+  /** The Spine the booted slot runs (selected on State, or the seed baked into the image). */
+  async getSpineStatus(): Promise<{ version: string; spine: { slot: string; seed: { version: string }; running: { role: 'trial' | 'current' | 'previous' | 'seed' } } }> {
+    return this.request('/api/spine/status');
   }
 
   /** The channel index of the box's channel, fetched and cached by Spine. */

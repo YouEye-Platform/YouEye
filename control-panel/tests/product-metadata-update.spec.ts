@@ -74,7 +74,9 @@ test('release-only adoption and ambiguous publication recovery use the durable j
         assert.ok(journal.resources.every(r=>!r.mutable || r.kind==='metadata'));
         assert.equal(store.isReserved(journal.resources[0]),false);
         if (['none','metadata','provenance','verification'].includes(fault)) {
-          assert.throws(()=>acceptProductSequence(metadata.productReleaseFloors,old),/older notes release/);
+          // The floor names the accepted document of the same build; the old name of that build stays acceptable.
+          assert.equal(metadata.productReleaseFloors?.notes.manifestSHA256,selected.manifestSHA256);
+          assert.doesNotThrow(()=>acceptProductSequence(metadata.productReleaseFloors,old));
         }
       } finally { rmSync(root,{recursive:true,force:true}); }
     });

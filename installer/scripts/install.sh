@@ -107,7 +107,7 @@ def fail(message):
 if pinned and not HASH.fullmatch(pinned):
     fail("--core-manifest-sha256 must be 64 lowercase hexadecimal characters")
 if exact_tag and not TAG.fullmatch(exact_tag):
-    fail("--release-tag must be a youeye-vX.Y.Z-rc.N release tag")
+    fail("--release-tag must be a youeye-v<version> release tag")
 
 parsed = urllib.parse.urlparse(repository.strip())
 path = parsed.path.rstrip("/")

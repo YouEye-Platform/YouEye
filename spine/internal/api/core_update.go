@@ -45,7 +45,7 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 	out := map[string]any{"schema": "youeye.core-status.v1", "managed": true, "installed": map[string]any{
 		"manifest_sha256": receipt.ManifestSHA256, "accepted_at": receipt.AcceptedAt, "machine_bound": true,
 		"payload_observation": "not-observed", // A retained receipt is not a fresh installed scan.
-		"release": map[string]any{"version": receipt.Release.Version, "tag": receipt.Release.Tag,
+		"release": map[string]any{"version": receipt.Release.Version, "build": receipt.Release.Build, "tag": receipt.Release.Tag,
 			"sequence": receipt.Release.Sequence, "source_tree": receipt.Release.SourceTree},
 	}}
 	// The System update source is read-only here: it is the installer-recorded

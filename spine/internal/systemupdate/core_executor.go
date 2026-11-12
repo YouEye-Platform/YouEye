@@ -198,7 +198,7 @@ func validateNativeIdentity(j CoreJournal, s CoreStep) error {
 	if !validSHA256(j.ManifestSHA256) || !coreRequestPattern.MatchString(j.RequestID) || s.RequestID != j.RequestID+"/"+s.Name {
 		return fmt.Errorf("native action lacks exact transaction identity")
 	}
-	for _, name := range coreStepNames(true) {
+	for _, name := range append(coreStepNames(true, false), "apply-spine") {
 		if name == s.Name {
 			return nil
 		}

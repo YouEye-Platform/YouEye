@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-script="$root/appliance/scripts/youeye-bootstrap-network"
+script="$(cd -- "$(dirname -- "$0")" && pwd)/network.sh"
 temp=$(mktemp -d)
 trap 'rm -rf "$temp"' EXIT HUP INT TERM
 mkdir -p "$temp/bin" "$temp/state" "$temp/network" "$temp/sys"

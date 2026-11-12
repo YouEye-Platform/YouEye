@@ -129,7 +129,7 @@ func ParseLayout(raw []byte, activeSlot string) (Layout, error) {
 		labelState: layout.State, labelData: layout.Data,
 	} {
 		if device.ParentName != layout.Parent {
-			return Layout{}, fmt.Errorf("%s is not on the accepted layout-3 installation drive", label)
+			return Layout{}, fmt.Errorf("%s is not on the accepted layout-1 installation drive", label)
 		}
 	}
 	if layout.SystemA.Size != RootSlotBytes || layout.SystemB.Size != RootSlotBytes {

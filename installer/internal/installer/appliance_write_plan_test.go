@@ -5,7 +5,7 @@ import "testing"
 func TestApplianceWriteOperationsKeepBootActivationLast(t *testing.T) {
 	plan, err := planApplianceInstall(
 		applianceDisk{Path: "/dev/vda", Serial: "target", SizeBytes: 128 * applianceGiB},
-		validApplianceArtifacts(8*applianceGiB),
+		validApplianceArtifacts(6*applianceGiB),
 	)
 	if err != nil {
 		t.Fatal(err)

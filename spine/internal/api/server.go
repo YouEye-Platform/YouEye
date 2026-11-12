@@ -243,6 +243,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/config", s.handleYouEyeConfig)
 	s.mux.HandleFunc("/api/releases/channel", s.handleReleaseChannel)
 	s.mux.HandleFunc("/api/releases/index", s.handleReleaseIndex)
+	s.mux.HandleFunc("/api/spine/status", s.handleSpineStatus)
 	s.mux.HandleFunc("/api/update/status", s.handleUpdateStatus)
 	s.mux.HandleFunc("/api/appliance/core-update/status", s.handleCoreUpdateStatus)
 	s.mux.HandleFunc("/api/appliance/core-update/check", s.handleCoreUpdateCheck)
@@ -929,7 +930,7 @@ func getControlStatus() map[string]interface{} {
 
 	// Try to get version
 	if strings.ToUpper(status) == "RUNNING" {
-		verOut, err := readStatusContainerFile("youeye-control", "/opt/app/package.json")
+		verOut, err := readStatusContainerFile("youeye-control", "/opt/app/version.json")
 		if err == nil {
 			var pkg struct {
 				Version string `json:"version"`
@@ -959,23 +960,7 @@ func getOSRelease() string {
 
 // getControlVersion gets the current Control Panel version from container
 func (s *Server) getControlVersion() string {
-	containerName := s.cfg.Deployment.Container.Name
-	appDir := s.cfg.Deployment.ControlPanel.AppDir
-
-	out, err := exec.Command("incus", "exec", containerName, "--",
-		"cat", appDir+"/package.json").Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" {
-		return pkg.Version
-	}
-
-	return "unknown"
+	return container.GetInstalledVersion(s.cfg.Deployment.Container.Name, s.cfg.Deployment.ControlPanel.AppDir)
 }
 
 func getServiceWorkingDir(containerName, serviceName, fallback string) string {
@@ -998,15 +983,18 @@ func readPackageVersionFromContainer(containerName string, appDirs ...string) st
 			continue
 		}
 		seen[appDir] = true
-		out, err := readStatusContainerFile(containerName, appDir+"/package.json")
-		if err != nil {
-			continue
-		}
-		var pkg struct {
-			Version string `json:"version"`
-		}
-		if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" {
-			return pkg.Version
+		// version.json is written by the build; package.json carries a placeholder in newer builds.
+		for _, name := range []string{"/version.json", "/package.json"} {
+			out, err := readStatusContainerFile(containerName, appDir+name)
+			if err != nil {
+				continue
+			}
+			var pkg struct {
+				Version string `json:"version"`
+			}
+			if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" && pkg.Version != "0.0.0" {
+				return pkg.Version
+			}
 		}
 	}
 	return "unknown"

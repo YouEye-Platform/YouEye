@@ -21,7 +21,7 @@ import (
 
 const (
 	ManifestSchema = "youeye.system-update.v1"
-	RootSlotBytes  = int64(8 * 1024 * 1024 * 1024)
+	RootSlotBytes  = int64(6 * 1024 * 1024 * 1024)
 	BootAttempts   = 3
 )
 

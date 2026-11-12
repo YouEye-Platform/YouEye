@@ -14,7 +14,7 @@ const validManifest = `{
   "source_tree": "0123456789012345678901234567890123456789",
   "architecture": "amd64",
   "firmware_mode": "uefi",
-  "disk_layout_version": 3,
+  "disk_layout_version": 1,
   "state_schema_min": 2,
   "state_schema_max": 2,
   "data_schema_min": 1,

@@ -81,15 +81,19 @@ func (c CoreArtifactCache) StageReader(ctx context.Context, selection CoreHostSe
 	return c.stage(ctx, selection, map[string]bool{"spine": true})
 }
 
-// StageUpdate downloads only changed standalone services and required host
-// documents. Native A/B staging owns host payload downloads; Installer/media
-// artifacts are not needed for updating an already installed appliance.
+// StageUpdate downloads only changed standalone services, the release's Spine
+// (applied as a trial, or selected for the slot an image update writes) and
+// required host documents. Native A/B staging owns host payload downloads;
+// Installer/media artifacts are not needed for updating an installed appliance.
 func (c CoreArtifactCache) StageUpdate(ctx context.Context, selection CoreHostSelection, previous releasecache.CoreRelease) (releasecache.CoreRelease, string, error) {
 	target, _, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil {
 		return target, "", err
 	}
 	selected := map[string]bool{}
+	if previous.PayloadSHA256() != target.PayloadSHA256() {
+		selected["spine"] = true // any payload change may select the release's Spine
+	}
 	for _, member := range target.Members {
 		if member.Role != "cp" && member.Role != "ui" && member.Role != "appliance" && member.Role != "system-update" {
 			continue

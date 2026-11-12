@@ -337,7 +337,15 @@ func (r CoreSystemdRunner) RunAction(ctx context.Context, request, name, digest 
 	}
 	outcome, effectErr := execute(ctx, j, s)
 	if effectErr != nil || validateNativeResult(outcome) != nil {
-		outcome = CoreActionObservation{State: "unknown", Stage: "execute", Code: coreNativeFailureCode(effectErr), EffectState: "started", Evidence: "native action entered effect execution; reconcile retained effect evidence before recovery"}
+		evidence := "native action entered effect execution; reconcile retained effect evidence before recovery"
+		if effectErr != nil {
+			msg := effectErr.Error()
+			if len(msg) > 4096 { // evidence is limited to 32 KiB (validateNativeResult)
+				msg = msg[:4096] + "…"
+			}
+			evidence += ": " + msg
+		}
+		outcome = CoreActionObservation{State: "unknown", Stage: "execute", Code: coreNativeFailureCode(effectErr), EffectState: "started", Evidence: evidence}
 	}
 	result.Result = outcome
 	if err = save(); err != nil {

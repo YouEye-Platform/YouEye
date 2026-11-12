@@ -13,7 +13,7 @@ These executable entrypoints are the component build boundary:
   `build-inputs.json`. See `appliance/build/README.md`.
 
 Every entrypoint requires `YOUEYE_SOURCE_DIR`, `YOUEYE_WORK_DIR`,
-`YOUEYE_OUTPUT_DIR`, `YOUEYE_VERSION` (the build version `X.Y.Z-rc.N`; its
+`YOUEYE_OUTPUT_DIR`, `YOUEYE_VERSION` (the build version `X.Y.Z-dev.N`; its
 `X.Y.Z` must equal `VERSION`), `YOUEYE_SOURCE_TREE` and `SOURCE_DATE_EPOCH`. Git
 metadata is optional: when it exists, the supplied tree must match `HEAD^{tree}`.
 The build is identified by its git tree, which is the same on every host a

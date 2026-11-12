@@ -10,6 +10,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/logging"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // Version and BuildDate are set at build time via ldflags:
@@ -91,6 +92,8 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(channelCmd)
+	rootCmd.AddCommand(spineCmd)
+	rootCmd.AddCommand(bootCmd)
 	rootCmd.AddCommand(languageCmd)
 	rootCmd.AddCommand(networkCmd)
 
@@ -125,9 +128,28 @@ var versionCmd = &cobra.Command{
 		}
 		output.Header("YouEye Versions")
 		if runtimeStatus.Kind == "appliance-image" {
+			// The installed release's name on its channel (0.6.2, 0.6.2-beta.1)
+			// and the build it is; the image line shows the image's own build.
+			if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
+				output.StatusLine("YouEye", receipt.Release.Version+" (build "+receipt.Release.Build+")", output.Cyan)
+			}
 			output.StatusLine("System image", runtimeStatus.ImageVersion+" (image-managed)", "")
 		}
-		output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+		if runtimeStatus.Kind == "appliance-image" {
+			// `version` runs in the seed; the slot may run a selected Spine from State.
+			if report, err := readSpineStatus(); err == nil {
+				running := report.Seed.Version + " (seed, baked into the image)"
+				if report.Running.Entry != nil {
+					running = report.Running.Entry.Version + " (" + report.Running.Role + ", on State, slot " + report.Slot + ")"
+				}
+				output.StatusLine("Spine", running, output.Cyan)
+				output.StatusLine("Spine seed", report.Seed.Version, "")
+			} else {
+				output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+			}
+		} else {
+			output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+		}
 
 		// Incus version
 		incusVer := getIncusVersion()

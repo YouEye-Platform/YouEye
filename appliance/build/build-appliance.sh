@@ -236,10 +236,6 @@ install -D -m 0755 "$bin_dir/youeye-installer" "$rootfs/usr/local/bin/youeye-ins
 install -D -m 0644 "$source_dir/LICENSE" "$rootfs/usr/share/doc/youeye/LICENSE"
 install -D -m 0644 "$source_dir/TRADEMARK.md" "$rootfs/usr/share/doc/youeye/TRADEMARK.md"
 install -D -m 0644 "$source_dir/THIRD_PARTY_NOTICES.txt" "$rootfs/usr/share/doc/youeye/THIRD_PARTY_NOTICES.txt"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-first-deploy" "$rootfs/usr/local/libexec/youeye-first-deploy"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-bootstrap-network" "$rootfs/usr/local/libexec/youeye-bootstrap-network"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-appliance-bless" "$rootfs/usr/local/libexec/youeye-appliance-bless"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-setup-gate" "$rootfs/usr/local/libexec/youeye-setup-gate"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery" "$rootfs/usr/local/libexec/youeye-recovery"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery-console" "$rootfs/usr/local/libexec/youeye-recovery-console"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery-apply" "$rootfs/usr/local/libexec/youeye-recovery-apply"
@@ -322,7 +318,7 @@ jq -S -n \
     '{
       schema_version:1,image_version:$image_version,build_id:$build_id,
       source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
-      disk_layout_version:3,state_schema_min:2,state_schema_max:2,
+      disk_layout_version:1,state_schema_min:2,state_schema_max:2,
       data_schema_min:1,data_schema_max:1,kernel_compatibility:">=6.12",
       zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
@@ -423,7 +419,7 @@ deterministic_uuid() {
 }
 system_uuid="$(deterministic_uuid "$source_tree-system")"
 recovery_uuid="$(deterministic_uuid "$source_tree-recovery")"
-make_ext4_image "$artifacts/system-root.img" 8G YE-SYSTEM-IMAGE "$system_uuid"
+make_ext4_image "$artifacts/system-root.img" 6G YE-SYSTEM-IMAGE "$system_uuid"
 make_ext4_image "$artifacts/internal-recovery.img" 4G YE-RECOVERY-IMG "$recovery_uuid"
 # Compression is a source-owned reproducibility input, never host-adaptive.
 # One worker stays within each bounded executor slot when A/B run together.
@@ -505,7 +501,7 @@ jq -S -n \
     --argjson source_date_epoch "$source_date_epoch" \
     '{schema:"youeye.appliance.manifest.v1",image_version:$image_version,build_id:$build_id,
       source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
-      disk_layout:{version:3,target_min_gib:32,esp_gib:1,recovery_gib:4,root_slot_gib:8,state_gib:4},
+      disk_layout:{version:1,target_min_gib:32,esp_gib:1,recovery_gib:4,root_slot_gib:6,state_gib:4},
       state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
       kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
@@ -528,9 +524,9 @@ jq -S -n \
 	'{schema:"youeye.system-update.v1",target_image_version:$target_image_version,
 	  build_id:$build_id,source_tree:$source_tree,
 	  architecture:"amd64",firmware_mode:"uefi",hardware_profile:"youeye-appliance-amd64-v1",
-	  disk_layout_version:3,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
+	  disk_layout_version:1,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
 	  recovery_version:"1",minimum_current_image_version:$minimum_current_image_version,
-	  root_slot_size_bytes:8589934592,
+	  root_slot_size_bytes:6442450944,
 	  boot_attempts:3,health_profile:"operational",artifact_kind:$artifact_kind,
 	  rollback:{supported:true,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
 	    preserve_state:true,preserve_data:true,preserve_recovery:true},

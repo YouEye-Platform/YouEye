@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-script="$root/appliance/scripts/youeye-setup-gate"
+script="$(cd -- "$(dirname -- "$0")" && pwd)/setup-gate.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

@@ -116,7 +116,7 @@ func TestReleaseChannelGetAndPut(t *testing.T) {
 func TestReleaseIndexCachesAndClassifiesErrors(t *testing.T) {
 	s := releaseTestServer(t)
 	index := releasecache.ChannelIndex{Schema: releasecache.ChannelIndexSchema, Channel: "stable", PublishedAt: "2026-11-12T10:00:00Z", Products: map[string]releasecache.ChannelEntry{
-		"notes": {Repository: "https://forge.example/owner/YE-App-Notes", Tag: "v0.6.1-rc.1", Version: "0.6.1-rc.1", Document: "product-release.json", SHA256: strings.Repeat("b", 64)},
+		"notes": {Repository: "https://forge.example/owner/YE-App-Notes", Tag: "v0.6.1-dev.1", Version: "0.6.1-dev.1", Build: "0.6.1-dev.1", Document: "product-release.json", SHA256: strings.Repeat("b", 64)},
 	}}
 	raw, _ := json.Marshal(index)
 	sum := sha256.Sum256(raw)
@@ -210,7 +210,7 @@ func TestCoreUpdateCheckReportsBehindAndRateLimit(t *testing.T) {
 	s.runtimeDetect = func() (appliance.RuntimeStatus, *appliance.Manifest, error) {
 		return appliance.RuntimeStatus{Kind: appliance.RuntimeApplianceImage, ManifestValid: true, Capabilities: appliance.Capabilities{ImageUpdate: true}}, &appliance.Manifest{}, nil
 	}
-	s.SetCoreUpdateOperations(coreCheckFixture{candidate: CoreUpdateCandidate{Behind: true, Message: "channel beta is behind the installed version 0.6.1-rc.2; waiting for it to catch up"}})
+	s.SetCoreUpdateOperations(coreCheckFixture{candidate: CoreUpdateCandidate{Behind: true, Message: "channel beta is behind the installed version 0.6.1-dev.2; waiting for it to catch up"}})
 	w := httptest.NewRecorder()
 	s.handleCoreUpdateCheck(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := decodeBody(t, w)

@@ -14,7 +14,7 @@ const (
 	applianceESPBytes         = 1 * applianceGiB
 	applianceRecoveryBytes    = 4 * applianceGiB
 	applianceStateBytes       = 4 * applianceGiB
-	applianceRootSlotBytes    = 8 * applianceGiB
+	applianceRootSlotBytes    = 6 * applianceGiB
 	applianceTargetMinBytes   = 32 * applianceGiB
 	applianceRecommendedBytes = 128 * applianceGiB
 )

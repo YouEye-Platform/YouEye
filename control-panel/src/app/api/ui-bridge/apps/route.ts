@@ -21,7 +21,6 @@ import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { refreshVersionCheck } from '@/lib/market/version-checker';
-import { isNewer } from '@/lib/version';
 import { getAllCachedLxdUpdates } from '@/lib/apps/lxd-updates';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
 
@@ -170,10 +169,10 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // For native user apps, derive update status from the installed_apps DB.
-        // Compute from versions (not the stored boolean) so it can't go stale.
+        // For native user apps, use the installed_apps projection: channel
+        // releases are ordered by build, never by their release names.
         const dbEntry = dbAppsMap.get(def.id);
-        if (dbEntry?.catalogVersion && dbEntry?.installedVersion && isNewer(dbEntry.catalogVersion, dbEntry.installedVersion)) {
+        if (dbEntry?.catalogVersion && dbEntry?.installedVersion && dbEntry.updateAvailable === true && dbEntry.catalogVersion !== dbEntry.installedVersion) {
           updateAvailable = true;
           updateInfo = `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`;
         }
@@ -259,7 +258,7 @@ export async function GET(request: NextRequest) {
       const dbEntry = dbAppsMap.get(meta.appId);
       const catV = dbEntry?.catalogVersion;
       const insV = dbEntry?.installedVersion;
-      const upd = !!(catV && insV && isNewer(catV, insV));
+      const upd = !!(catV && insV && dbEntry?.updateAvailable === true && catV !== insV);
       const manifest = manifestResults[i].status === 'fulfilled'
         ? manifestResults[i].value
         : null;

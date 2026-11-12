@@ -27,6 +27,13 @@ type NativeCoreRuntime struct {
 	HostHealth          func(context.Context, CoreJournal) (string, error)
 	AuthenticatedHealth func(context.Context, CoreJournal, bool) (string, error)
 	RecoverHost         func(context.Context, CoreJournal, bool) (CoreActionObservation, error)
+	// SpineTrial runs the target release's Spine on the booted slot as a trial
+	// and commits it when healthy. SelectSpine makes it the current Spine of a
+	// slot written by an image update. RestoreSpine returns the booted slot to
+	// the previous Spine during recovery. Required when the release changes Spine.
+	SpineTrial   func(context.Context, CoreJournal) (string, error)
+	SelectSpine  func(context.Context, CoreJournal, string) error
+	RestoreSpine func(context.Context, CoreJournal) error
 }
 
 func (r NativeCoreRuntime) Validate() error {
@@ -181,6 +188,17 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		if err != nil || status.State != PhaseStaged {
 			return CoreActionObservation{}, fmt.Errorf("selected host stage has no complete receipt")
 		}
+		// The slot written by an image update boots the release's Spine, even
+		// when the Spine itself did not change: the slot's own record (or its
+		// seed) may be older.
+		if j.RestartRequired {
+			if r.SelectSpine == nil {
+				return CoreActionObservation{}, fmt.Errorf("Spine selection is unavailable")
+			}
+			if err := r.SelectSpine(ctx, j, status.CandidateSlot); err != nil {
+				return CoreActionObservation{}, err
+			}
+		}
 		return coreActionPassed("inactive host and boot artifacts staged under exact core membership", nil)
 	case "checkpoint":
 		barrier := CoreLifecycleBarrier{Root: filepath.Join(r.Checkpoint.DataRoot, "state", "app-updates")}
@@ -228,6 +246,11 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		return CoreActionObservation{State: "unknown", Evidence: "counted host boot requested; awaiting actual boot observation"}, nil
 	case "host-health":
 		return coreActionPassed(r.HostHealth(ctx, j))
+	case "apply-spine":
+		if r.SpineTrial == nil {
+			return CoreActionObservation{}, fmt.Errorf("Spine trial is unavailable")
+		}
+		return coreActionPassed(r.SpineTrial(ctx, j))
 	case "apply-cp", "apply-ui":
 		role := strings.TrimPrefix(s.Name, "apply-")
 		if err := r.Services.StartHeldContainer(ctx, j.RequestID, role); err != nil {
@@ -267,6 +290,11 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 	case "recovery-host":
 		return r.RecoverHost(ctx, j, false)
 	case "recovery-health":
+		if j.SpineChanged && !j.RestartRequired && r.RestoreSpine != nil {
+			if err := r.RestoreSpine(ctx, j); err != nil {
+				return CoreActionObservation{}, errors.Join(errCoreRecoveryServices, err)
+			}
+		}
 		if _, err := r.Services.RecoverServices(ctx, j.RequestID, false); err != nil {
 			return CoreActionObservation{}, errors.Join(errCoreRecoveryServices, err)
 		}

@@ -28,15 +28,11 @@ func (coreAPIOperations) ObserveInstalled(ctx context.Context, receipt systemupd
 			if err = systemupdate.BindCoreImage(receipt.Release, *image); err != nil {
 				return err
 			}
-			executable, bootstrap, err := coreInstalledExecutable()
+			executable, _, err := coreInstalledExecutable()
 			if err != nil {
 				return err
 			}
-			digest, err := fileSHA256(executable)
-			if err != nil || image.ReleaseSet == nil || digest != image.ReleaseSet.Spine.ArtifactSHA256 || !bootstrap && Version != image.ReleaseSet.Spine.Version {
-				return fmt.Errorf("running Spine differs from its release member")
-			}
-			return nil
+			return verifyRunningSpine(executable)
 		})
 	})
 }

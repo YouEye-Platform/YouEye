@@ -35,6 +35,8 @@ export interface ManifestReference {
   repo: string;
   branch: string;
   digest: string;
+  /** Native channel products only: the build version of the release (orders updates). */
+  build?: string;
 }
 
 export interface ManifestFetchResult {
@@ -359,7 +361,7 @@ async function fetchManifestFromCatalogEntry(
     const { manifest, contract } = await nativeManifestFromRelease(selected);
     return {
       manifest,
-      reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: digestManifest(contract.toString('utf8')) },
+      reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: digestManifest(contract.toString('utf8')), build: selected.build.build_version },
     };
   }
 

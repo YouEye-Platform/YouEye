@@ -14,8 +14,9 @@ const mutate = (change: (r: any) => void) => { const r = JSON.parse(fixture.toSt
 
 test('the shared host-independent core release fixture parses strictly', () => {
   const r = parseCoreRelease(fixture);
-  assert.equal(r.version,'0.6.1-rc.1');
-  assert.equal(r.tag,'youeye-v0.6.1-rc.1');
+  assert.equal(r.version,'0.6.1-dev.1');
+  assert.equal(r.tag,'youeye-v0.6.1-dev.1');
+  assert.equal(r.build,'0.6.1-dev.1');
   assert.match(r.source_tree,/^[0-9a-f]{40}$/);
   assert.equal(r.authority,'digest');
   assert.equal(r.members.length,14);
@@ -28,6 +29,13 @@ test('the shared host-independent core release fixture parses strictly', () => {
   assert.throws(() => parseCoreRelease(mutate(r => r.members.pop())), /Incomplete/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.authority; })), /identity/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.source_tree = 'abc'; })), /identity/);
+  // `build` is required: the build version the document carries, whatever its release name.
+  assert.throws(() => parseCoreRelease(mutate(r => { delete r.build; })), /identity/);
+  for (const build of ['', '0.6.1-dev', 'v0.6.1-dev.1', 1]) assert.throws(() => parseCoreRelease(mutate(r => { r.build = build; })), /identity/, String(build));
+  // A promoted document: another name and tag for the same build.
+  const promoted = parseCoreRelease(mutate(r => { r.version = '0.6.1-beta.1'; r.tag = 'youeye-v0.6.1-beta.1'; }));
+  assert.equal(promoted.version,'0.6.1-beta.1');
+  assert.equal(promoted.build,'0.6.1-dev.1');
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].source_tree = 'x'.repeat(40); })), /member/);
   // Per-host fields are gone: they are unknown fields now, never silently accepted.
   for (const field of ['source','branch','source_commit','channel','previous_manifest_sha256']) {
@@ -40,7 +48,7 @@ test('the shared host-independent core release fixture parses strictly', () => {
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.members.find((m: any) => m.role === 'appliance').build_inputs; })), /build inputs/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.size_bytes = 1.5; })), /integer/);
   // A blob may live in another youeye-v release of the same repository, nothing else.
-  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'youeye-v0.6.0-rc.3'; })));
+  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'youeye-v0.6.0-dev.3'; })));
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'v0.6.0'; })), /blob/);
 });
 
@@ -48,8 +56,8 @@ test('assets are located only by repository, tag and name', () => {
   const r = parseCoreRelease(fixture);
   const repository = canonicalReleaseRepository('https://git.example.test/owner/YouEye');
   const ui = r.members.find(m => m.role === 'ui')!;
-  assert.equal(releaseAssetURL(repository, r.tag, ui.artifact), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.1-rc.1/${ui.artifact.name}`);
-  assert.equal(releaseAssetURL(repository, r.tag, {...ui.artifact, release:'youeye-v0.6.0-rc.2'}), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.0-rc.2/${ui.artifact.name}`);
+  assert.equal(releaseAssetURL(repository, r.tag, ui.artifact), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.1-dev.1/${ui.artifact.name}`);
+  assert.equal(releaseAssetURL(repository, r.tag, {...ui.artifact, release:'youeye-v0.6.0-dev.2'}), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.2/${ui.artifact.name}`);
   for (const bad of ['http://x.test/a/b','https://x.test/a','https://x.test/a/b/c','https://u:p@x.test/a/b','https://x.test/a/b?x=1']) {
     assert.throws(() => canonicalReleaseRepository(bad), undefined, bad);
   }

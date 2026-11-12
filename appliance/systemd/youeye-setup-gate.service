@@ -8,7 +8,7 @@ ConditionPathExists=!/var/lib/youeye-state/first-deploy/complete
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/youeye-setup-gate close
+ExecStart=/usr/local/bin/youeye boot setup-gate close
 RemainAfterExit=yes
 
 [Install]

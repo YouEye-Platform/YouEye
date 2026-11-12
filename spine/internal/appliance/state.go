@@ -409,7 +409,7 @@ func DiskReference(contract PartitionContract) string {
 		contract.DataPartUUID,
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.Join(parts, ":"))))
-	return fmt.Sprintf("disk-v3:%x", sum[:16])
+	return fmt.Sprintf("disk:%x", sum[:16])
 }
 
 func contractParentIdentity(identity, partUUID string) string {

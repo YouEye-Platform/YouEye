@@ -32,7 +32,7 @@ func TestCoreSelectionBindsAcceptedDigestAndExactPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Version, r.Tag = "0.6.1-rc.2", "youeye-v0.6.1-rc.2"
+	r.Version, r.Build, r.Tag = "0.6.1-dev.2", "0.6.1-dev.2", "youeye-v0.6.1-dev.2"
 	raw, _ = json.Marshal(r)
 	digest := fmt.Sprintf("%x", sha256.Sum256(raw))
 	root := t.TempDir()

@@ -147,24 +147,25 @@ test('external availability never exposes native branch or switch state', () => 
   });
 });
 
-test('a native channel head older than the installed version is never offered', () => {
+test('native channel candidates are ordered by build, never by release name', () => {
   const routing = { kind: 'channel' as const, reason: 'native-app' as const };
-  const behind = projectUpdateAvailability({
-    routing,
-    installedVersion: '0.6.2-rc.1',
-    catalogVersion: null,
-    candidate: { version: '0.6.1-rc.4', tag: 'v0.6.1-rc.4' },
+  const project = (installedVersion: string, installedBuild: string | null, version: string, build: string) => projectUpdateAvailability({
+    routing, installedVersion, installedBuild, catalogVersion: null, candidate: { version, tag: `v${version}`, build },
   });
+  const behind = project('0.6.2-dev.1', '0.6.2-dev.1', '0.6.1-dev.4', '0.6.1-dev.4');
   assert.equal(behind.updateAvailable, false);
   assert.equal(behind.switchPending, false);
-  const ahead = projectUpdateAvailability({
-    routing,
-    installedVersion: '0.6.1-rc.4',
-    catalogVersion: null,
-    candidate: { version: '0.6.2-rc.1', tag: 'v0.6.2-rc.1' },
-  });
+  const ahead = project('0.6.1-dev.4', '0.6.1-dev.4', '0.6.2-dev.1', '0.6.2-dev.1');
   assert.equal(ahead.updateAvailable, true);
-  assert.equal(ahead.candidateTag, 'v0.6.2-rc.1');
+  assert.equal(ahead.candidateTag, 'v0.6.2-dev.1');
+  // A newer build under a promoted name is an update; an older build named "0.6.1" is not.
+  assert.equal(project('0.6.1-dev.2', '0.6.1-dev.2', '0.6.1-alpha.1', '0.6.1-dev.3').updateAvailable, true);
+  assert.equal(project('0.6.1-alpha.1', '0.6.1-dev.3', '0.6.1', '0.6.1-dev.2').updateAvailable, false);
+  // The same build under another name only renames the installed release.
+  assert.equal(project('0.6.1-alpha.1', '0.6.1-dev.3', '0.6.1-beta.1', '0.6.1-dev.3').updateAvailable, true);
+  assert.equal(project('0.6.1-beta.1', '0.6.1-dev.3', '0.6.1-beta.1', '0.6.1-dev.3').updateAvailable, false);
+  // No recorded build (not installed from a product release): the channel release is offered.
+  assert.equal(project('0.6.1-dev.9', null, '0.6.1-dev.1', '0.6.1-dev.1').updateAvailable, true);
 });
 
 test('successful catalog updates clear synthetic native provenance for the next update', () => {

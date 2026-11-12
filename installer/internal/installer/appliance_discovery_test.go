@@ -62,7 +62,7 @@ func TestDiscoverApplianceTargetDisksPreservesUnsafeSignalsForPlanRejection(t *t
 	if !target.Mounted || len(target.Signatures) == 0 {
 		t.Fatalf("expected unsafe drive signals: %+v", target)
 	}
-	if _, err := planApplianceInstall(target, validApplianceArtifacts(8*applianceGiB)); err == nil {
+	if _, err := planApplianceInstall(target, validApplianceArtifacts(6*applianceGiB)); err == nil {
 		t.Fatal("expected plan rejection for mounted/nonblank drive")
 	}
 }

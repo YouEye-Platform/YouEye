@@ -19,12 +19,12 @@ import (
 
 const (
 	testForgeRepository = "https://forge.example.test/owner/YouEye"
-	testFixtureTag      = "youeye-v0.6.1-rc.1"
-	testFixtureVersion  = "0.6.1-rc.1"
+	testFixtureTag      = "youeye-v0.6.1-dev.1"
+	testFixtureVersion  = "0.6.1-dev.1"
 )
 
 // fixtureCoreRelease returns the shared releasecache fixture document and its
-// digest (0.6.1-rc.1, tree 1111…).
+// digest (0.6.1-dev.1, tree 1111…).
 func fixtureCoreRelease(t *testing.T) ([]byte, string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "releasecache", "testdata", "core-release.json"))
@@ -38,7 +38,7 @@ func fixtureCoreRelease(t *testing.T) ([]byte, string) {
 func testChannelIndex(channel, repository, tag, version, digest string) string {
 	entry := ""
 	if tag != "" {
-		entry = fmt.Sprintf(`"youeye":{"repository":%q,"tag":%q,"version":%q,"document":"core-release.json","sha256":%q}`, repository, tag, version, digest)
+		entry = fmt.Sprintf(`"youeye":{"repository":%q,"tag":%q,"version":%q,"build":%q,"document":"core-release.json","sha256":%q}`, repository, tag, version, version, digest)
 	}
 	return `{"schema":"youeye.channel.v1","channel":"` + channel + `","published_at":"2026-11-12T10:00:00Z","products":{` + entry + `}}`
 }
@@ -258,7 +258,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 	raw, digest := fixtureCoreRelease(t)
 	hosts := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw),
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.2-rc.1/core-release.json":     string(raw),
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.2-dev.1/core-release.json":     string(raw),
 	}, nil)
 	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest)
 	if err != nil || release.TagName != testFixtureTag || release.coreSHA256 != digest {
@@ -273,7 +273,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, other); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("digest mismatch accepted: %v", err)
 	}
-	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "youeye-v0.6.2-rc.1", digest); err == nil || !strings.Contains(err.Error(), "names tag") {
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "youeye-v0.6.2-dev.1", digest); err == nil || !strings.Contains(err.Error(), "names tag") {
 		t.Fatalf("document of another tag accepted: %v", err)
 	}
 	before := len(hosts.Requests())
@@ -329,8 +329,8 @@ func TestDownloadCoreBlobLocatesAssetsInTheReleaseRepository(t *testing.T) {
 	blob := releasecache.CoreBlob{Name: "spine-linux-amd64", SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(payload))}
 	hosts := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/spine-linux-amd64": payload,
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-rc.4/spine-linux-amd64":     payload,
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-rc.4/build-inputs.json":     "changed",
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/spine-linux-amd64":     payload,
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/build-inputs.json":     "changed",
 	}, nil)
 	release := applianceRelease{Repository: testForgeRepository, TagName: testFixtureTag}
 	dir := t.TempDir()
@@ -338,16 +338,16 @@ func TestDownloadCoreBlobLocatesAssetsInTheReleaseRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A blob carried over from an earlier release names that release.
-	blob.Release = "youeye-v0.6.0-rc.4"
+	blob.Release = "youeye-v0.6.0-dev.4"
 	if err := downloadCoreBlob(t.Context(), hosts.Client, release, blob, filepath.Join(dir, "b"), 1<<20, false); err != nil {
 		t.Fatal(err)
 	}
 	got := hosts.Requests()
-	if len(got) != 2 || !strings.HasSuffix(got[0], "/"+testFixtureTag+"/spine-linux-amd64") || !strings.HasSuffix(got[1], "/youeye-v0.6.0-rc.4/spine-linux-amd64") {
+	if len(got) != 2 || !strings.HasSuffix(got[0], "/"+testFixtureTag+"/spine-linux-amd64") || !strings.HasSuffix(got[1], "/youeye-v0.6.0-dev.4/spine-linux-amd64") {
 		t.Fatalf("blob requests = %v", got)
 	}
 	// Bytes that differ from the bound digest are refused.
-	bad := releasecache.CoreBlob{Name: "build-inputs.json", SHA256: blob.SHA256, SizeBytes: int64(len("changed")), Release: "youeye-v0.6.0-rc.4"}
+	bad := releasecache.CoreBlob{Name: "build-inputs.json", SHA256: blob.SHA256, SizeBytes: int64(len("changed")), Release: "youeye-v0.6.0-dev.4"}
 	if err := downloadCoreBlob(t.Context(), hosts.Client, release, bad, filepath.Join(dir, "c"), 1<<20, false); err == nil {
 		t.Fatal("blob with a different digest accepted")
 	}
@@ -425,10 +425,12 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 	if _, err := prepareCoreInstallInput(t.Context(), saved, wrong, nil, true); err == nil {
 		t.Fatal("foreign media accepted")
 	}
+	// The image's seed Spine may differ from the release's Spine: first boot
+	// adopts the release's Spine onto State.
 	otherSpine := bundle
 	otherSpine.Manifest.ReleaseSet.Spine.ArtifactSHA256 = strings.Repeat("e", 64)
-	if _, err := prepareCoreInstallInput(t.Context(), saved, otherSpine, nil, true); err == nil {
-		t.Fatal("media with another baked Spine accepted")
+	if _, err := prepareCoreInstallInput(t.Context(), saved, otherSpine, nil, true); err != nil {
+		t.Fatal("media with an older seed Spine refused:", err)
 	}
 	resuming := input
 	resuming.Operation = "resume"

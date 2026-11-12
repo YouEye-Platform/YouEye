@@ -74,7 +74,7 @@ func TestParseOptionsRepositoryAndChannel(t *testing.T) {
 		{"proxmox", "--repository", "https://user:password@code.example.test/owner/YouEye"},
 		{"proxmox", "--repository", "http://code.example.test/owner/YouEye"},
 		{"proxmox", "--repository", "https://code.example.test/api/v1/repos/owner/YouEye/releases"},
-		{"proxmox", "--release-tag", "youeye-v0.6.1-rc.1"},
+		{"proxmox", "--release-tag", "youeye-v0.6.1-dev.1"},
 		{"proxmox", "--core-manifest-sha256", strings.Repeat("a", 64)},
 	} {
 		if _, err := ParseOptions(args, strings.NewReader(""), io.Discard); err == nil {
@@ -122,13 +122,13 @@ func TestProxmoxAdvancedReleaseSourceDefaults(t *testing.T) {
 	if strings.Join(channels, ",") != "beta,alpha,dev,stable" {
 		t.Fatalf("channel choices = %v", channels)
 	}
-	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.6.1-rc.1", strings.Repeat("a", 64)
+	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.6.1-dev.1", strings.Repeat("a", 64)
 	model.cycleAdvancedSelection("channel", true)
 	if model.config.ReleaseTag != "" || model.config.CoreManifestSHA256 != "" {
 		t.Fatal("changing the channel kept a pinned release of another channel")
 	}
-	if got := estimatedProxmoxDataGiB(32); got != 7 {
-		t.Fatalf("estimated 32 GiB data capacity = %d, want 7", got)
+	if got := estimatedProxmoxDataGiB(32); got != 11 {
+		t.Fatalf("estimated 32 GiB data capacity = %d, want 11", got)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestProxmoxQuickExplicitlyRestoresOfficialStablePolicy(t *testing.T) {
 	model = updated.(proxmoxApplianceModel)
 	// Advanced edits made before choosing Quick do not survive into it.
 	model.config.Channel, model.config.ReleaseProvider, model.config.RepositoryURL = "dev", "custom", "https://updates.example.test/owner/YouEye"
-	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.7.0-rc.1", strings.Repeat("a", 64)
+	model.config.ReleaseTag, model.config.CoreManifestSHA256 = "youeye-v0.7.0-dev.1", strings.Repeat("a", 64)
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(proxmoxApplianceModel)
 	if model.config.Channel != "stable" || model.config.ReleaseProvider != defaultApplianceProvider || model.config.RepositoryURL != releasecache.OfficialRepository || model.config.ReleaseTag != "" || model.config.CoreManifestSHA256 != "" {
@@ -727,14 +727,14 @@ func TestProxmoxChannelAcceptsOnlyACompleteReleasePin(t *testing.T) {
 		args  []string
 		valid bool
 	}{
-		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-rc.10", "--core-manifest-sha256", digest}, true},
+		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-dev.10", "--core-manifest-sha256", digest}, true},
 		{[]string{"--channel", "stable", "--release-tag", "youeye-v0.6.1", "--core-manifest-sha256", digest}, true},
 		{[]string{"--channel", "beta"}, true},
-		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-rc.10"}, false},
+		{[]string{"--channel", "dev", "--release-tag", "youeye-v0.7.0-dev.10"}, false},
 		{[]string{"--channel", "dev", "--core-manifest-sha256", digest}, false},
 		{[]string{"--channel", "stable", "--release-tag", "appliance-v0.6.1", "--core-manifest-sha256", digest}, false},
 		{[]string{"--channel", "stable", "--release-tag", "youeye-v0.6.1", "--core-manifest-sha256", strings.Repeat("D", 64)}, false},
-		{[]string{"--channel", "branch", "--release-branch", "team/fix", "--release-tag", "youeye-v0.7.0-rc.3", "--core-manifest-sha256", digest}, false},
+		{[]string{"--channel", "branch", "--release-branch", "team/fix", "--release-tag", "youeye-v0.7.0-dev.3", "--core-manifest-sha256", digest}, false},
 	} {
 		opts, err := ParseOptions(append([]string{"proxmox", "--repository", "https://code.example.test/owner/YouEye", "--yes"}, tc.args...), strings.NewReader(""), io.Discard)
 		if err == nil {

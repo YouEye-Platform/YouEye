@@ -197,8 +197,8 @@ expected="YE-ESP YE-RECOVERY YE-SYSTEM-A YE-SYSTEM-B YE-STATE YE-DATA"
 actual="$(lsblk -nrpo PARTLABEL "$disk" | sed '/^$/d' | paste -sd ' ' -)"
 [ "$actual" = "$expected" ]
 [ "$(blockdev --getsize64 "$recovery")" -eq 4294967296 ]
-[ "$(blockdev --getsize64 "$system_a")" -eq 8589934592 ]
-[ "$(blockdev --getsize64 "$system_b")" -eq 8589934592 ]
+[ "$(blockdev --getsize64 "$system_a")" -eq 6442450944 ]
+[ "$(blockdev --getsize64 "$system_b")" -eq 6442450944 ]
 [ "$(blockdev --getsize64 "$state")" -eq 4294967296 ]
 [ "$(blockdev --getsize64 "$data")" -gt 0 ]`
 	verifyState := `set -eu

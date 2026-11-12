@@ -21,15 +21,15 @@ func TestSharedCoreReleaseFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Version != "0.6.1-rc.1" || len(digest) != 64 || len(r.Members) != len(CoreRoles) {
+	if r.Version != "0.6.1-dev.1" || len(digest) != 64 || len(r.Members) != len(CoreRoles) {
 		t.Fatalf("unexpected fixture identity %+v", r)
 	}
 	ui, ok := r.Member("ui")
-	if !ok || AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.1-rc.1/ui-standalone.tar" {
+	if !ok || AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.1-dev.1/ui-standalone.tar" {
 		t.Fatalf("asset URL is wrong")
 	}
-	ui.Artifact.Release = "youeye-v0.6.0-rc.2"
-	if AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.0-rc.2/ui-standalone.tar" {
+	ui.Artifact.Release = "youeye-v0.6.0-dev.2"
+	if AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.0-dev.2/ui-standalone.tar" {
 		t.Fatalf("referenced release is not used")
 	}
 }
@@ -59,13 +59,15 @@ func TestCoreReleaseRejectsBadDocuments(t *testing.T) {
 		"signature field":  func(d map[string]any) { d["signatures"] = []any{} },
 		"bad member tree":  func(d map[string]any) { member(d, 2)["source_tree"] = "" },
 		"cp without spine": func(d map[string]any) { delete(member(d, 12), "depends_on") },
+		"no build":         func(d map[string]any) { delete(d, "build") },
+		"bad build":        func(d map[string]any) { d["build"] = "dev2" },
 	}
 	for name, change := range cases {
 		if _, _, err := ParseCoreRelease(mutate(t, change)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	dup := strings.Replace(string(fixture(t)), `"version": "0.6.1-rc.1",`, `"version": "0.6.1-rc.1", "version": "0.6.1-rc.1",`, 1)
+	dup := strings.Replace(string(fixture(t)), `"version": "0.6.1-dev.1",`, `"version": "0.6.1-dev.1", "version": "0.6.1-dev.1",`, 1)
 	if _, _, err := ParseCoreRelease([]byte(dup)); err == nil {
 		t.Error("duplicate key accepted")
 	}
@@ -85,13 +87,13 @@ func TestCoreReleaseEmptyDependsOnSurvivesJSONRoundTrip(t *testing.T) {
 }
 
 func TestCompareVersions(t *testing.T) {
-	ordered := []string{"0.5.9-rc.3", "0.6.0-rc.1", "0.6.0-rc.2", "0.6.0-rc.10", "0.6.0", "0.6.1-rc.1", "1.0.0-rc.1"}
+	ordered := []string{"0.5.9-dev.3", "0.6.0-dev.1", "0.6.0-dev.2", "0.6.0-dev.10", "0.6.0", "0.6.1-dev.1", "1.0.0-dev.1"}
 	for i := 1; i < len(ordered); i++ {
 		if CompareVersions(ordered[i-1], ordered[i]) >= 0 || CompareVersions(ordered[i], ordered[i-1]) <= 0 {
 			t.Fatalf("%s should sort before %s", ordered[i-1], ordered[i])
 		}
 	}
-	if CompareVersions("0.6.1-rc.4", "0.6.1-rc.4") != 0 {
+	if CompareVersions("0.6.1-dev.4", "0.6.1-dev.4") != 0 {
 		t.Fatal("equal versions differ")
 	}
 }
@@ -110,5 +112,37 @@ func TestCanonicalRepository(t *testing.T) {
 		if _, err := CanonicalRepository(raw); err == nil {
 			t.Errorf("%s accepted", raw)
 		}
+	}
+}
+
+func TestPromotedCoreReleaseKeepsItsBuild(t *testing.T) {
+	// A promotion renames the release and keeps the build and every member.
+	raw := mutate(t, func(d map[string]any) { d["version"], d["tag"] = "0.6.1", "youeye-v0.6.1" })
+	r, _, err := ParseCoreRelease(raw)
+	if err != nil || r.Version != "0.6.1" || r.Build != "0.6.1-dev.1" {
+		t.Fatalf("promoted document: %+v %v", r, err)
+	}
+}
+
+func TestPayloadIgnoresWhereFilesLive(t *testing.T) {
+	r, _, err := ParseCoreRelease(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	promoted := r
+	promoted.Version, promoted.Tag = "0.6.1-alpha.1", "youeye-v0.6.1-alpha.1"
+	promoted.Members = append([]CoreMember{}, r.Members...)
+	for i := range promoted.Members {
+		promoted.Members[i].Artifact.Release = "youeye-v0.6.1-dev.1"
+	}
+	if promoted.PayloadSHA256() != r.PayloadSHA256() {
+		t.Fatal("the same files in another release changed the payload digest")
+	}
+	promoted.Members[0].Artifact.SHA256 = strings.Repeat("f", 64)
+	if promoted.PayloadSHA256() == r.PayloadSHA256() {
+		t.Fatal("another file did not change the payload digest")
+	}
+	if r.Members[0].Artifact.Release != "" && r.Members[0].Artifact.Release == "youeye-v0.6.1-dev.1" {
+		t.Fatal("PayloadSHA256 changed its input")
 	}
 }

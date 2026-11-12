@@ -65,11 +65,6 @@ func bindCoreInstallBundle(release releasecache.CoreRelease, bundle verifiedAppl
 			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.BuildVersion != bundle.Manifest.ImageVersion || member.SourceTree != bundle.Manifest.SourceTree {
 				return fmt.Errorf("selected System does not contain this appliance media; use its matching ISO or an exact selection that contains this media")
 			}
-		case "spine":
-			spine := bundle.Manifest.ReleaseSet.Spine
-			if member.Artifact.SHA256 != spine.ArtifactSHA256 || member.BuildVersion != spine.Version || member.SourceTree != spine.SourceTree {
-				return fmt.Errorf("selected System differs from the media's baked Spine")
-			}
 		}
 		if asset, ok := bundle.Assets[member.Role]; ok && (member.Artifact.SHA256 != asset.Manifest.SHA256 || member.Artifact.SizeBytes != asset.Manifest.SizeBytes) {
 			return fmt.Errorf("selected %s differs from verified media bytes", member.Role)

@@ -109,5 +109,6 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 			return host.RecoverCoreHost(ctx, j.RequestID, observe)
 		},
 	}
+	r.SpineTrial, r.SelectSpine, r.RestoreSpine = coreSpineHooks(cache)
 	return r, r.Validate()
 }

@@ -10,7 +10,10 @@ The System release document is `youeye.core-release.v1`, published as the
 release asset `core-release.json` (reader: `releasecache/core_release.go`,
 writer: `scripts/assemble-core-release.py`; the Control Panel reader parses the
 same fixture, `releasecache/testdata/core-release.json`). Top level: `schema`,
-`version` (`X.Y.Z-rc.N`), `tag` (`youeye-v<version>`), `source_tree` (the git
+`version` (the release name: `X.Y.Z-dev.N` on dev, `X.Y.Z-alpha.N`,
+`X.Y.Z-beta.N` or `X.Y.Z` after promotion), `build` (the build version
+`X.Y.Z-dev.N`; equal to `version` on dev; the only field ordered when deciding
+"newer" or "older"), `tag` (`youeye-v<version>`), `source_tree` (the git
 tree of the build), `sequence` (publish time), `minimum_reader` (1), `authority`
 (only `"digest"` is accepted), `compatibility` and `members`.
 

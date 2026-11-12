@@ -23,7 +23,7 @@ func TestNativeCoreAuthorityUsesFrozenTargetWithoutDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Version, r.Tag = "0.6.1-rc.2", "youeye-v0.6.1-rc.2"
+	r.Version, r.Build, r.Tag = "0.6.1-dev.2", "0.6.1-dev.2", "youeye-v0.6.1-dev.2"
 	r.Compatibility.MinimumRelease = "0.5.36"
 	r.Compatibility.StateMin = 2
 	r.Compatibility.StateMax = 2

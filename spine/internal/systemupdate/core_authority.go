@@ -34,7 +34,7 @@ func coreBeforeCheckpoint(j CoreJournal) bool {
 	return true
 }
 
-func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.StateRecord, installedVersion string) error {
+func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.StateRecord, installedBuild string) error {
 	c := r.Compatibility
 	if state.SchemaVersion < c.StateMin || state.SchemaVersion > c.StateMax || state.DataSchemaVersion < c.DataMin || state.DataSchemaVersion > c.DataMax {
 		return fmt.Errorf("core release is incompatible with persistent State or Data")
@@ -43,7 +43,7 @@ func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.State
 	if err != nil {
 		return err
 	}
-	installed, err := ordering.ParseVersion(installedVersion)
+	installed, err := ordering.ParseVersion(installedBuild)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	if err != nil {
 		return err
 	}
-	return validateCoreCompatibility(r, state, j.Previous.Release.Version)
+	return validateCoreCompatibility(r, state, j.Previous.Release.Build)
 }
 
 // AuthorizeTarget checks the frozen, digest-bound target. The channel head is

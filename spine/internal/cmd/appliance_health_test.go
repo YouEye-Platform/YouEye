@@ -20,13 +20,13 @@ func TestNormalizeApplianceHealthProfile(t *testing.T) {
 
 func TestValidateInstalledReleaseIdentityBindsVersionAndDigest(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	expected := appliance.ComponentRelease{Version: "0.6.1-rc.1", ArtifactSHA256: digest}
+	expected := appliance.ComponentRelease{Version: "0.6.1-dev.1", ArtifactSHA256: digest}
 	installed := installedReleaseIdentity{Version: expected.Version, ArtifactSHA256: digest}
 	if err := validateInstalledReleaseIdentity("Server interface", expected, installed); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*installedReleaseIdentity){
-		"version": func(value *installedReleaseIdentity) { value.Version = "0.6.1-rc.2" },
+		"version": func(value *installedReleaseIdentity) { value.Version = "0.6.1-dev.2" },
 		"digest":  func(value *installedReleaseIdentity) { value.ArtifactSHA256 = strings.Repeat("b", 64) },
 	} {
 		t.Run(name, func(t *testing.T) {

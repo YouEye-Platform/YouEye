@@ -174,7 +174,7 @@ func TestPreserveResumeAtVerifyInstallReconcilesOldUpdaterJournal(t *testing.T) 
 	assets.Operation = "preserve-reinstall"
 	commands, err := appliancePreserveCommandPlan(plan, assets, applianceBundleManifest{
 		StateSchemaMin: applianceStateSchema, DataSchemaMin: applianceDataSchema,
-		DiskLayout: applianceManifestLayout{Version: 3}, RecoveryVersion: applianceRecoveryVersion,
+		DiskLayout: applianceManifestLayout{Version: 1}, RecoveryVersion: applianceRecoveryVersion,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-import { isNewer } from '@/lib/version';
+import { compareVersions, isNewer } from '@/lib/version';
 import type { CatalogEntry } from './types';
 
 export interface InstalledUpdateEvidence {
@@ -40,8 +40,11 @@ export interface UpdateRoutingDecision {
 }
 
 export interface UpdateCandidate {
+  /** Release name (display). */
   version: string;
   tag: string;
+  /** Build version of the release; channel candidates are ordered by it. */
+  build?: string;
 }
 
 export interface UpdateAvailability {
@@ -154,22 +157,34 @@ export function classifyAppUpdateRouting(input: {
 
 /**
  * Shared update projection used by Settings, Market, and UI bridge data. A
- * native app's candidate older than the installed version is never offered:
- * the box waits for its channel to catch up.
+ * native app's channel candidate is ordered by build, never by release name:
+ * an older build is never offered (the box waits for its channel to catch
+ * up); the same build under another release name is a metadata-only update.
  */
 export function projectUpdateAvailability(input: {
   routing: UpdateRoutingDecision;
   installedVersion: string | null | undefined;
+  /** Build version of the installed native release, when known. */
+  installedBuild?: string | null;
   catalogVersion: string | null;
   candidate?: UpdateCandidate | null;
 }): UpdateAvailability {
   const installedVersion = clean(input.installedVersion);
+  const installedBuild = clean(input.installedBuild);
   const candidate = input.routing.kind === 'channel' ? input.candidate ?? null : null;
   const version = candidate ? candidate.version : input.routing.kind === 'catalog' ? input.catalogVersion : null;
   let updateAvailable = false;
   if (version) {
     try {
-      updateAvailable = !installedVersion || isNewer(version, installedVersion);
+      if (!candidate) {
+        updateAvailable = !installedVersion || isNewer(version, installedVersion);
+      } else if (!installedBuild) {
+        // Not installed from a product release (no recorded build): offer the channel's release.
+        updateAvailable = true;
+      } else if (candidate.build) {
+        const order = compareVersions(candidate.build, installedBuild);
+        updateAvailable = order > 0 || order === 0 && version !== installedVersion;
+      }
     } catch {
       updateAvailable = false;
     }

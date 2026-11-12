@@ -29,8 +29,8 @@ function snapshotOf(files: Record<string, string>) {
     content: { files: Object.entries(files).map(([path, body]) => ({ path, sha256: `sha256:${sha(body)}` })) } }));
 }
 
-function marketRelease(version: string, sequence: number, snapshot: Buffer, tar: Buffer) {
-  const f = productFixture('market', version, marketRepo, { 'catalog-snapshot.json': snapshot, 'catalog.tar': tar }, { kind: 'catalog', primary: 'catalog.tar', sequence, contract: snapshot });
+function marketRelease(version: string, sequence: number, snapshot: Buffer, tar: Buffer, build?: string) {
+  const f = productFixture('market', version, marketRepo, { 'catalog-snapshot.json': snapshot, 'catalog.tar': tar }, { kind: 'catalog', primary: 'catalog.tar', sequence, contract: snapshot, build });
   return { f, selected: verifyProductRelease(f.raw, { product: 'market', repository: marketRepo, tag: f.tag }) };
 }
 
@@ -40,13 +40,13 @@ test('catalog.tar holds exactly the snapshot files, each hash-checked', async ()
   for (const format of ['pax', 'gnu'] as const) {
     const tar = await catalogBuild(format, files);
     const snapshot = snapshotOf(files);
-    const { selected } = marketRelease('0.6.1-rc.1', 1, snapshot, tar);
+    const { selected } = marketRelease('0.6.1-dev.1', 1, snapshot, tar);
     const parsed = readCatalogTar(tar, verifyCatalogSnapshot(selected, snapshot));
     assert.deepEqual([...parsed.keys()].sort(), Object.keys(files).sort(), format);
     assert.equal(parsed.get(longPath)?.toString(), 'id: long\n');
     // A missing, extra or changed file is refused.
     const { [longPath]: _dropped, ...fewer } = files;
-    assert.throws(() => readCatalogTar(tar, verifyCatalogSnapshot(marketRelease('0.6.1-rc.1', 1, snapshotOf(fewer), tar).selected, snapshotOf(fewer))), /differs/);
+    assert.throws(() => readCatalogTar(tar, verifyCatalogSnapshot(marketRelease('0.6.1-dev.1', 1, snapshotOf(fewer), tar).selected, snapshotOf(fewer))), /differs/);
     const changed = await catalogBuild(format, { ...files, 'apps/memos/youeye-app.yaml': 'id: evil\n' });
     assert.throws(() => readCatalogTar(changed, verifyCatalogSnapshot(selected, snapshot)), /differs/);
     const more = await catalogBuild(format, { ...files, 'extra.yaml': 'x' });
@@ -60,7 +60,7 @@ test('the official Market follows the channel index and keeps its accepted catal
   try {
     const tar = await catalogBuild('pax', files);
     const snapshot = snapshotOf(files);
-    const one = marketRelease('0.6.1-rc.1', 10, snapshot, tar);
+    const one = marketRelease('0.6.1-dev.1', 10, snapshot, tar);
     const host = fakeReleaseHost(new Map([
       [`${marketRepo}/releases/download/${one.f.tag}/catalog-snapshot.json`, snapshot],
       [`${marketRepo}/releases/download/${one.f.tag}/catalog.tar`, tar],
@@ -68,7 +68,7 @@ test('the official Market follows the channel index and keeps its accepted catal
     globalThis.fetch = host.fetch;
     assert.equal(await readAcceptedCatalog(directory), null);
     const accepted = await refreshOfficialCatalog({ directory, resolve: async () => one.selected });
-    assert.equal(accepted.selected.release.version, '0.6.1-rc.1');
+    assert.equal(accepted.selected.release.version, '0.6.1-dev.1');
     assert.equal(accepted.files.get('catalog.yaml')?.toString(), files['catalog.yaml']);
     assert.ok(host.requests.every((url) => url.startsWith(`${marketRepo}/releases/download/`)), host.requests.join('\n'));
     verifyCatalogFile(accepted.snapshot, 'apps/memos/youeye-app.yaml', files['apps/memos/youeye-app.yaml']);
@@ -82,16 +82,25 @@ test('the official Market follows the channel index and keeps its accepted catal
     assert.equal(host.requests.length, before);
 
     // An older catalog on the channel is never adopted (the box waits).
-    const older = marketRelease('0.6.0-rc.9', 5, snapshot, tar);
-    await assert.rejects(refreshOfficialCatalog({ directory, resolve: async () => older.selected }), /older market release/);
+    const older = marketRelease('0.6.0-dev.9', 5, snapshot, tar);
+    await assert.rejects(refreshOfficialCatalog({ directory, resolve: async () => older.selected }), /older market build/);
     await assert.rejects(acceptCatalogRelease(older.selected, snapshot, tar, directory), /older/);
+    // An older build under a stable-looking name is still older.
+    const renamedOlder = marketRelease('0.6.1', 50, snapshot, tar, '0.6.0-dev.9');
+    await assert.rejects(acceptCatalogRelease(renamedOlder.selected, snapshot, tar, directory), /older market build/);
+
+    // The accepted build promoted under another name is adopted.
+    const promoted = marketRelease('0.6.1-alpha.1', 10, snapshot, tar, '0.6.1-dev.1');
+    await acceptCatalogRelease(promoted.selected, snapshot, tar, directory);
+    assert.equal((await readAcceptedCatalog(directory))?.selected.release.version, '0.6.1-alpha.1');
+    assert.equal((await readAcceptedCatalog(directory))?.floors.market.build, '0.6.1-dev.1');
 
     // A newer release replaces the accepted tar.
     const next = { ...files, 'catalog.yaml': `${files['catalog.yaml']}# next\n` };
     const nextTar = await catalogBuild('gnu', next), nextSnapshot = snapshotOf(next);
-    const two = marketRelease('0.6.1-rc.2', 11, nextSnapshot, nextTar);
+    const two = marketRelease('0.6.1-dev.2', 11, nextSnapshot, nextTar);
     await acceptCatalogRelease(two.selected, nextSnapshot, nextTar, directory);
-    assert.equal((await readAcceptedCatalog(directory))?.selected.release.version, '0.6.1-rc.2');
+    assert.equal((await readAcceptedCatalog(directory))?.selected.release.version, '0.6.1-dev.2');
     assert.deepEqual((await readdir(directory)).filter((n) => n.endsWith('.tar')), [`catalog-${sha(nextTar)}.tar`]);
     await assert.rejects(acceptCatalogRelease(two.selected, nextSnapshot, tar, directory), /differs from its release digest/);
   } finally {

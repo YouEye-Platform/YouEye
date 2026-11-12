@@ -172,7 +172,7 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 	if manifest.SourceDateEpoch <= 0 {
 		return fmt.Errorf("appliance manifest source_date_epoch must be positive")
 	}
-	if manifest.DiskLayout.Version != 3 ||
+	if manifest.DiskLayout.Version != 1 ||
 		manifest.DiskLayout.TargetMinGiB != applianceTargetMinBytes/applianceGiB ||
 		manifest.DiskLayout.ESPGiB != applianceESPBytes/applianceGiB ||
 		manifest.DiskLayout.RecoveryGiB != applianceRecoveryBytes/applianceGiB ||

@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-script="$root/appliance/scripts/youeye-first-deploy"
+script="$(cd -- "$(dirname -- "$0")" && pwd)/first-deploy.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
@@ -46,6 +46,11 @@ case "$*" in
     esac ;;
   "update core initialize "*) [ "${FAKE_CORE_INIT_FAIL:-0}" != 1 ] ;;
   "appliance health --profile=operational --json") printf '{"healthy":true}\n' ;;
+  "spine adopt")
+    if [ "${FAKE_ADOPT:-0}" = 1 ]; then printf 'Spine 9.9.9-rc.1 is now current on slot A\n'; else printf 'Spine is already current\n'; fi ;;
+  "boot first-deploy")
+    # Like Spine: run the step as a child while this process keeps fd 9.
+    /bin/sh "$FAKE_FIRST_DEPLOY_SCRIPT"; exit $? ;;
   *) [ "${FAKE_DEPLOY_FAIL:-0}" != 1 ] ;;
 esac
 EOF
@@ -73,6 +78,7 @@ run_fixture() {
     shift
     env \
         FAKE_COMMAND_LOG="$fixture/commands" \
+        FAKE_FIRST_DEPLOY_SCRIPT="$script" \
         FAKE_INCUS_STATE_FILE="$fixture/incus-running" \
         YOUEYE_FIRST_DEPLOY_STATE_DIR="$fixture/state" \
         YOUEYE_CONTROL_SECRET="$fixture/control/.deploy_secret" \
@@ -106,7 +112,8 @@ outdated="$tmp/outdated"
 make_fixture "$outdated"
 printf 'test-secret\n' > "$outdated/control/.deploy_secret"
 run_fixture "$outdated" FAKE_CONTROL_COMPLETE=1 FAKE_CONTROL_VERSION=0.5.23
-grep -Fxq 'update control --yes' "$outdated/commands"
+grep -Fxq "spine adopt" "$outdated/commands"
+! grep -Fq "update control" "$outdated/commands"
 grep -Fxq 'deploy --resume' "$outdated/commands"
 
 start_race="$tmp/start-race"
@@ -196,3 +203,13 @@ fi
 grep -Fq 'original v5 installer answer' "$required/error"
 test ! -s "$required/commands"
 test ! -e "$required/state/complete"
+
+# Adopting a newer Spine re-runs first deployment from it while the first run
+# still holds the lock; the re-run must finish the deployment, not exit early.
+adopted="$tmp/adopted"
+make_fixture "$adopted"
+run_fixture "$adopted" FAKE_ADOPT=1 FAKE_CONTROL_COMPLETE=0
+grep -Fxq "boot first-deploy" "$adopted/commands"
+grep -Fxq deploy "$adopted/commands"
+test -e "$adopted/state/complete"
+jq -e '.attempt == 1 and .state == "complete"' "$adopted/state/progress.json" >/dev/null

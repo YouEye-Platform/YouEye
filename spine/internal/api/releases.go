@@ -50,6 +50,7 @@ func (s *Server) releaseChannelView() (map[string]string, error) {
 	view := map[string]string{"repository": policy.Repository, "channel": policy.Channel}
 	if receipt, err := (systemupdate.CoreManager{Root: s.coreRoot()}).ReadReceipt(); err == nil {
 		view["installed_version"] = receipt.Release.Version
+		view["installed_build"] = receipt.Release.Build
 	}
 	return view, nil
 }

@@ -73,7 +73,8 @@ Spine is a Go binary that runs on the host system. Its responsibilities are stri
 - Install and manage Incus
 - Create the unprivileged container
 - Deploy the Control Panel into the container
-- Update itself and the Control Panel
+- Run the boot steps (first deployment, boot blessing, setup gate, network check)
+- Apply System releases, including its own updates without a reboot
 - Report platform status
 
 On sealed appliances, the storage boot phase validates persisted Incus DNS
@@ -235,34 +236,33 @@ YouEye/
 
 Each component is **versioned independently** and released with its own tag prefix (`spine-v*`, `cp-v*`, `ui-v*`).
 
+## What lives where: image, State, Data
+
+| Place | Holds | Changes when |
+|---|---|---|
+| **Image** (System A/B, 6 GiB each, read-only, A/B updated) | Debian base, kernel, ZFS, Incus, systemd units that only call `youeye …`, initramfs hooks, and the **seed Spine** at `/usr/local/bin/youeye` | the OS itself changes (an image build) |
+| **State** (ext4, 4 GiB) | machine identity, network and SSH config, the release policy (`{repository, channel}`), update journals, and the **selected Spine** per System slot under `spine/` | every Spine, CP or UI release; owner settings |
+| **Data** (ZFS pool `default`) | Incus storage and state, app data, the update cache | always |
+
+The seed Spine is the image's own copy: it prepares State and storage, runs recovery, manages the selection
+(`youeye spine …`) and launches the selected Spine for every other command. A Spine, CP or UI change therefore
+never needs a new image, and boot orchestration (first deployment, boot blessing, the setup gate, the network
+check) ships inside Spine as `youeye boot <step>`. See [spine.md](spine.md).
+
 ## Update System
 
-Spine manages updates for itself and the Control Panel. The Control Panel manages updates for everything else.
+One System release (`core-release.json`) names every part. The updater compares each part with what is installed
+and applies only what changed:
 
-```mermaid
-graph TD
-    F[Release provider] -->|spine-v*| Spine
-    F -->|cp-v*| Spine
-    Spine -->|deploys| CP[Control Panel]
-    
-    F -->|ui-v*| CP
-    F -->|app tags| CP
-    CP -->|deploys| UI[UI]
-    CP -->|deploys| Apps[Native Apps]
-    
-    Registry[Market Registry] -->|manifests| CP
-    CP -->|deploys| MarketApps[Market Apps]
-```
+- **host parts** (system root, UKIs, recovery, installer media): A/B write and reboot; the new slot boots with the
+  release's Spine selected;
+- **only Spine:** a trial on State without a reboot (`apply-spine`), committed when healthy;
+- **only CP/UI:** container update without a reboot.
 
-Updates default to official GitHub Stable releases. An administrator may select
-an explicit Forgejo or custom HTTPS source without changing distributed build
-defaults. Each mutation requires the exact artifact digest and size from
-HTTPS-fetched release metadata and any configured channel digest; releases are
-unsigned until signing returns before the first public release. Missing
-releases do not fall back across channels. The complete System (host, Spine,
-Control Panel and UI) follows the source and track the Installer recorded in
-protected State; the Control Panel can read that selection but cannot change
-it.
+A release whose image inputs did not change reuses the image files of the release that built them (the blob's
+`release` field), so publishing it builds only Spine, CP and UI. Releases come from the box's channel index
+([releases.md](releases.md)); the Control Panel can read the box's channel and request a change of channel, but
+never changes the repository. Releases are unsigned until signing returns before the first public release.
 
 UI infrastructure reconciliation also restores the existing protected bridge authority after container recreation, and verifies its bytes and file mode before readiness. This applies when an interrupted update did not reach Spine finalization. Reconciliation never issues a replacement bridge identity; missing authority on a configured appliance remains a failed repair.
 
