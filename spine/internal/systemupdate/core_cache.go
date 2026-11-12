@@ -172,15 +172,15 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 		artifactClient = c.Client
 	}
 	client := CoreArtifactHTTPClient(artifactClient)
-	transport, err := releasecache.CoreTransport(client.Transport, r)
-	if err != nil {
-		return r, "", err
-	}
-	client.Transport = releasecache.Wrap(transport)
+	client.Transport = releasecache.Wrap(client.Transport)
 	download := New(Config{HTTPClient: client})
 	for _, b := range missing {
 		path, _ := c.Path(b)
-		if err := download.downloadSource(ctx, b.URL, path+".part", path, b.SizeBytes, b.SHA256); err != nil {
+		source, err := CoreBlobURL(r, b)
+		if err != nil {
+			return r, "", err
+		}
+		if err := download.downloadSource(ctx, source, path+".part", path, b.SizeBytes, b.SHA256); err != nil {
 			return r, "", fmt.Errorf("stage %s: %w", b.Name, err)
 		}
 	}

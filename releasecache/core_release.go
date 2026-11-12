@@ -25,19 +25,15 @@ const CoreReleaseReader = 1
 const CoreReleaseAuthority = "digest"
 
 type CoreRelease struct {
-	Schema                 string            `json:"schema"`
-	Version                string            `json:"version"`
-	Tag                    string            `json:"tag"`
-	Source                 string            `json:"source"`
-	Branch                 string            `json:"branch"`
-	SourceCommit           string            `json:"source_commit"`
-	Channel                string            `json:"channel"`
-	Sequence               uint64            `json:"sequence"`
-	PreviousManifestSHA256 string            `json:"previous_manifest_sha256,omitempty"`
-	MinimumReader          int               `json:"minimum_reader"`
-	Authority              string            `json:"authority"`
-	Compatibility          CoreCompatibility `json:"compatibility"`
-	Members                []CoreMember      `json:"members"`
+	Schema        string            `json:"schema"`
+	Version       string            `json:"version"`
+	Tag           string            `json:"tag"`
+	SourceTree    string            `json:"source_tree"`
+	Sequence      uint64            `json:"sequence"`
+	MinimumReader int               `json:"minimum_reader"`
+	Authority     string            `json:"authority"`
+	Compatibility CoreCompatibility `json:"compatibility"`
+	Members       []CoreMember      `json:"members"`
 }
 
 type CoreCompatibility struct {
@@ -49,31 +45,35 @@ type CoreCompatibility struct {
 	Capabilities   []string `json:"capabilities"`
 }
 
+// CoreBlob names one release asset. The document never says where it lives:
+// a client resolves <repository>/releases/download/<tag>/<name>, where the
+// repository and tag come from where it found the document, unless Release
+// names another release of the same repository. The bytes are therefore the
+// same on every host a release is promoted to.
 type CoreBlob struct {
-	Name      string `json:"name"` // Exact release asset name.
-	URL       string `json:"url"`
+	Name      string `json:"name"`
 	SHA256    string `json:"sha256"`
 	SizeBytes int64  `json:"size_bytes"`
+	Release   string `json:"release,omitempty"`
 }
 
 type CoreMember struct {
 	Role         string    `json:"role"`
 	BuildVersion string    `json:"build_version"`
-	Source       string    `json:"source"`
-	Branch       string    `json:"branch"`
-	SourceCommit string    `json:"source_commit"`
-	Tag          string    `json:"tag"`
+	SourceTree   string    `json:"source_tree"`
 	InputSHA256  string    `json:"input_sha256"`
 	Artifact     CoreBlob  `json:"artifact"`
 	BuildInputs  *CoreBlob `json:"build_inputs,omitempty"`
 	DependsOn    []string  `json:"depends_on,omitempty"`
 }
 
-var installationCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var gitTree = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var installationHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 var coreVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$`)
 
+// ValidCoreVersion accepts X.Y.Z[-token.N]. Builds are X.Y.Z-rc.N; the suffix
+// never names a channel.
 func ValidCoreVersion(value string) bool {
 	m := coreVersionPattern.FindStringSubmatch(value)
 	if m == nil || len(m[4]) > 63 {
@@ -91,116 +91,88 @@ func ValidCoreVersion(value string) bool {
 	return true
 }
 
-// ValidCoreBranch preserves the exact ref spelling; a display token is never
-// used to reconstruct a branch or its authority scope.
-func ValidCoreBranch(value string) bool {
-	if value == "" || len(value) > 128 || strings.ContainsAny(value, " ~^:?*[\\%\x00\t\r\n") || strings.Contains(value, "..") || strings.Contains(value, "@{") {
-		return false
+// CompareVersions orders X.Y.Z[-token.N] numerically: X, Y, Z, then N. A
+// version without a suffix sorts after every suffixed build of the same line.
+// Invalid versions sort first.
+func CompareVersions(a, b string) int {
+	key := func(v string) []uint64 {
+		m := coreVersionPattern.FindStringSubmatch(v)
+		if m == nil {
+			return nil
+		}
+		out := make([]uint64, 5)
+		for i, part := range []string{m[1], m[2], m[3]} {
+			out[i], _ = strconv.ParseUint(part, 10, 64)
+		}
+		if m[5] == "" {
+			out[3] = 1
+		} else {
+			out[4], _ = strconv.ParseUint(m[5], 10, 64)
+		}
+		return out
 	}
-	for _, char := range value {
-		if char < 0x20 || char == 0x7f {
-			return false
+	ka, kb := key(a), key(b)
+	switch {
+	case ka == nil && kb == nil:
+		return 0
+	case ka == nil:
+		return -1
+	case kb == nil:
+		return 1
+	}
+	for i := range ka {
+		if ka[i] != kb[i] {
+			if ka[i] < kb[i] {
+				return -1
+			}
+			return 1
 		}
 	}
-	for _, part := range strings.Split(value, "/") {
-		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
-			return false
-		}
-	}
-	return true
+	return 0
 }
 
-func coreSource(value string) (*url.URL, error) {
-	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || strings.ContainsAny(u.Path, "\\\x00") {
-		return nil, fmt.Errorf("invalid core source")
-	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." {
-		return nil, fmt.Errorf("core source must name an exact repository")
-	}
-	return u, nil
+// ValidGitTree accepts a 40-hex git tree id, the build identity.
+func ValidGitTree(value string) bool { return gitTree.MatchString(value) }
+
+var coreAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
+
+func validReleaseTag(value string) bool {
+	return len(value) <= 128 && coreAssetName.MatchString(value) && !strings.Contains(value, "..")
 }
 
-func (blob CoreBlob) validate(source, tag string) error {
-	if !coreAssetName.MatchString(blob.Name) || blob.Name == "." || blob.Name == ".." {
+func (blob CoreBlob) validate() error {
+	if !coreAssetName.MatchString(blob.Name) {
 		return fmt.Errorf("core blob requires its exact asset name")
 	}
 	if !installationHash.MatchString(blob.SHA256) || blob.SizeBytes <= 0 {
 		return fmt.Errorf("core blob requires exact digest and size")
 	}
-	u, err := url.Parse(blob.URL)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Path, "\\\x00") {
-		return fmt.Errorf("invalid core blob URL")
-	}
-	// Forgejo and GitHub both expose immutable assets at this path. The tag
-	// itself may contain a slash; PathEscape prevents ambiguous path segments.
-	prefix := source + "/releases/download/" + url.PathEscape(tag) + "/"
-	if !strings.HasPrefix(blob.URL, prefix) {
-		return fmt.Errorf("blob is outside its exact source/tag")
-	}
-	name := strings.TrimPrefix(blob.URL, prefix)
-	decoded, err := url.PathUnescape(name)
-	if err != nil || name == "" || decoded == "." || decoded == ".." || strings.ContainsAny(decoded, "/\\\x00") {
-		return fmt.Errorf("unsafe core blob asset name")
+	if blob.Release != "" && !(strings.HasPrefix(blob.Release, "youeye-v") && ValidCoreVersion(strings.TrimPrefix(blob.Release, "youeye-v"))) {
+		return fmt.Errorf("core blob may only reference another youeye-v release")
 	}
 	return nil
 }
 
-var coreAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
-
-// CoreMemberChannel retains the original public payload's channel even when a
-// newer release selects it from the other public branch. A selected release may
-// retain any original member, including a development build.
-func CoreMemberChannel(member CoreMember, assemblyChannel string) (string, error) {
-	if member.Source != "https://github.com/YouEye-Platform/YouEye" {
-		return assemblyChannel, nil
+// AssetURL locates a blob of a release found at repository/tag.
+func AssetURL(repository, tag string, blob CoreBlob) string {
+	if blob.Release != "" {
+		tag = blob.Release
 	}
-	version := coreVersionPattern.FindStringSubmatch(member.BuildVersion)
-	if version == nil {
-		return "", fmt.Errorf("invalid original core member version")
-	}
-	if member.Branch == "main" && version[4] == "" {
-		return "stable", nil
-	}
-	if member.Branch == "beta" && version[4] == "beta" {
-		return "beta", nil
-	}
-	return "", fmt.Errorf("core member has no compatible public source branch")
+	return repository + "/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(blob.Name)
 }
+
+// CoreRoles lists the 14 System roles in document order.
+var CoreRoles = []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"}
 
 func (r CoreRelease) Validate() error {
 	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || r.Tag != "youeye-v"+r.Version || r.MinimumReader != CoreReleaseReader {
 		return fmt.Errorf("unsupported core release identity or reader")
 	}
-	if _, err := coreSource(r.Source); err != nil {
-		return err
-	}
 	if r.Authority != CoreReleaseAuthority {
 		return fmt.Errorf("unsupported core release authority")
 	}
-	if !ValidCoreBranch(r.Branch) || !installationCommit.MatchString(r.SourceCommit) || r.Sequence == 0 || r.Sequence > 9007199254740991 {
+	if !ValidGitTree(r.SourceTree) || r.Sequence == 0 || r.Sequence > 9007199254740991 {
 		return fmt.Errorf("core release provenance is incomplete")
-	}
-	if r.PreviousManifestSHA256 != "" && !installationHash.MatchString(r.PreviousManifestSHA256) {
-		return fmt.Errorf("invalid core release lineage")
-	}
-	m := coreVersionPattern.FindStringSubmatch(r.Version)
-	switch r.Channel {
-	case "stable":
-		if m[4] != "" {
-			return fmt.Errorf("Stable release cannot have a suffix")
-		}
-	case "beta", "alpha", "dev":
-		if m[4] != r.Channel {
-			return fmt.Errorf("release suffix does not match selected channel")
-		}
-	case "feature":
-		if m[4] == "" || m[4] == "beta" || m[4] == "alpha" || m[4] == "dev" {
-			return fmt.Errorf("feature release needs its exact branch token")
-		}
-	default:
-		return fmt.Errorf("unsupported core release channel")
 	}
 	c := r.Compatibility
 	if c.StateMin < 1 || c.StateMax < c.StateMin || c.DataMin < 1 || c.DataMax < c.DataMin || !ValidCoreVersion(c.MinimumRelease) {
@@ -216,32 +188,27 @@ func (r CoreRelease) Validate() error {
 	if !capabilities["core-release-v1"] {
 		return fmt.Errorf("core release reader capability missing")
 	}
-	required := map[string]bool{"installer": false, "media": false, "appliance": false, "system-update": false, "spine": false, "cp": false, "ui": false, "system-root": false, "system-a-uki": false, "system-b-uki": false, "system-updater": false, "internal-recovery": false, "recovery-uki": false, "update-bootstrap": false}
+	required := map[string]bool{}
+	for _, role := range CoreRoles {
+		required[role] = false
+	}
 	for _, member := range r.Members {
 		present, known := required[member.Role]
 		if !known || present {
 			return fmt.Errorf("unknown or duplicate core role %q", member.Role)
 		}
 		required[member.Role] = true
-		if !ValidCoreVersion(member.BuildVersion) || !installationCommit.MatchString(member.SourceCommit) || !installationHash.MatchString(member.InputSHA256) || !ValidCoreBranch(member.Branch) || member.Tag == "" {
+		if !ValidCoreVersion(member.BuildVersion) || !ValidGitTree(member.SourceTree) || !installationHash.MatchString(member.InputSHA256) {
 			return fmt.Errorf("incomplete %s provenance", member.Role)
 		}
-		if _, err := coreSource(member.Source); err != nil {
-			return err
-		}
-		if r.Channel == "stable" || r.Channel == "beta" {
-			if _, err := CoreMemberChannel(member, r.Channel); err != nil {
-				return err
-			}
-		}
-		if err := member.Artifact.validate(member.Source, member.Tag); err != nil {
+		if err := member.Artifact.validate(); err != nil {
 			return fmt.Errorf("%s: %w", member.Role, err)
 		}
 		if member.Role == "appliance" {
 			if member.BuildInputs == nil {
 				return fmt.Errorf("appliance build inputs are required")
 			}
-			if err := member.BuildInputs.validate(member.Source, member.Tag); err != nil {
+			if err := member.BuildInputs.validate(); err != nil {
 				return err
 			}
 		} else if member.BuildInputs != nil {
@@ -273,6 +240,25 @@ func (r CoreRelease) Validate() error {
 		seen[member.Role] = true
 	}
 	return nil
+}
+
+// Member returns the member with role.
+func (r CoreRelease) Member(role string) (CoreMember, bool) {
+	for _, member := range r.Members {
+		if member.Role == role {
+			return member, true
+		}
+	}
+	return CoreMember{}, false
+}
+
+// Blobs lists every digest-bound blob of a member.
+func (m CoreMember) Blobs() []CoreBlob {
+	blobs := []CoreBlob{m.Artifact}
+	if m.BuildInputs != nil {
+		blobs = append(blobs, *m.BuildInputs)
+	}
+	return blobs
 }
 
 func ParseCoreRelease(raw []byte) (CoreRelease, string, error) {

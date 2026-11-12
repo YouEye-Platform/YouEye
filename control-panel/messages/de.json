@@ -2492,7 +2492,14 @@
     "m49923597aa88": "Erfassung eingeschaltet",
     "mb5be0abae288": "Erfassung ausgeschaltet",
     "m391f41a0d510": "Wählen Sie, ob unterstützte Apps Aktivitäten zu Ihrer verschlüsselten Chronik hinzufügen.",
-    "ma584ca624d6e": "Entsperren Sie den verschlüsselten Verlauf mit Ihrem Verschlüsselungscode"
+    "ma584ca624d6e": "Entsperren Sie den verschlüsselten Verlauf mit Ihrem Verschlüsselungscode",
+    "m627ce14f7b75": "Repository: {repository}",
+    "mb2585dff0f5d": "Diese Box wird nie herabgestuft. Wechseln Sie zu einem Kanal, der hinter der installierten Version liegt, wartet sie, bis der Kanal aufholt.",
+    "m970dd0475e19": "Diese Box folgt jetzt dem Kanal {channel}.",
+    "m84d6732746f8": "Der Kanal konnte nicht geändert werden.",
+    "m66de5771dc12": "Der Release-Kanal ist nicht verfügbar.",
+    "m4d6bfb83f08f": "Der Release-Server hat die Anfrage abgelehnt oder begrenzt. YouEye versucht es automatisch erneut; prüfen Sie in einigen Minuten noch einmal.",
+    "ma28bdb69b7f1": "Branch {value0}"
   },
   "settingsNavigation": {
     "profile": "Profil",

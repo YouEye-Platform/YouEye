@@ -31,7 +31,7 @@ type applianceBundleManifest struct {
 	Schema              string                    `json:"schema"`
 	ImageVersion        string                    `json:"image_version"`
 	BuildID             string                    `json:"build_id"`
-	SourceCommit        string                    `json:"source_commit"`
+	SourceTree          string                    `json:"source_tree"`
 	Architecture        string                    `json:"architecture"`
 	FirmwareMode        string                    `json:"firmware_mode"`
 	DiskLayout          applianceManifestLayout   `json:"disk_layout"`
@@ -59,9 +59,6 @@ type applianceManifestLayout struct {
 }
 
 type applianceManifestReleases struct {
-	Source       string                     `json:"source"`
-	Branch       string                     `json:"branch"`
-	Fallback     []string                   `json:"fallback"`
 	Spine        applianceManifestComponent `json:"spine"`
 	ControlPanel applianceManifestComponent `json:"control_panel"`
 	UI           applianceManifestComponent `json:"ui"`
@@ -69,8 +66,7 @@ type applianceManifestReleases struct {
 
 type applianceManifestComponent struct {
 	Version        string `json:"version"`
-	Tag            string `json:"tag,omitempty"`
-	SourceCommit   string `json:"source_commit"`
+	SourceTree     string `json:"source_tree"`
 	ArtifactSHA256 string `json:"artifact_sha256"`
 }
 
@@ -151,7 +147,7 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 	for name, value := range map[string]string{
 		"image_version":        manifest.ImageVersion,
 		"build_id":             manifest.BuildID,
-		"source_commit":        manifest.SourceCommit,
+		"source_tree":          manifest.SourceTree,
 		"architecture":         manifest.Architecture,
 		"firmware_mode":        manifest.FirmwareMode,
 		"kernel_compatibility": manifest.KernelCompatibility,
@@ -159,15 +155,13 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 		"zfs_feature_profile":  manifest.ZFSFeatureProfile,
 		"incus_compatibility":  manifest.IncusCompatibility,
 		"recovery_version":     manifest.RecoveryVersion,
-		"release_set.source":   manifest.ReleaseSet.Source,
-		"release_set.branch":   manifest.ReleaseSet.Branch,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("appliance manifest %s is required", name)
 		}
 	}
-	if len(manifest.SourceCommit) != 40 || !isLowerHex(manifest.SourceCommit) {
-		return fmt.Errorf("appliance manifest source_commit must be a full lowercase Git commit")
+	if len(manifest.SourceTree) != 40 || !isLowerHex(manifest.SourceTree) {
+		return fmt.Errorf("appliance manifest source_tree must be a full lowercase git tree id")
 	}
 	if err := ordering.ValidateIdentity(manifest.ImageVersion); err != nil {
 		return fmt.Errorf("appliance manifest ordering identity: %w", err)
@@ -198,12 +192,6 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 		manifest.IncusCompatibility != applianceIncusCompatibility ||
 		manifest.RecoveryVersion != applianceRecoveryVersion {
 		return fmt.Errorf("appliance manifest runtime compatibility is not supported by this installer")
-	}
-	if len(manifest.ReleaseSet.Fallback) != 0 {
-		return fmt.Errorf("appliance release_set fallback must be empty")
-	}
-	if !validApplianceReleaseBranch(manifest.ReleaseSet.Branch) {
-		return fmt.Errorf("appliance release_set branch is invalid")
 	}
 	for name, component := range map[string]applianceManifestComponent{
 		"spine":         manifest.ReleaseSet.Spine,
@@ -264,29 +252,9 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 	return nil
 }
 
-func validApplianceReleaseBranch(branch string) bool {
-	if branch == "" || len(branch) > 96 || strings.ContainsAny(branch, "\\%\x00") {
-		return false
-	}
-	for _, component := range strings.Split(branch, "/") {
-		if component == "" || component == "." || component == ".." || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".") || strings.HasSuffix(component, ".lock") {
-			return false
-		}
-		for _, char := range component {
-			if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func validateManifestComponent(name string, component applianceManifestComponent) error {
-	if strings.TrimSpace(component.Version) == "" || len(component.SourceCommit) != 40 || !isLowerHex(component.SourceCommit) || !validSHA256Hex(component.ArtifactSHA256) {
+	if strings.TrimSpace(component.Version) == "" || len(component.SourceTree) != 40 || !isLowerHex(component.SourceTree) || !validSHA256Hex(component.ArtifactSHA256) {
 		return fmt.Errorf("appliance release_set %s identity is incomplete", name)
-	}
-	if name != "spine" && strings.TrimSpace(component.Tag) == "" {
-		return fmt.Errorf("appliance release_set %s tag is required", name)
 	}
 	return nil
 }

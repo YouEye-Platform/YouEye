@@ -36,15 +36,10 @@ export interface AppDefinition {
   marketSystemId?: 'postgresql' | 'caddy' | 'pihole';
   /** Who performs the update */
   updatedBy: 'control-panel' | 'spine';
-  /** Per-app release channel used by a statically defined native app. */
-  releaseChannelKey?: `app:${string}`;
   /** Web UI port inside the container (if applicable) */
   webPort?: number;
   /** LXD app configuration for updates (required when type=lxd and updatedBy=control-panel) */
   lxdConfig?: {
-    giteaRepo: string;
-    /** Tag prefix for monorepo releases (e.g. 'ui' for ui-v0.2.21). Empty for standalone repos. */
-    tagPrefix?: string;
     appDir: string;
     serviceName: string;
     healthEndpoint?: string;
@@ -156,8 +151,6 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     updatedBy: 'control-panel',
     webPort: 3000,
     lxdConfig: {
-      giteaRepo: 'YouEye',
-      tagPrefix: 'ui',
       appDir: '/opt/youeye-ui',
       serviceName: 'youeye-ui',
       healthEndpoint: '/api/health',
@@ -172,10 +165,8 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     type: 'lxd',
     containers: [{ name: 'youeye-pointer', canControl: true }],
     updatedBy: 'control-panel',
-    releaseChannelKey: 'app:pointer',
     webPort: 4001,
     lxdConfig: {
-      giteaRepo: 'Pointer',
       appDir: '/opt/pointer',
       serviceName: 'youeye-pointer',
       healthEndpoint: '/readyz',
@@ -215,7 +206,6 @@ export function appDefinitionFromManifest(
 
   if (manifest.integration === 'native' || primary?.type === 'lxd') {
     const containerName = containers.length === 1 ? `app-${appId}` : `app-${appId}-${primary.name}`;
-    const repoName = primary?.source?.repo?.includes('/') ? primary.source.repo.split('/').pop()! : (primary?.source?.repo || appId);
     return {
       id: appId,
       displayName: manifest.metadata.name,
@@ -227,7 +217,6 @@ export function appDefinitionFromManifest(
       updatedBy: 'control-panel',
       webPort: primary?.port || 3000,
       lxdConfig: {
-        giteaRepo: repoName,
         appDir: primary?.source?.appDir || '/opt/app',
         serviceName: containerName,
         healthEndpoint: primary?.healthCheck?.type === 'http' ? (primary.healthCheck.path || '/api/health') : '/api/health',

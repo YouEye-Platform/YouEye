@@ -48,14 +48,9 @@ import { withAppNetworkOperationLock } from '../incus/app-network';
 import { readSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { isNewer } from '@/lib/version';
-import { parseMarketRepoURL } from './source';
-import { effectiveChannel, resolveCandidate, getReleaseChannelsConfig, APP_PREFIX, type ResolvedCandidate } from '@/lib/updates/channels';
-import { fetchRepoFile } from './catalog';
-import { parseManifest } from './parser';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import {
   classifyAppUpdateRouting,
-  isChannelSwitchConfirmationRequired,
   recordedCatalogSourceIds,
 } from './update-routing';
 import {
@@ -65,7 +60,7 @@ import {
   type MigrationWithSource,
 } from './migration-planner';
 import { refreshDirectMarketApp } from './direct-apps';
-import { stageMarketNativeArtifacts, resolveMarketProductRelease, downloadMarketProductBlob, type StagedMarketNativeArtifact } from './native-artifact';
+import { nativeManifestFromRelease, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
 import type {
@@ -83,8 +78,6 @@ export interface UpdateConfig {
   appId: string;
   /** Force update even if versions match */
   force?: boolean;
-  /** Confirm installing a NOT-newer candidate after a channel change (downgrade/sidegrade) */
-  confirmSwitch?: boolean;
 }
 
 export interface UpdateResult {
@@ -269,7 +262,7 @@ async function updateLXDContainer(
   const resolvedDir = appDir;
 
   step++;
-  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (${artifact.verification.status === 'manifest' ? 'manifest-authorized' : 'product release digest'})`);
+  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (product release digest)`);
 
   step++;
   emit(onEvent, step, totalSteps, 'running', `Staging preflighted v${artifact.version} bytes...`);
@@ -300,10 +293,8 @@ async function updateLXDContainer(
   }
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
 
-  if (artifact.productRelease) {
-    const { publishProductProjection } = await import('../releases/product-projection');
-    artifact.runtimeUUID = await publishProductProjection(containerName,artifact.productRelease);
-  }
+  const { publishProductProjection } = await import('../releases/product-projection');
+  artifact.runtimeUUID = await publishProductProjection(containerName,artifact.productRelease);
 
   return { step, version: artifact.version };
 }
@@ -360,12 +351,8 @@ async function updateMarketAppLocked(
     }
   }
 
-  // Classify before any release lookup or runtime mutation. A historical
-  // `installedBranch: main` is not native evidence: external catalog updates
-  // used to write that synthetic value after every successful update.
-  let channelCandidate: ResolvedCandidate | null = null;
-  let channelSourceUrl: string | null = null;
-  const chCfg = await getReleaseChannelsConfig();
+  // Classify before any release lookup or runtime mutation. A native app's
+  // candidate is its product release on the box's channel index.
   const routing = resolvedCatalog ? classifyAppUpdateRouting({
     appId,
     installed: installedApp,
@@ -377,75 +364,38 @@ async function updateMarketAppLocked(
       entry: resolvedCatalog.entry,
       manifestIntegration: resolvedCatalog.manifest.integration,
     },
-    hasExplicitChannelOverride: !!chCfg.apps?.[appId],
   }) : null;
-  if (routing?.kind === 'channel') {
-    const ch = await effectiveChannel(APP_PREFIX + appId, {
-      config: chCfg,
-      appDefaultSource: routing.channelDefaultSource,
-    });
-    channelSourceUrl = ch.source;
-    channelCandidate = await resolveCandidate(ch, null);
-    if (!channelCandidate) {
-      throw new Error(`Channel for "${appId}" (${ch.branch} @ ${ch.source}) has no resolvable releases`);
-    }
-  }
 
   let manifest: AppManifest;
   let productRelease: VerifiedProductRelease | null = null;
   let channelManifestReference: { path: string; repo: string; branch: string; digest: string } | null = null;
-  if (channelCandidate && channelSourceUrl) {
+  if (routing?.kind === 'channel') {
     try {
-      const srcLike = parseMarketRepoURL(channelSourceUrl);
-      productRelease = await resolveMarketProductRelease(appId,channelSourceUrl,channelCandidate.tag);
-      const yamlText = productRelease
-        ? (await downloadMarketProductBlob(productRelease,'youeye-app.yaml')).toString('utf8')
-        : await fetchRepoFile(srcLike.organization, srcLike.repository, 'youeye-app.yaml', channelCandidate.tag, srcLike);
-      if (productRelease && updateDigest(yamlText) !== productRelease.build.contract_sha256) throw new Error('Product installer contract differs from original build');
-      manifest = parseManifest(yamlText);
-      if (productRelease) {
-        acceptProductSequence(installMeta.productReleaseFloors,productRelease);
-        if (manifest.metadata.id !== appId || manifest.version !== productRelease.build.build_version || productRelease.release.version !== channelCandidate.version) throw new Error('Product manifest differs from selected build/release identity');
-        // Installed registration is release metadata. Original YAML/archive
-        // bytes and their original build-version field remain untouched.
-        manifest = {...manifest,version:productRelease.release.version};
-      }
-      channelManifestReference = { path: 'youeye-app.yaml',
-        repo: `${srcLike.organization}/${srcLike.repository}`, branch: channelCandidate.tag,
-        digest: `sha256:${updateDigest(yamlText)}` };
+      productRelease = await resolveNativeProduct(appId);
+      const native = await nativeManifestFromRelease(productRelease);
+      // No downgrade: an older channel head is rejected here (the box waits).
+      acceptProductSequence(installMeta.productReleaseFloors, productRelease);
+      manifest = native.manifest;
+      channelManifestReference = { path: 'youeye-app.yaml', repo: productRelease.repository, branch: productRelease.release.tag,
+        digest: `sha256:${updateDigest(native.contract)}` };
     } catch (err) {
-      throw new Error(`Failed to fetch manifest for "${appId}" at ${channelCandidate.tag}: ${err}`);
+      throw new Error(`Failed to resolve the ${appId} release of this channel: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
     manifest = directEntry?.manifest ?? resolvedCatalog!.manifest;
   }
 
   const installedVersion = installedApp.installedVersion || '0.0.0';
-  const targetVersion = channelCandidate ? channelCandidate.version : (manifest.version || '0.0.0');
+  const targetVersion = productRelease ? productRelease.release.version : (manifest.version || '0.0.0');
   const containerSpecs = manifest.containers || [];
   const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
   let durableMigrationPlan: Awaited<ReturnType<typeof fetchUpdatePlanMigrationsFromSource>> = { migrations: [], references: [] };
-  if (channelCandidate) {
-    // Exact-tag semantics: the channel resolver + check already decided; only
-    // no-op when the exact candidate tag is what's installed.
-    if (!config.force && installedApp.installedTag === channelCandidate.tag) {
-      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${channelCandidate.tag})`);
+  if (productRelease) {
+    // Only no-op when the exact release document is what's installed.
+    const installedRelease = installMeta.nativeArtifacts?.[0]?.productReleaseSHA256;
+    if (!config.force && installedRelease === productRelease.manifestSHA256) {
+      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${productRelease.release.version})`);
       return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
-    }
-    // Not-newer candidate on a different branch = channel switch — confirm-gated
-    // exactly like spine/control/ui.
-    const installedBranch = installedApp.installedBranch || 'main';
-    if (isChannelSwitchConfirmationRequired({
-      force: !!config.force,
-      confirmSwitch: !!config.confirmSwitch,
-      installedBranch,
-      candidateBranch: channelCandidate.branch,
-      candidateIsNewer: isNewer(channelCandidate.version, installedVersion),
-    })) {
-      throw new Error(
-        `Channel switch requires confirmation: ${installedBranch} ${installedVersion} → ` +
-        `${channelCandidate.branch} ${channelCandidate.version} (downgrade/sidegrade). ` +
-        `Re-run with confirmation (CLI: -y).`);
     }
   } else if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
@@ -545,21 +495,8 @@ async function updateMarketAppLocked(
 
   const stagedNativeArtifacts = await stageMarketNativeArtifacts(
     manifest,
-    {
-      appId,
-      subdomain: installMeta.subdomain,
-      domain: installMeta.domain,
-      sourceId,
-      sourceName: directEntry ? 'Added' : resolvedCatalog!.source.name,
-      sourceRepoUrl: directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url,
-    },
-    channelCandidate && channelSourceUrl ? {
-      releases: Object.fromEntries(lxdContainers.map((container) => [container.name, {
-        tag: channelCandidate!.tag,
-        version: channelCandidate!.version,
-        sourceRepo: channelSourceUrl!,
-      }])),
-    } : {},
+    { appId },
+    productRelease ? { selected: productRelease } : {},
   );
 
   let attemptedOperation: string | undefined;
@@ -743,7 +680,7 @@ async function updateMarketAppLocked(
       sha256: artifact.artifactSHA256,
       bytes: artifact.artifactBytes,
       verification: artifact.verification.status,
-      productReleaseSHA256: artifact.verification.status === 'product-release' ? artifact.verification.releaseSHA256 : undefined,
+      productReleaseSHA256: artifact.verification.releaseSHA256,
     }));
     installMeta.containers = installMeta.containers.map((container) => {
       const spec = containerSpecs.find((candidate) => candidate.name === container.name);
@@ -763,12 +700,13 @@ async function updateMarketAppLocked(
     installMeta.entrances = manifest.entrances?.map((entrance) => ({ ...entrance }));
     await transaction.mutate('publish-install-metadata', () => saveInstallMetadata(installMeta));
     // Provenance: what tag/branch/source is actually installed now.
-    if (channelCandidate) {
+    if (productRelease) {
+      const selected = productRelease;
       await transaction.mutate('publish-provenance', () => recordAppProvenance(appId, {
-        version: channelCandidate.version,
-        tag: channelCandidate.tag,
-        branch: channelCandidate.branch,
-        source: channelSourceUrl,
+        version: selected.release.version,
+        tag: selected.release.tag,
+        branch: null,
+        source: selected.repository,
       }));
     } else {
       await transaction.mutate('publish-provenance', () => recordCatalogAppUpdate(appId, targetVersion));

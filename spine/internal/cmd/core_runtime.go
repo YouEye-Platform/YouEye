@@ -66,7 +66,7 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 		}}
 	cache := systemupdate.NewRuntimeCoreArtifactCache(filepath.Join(checkpoint.DataRoot, "cache", "core-update"))
 	services := systemupdate.NativeCoreServices{Checkpoint: checkpoint, Cache: cache, CPAppDir: cfg.Deployment.ControlPanel.AppDir, UIAppDir: cfg.Deployment.UI.AppDir, CPPort: cfg.Deployment.ControlPanel.Port}
-	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, Client: cache.Client, CurrentSelection: currentCoreSelection}
+	authority := systemupdate.NativeCoreAuthority{Checkpoint: checkpoint, Client: cache.Client}
 	host := systemupdate.NewDefault()
 	r = systemupdate.NativeCoreRuntime{Root: checkpoint.Root, Host: host, Cache: cache, Services: services, Checkpoint: checkpoint,
 		Runner: systemupdate.CoreSystemdRunner{Root: checkpoint.Root, Executable: coordinator}, AuthorizeTarget: authority.AuthorizeTarget, AuthorizePrevious: authority.AuthorizePrevious,

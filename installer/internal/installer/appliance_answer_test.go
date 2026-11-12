@@ -12,9 +12,9 @@ import (
 
 func TestParseApplianceAnswerSupportsDHCPAndStaticIPv4(t *testing.T) {
 	for _, raw := range []string{
-		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"02:00:00:00:00:18"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1","dns":"192.0.2.53"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"02:00:00:00:00:18"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		`{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1","dns":"192.0.2.53"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
 	} {
 		if _, err := parseApplianceAnswer([]byte(raw)); err != nil {
 			t.Fatal(err)
@@ -73,15 +73,15 @@ func testApplianceAuthorizedKey(t *testing.T) string {
 
 func TestParseApplianceAnswerRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 	cases := map[string]string{
-		"missing transaction":   `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"IPv6 static":           `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"static","address":"2001:db8::1/64","gateway":"192.0.2.1","dns":"192.0.2.53"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"private key":           `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"authorized_keys":["-----BEGIN OPENSSH PRIVATE KEY-----"],"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"unconfirmed erase":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"missing transaction":   `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"IPv6 static":           `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"static","address":"2001:db8::1/64","gateway":"192.0.2.1","dns":"192.0.2.53"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"private key":           `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"authorized_keys":["-----BEGIN OPENSSH PRIVATE KEY-----"],"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"unconfirmed erase":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
 		"legacy typed phrase":   `{"schema":"youeye.appliance.answer.v1","operation":"reinstall","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","allow_nonblank":true,"confirmation":"ERASE DEADBEEF","network":{"mode":"dhcp"}}`,
-		"short transaction":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"uppercase transaction": `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789ABCDEF0123456789ABCDEF","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"multicast adapter":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"01:00:5e:00:00:01"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
-		"noncanonical adapter":  `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"02-00-00-00-00-18"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"short transaction":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"uppercase transaction": `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789ABCDEF0123456789ABCDEF","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"multicast adapter":     `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"01:00:5e:00:00:01"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
+		"noncanonical adapter":  `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp","adapter_mac":"02-00-00-00-00-18"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`,
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -93,14 +93,14 @@ func TestParseApplianceAnswerRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 }
 
 func TestParseApplianceAnswerRejectsTrailingJSON(t *testing.T) {
-	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"}} {,"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`
+	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"}} {,"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`
 	if _, err := parseApplianceAnswer([]byte(raw)); err == nil || !strings.Contains(err.Error(), "trailing") {
 		t.Fatalf("expected trailing JSON rejection, got %v", err)
 	}
 }
 
 func TestApplianceAnswerAcceptsPreserveReinstallWithoutEraseConfirmation(t *testing.T) {
-	raw := []byte(`{"schema":"youeye.appliance.answer.v1","operation":"preserve-reinstall","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"disk-1","network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`)
+	raw := []byte(`{"schema":"youeye.appliance.answer.v1","operation":"preserve-reinstall","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"disk-1","network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`)
 	answer, err := parseApplianceAnswer(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestApplianceAnswerAcceptsPreserveReinstallWithoutEraseConfirmation(t *test
 }
 
 func TestApplianceAnswerAcceptsOnlyV1(t *testing.T) {
-	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`
+	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`
 	if _, err := parseApplianceAnswer([]byte(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestApplianceAnswerAcceptsOnlyV1(t *testing.T) {
 }
 
 func TestCandidateCacheAnswerRequiresExactHash(t *testing.T) {
-	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false},"release_cache_sha256":"` + strings.Repeat("a", 64) + `"}`
+	raw := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false},"release_cache_sha256":"` + strings.Repeat("a", 64) + `"}`
 	if _, err := parseApplianceAnswer([]byte(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -137,17 +137,33 @@ func TestCandidateCacheAnswerRequiresExactHash(t *testing.T) {
 	}
 }
 
-func TestExactReleasePolicyRequiresCoreTag(t *testing.T) {
-	p := applianceReleasePolicy{Schema: releasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example.test/api/v1/repos/owner/YouEye/releases", Mode: "exact", ExactTag: "youeye-v0.6.0-dev.1", ManifestSHA256: strings.Repeat("a", 64), Freshness: "require-current"}
+func TestReleasePolicyRequiresCanonicalRepositoryAndChannel(t *testing.T) {
+	p := applianceReleasePolicy{Schema: releasePolicySchema, Repository: "https://forge.example.test/owner/YouEye", Channel: "dev", CoreManifestSHA256: strings.Repeat("a", 64)}
 	if err := validateApplianceReleasePolicy(p); err != nil {
 		t.Fatal(err)
 	}
-	p.ExactTag = "appliance-v0.5.23.0.4"
-	if err := validateApplianceReleasePolicy(p); err == nil {
-		t.Fatal("legacy appliance tag accepted")
+	if err := validateApplianceReleasePolicy(defaultApplianceReleasePolicy()); err != nil {
+		t.Fatalf("default policy rejected: %v", err)
 	}
-	p.ExactTag, p.Provider = "youeye-v0.6.0-dev.1", "unsupported"
-	if err := validateApplianceReleasePolicy(p); err == nil {
-		t.Fatal("unsupported custom selection accepted")
+	for name, mutate := range map[string]func(*applianceReleasePolicy){
+		"feature channel":    func(p *applianceReleasePolicy) { p.Channel = "feature" },
+		"empty channel":      func(p *applianceReleasePolicy) { p.Channel = "" },
+		"http repository":    func(p *applianceReleasePolicy) { p.Repository = "http://forge.example.test/owner/YouEye" },
+		"non-canonical .git": func(p *applianceReleasePolicy) { p.Repository = "https://forge.example.test/owner/YouEye.git" },
+		"API URL": func(p *applianceReleasePolicy) {
+			p.Repository = "https://forge.example.test/api/v1/repos/owner/YouEye/releases"
+		},
+		"uppercase digest":     func(p *applianceReleasePolicy) { p.CoreManifestSHA256 = strings.Repeat("A", 64) },
+		"unknown service mode": func(p *applianceReleasePolicy) { p.ServiceSelection = "latest" },
+	} {
+		q := p
+		mutate(&q)
+		if err := validateApplianceReleasePolicy(q); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	legacy := `{"schema":"youeye.appliance.answer.v1","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}}`
+	if _, err := parseApplianceAnswer([]byte(legacy)); err == nil {
+		t.Fatal("answer with the removed provider/track policy accepted")
 	}
 }

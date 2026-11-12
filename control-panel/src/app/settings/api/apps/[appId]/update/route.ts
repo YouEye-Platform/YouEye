@@ -160,14 +160,6 @@ export async function POST(
 
     let result;
     switch (appId) {
-      case 'spine':
-        await recordStatus(component, 'downloading', 20, 'Downloading Spine update...');
-        result = await spineClient.updateSelf();
-        break;
-      case 'control-panel':
-        await recordStatus(component, 'downloading', 20, 'Downloading Control Panel update...');
-        result = await spineClient.updateControl();
-        break;
       case 'incus':
         await recordStatus(component, 'installing', 30, 'Updating Incus...');
         result = await spineClient.updateIncus();

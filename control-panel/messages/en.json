@@ -2492,7 +2492,14 @@
     "m49923597aa88": "Collection on",
     "mb5be0abae288": "Collection off",
     "m391f41a0d510": "Choose whether supported apps add activity to your encrypted Timeline.",
-    "ma584ca624d6e": "Unlock encrypted history with your encryption secret"
+    "ma584ca624d6e": "Unlock encrypted history with your encryption secret",
+    "m627ce14f7b75": "Repository: {repository}",
+    "mb2585dff0f5d": "This box never downgrades. If you switch to a channel that is behind the installed version, it waits until that channel catches up.",
+    "m970dd0475e19": "This box now follows the {channel} channel.",
+    "m84d6732746f8": "The channel could not be changed.",
+    "m66de5771dc12": "The release channel is unavailable.",
+    "m4d6bfb83f08f": "The release host refused or rate-limited the request. YouEye retries automatically; check again in a few minutes.",
+    "ma28bdb69b7f1": "Branch {value0}"
   },
   "settingsNavigation": {
     "profile": "Profile",

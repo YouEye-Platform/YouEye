@@ -143,7 +143,7 @@ test('app and operation IDs are bounded and reject paths, malformed bodies and i
     assert.equal((await f.update(request({ appId }))).status, 400);
     assert.equal((await f.recovery(request({ appId, id }))).status, 400);
   }
-  for (const invalid of [null, [], 'text', { appId: 42 }, { appId: 'wiki', confirm_switch: 'yes' }]) {
+  for (const invalid of [null, [], 'text', { appId: 42 }]) {
     assert.equal((await f.update(request(invalid))).status, 400);
   }
   for (const invalidId of ['', '../journal', 'a'.repeat(500), otherId.toUpperCase(), 123]) {

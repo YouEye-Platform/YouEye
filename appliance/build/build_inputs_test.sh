@@ -30,15 +30,13 @@ expect_invalid 'del(.components.ui.source_date_epoch)' 'youeye.build-inputs.v1'
 expect_invalid '.components.spine.signature="x"' 'youeye.build-inputs.v1'
 expect_invalid '.version="0.6.0-Dev.1"' 'exact release version'
 expect_invalid '.debian_snapshot="latest"' 'snapshot'
-expect_invalid '.release_source="http://forge.example.test/example/YouEye"' 'release_source'
-expect_invalid '.release_source="https://user@forge.example.test/example/YouEye"' 'release_source'
-expect_invalid '.release_branch="x/../main"' 'release_branch'
-expect_invalid '.market.commit="abc"' '40-character'
-expect_invalid '.components.ui.tag="ui-v0.6.0-dev.1"' 'youeye-v<version>'
+expect_invalid '.release_source="https://forge.example.test/example/YouEye"' 'youeye.build-inputs.v1'
+expect_invalid '.market={}' 'youeye.build-inputs.v1'
+expect_invalid '.components.ui.source_tree="abc"' '40-character'
 expect_invalid '.components.control_panel.artifact_sha256=(.components.control_panel.artifact_sha256|ascii_upcase)' '64-character'
 expect_invalid '.components.spine.source_date_epoch=0' 'youeye.build-inputs.v1'
 for version in 0.5.37 0.5.37-beta.2 0.5.37-feature-one.2; do
-    jq --arg v "$version" '.version=$v | .components |= with_entries(.value.version=$v | .value.tag=("youeye-v"+$v))' "$valid" > "$work/inputs.json"
+    jq --arg v "$version" '.version=$v | .components |= with_entries(.value.version=$v)' "$valid" > "$work/inputs.json"
     build_inputs_validate "$work/inputs.json" || fail "canonical version rejected: $version: $build_inputs_error"
 done
 for version in 01.5.37 0.5.37-dev.0 0.5.37-dev.01 9007199254740992.0.0; do

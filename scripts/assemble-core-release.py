@@ -6,20 +6,20 @@ the exact sha256 of core-release.json, and every member artifact below it is
 bound by sha256 and size. Python 3 standard library only.
 
 Usage:
-  assemble-core-release.py --version 0.6.0-dev.1 --source https://github.com/OWNER/YouEye \
-      --branch dev --source-commit <40 hex> --channel dev --sequence 1 \
-      --minimum-release 0.6.0-dev.1 --artifacts DIR [--tag youeye-v0.6.0-dev.1] \
-      [--output DIR] [--previous-manifest-sha256 <64 hex>]
+  assemble-core-release.py --version 0.6.1-rc.1 --source-tree <40 hex> \
+      --minimum-release 0.6.1-rc.1 --artifacts DIR [--sequence N] [--output DIR]
 
 DIR must contain every asset listed in ROLES under its exact name. The tool
 writes DIR/core-release.json and DIR/SHA256SUMS unless --output names another
 directory. SHA256SUMS lists every asset including core-release.json and is for
 humans only; nothing verifies it.
 
+The document is host-independent: it names assets but never says where they
+live, and it carries the git tree (not a commit) the build came from. The same
+bytes are published unchanged on every host a release is promoted to.
+
 Member input_sha256 is sha256 of the UTF-8 text
-"youeye.core-member-input.v1\\n<role>\\n<source_commit>\\n<artifact sha256>\\n":
-it identifies the inputs of one member by the source commit it was built from
-and the exact bytes it produced.
+"youeye.core-member-input.v1\\n<role>\\n<source_tree>\\n<artifact sha256>\\n".
 """
 import argparse
 import hashlib
@@ -28,6 +28,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 SCHEMA = "youeye.core-release.v1"
 
@@ -55,7 +56,7 @@ DEPENDS_ON = {"cp": ["spine"], "ui": ["cp"]}
 COMPATIBILITY = {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1}
 
 VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$")
-COMMIT = re.compile(r"^[0-9a-f]{40}$")
+TREE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -72,50 +73,25 @@ def digest(path):
     return h.hexdigest()
 
 
-def check_channel(version, channel):
-    suffix = VERSION.fullmatch(version).group(4) or ""
-    if channel == "stable":
-        ok = suffix == ""
-    elif channel in ("beta", "alpha", "dev"):
-        ok = suffix == channel
-    elif channel == "feature":
-        ok = suffix not in ("", "beta", "alpha", "dev")
-    else:
-        ok = False
-    if not ok:
-        fail(f"version {version} does not match channel {channel}")
-
-
 def main():
     p = argparse.ArgumentParser(description="Write an unsigned youeye.core-release.v1 document.")
     p.add_argument("--version", required=True)
-    p.add_argument("--tag")
-    p.add_argument("--source", required=True, help="HTTPS repository URL, e.g. https://github.com/OWNER/YouEye")
-    p.add_argument("--branch", required=True)
-    p.add_argument("--source-commit", required=True)
-    p.add_argument("--channel", required=True, choices=["dev", "alpha", "beta", "stable", "feature"])
-    p.add_argument("--sequence", required=True, type=int)
+    p.add_argument("--source-tree", required=True, help="git tree id of the built source (git rev-parse <commit>^{tree})")
+    p.add_argument("--sequence", type=int, default=int(time.time()), help="default: now, in Unix seconds")
     p.add_argument("--minimum-release", required=True)
-    p.add_argument("--previous-manifest-sha256", default="")
     p.add_argument("--artifacts", required=True, type=Path, help="directory with every asset under its exact name")
     p.add_argument("--output", type=Path, help="output directory (default: --artifacts)")
     a = p.parse_args()
 
-    tag = a.tag or "youeye-v" + a.version
-    if not VERSION.fullmatch(a.version) or tag != "youeye-v" + a.version:
-        fail("version must be X.Y.Z[-token.N] and tag youeye-v<version>")
+    tag = "youeye-v" + a.version
+    if not VERSION.fullmatch(a.version):
+        fail("version must be X.Y.Z-rc.N")
     if not VERSION.fullmatch(a.minimum_release):
         fail("invalid --minimum-release")
-    check_channel(a.version, a.channel)
-    source = a.source.rstrip("/")
-    if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~-]+/[A-Za-z0-9._~-]+", source):
-        fail("--source must be https://host/owner/repository")
-    if not COMMIT.fullmatch(a.source_commit):
-        fail("--source-commit must be 40 lowercase hex characters")
+    if not TREE.fullmatch(a.source_tree):
+        fail("--source-tree must be 40 lowercase hex characters")
     if not 1 <= a.sequence <= 9007199254740991:
         fail("--sequence must be a positive integer")
-    if a.previous_manifest_sha256 and not DIGEST.fullmatch(a.previous_manifest_sha256):
-        fail("invalid --previous-manifest-sha256")
 
     def blob(name):
         path = a.artifacts / name
@@ -124,19 +100,16 @@ def main():
         size = path.stat().st_size
         if size <= 0:
             fail(f"artifact {name} is empty")
-        return {"name": name, "url": f"{source}/releases/download/{tag}/{name}", "sha256": digest(path), "size_bytes": size}
+        return {"name": name, "sha256": digest(path), "size_bytes": size}
 
     members = []
     for role, name in ROLES:
         artifact = blob(name)
-        text = f"youeye.core-member-input.v1\n{role}\n{a.source_commit}\n{artifact['sha256']}\n"
+        text = f"youeye.core-member-input.v1\n{role}\n{a.source_tree}\n{artifact['sha256']}\n"
         member = {
             "role": role,
             "build_version": a.version,
-            "source": source,
-            "branch": a.branch,
-            "source_commit": a.source_commit,
-            "tag": tag,
+            "source_tree": a.source_tree,
             "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "artifact": artifact,
         }
@@ -150,18 +123,13 @@ def main():
         "schema": SCHEMA,
         "version": a.version,
         "tag": tag,
-        "source": source,
-        "branch": a.branch,
-        "source_commit": a.source_commit,
-        "channel": a.channel,
+        "source_tree": a.source_tree,
         "sequence": a.sequence,
         "minimum_reader": 1,
         "authority": "digest",
         "compatibility": dict(COMPATIBILITY, minimum_release=a.minimum_release, capabilities=["core-release-v1"]),
         "members": members,
     }
-    if a.previous_manifest_sha256:
-        document["previous_manifest_sha256"] = a.previous_manifest_sha256
 
     output = a.output or a.artifacts
     output.mkdir(parents=True, exist_ok=True)

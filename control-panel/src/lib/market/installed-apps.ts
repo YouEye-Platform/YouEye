@@ -19,7 +19,6 @@ import { listInstalledApps, readInstallMetadata } from './metadata';
 import { fetchCatalog, fetchUpdatePlanMigrationsFromSource, resolveCatalogApp } from './catalog';
 import { parse as parseYAML } from 'yaml';
 import { describeUpdatePath, findApplicableMigrations, mergeMigrationSources } from './migration-planner';
-import { effectiveChannel, resolveCandidate, getReleaseChannelsConfig, APP_PREFIX } from '@/lib/updates/channels';
 import {
   catalogUpdateState,
   classifyAppUpdateRouting,
@@ -422,7 +421,6 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     console.error('[installed-apps] Failed to fetch catalog for update check:', err);
   }
 
-  const channelsConfig = await getReleaseChannelsConfig();
   const s = await loadStore();
   const installed = Object.values(s.apps);
   const baselines = new Map(installed.map(app => [app.appId, structuredClone(app)]));
@@ -469,7 +467,6 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
         entry: resolvedCatalog.entry,
         manifestIntegration: resolvedCatalog.manifest.integration,
       } : null,
-      hasExplicitChannelOverride: !!channelsConfig.apps?.[app.appId],
     });
     if (resolvedCatalog) {
       app.sourceId = resolvedCatalog.source.id;
@@ -482,34 +479,14 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       app.catalogKey = `${resolvedCatalog.source.id}:app:${app.appId}`;
     }
 
-    // ─── Channel-aware resolution ─────────────────────────────
-    // Resolve the app's effective channel and its candidate release. For a
-    // repo-type native app this drives both the catalog version and the
-    // update-vs-switch decision. External catalog records never enter this path.
-    let candidate: { version: string; branch: string; tag: string } | null = null;
-
-    if (routing.kind === 'channel') {
-      try {
-        const ch = await effectiveChannel(APP_PREFIX + app.appId, {
-          config: channelsConfig,
-          appDefaultSource: routing.channelDefaultSource,
-        });
-        // Native apps use bare tags (no component prefix). The effective
-        // channel already carries the right source (explicit override, else
-        // the app's own repo) — do not pass an override here.
-        candidate = await resolveCandidate(ch, null);
-        if (candidate) {
-          catalogVersion = candidate.version;
-        }
-      } catch (err) {
-        console.warn('[installed-apps] Channel resolution failed for', app.appId, err);
-      }
-    }
+    // A native app's catalog manifest is its release on the box's channel.
+    const candidate = routing.kind === 'channel' && resolvedCatalog?.manifest.version
+      ? { version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch }
+      : null;
 
     const availability = projectUpdateAvailability({
       routing,
       installedVersion: app.installedVersion,
-      installedBranch: app.installedBranch,
       catalogVersion,
       candidate,
     });

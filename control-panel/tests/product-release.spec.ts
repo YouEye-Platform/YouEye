@@ -1,64 +1,72 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { ProductAssetNotFound, acceptProductSequence, parseProductRelease, verifyProductRelease, identicalProductPayloads, loadProductRelease, loadProductBlob, installedProductProjection, productReceipt, verifyInstalledProductReceipt, type ProductBuild, type ProductRelease } from '../src/lib/releases/product-release';
+import { acceptProductSequence, parseProductRelease, productAssetURL, productTag, verifyProductRelease, identicalProductPayloads, loadProductBlob, installedProductProjection, productReceipt, verifyInstalledProductReceipt } from '../src/lib/releases/product-release';
+import { productFixture, tree } from './fixtures/release-fixtures';
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-test('unsigned release metadata preserves original Beta build identity and binds assets by digest', async () => {
+
+test('host-independent product releases bind assets by name and digest', async () => {
   for (const product of ['pointer','market','canvas','cinema','notes','search','translate','weather','wiki']) {
-    const source = `https://github.com/YouEye-Platform/${product}`, prefix = product === 'market' ? 'catalog-' : '';
-    const payload = Buffer.from('immutable source archive fixture');
-    const b: ProductBuild = {schema:'youeye.product-build.v1',product,kind:'source',build_version:'0.5.40-beta.1',source,branch:'beta',source_commit:'a'.repeat(40),tag:`${prefix}beta-v0.5.40-beta.1`,input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'source.tar.gz',assets:[]};
-    b.assets = [{name:b.primary,url:`${source}/releases/download/${b.tag}/${b.primary}`,sha256:sha(payload),size_bytes:payload.length}];
-    const buildRaw = Buffer.from(JSON.stringify(b));
-    const r: ProductRelease = {schema:'youeye.product-release.v1',product,version:'0.5.40',source,branch:'main',tag:`${prefix}v0.5.40`,channel:'stable',sequence:23,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
-    const raw = Buffer.from(JSON.stringify(r)), expected = {product,source,tag:r.tag};
-    const selected = verifyProductRelease(raw,expected);
-    assert.equal(selected.manifestSHA256,sha(raw));
-    assert.equal(installedProductProjection(selected).version,'0.5.40');
-    assert.equal(installedProductProjection(selected).build_version,'0.5.40-beta.1');
-    assert.deepEqual(Object.keys(productReceipt(selected)).sort(),['manifestBase64','manifestSHA256']);
-    assert.equal(verifyInstalledProductReceipt(productReceipt(selected),expected).manifestSHA256,sha(raw));
-    assert.throws(() => verifyInstalledProductReceipt({...productReceipt(selected),manifestSHA256:'f'.repeat(64)},expected),/digest differs/);
-    const later = {...r,version:'0.5.41',tag:`${prefix}v0.5.41`,sequence:24};
-    assert.ok(identicalProductPayloads(selected,verifyProductRelease(Buffer.from(JSON.stringify(later)),{...expected,tag:later.tag})));
-    assert.throws(() => verifyProductRelease(raw,{...expected,tag:'v0.0.0'}),/differs/);
-    assert.throws(() => parseProductRelease(Buffer.from(raw.toString().replace('"sequence":23','"sequence":22,"sequence":23'))),/Duplicate/);
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...r,extra:true}))),/fields/);
-    // Former signature fields are unknown now and never silently accepted.
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...r,build_signature_base64:''}))),/fields/);
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...r,build_manifest_base64:Buffer.from(JSON.stringify({...b,extra:true})).toString('base64')}))),/fields/);
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...r,authority:undefined}))),/identity/);
-    // No signature companion is required or fetched.
-    assert.equal((await loadProductRelease(['product-release.json'],expected,async name=>{assert.equal(name,'product-release.json');return raw}))?.manifestSHA256,sha(raw));
-    await assert.rejects(loadProductRelease(['product-release.json','product-release.json'],expected,async()=>raw),/Ambiguous/);
-    assert.equal(await loadProductRelease(['standalone.tar'],expected,async()=>{throw Error('legacy must not fetch')}),null);
-    assert.deepEqual(await loadProductBlob(selected,b.primary,async url=>{assert.equal(url,b.assets[0].url);return payload},1024),payload);
-    const calls: string[] = [];
-    assert.deepEqual(await loadProductBlob(selected,b.primary,async url=>{
-      calls.push(url);
-      if (calls.length === 1) throw new ProductAssetNotFound();
-      assert.equal(url,`${source}/releases/download/${r.tag}/blob-${sha(payload)}`);
-      return payload;
-    },1024),payload);
-    assert.equal(calls.length,2);
-    let forbiddenCalls = 0;
-    await assert.rejects(loadProductBlob(selected,b.primary,async()=>{forbiddenCalls++;throw Error('HTTP 403')},1024),/403/);
-    assert.equal(forbiddenCalls,1);
-    const floors = acceptProductSequence(undefined,selected);
-    assert.deepEqual(acceptProductSequence(floors,selected),floors);
-    assert.throws(()=>acceptProductSequence(floors,{...selected,manifestSHA256:'f'.repeat(64)}),/substitution/);
-    assert.throws(()=>acceptProductSequence(floors,{...selected,release:{...r,sequence:22}}),/rollback/);
-    assert.equal(Object.keys(acceptProductSequence(floors,{...selected,release:{...r,branch:'beta',sequence:1}})).length,2);
-    await assert.rejects(loadProductBlob(selected,b.primary,async()=>Buffer.alloc(payload.length),1024),/differs/);
+    const repository = `https://github.com/YouEye-Platform/${product}`;
+    const payload = Buffer.from('immutable archive fixture');
+    const f = productFixture(product,'0.6.1-rc.2',repository,{'standalone.tar':payload},{kind:'source'});
+    assert.equal(f.tag, product === 'market' ? 'catalog-v0.6.1-rc.2' : 'v0.6.1-rc.2');
+    const selected = verifyProductRelease(f.raw,{product,repository,tag:f.tag});
+    assert.equal(selected.manifestSHA256,sha(f.raw));
+    assert.equal(selected.repository,repository);
+    assert.equal(installedProductProjection(selected).version,'0.6.1-rc.2');
+    assert.equal(installedProductProjection(selected).source_tree,tree);
+    assert.equal(Object.hasOwn(installedProductProjection(selected),'channel'),false);
+    assert.deepEqual(Object.keys(productReceipt(selected)).sort(),['manifestBase64','manifestSHA256','repository']);
+    assert.equal(verifyInstalledProductReceipt(productReceipt(selected),{product}).manifestSHA256,sha(f.raw));
+    assert.throws(() => verifyInstalledProductReceipt({...productReceipt(selected),manifestSHA256:'f'.repeat(64)},{product}),/digest differs/);
+    assert.throws(() => verifyProductRelease(f.raw,{product,repository,tag:'v0.0.0'}),/differs/);
+    assert.throws(() => verifyProductRelease(f.raw,{product,repository:`${repository}/`,tag:f.tag}),/canonical/);
+    // The same bytes are valid in any repository: documents carry no host.
+    assert.equal(verifyProductRelease(f.raw,{product,repository:'https://git.example.test/team/X',tag:f.tag}).manifestSHA256,sha(f.raw));
+    const relabelled = {...f.release,version:'0.6.1-rc.3',tag:productTag(product,'0.6.1-rc.3'),sequence:1762950001};
+    assert.ok(identicalProductPayloads(selected,verifyProductRelease(Buffer.from(JSON.stringify(relabelled)),{product,repository,tag:relabelled.tag})));
+    const rebuilt = productFixture(product,'0.6.1-rc.3',repository,{'standalone.tar':Buffer.from('other')},{kind:'source'});
+    assert.equal(identicalProductPayloads(selected,verifyProductRelease(rebuilt.raw,{product,repository,tag:rebuilt.tag})),false);
+    assert.equal(productAssetURL(selected,selected.build.assets[0]),`${repository}/releases/download/${encodeURIComponent(f.tag)}/standalone.tar`);
+    assert.deepEqual(await loadProductBlob(selected,'standalone.tar',async url=>{assert.equal(url,productAssetURL(selected,selected.build.assets[0]));return payload},1024),payload);
+    await assert.rejects(loadProductBlob(selected,'standalone.tar',async()=>Buffer.alloc(payload.length),1024),/differs/);
+    await assert.rejects(loadProductBlob(selected,'missing.tar',async()=>payload,1024),/no missing.tar/);
   }
 });
 
-test('a native product needs only its standalone archive', () => {
-  const source = 'https://forge.example.test/team/Notes', tag = 'v1.0.0-alpha.1';
-  const build: ProductBuild = {schema:'youeye.product-build.v1',product:'notes',kind:'native',build_version:'1.0.0-alpha.1',source,branch:'main',source_commit:'a'.repeat(40),tag,input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'standalone.tar',
-    assets:[{name:'standalone.tar',url:`${source}/releases/download/${tag}/standalone.tar`,sha256:'d'.repeat(64),size_bytes:10}]};
-  const release = (b: ProductBuild) => Buffer.from(JSON.stringify({schema:'youeye.product-release.v1',product:'notes',version:'1.0.0-alpha.1',source,branch:'main',tag,channel:'alpha',sequence:1,minimum_reader:1,authority:'digest',build_manifest_base64:Buffer.from(JSON.stringify(b)).toString('base64')}));
-  assert.equal(verifyProductRelease(release(build),{product:'notes',source,tag}).build.assets.length,1);
-  assert.throws(() => verifyProductRelease(release({...build,primary:'other.tar',assets:[{...build.assets[0],name:'other.tar',url:build.assets[0].url.replace('standalone.tar','other.tar')}]}),{product:'notes',source,tag}),/standalone.tar/);
+test('per-host, branch and channel fields are rejected', () => {
+  const f = productFixture('notes','0.6.1-rc.1','https://git.example.test/team/Notes',{'standalone.tar':Buffer.from('x')});
+  for (const field of ['source','branch','channel','source_commit','previous_manifest_sha256']) {
+    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,[field]:'x'}))),/fields/,field);
+    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,[field]:'x'})).toString('base64')}))),/fields/,field);
+  }
+  for (const field of ['asset_source','asset_tag']) {
+    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,[field]:'x'})).toString('base64')}))),/fields/,field);
+  }
+  assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,assets:[{...f.build.assets[0],url:'https://x.test/a/b/releases/download/v1/standalone.tar'}]})).toString('base64')}))),/fields/);
+  // Branch-prefixed tags are gone; the tag never names a channel.
+  assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,tag:'dev-v0.6.1-rc.1'}))),/identity/);
+  assert.throws(() => parseProductRelease(Buffer.from(f.raw.toString().replace('"sequence":1762950000','"sequence":1,"sequence":1762950000'))),/Duplicate/);
+  assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,source_tree:'b'.repeat(40)}))),/another build/);
+  const native = productFixture('notes','0.6.1-rc.1','https://git.example.test/team/Notes',{'other.tar':Buffer.from('x')},{primary:'other.tar'});
+  assert.throws(() => parseProductRelease(native.raw),/standalone.tar/);
+});
+
+test('replay floors are per product and refuse older publications (no downgrade)', () => {
+  const repository = 'https://git.example.test/team/Notes';
+  const current = verifyProductRelease(productFixture('notes','0.6.1-rc.2',repository,{'standalone.tar':Buffer.from('a')},{sequence:20}).raw,{product:'notes',repository,tag:'v0.6.1-rc.2'});
+  const older = verifyProductRelease(productFixture('notes','0.6.1-rc.1',repository,{'standalone.tar':Buffer.from('b')},{sequence:10}).raw,{product:'notes',repository,tag:'v0.6.1-rc.1'});
+  const floors = acceptProductSequence(undefined,current);
+  assert.deepEqual(Object.keys(floors),['notes']);
+  assert.deepEqual(acceptProductSequence(floors,current),floors);
+  assert.throws(() => acceptProductSequence(floors,older),/older notes release .*catch up/);
+  assert.throws(() => acceptProductSequence(floors,{...current,manifestSHA256:'f'.repeat(64)}),/older/);
+  // The same document from another host (a promoted copy) is the same release.
+  const promoted = verifyProductRelease(current.raw,{product:'notes',repository:'https://github.com/YouEye-Platform/Notes',tag:'v0.6.1-rc.2'});
+  assert.deepEqual(acceptProductSequence(floors,promoted),floors);
+  // A hotfix of an older line published later (higher sequence) is still older.
+  const hotfix = verifyProductRelease(productFixture('notes','0.6.1-rc.1',repository,{'standalone.tar':Buffer.from('c')},{sequence:99}).raw,{product:'notes',repository,tag:'v0.6.1-rc.1'});
+  assert.throws(() => acceptProductSequence(floors,hotfix),/older notes release/);
 });

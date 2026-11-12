@@ -30,7 +30,7 @@ interface BackupRecord {
   reason?: "manual" | "scheduled" | "pre-restore";
   sizeBytes?: number;
   verifiedAt?: string;
-  source?: { image_version?: string; release_branch?: string };
+  source?: { image_version?: string };
   compatibility?: { compatible: boolean; summary: string };
   error?: string;
 }

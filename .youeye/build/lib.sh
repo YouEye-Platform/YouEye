@@ -16,7 +16,8 @@ youeye_prepare_contract() {
     YOUEYE_SOURCE_DIR="${YOUEYE_SOURCE_DIR:-$(cd -- "$script_dir/../.." && pwd)}"
     YOUEYE_OUTPUT_DIR="${YOUEYE_OUTPUT_DIR:-}"
     YOUEYE_WORK_DIR="${YOUEYE_WORK_DIR:-}"
-    YOUEYE_SOURCE_COMMIT="${YOUEYE_SOURCE_COMMIT:-}"
+    YOUEYE_SOURCE_TREE="${YOUEYE_SOURCE_TREE:-}"
+    YOUEYE_VERSION="${YOUEYE_VERSION:-}"
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-}"
 
     [[ -d $YOUEYE_SOURCE_DIR ]] || youeye_build_fail 'YOUEYE_SOURCE_DIR must be an existing source directory'
@@ -24,24 +25,32 @@ youeye_prepare_contract() {
         youeye_build_fail 'YOUEYE_OUTPUT_DIR must be a dedicated non-root directory'
     [[ -n $YOUEYE_WORK_DIR && $YOUEYE_WORK_DIR != / && $YOUEYE_WORK_DIR != "$YOUEYE_SOURCE_DIR" ]] || \
         youeye_build_fail 'YOUEYE_WORK_DIR must be a dedicated non-root directory'
+    # The full build version (X.Y.Z-rc.N) comes from the publish tool; the
+    # source tree only holds the line in VERSION.
+    [[ $YOUEYE_VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$ ]] || \
+        youeye_build_fail 'YOUEYE_VERSION must be the build version X.Y.Z-rc.N'
+    if [[ -f $YOUEYE_SOURCE_DIR/VERSION && ${YOUEYE_VERSION%%-*} != "$(tr -d '[:space:]' < "$YOUEYE_SOURCE_DIR/VERSION")" ]]; then
+        youeye_build_fail "YOUEYE_VERSION $YOUEYE_VERSION is not a build of the line in VERSION"
+    fi
 
-    local git_commit
-    if git_commit="$(git -C "$YOUEYE_SOURCE_DIR" rev-parse HEAD 2>/dev/null)"; then
-        if [[ -n $YOUEYE_SOURCE_COMMIT && $YOUEYE_SOURCE_COMMIT != "$git_commit" ]]; then
-            youeye_build_fail 'YOUEYE_SOURCE_COMMIT does not match the checked-out source commit'
+    # A build is identified by its git tree, the same on every host.
+    local git_tree
+    if git_tree="$(git -C "$YOUEYE_SOURCE_DIR" rev-parse 'HEAD^{tree}' 2>/dev/null)"; then
+        if [[ -n $YOUEYE_SOURCE_TREE && $YOUEYE_SOURCE_TREE != "$git_tree" ]]; then
+            youeye_build_fail 'YOUEYE_SOURCE_TREE does not match the checked-out source tree'
         fi
-        YOUEYE_SOURCE_COMMIT="$git_commit"
+        YOUEYE_SOURCE_TREE="$git_tree"
         if [[ -z $SOURCE_DATE_EPOCH ]]; then
-            SOURCE_DATE_EPOCH="$(git -C "$YOUEYE_SOURCE_DIR" show -s --format=%ct "$git_commit")"
+            SOURCE_DATE_EPOCH="$(git -C "$YOUEYE_SOURCE_DIR" show -s --format=%ct HEAD)"
         fi
     fi
-    [[ $YOUEYE_SOURCE_COMMIT =~ ^[0-9a-f]{40}$ ]] || \
-        youeye_build_fail 'YOUEYE_SOURCE_COMMIT must be the exact 40-character source commit'
+    [[ $YOUEYE_SOURCE_TREE =~ ^[0-9a-f]{40}$ ]] || \
+        youeye_build_fail 'YOUEYE_SOURCE_TREE must be the exact 40-character source tree'
     [[ $SOURCE_DATE_EPOCH =~ ^[1-9][0-9]*$ ]] || \
         youeye_build_fail 'SOURCE_DATE_EPOCH must be a positive integer'
 
     install -d -m 0755 "$YOUEYE_OUTPUT_DIR" "$YOUEYE_WORK_DIR"
-    export YOUEYE_SOURCE_DIR YOUEYE_OUTPUT_DIR YOUEYE_WORK_DIR YOUEYE_SOURCE_COMMIT SOURCE_DATE_EPOCH
+    export YOUEYE_SOURCE_DIR YOUEYE_OUTPUT_DIR YOUEYE_WORK_DIR YOUEYE_SOURCE_TREE YOUEYE_VERSION SOURCE_DATE_EPOCH
     export LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 }
 

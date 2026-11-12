@@ -16,7 +16,7 @@ import (
 )
 
 func TestCoreCacheRequiresCapacityAndCompleteDigestBoundBytes(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +24,13 @@ func TestCoreCacheRequiresCapacityAndCompleteDigestBoundBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Source = "https://forge.example/owner/YouEye"
+	repository := useBoxRepository(t)
 	files := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source = r.Source
 		blob := func(name string, data []byte) releasecache.CoreBlob {
-			b := releasecache.CoreBlob{Name: name, URL: m.Source + "/releases/download/" + m.Tag + "/" + m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
-			files[b.URL] = data
+			b := releasecache.CoreBlob{Name: m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
+			files[releasecache.AssetURL(repository, r.Tag, b)] = data
 			return b
 		}
 		artifact := []byte(`{"fixture":"` + m.Role + `"}`)

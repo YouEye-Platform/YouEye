@@ -84,13 +84,8 @@ test('id mapping: definition id "postgres" maps to market system id "postgresql"
   assert.match(d, /id: 'postgres',[\s\S]*?marketSystemId: 'postgresql'/);
 });
 
-test('UI update restores persistent database and identity environment before every restart', () => {
+test('the UI is never updated by the Control Panel; it updates with the System release', () => {
   const updater = read('src/lib/apps/lxd-updater.ts');
-  assert.match(updater, /PERSISTENT_UI_ENV_PATH = '\/var\/lib\/youeye\/ui\/\.env'/);
-  assert.match(updater, /await incusUploadFile\(containerName, '\/etc\/youeye-ui\.env', environment, \{ mode: '0600' \}\)/);
-  const repair = updater.indexOf('await restorePersistentUIEnvironment(appDef.id, containerName)');
-  const noOpRestart = updater.indexOf('if (releaseIsCurrent)');
-  const updateRestart = updater.indexOf('// 11. Start service');
-  assert.ok(repair > 0 && repair < noOpRestart && repair < updateRestart,
-    'persistent UI environment repair must precede no-op and real update restarts');
+  assert.match(updater, /if \(appDef\.id !== 'pointer'\) \{\s*throw new Error\(`\$\{appDef\.displayName\} updates with the System release\.`\);/);
+  assert.doesNotMatch(updater, /PERSISTENT_UI_ENV_PATH|getLatestRelease|release_branch/);
 });

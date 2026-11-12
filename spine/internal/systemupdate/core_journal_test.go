@@ -42,15 +42,25 @@ func (e *coreTestExecutor) Observe(_ context.Context, _ CoreJournal, s CoreStep)
 	return CoreActionObservation{State: "unknown"}, nil
 }
 
+const testBoxRepository = "https://forge.example/owner/YouEye"
+
+// useBoxRepository points CoreBlobURL at the fixture repository.
+func useBoxRepository(t *testing.T) string {
+	t.Helper()
+	old := BoxRepository
+	BoxRepository = func() (string, error) { return testBoxRepository, nil }
+	t.Cleanup(func() { BoxRepository = old })
+	return testBoxRepository
+}
+
 func coreJournalFixture(t *testing.T) (CoreManager, *coreTestExecutor, releasecache.CoreRelease) {
 	t.Helper()
-	source := "https://github.com/YouEye-Platform/YouEye"
-	r := releasecache.CoreRelease{Schema: releasecache.CoreReleaseSchema, Version: "0.5.37", Tag: "youeye-v0.5.37", Source: source, Branch: "main", SourceCommit: strings.Repeat("a", 40), Channel: "stable", Sequence: 1, MinimumReader: 1, Authority: releasecache.CoreReleaseAuthority, Compatibility: releasecache.CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
+	r := releasecache.CoreRelease{Schema: releasecache.CoreReleaseSchema, Version: "0.5.37", Tag: "youeye-v0.5.37", SourceTree: strings.Repeat("a", 40), Sequence: 1, MinimumReader: 1, Authority: releasecache.CoreReleaseAuthority, Compatibility: releasecache.CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
 	for _, role := range []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"} {
 		blob := func(name string) releasecache.CoreBlob {
-			return releasecache.CoreBlob{Name: name, URL: source + "/releases/download/youeye-v0.5.37/" + name, SHA256: strings.Repeat("c", 64), SizeBytes: 42}
+			return releasecache.CoreBlob{Name: name, SHA256: strings.Repeat("c", 64), SizeBytes: 42}
 		}
-		member := releasecache.CoreMember{Role: role, BuildVersion: r.Version, Source: source, Branch: "main", SourceCommit: r.SourceCommit, Tag: r.Tag, InputSHA256: strings.Repeat("d", 64), Artifact: blob(role + ".tar")}
+		member := releasecache.CoreMember{Role: role, BuildVersion: r.Version, SourceTree: r.SourceTree, InputSHA256: strings.Repeat("d", 64), Artifact: blob(role + ".tar")}
 		if role == "appliance" {
 			inputs := blob("build-inputs.json")
 			member.BuildInputs = &inputs
@@ -81,7 +91,6 @@ func coreJournalFixture(t *testing.T) (CoreManager, *coreTestExecutor, releaseca
 	r.Version = "0.5.38"
 	r.Tag = "youeye-v0.5.38"
 	r.Sequence = 2
-	r.PreviousManifestSHA256 = digest
 	// The default fixture changes CP. Promotion-only tests explicitly retain all
 	// original members; a version label alone no longer installs services.
 	for i := range r.Members {

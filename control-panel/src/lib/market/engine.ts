@@ -102,7 +102,6 @@ import {
 import { injectCaddyRootCA, stageCaddyTrustBundle } from './caddy-ca';
 import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge, pushConnectionsToUI } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
-import { getMarketSource } from './source';
 import { getUserById } from '@/lib/identity/store';
 import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import {
@@ -733,7 +732,7 @@ function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMe
     sha256: artifact.artifactSHA256,
     bytes: artifact.artifactBytes,
     verification: artifact.verification.status,
-    productReleaseSHA256: artifact.verification.status === 'product-release' ? artifact.verification.releaseSHA256 : undefined,
+    productReleaseSHA256: artifact.verification.releaseSHA256,
   }));
   return artifacts.length > 0 ? artifacts : undefined;
 }
@@ -1294,16 +1293,6 @@ function buildOCIManifest(
   };
 }
 
-// ─── Release Repo Helpers ─────────────────────────────────
-
-function repoPartsFromSource(repo: string, fallbackOrg: string): { org: string; repo: string } {
-  const parts = repo.split('/');
-  if (parts.length >= 2) {
-    return { org: parts[0], repo: parts[parts.length - 1] };
-  }
-  return { org: fallbackOrg, repo: parts[0] };
-}
-
 // ─── Main Install Function (v2: unified) ──────────────────
 
 export async function installApp(
@@ -1377,19 +1366,17 @@ export async function installApp(
     });
 
     try {
-      const products = [...stagedNativeArtifacts.byContainerName.values()].filter(a => a.productRelease);
+      const products = [...stagedNativeArtifacts.byContainerName.values()];
       if (products.length) {
-        const { downloadMarketProductBlob, verifyMarketProductInstallContract } = await import('./native-artifact');
+        // The manifest of a native app is its release's installer contract.
+        const { verifyMarketProductInstallContract } = await import('./native-artifact');
+        const { downloadProductAsset } = await import('../releases/channel-index');
         const { verifyInstalledProductReceipt } = await import('../releases/product-release');
-        const versions = new Set<string>();
         for (const artifact of products) {
-          const selected = verifyInstalledProductReceipt(artifact.productRelease!,{product:appId,source:artifact.sourceRepo,tag:artifact.tag});
-          const contract = await downloadMarketProductBlob(selected,'youeye-app.yaml');
-          await verifyMarketProductInstallContract(contract, selected, manifest, config);
-          versions.add(selected.release.version);
+          const selected = verifyInstalledProductReceipt(artifact.productRelease,{product:appId});
+          const contract = await downloadProductAsset(selected,'youeye-app.yaml');
+          await verifyMarketProductInstallContract(contract, selected, manifest);
         }
-        if (versions.size !== 1 || products.length !== stagedNativeArtifacts.byContainerName.size) throw new Error('Application has conflicting product release identities');
-        manifest = {...manifest,version:[...versions][0]};
       }
       try {
         onEvent({ step: 0, totalSteps, status: 'running', message: 'Reserving isolated /27 app network...' });
@@ -1759,20 +1746,7 @@ async function installAppLocked(
             await adoptRestoredLXDContainer(lxdSpec, appNIC);
           } else {
             if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${containerSpec.name}`);
-            const marketSource = await getMarketSource();
-            const gitInfo = repoPartsFromSource(source.repo, marketSource.organization);
-            await deployMarketLXDContainer(
-              lxdSpec,
-            {
-              spineSocketPath: '/var/run/youeye/youeye.sock',
-              giteaBaseURL: marketSource.base_url,
-              giteaOrg: gitInfo.org,
-              giteaRepo: gitInfo.repo,
-              tagPrefix: source.tagPrefix,
-            },
-            stagedArtifact,
-            appNIC,
-            );
+            await deployMarketLXDContainer(lxdSpec, {}, stagedArtifact, appNIC);
           }
 
           // Write env file to LXD container
@@ -2170,7 +2144,7 @@ async function installAppLocked(
     if (!artifact.productRelease) continue;
     const { acceptProductSequence, verifyInstalledProductReceipt } = await import('../releases/product-release');
     meta.productReleaseFloors = acceptProductSequence(meta.productReleaseFloors,
-      verifyInstalledProductReceipt(artifact.productRelease, {product:appId,source:artifact.sourceRepo,tag:artifact.releaseTag}));
+      verifyInstalledProductReceipt(artifact.productRelease, {product:appId}));
   }
   await saveInstallMetadata(meta);
   finalMetadata = meta;

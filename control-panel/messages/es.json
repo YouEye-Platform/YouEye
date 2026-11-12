@@ -2492,7 +2492,14 @@
     "m49923597aa88": "Recopilación activada",
     "mb5be0abae288": "Recopilación desactivada",
     "m391f41a0d510": "Elige si las aplicaciones compatibles añaden actividad a tu cronología cifrada.",
-    "ma584ca624d6e": "Desbloquea el historial cifrado con tu secreto de cifrado"
+    "ma584ca624d6e": "Desbloquea el historial cifrado con tu secreto de cifrado",
+    "m627ce14f7b75": "Repositorio: {repository}",
+    "mb2585dff0f5d": "Este equipo nunca vuelve a una versión anterior. Si cambias a un canal que va por detrás de la versión instalada, espera a que ese canal la alcance.",
+    "m970dd0475e19": "Este equipo sigue ahora el canal {channel}.",
+    "m84d6732746f8": "No se pudo cambiar el canal.",
+    "m66de5771dc12": "El canal de versiones no está disponible.",
+    "m4d6bfb83f08f": "El servidor de versiones rechazó o limitó la solicitud. YouEye lo reintenta automáticamente; vuelve a comprobarlo en unos minutos.",
+    "ma28bdb69b7f1": "Rama {value0}"
   },
   "settingsNavigation": {
     "profile": "Perfil",

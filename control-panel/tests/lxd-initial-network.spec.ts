@@ -52,17 +52,19 @@ function fixture(mode = 'normal', system = true) {
       applyStaticIP: async () => { if (mode === 'static-error') throw Error('static configuration rejected'); },
     },
     './oci-deployer': { containerExists: async () => false },
-    './release-resolver': {
-      infrastructureChannelSource: (source: any, repository: string) => ({ source, repository }),
-      resolveInfrastructureStandaloneRelease: async () => ({ tag: 'v0.1.0', version: '0.1.0', url: 'https://example.test/standalone.tar' }),
+    '../releases/core-release': {
+      selectedCoreRole: () => ({ release: { tag: 'youeye-v0.1.0-rc.1' }, member: { build_version: '0.1.0-rc.1', artifact: { name: 'ui-standalone.tar', sha256: 'a'.repeat(64), size_bytes: 1 } } }),
+      canonicalReleaseRepository: (repository: string) => repository,
+      releaseAssetURL: (repository: string, tag: string, blob: { name: string }) => `${repository}/releases/download/${tag}/${blob.name}`,
     },
+    '../spine/client': { spineClient: { getReleaseChannel: async () => ({ repository: 'https://example.test/owner/YouEye', channel: 'dev' }) } },
     'fixture-install': { install: async () => { if (mode === 'install-error') throw Error('install rejected'); installed = true; return 'a'.repeat(64); } },
   };
   const api = load('src/lib/infrastructure/lxd-deployer.ts', mocks, '\ninstallNodeAndApp = require("fixture-install").install;');
   return { effects, get instance() { return instance; }, get watchdogStarts() { return watchdogStarts; },
     run: () => api.deployLXDContainer({ name: system ? 'pointer' : 'example', containerName: name, volumes: [
       { kind: 'custom', pool: 'data', source: 'retained', container: '/data' },
-    ] }, { giteaBaseURL: 'https://github.com', giteaOrg: 'example', giteaRepo: 'example' },
+    ] }, {},
     system ? undefined : { eth0: { type: 'nic', network: 'app-bridge', name: 'eth0' } }),
   };
 }

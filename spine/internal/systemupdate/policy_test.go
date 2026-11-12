@@ -10,38 +10,56 @@ import (
 func TestReleasePolicyStrictValidation(t *testing.T) {
 	digest := strings.Repeat("c", 64)
 	path := filepath.Join(t.TempDir(), "policy.json")
-	if err := os.WriteFile(path, []byte(`{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"branch","branch":"f-test","core_manifest_sha256":"`+digest+`","freshness":"require-current"}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"`+digest+`"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	policy, err := LoadReleasePolicy(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.Track != "branch" || policy.Branch != "f-test" || policy.Provider != "github" {
+	if policy.Repository != "https://github.com/YouEye-Platform/YouEye" || policy.Channel != "stable" {
 		t.Fatalf("unexpected policy: %+v", policy)
 	}
-	policy.Branch = "codex/phase1-repository-builds"
-	if err := policy.Validate(); err != nil {
-		t.Fatalf("safe multi-segment branch was rejected: %v", err)
+	for _, channel := range []string{"dev", "alpha", "beta", "stable"} {
+		p := policy
+		p.Channel = channel
+		if err := p.Validate(); err != nil {
+			t.Fatalf("channel %s rejected: %v", channel, err)
+		}
 	}
-	// Every installation records the exact core-release.json it accepted.
-	withoutCore := policy
-	withoutCore.CoreManifestSHA256 = ""
-	if err := withoutCore.Validate(); err == nil {
-		t.Fatal("policy without its accepted core-release.json digest was accepted")
+	for name, change := range map[string]func(*ReleasePolicy){
+		"no core digest":           func(p *ReleasePolicy) { p.CoreManifestSHA256 = "" },
+		"upper-case digest":        func(p *ReleasePolicy) { p.CoreManifestSHA256 = strings.Repeat("C", 64) },
+		"unknown channel":          func(p *ReleasePolicy) { p.Channel = "main" },
+		"empty channel":            func(p *ReleasePolicy) { p.Channel = "" },
+		"non-canonical repository": func(p *ReleasePolicy) { p.Repository = "https://GitHub.com/YouEye-Platform/YouEye.git" },
+		"http repository":          func(p *ReleasePolicy) { p.Repository = "http://github.com/YouEye-Platform/YouEye" },
+		"bad service selection":    func(p *ReleasePolicy) { p.ServiceSelection = "latest" },
+		"wrong schema":             func(p *ReleasePolicy) { p.Schema = "youeye.release-policy.v2" },
+	} {
+		p := policy
+		change(&p)
+		if err := p.Validate(); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
 	}
-	exact := ReleasePolicy{Schema: ReleasePolicySchema, Provider: "github", Mode: "exact", ExactTag: "appliance-v0.5.23.0.4", ManifestSHA256: strings.Repeat("a", 64), CoreManifestSHA256: digest, Freshness: "require-current"}
-	if err := exact.Validate(); err == nil {
-		t.Fatal("legacy appliance tag accepted as an exact System release")
-	}
-	exact.ExactTag = "youeye-v0.6.0"
-	if err := exact.Validate(); err != nil {
+	saved := filepath.Join(t.TempDir(), "saved.json")
+	policy.Channel = "beta"
+	if err := SaveReleasePolicy(saved, policy); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","core_manifest_sha256":"`+digest+`","freshness":"require-current","unknown":true}`), 0600); err != nil {
-		t.Fatal(err)
+	if again, err := LoadReleasePolicy(saved); err != nil || again != policy {
+		t.Fatal(again, err)
 	}
-	if _, err := LoadReleasePolicy(path); err == nil {
-		t.Fatal("unknown release-policy field was accepted")
+	for _, raw := range []string{
+		`{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"` + digest + `","unknown":true}`,
+		`{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","core_manifest_sha256":"` + digest + `"}`,
+	} {
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadReleasePolicy(path); err == nil {
+			t.Fatal("unknown or removed release-policy field was accepted", raw)
+		}
 	}
 }

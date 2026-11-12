@@ -186,15 +186,16 @@ export async function prepareRetainedAdoption(
     const record = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
     const artifact = metadata.nativeArtifacts?.[0];
     if (!artifact) throw new Error('Retained native manifest provenance is unavailable');
-    const { parseMarketRepoURL } = await import('@/lib/market/source');
-    const { fetchRepoFile } = await import('@/lib/market/catalog');
+    if (!artifact.productRelease) throw new Error('Retained native release receipt is unavailable');
+    const { verifyInstalledProductReceipt } = await import('@/lib/releases/product-release');
+    const { downloadProductAsset } = await import('@/lib/releases/channel-index');
     const { parseManifest } = await import('@/lib/market/parser');
     const { verifyRetainedNativeManifestUpdate } = await import('./retained-native-manifest');
-    const source = parseMarketRepoURL(artifact.sourceRepo);
-    const yaml = await fetchRepoFile(source.organization, source.repository!, 'youeye-app.yaml', artifact.releaseTag, source);
+    const selected = verifyInstalledProductReceipt(artifact.productRelease, { product: metadata.appId });
+    const yaml = (await downloadProductAsset(selected, 'youeye-app.yaml')).toString('utf8');
     verifyRetainedNativeManifestUpdate(metadata, config, parseManifest(yaml), yaml, record);
     const recovered = { ...metadata, manifestPath: 'youeye-app.yaml',
-      manifestRepo: `${source.organization}/${source.repository}`, manifestBranch: artifact.releaseTag,
+      manifestRepo: selected.repository, manifestBranch: selected.release.tag,
       manifestDigest: config.manifestDigest };
     validateRetainedManifest(recovered, manifest, config);
     await saveRetainedInstallMetadata(recovered);

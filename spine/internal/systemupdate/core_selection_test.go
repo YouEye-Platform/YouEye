@@ -24,7 +24,7 @@ func writeCoreSelectionFixture(t *testing.T, root string, raw []byte, policy Rel
 }
 
 func TestCoreSelectionBindsAcceptedDigestAndExactPolicy(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +32,11 @@ func TestCoreSelectionBindsAcceptedDigestAndExactPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "https://forge.example/owner/YouEye"
-	r.Source, r.Branch, r.Channel, r.Version, r.Tag = source, "Team/Fix", "feature", "0.5.38-worker-abcd.1", "youeye-v0.5.38-worker-abcd.1"
+	r.Version, r.Tag = "0.6.1-rc.2", "youeye-v0.6.1-rc.2"
 	raw, _ = json.Marshal(r)
 	digest := fmt.Sprintf("%x", sha256.Sum256(raw))
 	root := t.TempDir()
-	policy := ReleasePolicy{Schema: ReleasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example/api/v1/repos/owner/YouEye/releases", Mode: "track", Track: "branch", Branch: "Team/Fix", CoreManifestSHA256: digest, Freshness: "require-current", ServiceSelection: "current"}
+	policy := ReleasePolicy{Schema: ReleasePolicySchema, Repository: "https://forge.example/owner/YouEye", Channel: "dev", CoreManifestSHA256: digest, ServiceSelection: "current"}
 	writeCoreSelectionFixture(t, root, raw, policy)
 	selection, actual, err := ReadCoreSelection(root)
 	if err != nil || actual != digest {
@@ -46,9 +45,10 @@ func TestCoreSelectionBindsAcceptedDigestAndExactPolicy(t *testing.T) {
 	if err := ValidateCorePolicy(policy, selection, digest); err != nil {
 		t.Fatal(err)
 	}
-	policy.Branch = "team/fix"
-	if err := ValidateCorePolicy(policy, selection, digest); err == nil {
-		t.Fatal("case-folded policy selected another branch")
+	other := policy
+	other.CoreManifestSHA256 = strings.Repeat("a", 64)
+	if err := ValidateCorePolicy(other, selection, digest); err == nil {
+		t.Fatal("policy for another document accepted")
 	}
 	// Any change to the recorded document breaks the accepted digest.
 	r.Members[0].Artifact.SHA256 = strings.Repeat("f", 64)
@@ -59,18 +59,10 @@ func TestCoreSelectionBindsAcceptedDigestAndExactPolicy(t *testing.T) {
 	if _, _, err := ReadCoreSelection(root); err == nil || !strings.Contains(err.Error(), "accepted release digest") {
 		t.Fatal("tampered selection accepted", err)
 	}
-	policy = ReleasePolicy{Schema: ReleasePolicySchema, Provider: "github", Mode: "exact", ExactTag: "youeye-v0.5.38", ManifestSHA256: strings.Repeat("a", 64), Freshness: "require-current"}
-	if err := policy.Validate(); err == nil {
-		t.Fatal("core exact selection lacks its separate manifest digest")
-	}
-	policy.CoreManifestSHA256 = digest
-	if err := policy.Validate(); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,21 +70,11 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := r.Source
-	r.Source = "https://forge.example/owner/YouEye"
-	for i := range r.Members {
-		m := &r.Members[i]
-		m.Source = r.Source
-		for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
-			if b != nil {
-				b.URL = strings.Replace(b.URL, original, r.Source, 1)
-			}
-		}
-	}
-	image := testApplianceManifest("0.5.37", r.SourceCommit)
-	image.ReleaseSet = &appliance.ReleaseSet{Source: r.Source, Branch: "main", Fallback: []string{}}
+	media, _ := r.Member("appliance")
+	image := testApplianceManifest(media.BuildVersion, r.SourceTree)
+	image.ReleaseSet = &appliance.ReleaseSet{}
 	for _, m := range r.Members {
-		c := appliance.ComponentRelease{Version: m.BuildVersion, Tag: m.Tag, SourceCommit: m.SourceCommit, ArtifactSHA256: m.Artifact.SHA256}
+		c := appliance.ComponentRelease{Version: m.BuildVersion, SourceTree: m.SourceTree, ArtifactSHA256: m.Artifact.SHA256}
 		switch m.Role {
 		case "spine":
 			image.ReleaseSet.Spine = c
@@ -102,7 +84,7 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 			image.ReleaseSet.UI = c
 		}
 	}
-	bundle, _ := json.Marshal(exactBundleManifest{Schema: "youeye.appliance.manifest.v1", ImageVersion: image.ImageVersion, SourceCommit: image.SourceCommit, ReleaseSet: *image.ReleaseSet})
+	bundle, _ := json.Marshal(exactBundleManifest{Schema: "youeye.appliance.manifest.v1", ImageVersion: image.ImageVersion, SourceTree: image.SourceTree, ReleaseSet: *image.ReleaseSet})
 	for i := range r.Members {
 		if r.Members[i].Role == "appliance" {
 			m := &r.Members[i]
@@ -115,7 +97,7 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	policy := ReleasePolicy{Schema: ReleasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example/api/v1/repos/owner/YouEye/releases", Mode: "exact", ExactTag: r.Tag, ManifestSHA256: fmt.Sprintf("%x", sha256.Sum256(bundle)), CoreManifestSHA256: digest, Freshness: "require-current"}
+	policy := ReleasePolicy{Schema: ReleasePolicySchema, Repository: "https://forge.example/owner/YouEye", Channel: "stable", CoreManifestSHA256: digest}
 	writeCoreSelectionFixture(t, root, raw, policy)
 	imageRaw, _ := json.Marshal(image)
 	for name, bytes := range map[string][]byte{"image.json": imageRaw, "bundle.json": bundle} {
@@ -127,7 +109,7 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 		return VerifyCoreInstalledMedia(policy, root, filepath.Join(root, "image.json"), filepath.Join(root, "bundle.json"))
 	}
 	result, err := check()
-	if err != nil || result.SelectedTag != "youeye-v0.5.38" || result.CurrentImage != "0.5.37" {
+	if err != nil || result.SelectedTag != r.Tag || result.CurrentImage != media.BuildVersion {
 		t.Fatal(result, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "bundle.json"), append(bundle, ' '), 0600); err != nil {

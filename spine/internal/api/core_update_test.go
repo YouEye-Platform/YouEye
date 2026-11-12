@@ -2,8 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/youeye-platform/YouEye/releasecache"
-	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,10 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/youeye-platform/YouEye/releasecache"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
+
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
 
-func TestCoreStatusAndComponentUpdateFailClosedOnDamagedReceipt(t *testing.T) {
+func TestCoreStatusFailsClosedOnDamagedReceipt(t *testing.T) {
 	s := NewServer("test", config.Default())
 	s.coreStatePath = t.TempDir()
 	s.runtimeDetect = applianceTestRuntime
@@ -26,25 +27,17 @@ func TestCoreStatusAndComponentUpdateFailClosedOnDamagedReceipt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.coreStatePath, "committed.json"), []byte(`{"broken":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for name, handler := range map[string]http.HandlerFunc{"status": s.handleCoreUpdateStatus, "control": s.handleUpdateControl} {
-		t.Run(name, func(t *testing.T) {
-			method := http.MethodGet
-			if name == "control" {
-				method = http.MethodPost
-			}
-			w := httptest.NewRecorder()
-			handler(w, httptest.NewRequest(method, "/", nil))
-			if w.Code != http.StatusConflict {
-				t.Fatal(w.Code, w.Body.String())
-			}
-		})
+	w = httptest.NewRecorder()
+	s.handleCoreUpdateStatus(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }
 
 func TestCoreStatusDoesNotExposeRawMachineIdentityOrImplyFreshObservation(t *testing.T) {
 	s := NewServer("test", config.Default())
 	s.coreStatePath = t.TempDir()
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +72,7 @@ func TestCoreStatusDoesNotExposeRawMachineIdentityOrImplyFreshObservation(t *tes
 	}
 	// The read-only System source comes from the installer-recorded policy.
 	s.coreBootstrapPath = t.TempDir()
-	policy, _ := json.Marshal(systemupdate.ReleasePolicy{Schema: systemupdate.ReleasePolicySchema, Provider: "github", Mode: "track", Track: "stable", CoreManifestSHA256: digest, Freshness: "require-current"})
+	policy, _ := json.Marshal(systemupdate.ReleasePolicy{Schema: systemupdate.ReleasePolicySchema, Repository: "https://forge.example/owner/YouEye", Channel: "beta", CoreManifestSHA256: digest})
 	for name, data := range map[string][]byte{"core-release.json": raw, "release-policy.json": policy} {
 		if err := os.WriteFile(filepath.Join(s.coreBootstrapPath, name), data, 0600); err != nil {
 			t.Fatal(err)
@@ -90,7 +83,7 @@ func TestCoreStatusDoesNotExposeRawMachineIdentityOrImplyFreshObservation(t *tes
 	var status struct {
 		Selection map[string]string `json:"selection"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Selection["source"] != release.Source || status.Selection["branch"] != release.Branch || status.Selection["tag"] != "" {
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Selection["repository"] != "https://forge.example/owner/YouEye" || status.Selection["channel"] != "beta" || len(status.Selection) != 2 {
 		t.Fatal("policy selection not reported", w.Body.String(), err)
 	}
 	w = httptest.NewRecorder()

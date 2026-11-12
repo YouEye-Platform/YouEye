@@ -1,70 +1,113 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { acceptCatalogRelease, catalogDependencySource, readAcceptedCatalog, verifyCatalogFile } from '../src/lib/market/catalog-release';
-import { buildMarketRawURL, parseMarketRepoURL, publicNativeManifestRepo } from '../src/lib/market/source';
-import { catalogRepoReferenceToUrl } from '../src/lib/market/update-routing';
-import { verifyProductRelease, type ProductBuild, type ProductRelease } from '../src/lib/releases/product-release';
-import { selectInfrastructureStandaloneRelease } from '../src/lib/infrastructure/release-resolver';
+import { dirname, join } from 'node:path';
+import { acceptCatalogRelease, readAcceptedCatalog, readCatalogTar, refreshOfficialCatalog, verifyCatalogFile, verifyCatalogSnapshot } from '../src/lib/market/catalog-release';
+import { buildMarketRawURL, officialMarketSource, parseMarketRepoURL } from '../src/lib/market/source';
+import { verifyProductRelease } from '../src/lib/releases/product-release';
+import { fakeReleaseHost, productFixture, sha } from './fixtures/release-fixtures';
 
-const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
-test('Market accepts unsigned labels over the same catalog and retains offline bytes and replay floor', async () => {
-  const directory = await mkdtemp(join(tmpdir(),'youeye-market-release-'));
+const marketRepo = 'https://git.example.test/owner/YE-AppMarket';
+const longPath = `apps/${'very-long-directory-name-'.repeat(5)}/youeye-app.yaml`;
+
+async function catalogBuild(format: 'pax' | 'gnu' | 'ustar', files: Record<string, string>) {
+  const root = await mkdtemp(join(tmpdir(), 'youeye-catalog-tar-'));
   try {
-    const source = parseMarketRepoURL('https://github.com/YouEye-Platform/Market');
-    const catalog = 'apps: []\n', file = 'id: example\n';
-    const snapshot = Buffer.from(JSON.stringify({apiVersion:'youeye.market/catalog-snapshot/v1',catalog:{sha256:`sha256:${sha(catalog)}`},content:{files:[{path:'catalog.yaml',sha256:`sha256:${sha(catalog)}`},{path:'apps/example.yaml',sha256:`sha256:${sha(file)}`}]}}));
-    const build: ProductBuild = {schema:'youeye.product-build.v1',product:'market',kind:'catalog',build_version:'1.2.3',source:source.repo_url,branch:'main',source_commit:'a'.repeat(40),tag:'catalog-v1.2.3',input_sha256:'b'.repeat(64),contract_sha256:sha(snapshot),primary:'catalog-snapshot.json',assets:[{name:'catalog-snapshot.json',url:`${source.repo_url}/releases/download/catalog-v1.2.3/catalog-snapshot.json`,sha256:sha(snapshot),size_bytes:snapshot.length}]};
-    const buildRaw = Buffer.from(JSON.stringify(build));
-    const release = (version: string, sequence: number) => {
-      const r: ProductRelease = {schema:'youeye.product-release.v1',product:'market',version,source:source.repo_url,branch:'main',tag:`catalog-v${version}`,channel:'stable',sequence,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
-      return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'market',source:source.repo_url,tag:r.tag});
-    };
-    assert.equal(await readAcceptedCatalog(source,directory),null);
-    await acceptCatalogRelease(source,release('1.2.3',3),snapshot,catalog,directory);
-    await acceptCatalogRelease(source,release('1.2.4',4),snapshot,catalog,directory);
-    const accepted = (await readAcceptedCatalog(source,directory))!;
-    assert.equal(accepted.catalog,catalog);
-    assert.equal(accepted.selected.release.version,'1.2.4');
-    assert.equal(accepted.selected.build.build_version,'1.2.3');
-    assert.equal(accepted.selected.build.source_commit,build.source_commit);
-    // A release mirror cannot reinterpret the original catalog's relative
-    // dependency repositories as repositories hosted on that mirror.
-    const mirror = parseMarketRepoURL('https://forge.example.test/team/Market', {id:'alpha-market'});
-    const dependencies = catalogDependencySource(mirror, accepted);
-    assert.equal(dependencies.repo_url,source.repo_url);
-    assert.equal(dependencies.id,mirror.id);
-    assert.equal(buildMarketRawURL(dependencies,'YouEye-Platform','Notes','youeye-app.yaml','main'),
-      'https://raw.githubusercontent.com/YouEye-Platform/Notes/main/youeye-app.yaml');
-    assert.equal(publicNativeManifestRepo(dependencies,'YouEye-Platform/Notes','potemsla/YE-App-Notes'),'YouEye-Platform/Notes');
-    const appRepo = `${dependencies.base_url}/YouEye-Platform/Notes`;
-    assert.equal(catalogRepoReferenceToUrl(appRepo,mirror.repo_url),appRepo);
-    assert.equal(catalogDependencySource(mirror,null),mirror,'legacy/private catalogs keep their selected host');
-    assert.equal(catalogDependencySource(source,accepted),source);
-    verifyCatalogFile(accepted.snapshot,'apps/example.yaml',file);
-    assert.throws(()=>verifyCatalogFile(accepted.snapshot,'apps/example.yaml','changed'),/differs/);
-    await assert.rejects(acceptCatalogRelease(source,release('1.2.3',3),snapshot,catalog,directory),/rollback/);
-    await assert.rejects(acceptCatalogRelease(source,release('1.2.5',4),snapshot,catalog,directory),/substitution/);
-    await assert.rejects(acceptCatalogRelease(source,release('1.2.5',5),snapshot,catalog+'changed',directory),/differs/);
-    await assert.rejects(acceptCatalogRelease(source,release('1.2.5',5),Buffer.from('{}'),catalog,directory),/differs/);
-    assert.equal((await readAcceptedCatalog(source,directory))?.selected.release.version,'1.2.4');
-    assert.equal(await readAcceptedCatalog({...source,branch:'beta'},directory),null);
-    // Offline operation still rechecks the exact retained document digest.
-    const stored = (await readdir(directory)).find(name => name.endsWith('.json'))!;
-    const saved = JSON.parse(await readFile(join(directory,stored),'utf8'));
-    saved.receipt.manifestSHA256 = 'f'.repeat(64);
-    await writeFile(join(directory,stored),JSON.stringify(saved),{mode:0o600});
-    await assert.rejects(readAcceptedCatalog(source,directory),/digest differs/);
-  } finally { await rm(directory,{recursive:true,force:true}); }
+    for (const [path, body] of Object.entries(files)) {
+      await mkdir(join(root, 'tree', dirname(path)), { recursive: true });
+      await writeFile(join(root, 'tree', path), body);
+    }
+    execFileSync('tar', [`--format=${format}`, '-cf', join(root, 'catalog.tar'), '-C', join(root, 'tree'), ...Object.keys(files)]);
+    return await readFile(join(root, 'catalog.tar'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+}
+
+function snapshotOf(files: Record<string, string>) {
+  return Buffer.from(JSON.stringify({ apiVersion: 'youeye.market/catalog-snapshot/v1', catalog: { sha256: `sha256:${sha(files['catalog.yaml'])}` },
+    content: { files: Object.entries(files).map(([path, body]) => ({ path, sha256: `sha256:${sha(body)}` })) } }));
+}
+
+function marketRelease(version: string, sequence: number, snapshot: Buffer, tar: Buffer) {
+  const f = productFixture('market', version, marketRepo, { 'catalog-snapshot.json': snapshot, 'catalog.tar': tar }, { kind: 'catalog', primary: 'catalog.tar', sequence, contract: snapshot });
+  return { f, selected: verifyProductRelease(f.raw, { product: 'market', repository: marketRepo, tag: f.tag }) };
+}
+
+const files = { 'catalog.yaml': 'apps:\n  - id: notes\n    integration: native\n', 'apps/memos/youeye-app.yaml': 'id: memos\n', 'apps/memos/icon.svg': '<svg/>', [longPath]: 'id: long\n' };
+
+test('catalog.tar holds exactly the snapshot files, each hash-checked', async () => {
+  for (const format of ['pax', 'gnu'] as const) {
+    const tar = await catalogBuild(format, files);
+    const snapshot = snapshotOf(files);
+    const { selected } = marketRelease('0.6.1-rc.1', 1, snapshot, tar);
+    const parsed = readCatalogTar(tar, verifyCatalogSnapshot(selected, snapshot));
+    assert.deepEqual([...parsed.keys()].sort(), Object.keys(files).sort(), format);
+    assert.equal(parsed.get(longPath)?.toString(), 'id: long\n');
+    // A missing, extra or changed file is refused.
+    const { [longPath]: _dropped, ...fewer } = files;
+    assert.throws(() => readCatalogTar(tar, verifyCatalogSnapshot(marketRelease('0.6.1-rc.1', 1, snapshotOf(fewer), tar).selected, snapshotOf(fewer))), /differs/);
+    const changed = await catalogBuild(format, { ...files, 'apps/memos/youeye-app.yaml': 'id: evil\n' });
+    assert.throws(() => readCatalogTar(changed, verifyCatalogSnapshot(selected, snapshot)), /differs/);
+    const more = await catalogBuild(format, { ...files, 'extra.yaml': 'x' });
+    assert.throws(() => readCatalogTar(more, verifyCatalogSnapshot(selected, snapshot)), /differs/);
+  }
 });
 
-test('catalog discovery selects private Alpha labels and excludes drafts and public Alpha', () => {
-  const source = parseMarketRepoURL('https://forge.example.test/team/Market');
-  const releases = ['1.2.3-alpha.1','1.2.3-alpha.2'].map(version=>({tag_name:`catalog-v${version}`,draft:version.endsWith('.2'),assets:[{name:'product-release.json',browser_download_url:`${source.repo_url}/releases/download/catalog-v${version}/product-release.json`}]}));
-  assert.equal(selectInfrastructureStandaloneRelease(source,releases,'catalog','main')?.version,'1.2.3-alpha.1');
-  const publicSource = parseMarketRepoURL('https://github.com/YouEye-Platform/Market');
-  assert.equal(selectInfrastructureStandaloneRelease(publicSource,releases,'catalog','main'),null);
+test('the official Market follows the channel index and keeps its accepted catalog offline', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'youeye-market-release-'));
+  const saved = globalThis.fetch;
+  try {
+    const tar = await catalogBuild('pax', files);
+    const snapshot = snapshotOf(files);
+    const one = marketRelease('0.6.1-rc.1', 10, snapshot, tar);
+    const host = fakeReleaseHost(new Map([
+      [`${marketRepo}/releases/download/${one.f.tag}/catalog-snapshot.json`, snapshot],
+      [`${marketRepo}/releases/download/${one.f.tag}/catalog.tar`, tar],
+    ]));
+    globalThis.fetch = host.fetch;
+    assert.equal(await readAcceptedCatalog(directory), null);
+    const accepted = await refreshOfficialCatalog({ directory, resolve: async () => one.selected });
+    assert.equal(accepted.selected.release.version, '0.6.1-rc.1');
+    assert.equal(accepted.files.get('catalog.yaml')?.toString(), files['catalog.yaml']);
+    assert.ok(host.requests.every((url) => url.startsWith(`${marketRepo}/releases/download/`)), host.requests.join('\n'));
+    verifyCatalogFile(accepted.snapshot, 'apps/memos/youeye-app.yaml', files['apps/memos/youeye-app.yaml']);
+    assert.throws(() => verifyCatalogFile(accepted.snapshot, 'apps/memos/youeye-app.yaml', 'changed'), /differs/);
+    assert.deepEqual((await readdir(directory)).filter((n) => n.endsWith('.tar')), [`catalog-${sha(tar)}.tar`]);
+
+    // Same release again: nothing is downloaded. Offline: the accepted catalog stays.
+    const before = host.requests.length;
+    assert.equal((await refreshOfficialCatalog({ directory, resolve: async () => one.selected })).selected.manifestSHA256, one.selected.manifestSHA256);
+    assert.equal((await refreshOfficialCatalog({ directory, resolve: async () => null })).selected.manifestSHA256, one.selected.manifestSHA256);
+    assert.equal(host.requests.length, before);
+
+    // An older catalog on the channel is never adopted (the box waits).
+    const older = marketRelease('0.6.0-rc.9', 5, snapshot, tar);
+    await assert.rejects(refreshOfficialCatalog({ directory, resolve: async () => older.selected }), /older market release/);
+    await assert.rejects(acceptCatalogRelease(older.selected, snapshot, tar, directory), /older/);
+
+    // A newer release replaces the accepted tar.
+    const next = { ...files, 'catalog.yaml': `${files['catalog.yaml']}# next\n` };
+    const nextTar = await catalogBuild('gnu', next), nextSnapshot = snapshotOf(next);
+    const two = marketRelease('0.6.1-rc.2', 11, nextSnapshot, nextTar);
+    await acceptCatalogRelease(two.selected, nextSnapshot, nextTar, directory);
+    assert.equal((await readAcceptedCatalog(directory))?.selected.release.version, '0.6.1-rc.2');
+    assert.deepEqual((await readdir(directory)).filter((n) => n.endsWith('.tar')), [`catalog-${sha(nextTar)}.tar`]);
+    await assert.rejects(acceptCatalogRelease(two.selected, nextSnapshot, tar, directory), /differs from its release digest/);
+  } finally {
+    globalThis.fetch = saved;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('custom Market sources read raw files from their branch, never a forge API', () => {
+  assert.equal(officialMarketSource().kind, 'channel');
+  assert.throws(() => buildMarketRawURL(officialMarketSource(), 'a', 'b', 'catalog.yaml', 'main'), /catalog release/);
+  const github = parseMarketRepoURL('https://github.com/example/Community-Market', { branch: 'main' });
+  assert.equal(buildMarketRawURL(github, 'example', 'Community-Market', 'apps/x/youeye-app.yaml', 'main'),
+    'https://raw.githubusercontent.com/example/Community-Market/main/apps/x/youeye-app.yaml');
+  const forgejo = parseMarketRepoURL('https://forge.example.test/team/Market', { branch: 'release/one' });
+  assert.equal(buildMarketRawURL(forgejo, 'team', 'Market', 'catalog.yaml', forgejo.branch),
+    'https://forge.example.test/team/Market/raw/branch/release/one/catalog.yaml');
+  assert.throws(() => parseMarketRepoURL('http://forge.example.test/team/Market'), /https/);
 });

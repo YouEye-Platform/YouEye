@@ -23,7 +23,7 @@ async function pointerProvenance(): Promise<CoreProvenance | null> {
   const {productRuntimeIdentity} = await import('../releases/product-projection');
   if (await productRuntimeIdentity('youeye-pointer') !== state.installed!.runtimeUUID) throw new Error('Pointer runtime differs from accepted release');
   const r = selected.release;
-  return {version:r.version,tag:r.tag,branch:r.branch,source:r.source,
+  return {version:r.version,tag:r.tag,branch:null,source:selected.repository,
     artifact_sha256:selected.build.assets.find(a=>a.name === 'standalone.tar')!.sha256,updated_at:state.installed!.acceptedAt || ''};
 }
 

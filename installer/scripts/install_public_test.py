@@ -74,119 +74,132 @@ class BootstrapTests(unittest.TestCase):
 
     def setUp(self):
         Handler.routes = {}
-        self.releases = []
         self.documents = {}
         self.case = Path(tempfile.mkdtemp(prefix="case-", dir=self.work.name))
 
-    def publish(self, version, branch, prerelease=False, draft=False, installer=INSTALLER, served=None):
+    def publish(self, version, installer=INSTALLER, served=None):
         tag = "youeye-v" + version
         base = "/owner/YouEye/releases/download/" + tag + "/"
-        channel = version.split("-", 1)[1].split(".")[0] if "-" in version else "stable"
         members = []
         for role in ROLES:
             name = "youeye-installer-linux-amd64" if role == "installer" else role + ".bin"
             body = installer if role == "installer" else role.encode()
-            member = {"role": role, "build_version": version, "source": self.source, "branch": branch,
-                      "source_commit": "a" * 40, "tag": tag, "input_sha256": "c" * 64,
-                      "artifact": {"name": name, "url": self.source + "/releases/download/" + tag + "/" + name,
-                                   "sha256": hashlib.sha256(body).hexdigest(), "size_bytes": len(body)},
-                      "depends_on": {"cp": ["spine"], "ui": ["cp"]}.get(role, [])}
+            member = {"role": role, "build_version": version, "source_tree": "a" * 40, "input_sha256": "c" * 64,
+                      "artifact": {"name": name, "sha256": hashlib.sha256(body).hexdigest(), "size_bytes": len(body)}}
+            if role in ("cp", "ui"):
+                member["depends_on"] = {"cp": ["spine"], "ui": ["cp"]}[role]
             if role == "appliance":
-                member["build_inputs"] = dict(member["artifact"], name="build-inputs.json",
-                                              url=self.source + "/releases/download/" + tag + "/build-inputs.json")
+                member["build_inputs"] = dict(member["artifact"], name="build-inputs.json")
             members.append(member)
             Handler.routes[base + name] = (200, served if served is not None and role == "installer" else body, {})
-        document = {"schema": "youeye.core-release.v1", "version": version, "tag": tag, "source": self.source,
-                    "branch": branch, "source_commit": "a" * 40, "channel": channel, "sequence": 1,
-                    "minimum_reader": 1, "authority": "digest",
-                    "compatibility": {"state_min": 1, "state_max": 1, "data_min": 1, "data_max": 1,
-                                      "minimum_release": "0.5.37", "capabilities": ["core-release-v1"]},
+        document = {"schema": "youeye.core-release.v1", "version": version, "tag": tag, "source_tree": "a" * 40,
+                    "sequence": 1, "minimum_reader": 1, "authority": "digest",
+                    "compatibility": {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1,
+                                      "minimum_release": version, "capabilities": ["core-release-v1"]},
                     "members": members}
         raw = json.dumps(document, indent=2).encode() + b"\n"
         self.documents[tag] = raw
         Handler.routes[base + "core-release.json"] = (200, raw, {})
-        self.releases.append({"tag_name": tag, "draft": draft, "prerelease": prerelease,
-                              "published_at": "2026-11-11T00:00:00Z",
-                              "assets": [{"name": "core-release.json", "size": len(raw),
-                                          "browser_download_url": self.source + "/releases/download/" + tag + "/core-release.json"}]})
         return tag
 
+    def index(self, channel, tag, repository=None):
+        """Point channel's index at tag."""
+        entry = {"repository": repository or self.source, "tag": tag, "version": tag[len("youeye-v"):],
+                 "document": "core-release.json", "sha256": hashlib.sha256(self.documents[tag]).hexdigest()}
+        body = json.dumps({"schema": "youeye.channel.v1", "channel": channel, "published_at": "2026-11-12T00:00:00Z",
+                           "products": {"youeye": entry}}).encode()
+        Handler.routes["/owner/YouEye/releases/download/channel-%s/index.json" % channel] = (200, body, {})
+
     def run_bootstrap(self, *args):
-        api = "/api/v1/repos/owner/YouEye/releases"
-        Handler.routes[api + "?limit=50&page=1"] = (200, json.dumps(self.releases).encode(), {})
-        Handler.routes[api + "?limit=50&page=2"] = (200, b"[]", {})
         log = self.case / "launch.log"
         if log.exists():
             log.unlink()
         env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], SSL_CERT_FILE=str(self.cert),
-                   YOUEYE_INSTALLER_CACHE=str(self.case / "cache"), LAUNCH_LOG=str(log))
-        for name in ["INSTALLER_REPOSITORY", "INSTALLER_CHANNEL", "INSTALLER_TAG", "INSTALLER_RELEASE_BRANCH"]:
+                   YOUEYE_INSTALLER_CACHE=str(self.case / "cache"), LAUNCH_LOG=str(log), YOUEYE_BOOTSTRAP_RETRY_SECONDS="0")
+        for name in ["INSTALLER_REPOSITORY", "INSTALLER_CHANNEL", "INSTALLER_TAG", "INSTALLER_CORE_MANIFEST_SHA256"]:
             env.pop(name, None)
         result = subprocess.run(["sh", str(SCRIPT), "--repository", self.source, *args], env=env, capture_output=True, text=True, timeout=60)
         launched = log.read_text().strip() if log.exists() else None
         return result, launched
 
-    def pinned(self, channel, tag, branch=None):
+    def pinned(self, channel, tag):
         """The Installer arguments for exactly the verified release."""
         digest = hashlib.sha256(self.documents[tag]).hexdigest()
-        selection = "--repository %s --channel %s" % (self.source, channel)
-        if branch:
-            selection += " --release-branch " + branch
-        return selection + " --release-tag %s --core-manifest-sha256 %s" % (tag, digest)
+        return "--repository %s --channel %s --release-tag %s --core-manifest-sha256 %s" % (self.source, channel, tag, digest)
 
     def test_static_contract(self):
         text = SCRIPT.read_text()
         subprocess.run(["sh", "-n", str(SCRIPT)], check=True)
         self.assertIn('INSTALLER_REPOSITORY:-https://github.com/YouEye-Platform/YouEye', text)
         self.assertIn('INSTALLER_CHANNEL:-stable', text)
-        self.assertIn("https://api.github.com/repos", text)
-        self.assertIn("/api/v1/repos", text)
-        self.assertIn("objects.githubusercontent.com", text)
-        # Retired signing vocabulary, spelled in pieces so repository greps stay clean.
-        for retired in ["git.potemk" + ".in", "openssl", "pkey" + "utl", "." + "sig", "SHA256SUMS", "GENERATED", "distribution", "trust_key"]:
+        self.assertIn("https://releases.youeye.me", text)
+        self.assertIn("channel-", text)
+        # No release-listing API, no private hosts, no retired signing vocabulary
+        # (spelled in pieces so repository greps stay clean).
+        for retired in ["api.github" + ".com", "/api/v1/" + "repos", "per_page", "git.potemk" + ".in", "potem" + "sla",
+                        "openssl", "pkey" + "utl", "." + "sig", "SHA256SUMS", "trust_key", "--release-branch"]:
             self.assertNotIn(retired, text)
 
-    def test_stable_selects_newest_release_on_main(self):
-        self.publish("0.6.0", "main")
-        self.publish("0.6.2", "main")
-        self.publish("0.7.0-dev.1", "dev", prerelease=True)
-        self.publish("0.9.0", "main", draft=True)
-        self.publish("0.8.0", "other")
-        result, launched = self.run_bootstrap("--vmid", "166")
+    def test_channel_index_selects_its_release(self):
+        old, new = self.publish("0.6.1-rc.1"), self.publish("0.6.1-rc.2")
+        self.index("dev", new)
+        self.index("alpha", old)
+        result, launched = self.run_bootstrap("--channel", "dev", "--vmid", "166")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("youeye-v0.6.2", result.stdout)
-        self.assertEqual(launched, "proxmox --vmid 166 " + self.pinned("stable", "youeye-v0.6.2"))
+        self.assertIn(new, result.stdout)
+        self.assertEqual(launched, "proxmox --vmid 166 " + self.pinned("dev", new))
+        result, launched = self.run_bootstrap("--channel=alpha", "--silent")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(launched, "proxmox --silent " + self.pinned("alpha", old))
 
-    def test_dev_selects_newest_dev_prerelease(self):
-        self.publish("0.6.0", "main")
-        self.publish("0.7.0-dev.2", "dev", prerelease=True)
-        self.publish("0.7.0-dev.10", "dev", prerelease=True)
-        self.publish("0.7.0-beta.1", "dev", prerelease=True)
+    def test_missing_channel_index_is_reported(self):
+        self.publish("0.6.1-rc.1")
+        result, launched = self.run_bootstrap("--channel", "beta")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no channel index yet", result.stderr)
+        self.assertIsNone(launched)
+
+    def test_index_of_another_repository_is_refused(self):
+        tag = self.publish("0.6.1-rc.1")
+        self.index("dev", tag, repository="https://localhost:%d/other/YouEye" % self.port)
         result, launched = self.run_bootstrap("--channel", "dev")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("youeye-v0.7.0-dev.10", result.stdout)
-        self.assertEqual(launched, "proxmox " + self.pinned("development", "youeye-v0.7.0-dev.10"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not name a YouEye release of this repository", result.stderr)
+        self.assertIsNone(launched)
 
-    def test_branch_selects_named_branch(self):
-        self.publish("0.6.0", "main")
-        self.publish("0.7.0-feature.3", "team/fix", prerelease=True)
-        result, launched = self.run_bootstrap("--channel=branch", "--silent", "--release-branch", "team/fix")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(launched, "proxmox --silent " + self.pinned("branch", "youeye-v0.7.0-feature.3", "team/fix"))
+    def test_document_must_match_index_digest(self):
+        tag = self.publish("0.6.1-rc.1")
+        self.index("dev", tag)
+        Handler.routes["/owner/YouEye/releases/download/%s/core-release.json" % tag] = (200, self.documents[tag] + b" ", {})
+        result, launched = self.run_bootstrap("--channel", "dev")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected", result.stderr)
+        self.assertIsNone(launched)
 
-    def test_exact_passes_tag_and_document_digest(self):
-        tag = self.publish("0.6.0-dev.4", "dev", prerelease=True)
+    def test_rate_limit_is_reported_as_such(self):
+        tag = self.publish("0.6.1-rc.1")
+        Handler.routes["/owner/YouEye/releases/download/channel-dev/index.json"] = (429, b"", {})
+        result, launched = self.run_bootstrap("--channel", "dev")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rate-limited", result.stderr)
+        self.assertNotIn("download failed", result.stderr)
+        self.assertIsNone(launched)
+        self.assertTrue(tag)
+
+    def test_exact_release_passes_tag_and_document_digest(self):
+        tag = self.publish("0.6.1-rc.4")
         digest = hashlib.sha256(self.documents[tag]).hexdigest()
-        result, launched = self.run_bootstrap("--channel", "exact", "--release-tag", tag)
+        result, launched = self.run_bootstrap("--channel", "beta", "--release-tag", tag, "--core-manifest-sha256", digest)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(launched, "proxmox --repository %s --channel exact --release-tag %s --core-manifest-sha256 %s" % (self.source, tag, digest))
-        result, launched = self.run_bootstrap("--channel", "exact", "--release-tag", tag, "--core-manifest-sha256", "0" * 64)
+        self.assertEqual(launched, "proxmox " + self.pinned("beta", tag))
+        result, launched = self.run_bootstrap("--release-tag", tag, "--core-manifest-sha256", "0" * 64)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected " + "0" * 64, result.stderr)
         self.assertIsNone(launched)
 
     def test_tampered_installer_is_refused(self):
-        self.publish("0.6.0", "main", served=INSTALLER.replace(b"printf", b"PRINTF"))
+        tag = self.publish("0.6.1-rc.1", served=INSTALLER.replace(b"printf", b"PRINTF"))
+        self.index("stable", tag)
         result, launched = self.run_bootstrap()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("installer checksum mismatch", result.stderr)
@@ -194,7 +207,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(list((self.case / "cache").rglob("youeye-installer-linux-amd64")))
 
     def test_redirect_to_another_host_is_refused(self):
-        tag = self.publish("0.6.0", "main")
+        tag = self.publish("0.6.1-rc.1")
+        self.index("stable", tag)
         path = "/owner/YouEye/releases/download/%s/youeye-installer-linux-amd64" % tag
         Handler.routes[path] = (302, b"", {"Location": "https://127.0.0.1:%d%s" % (self.port, path)})
         result, launched = self.run_bootstrap()
@@ -203,17 +217,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
 
     def test_malformed_document_is_refused(self):
-        tag = self.publish("0.6.0", "main")
-        base = "/owner/YouEye/releases/download/%s/core-release.json" % tag
-        Handler.routes[base] = (200, self.documents[tag].replace(b'"authority": "digest"', b'"authority": "ed25519"'), {})
+        tag = self.publish("0.6.1-rc.1")
+        raw = self.documents[tag].replace(b'"authority": "digest"', b'"authority": "ed25519"')
+        self.documents[tag] = raw
+        Handler.routes["/owner/YouEye/releases/download/%s/core-release.json" % tag] = (200, raw, {})
+        self.index("stable", tag)
         result, launched = self.run_bootstrap()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not describe this release", result.stderr)
         self.assertIsNone(launched)
 
     def test_option_errors(self):
-        for args in (["--channel", "exact"], ["--channel", "nightly"], ["--release-tag", "youeye-v1.0.0"],
-                     ["--channel", "branch"], ["--release-branch", "main"]):
+        for args in (["--channel", "exact"], ["--channel", "nightly"], ["--channel", "branch"],
+                     ["--release-tag", "youeye-v1.0.0-rc.1"], ["--core-manifest-sha256", "a" * 64]):
             result, launched = self.run_bootstrap(*args)
             self.assertNotEqual(result.returncode, 0, args)
             self.assertIsNone(launched)

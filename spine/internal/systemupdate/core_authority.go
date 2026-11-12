@@ -21,11 +21,8 @@ import (
 // After checkpoint intent, continuation uses the frozen selection: a newer
 // published head is not permission to change an in-flight data transaction.
 type NativeCoreAuthority struct {
-	Checkpoint            NativeCoreCheckpoint
-	Client                *http.Client
-	FirstBootPolicyPath   string
-	FirstBootCompletePath string
-	CurrentSelection      func() (CoreReleaseSelection, error) // host-owned release policy
+	Checkpoint NativeCoreCheckpoint
+	Client     *http.Client
 }
 
 func coreBeforeCheckpoint(j CoreJournal) bool {
@@ -35,32 +32,6 @@ func coreBeforeCheckpoint(j CoreJournal) bool {
 		}
 	}
 	return true
-}
-
-func validateCorePolicySelection(selection CoreReleaseSelection, r releasecache.CoreRelease, digest string) error {
-	if selection.Source != r.Source || !releasecache.ValidCoreBranch(selection.Branch) {
-		return fmt.Errorf("release source differs from the installer-recorded System source")
-	}
-	if selection.Tag != "" {
-		if selection.Tag != r.Tag || selection.ManifestSHA256 != digest || selection.Branch != r.Branch {
-			return fmt.Errorf("selected System pin changed")
-		}
-		return nil
-	}
-	if selection.ManifestSHA256 != "" {
-		return fmt.Errorf("System digest requires an exact pin")
-	}
-	allowed := selection.Branch == r.Branch
-	for _, branch := range selection.Fallback {
-		if !releasecache.ValidCoreBranch(branch) {
-			return fmt.Errorf("invalid current fallback branch")
-		}
-		allowed = allowed || branch == r.Branch
-	}
-	if !allowed {
-		return fmt.Errorf("frozen System branch is no longer selected")
-	}
-	return nil
 }
 
 func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.StateRecord, installedVersion string) error {
@@ -137,39 +108,11 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	return validateCoreCompatibility(r, state, j.Previous.Release.Version)
 }
 
+// AuthorizeTarget checks the frozen, digest-bound target. The channel head is
+// not consulted again: once a release was staged by its digest, a later
+// channel change or an unreachable release host cannot invalidate it.
 func (a NativeCoreAuthority) AuthorizeTarget(ctx context.Context, j CoreJournal, activation bool) error {
-	if a.CurrentSelection == nil {
-		return fmt.Errorf("live System source policy required")
-	}
-	if err := a.verify(ctx, j, false); err != nil {
-		return err
-	}
-	selection, err := a.CurrentSelection()
-	if err != nil {
-		return err
-	}
-	if err = validateCorePolicySelection(selection, j.Target, j.ManifestSHA256); err != nil {
-		return err
-	}
-	// A request waiting for restart must still be the policy-selected release
-	// before capture. Once effects start, only exact authority is rechecked.
-	if coreBeforeCheckpoint(j) && (j.Phase == "prepared" || activation || !j.RestartRequired) {
-		offline, err := a.allowOfflineFirstBoot(j)
-		if err != nil {
-			return err
-		}
-		if offline {
-			return nil
-		}
-		_, selected, digest, err := ResolveCoreRelease(ctx, a.Client, selection)
-		if err != nil {
-			return err
-		}
-		if digest != j.ManifestSHA256 || !reflect.DeepEqual(selected, j.Target) {
-			return fmt.Errorf("System selection changed; cancel or recover this request before selecting another release")
-		}
-	}
-	return nil
+	return a.verify(ctx, j, false)
 }
 
 // Current channel changes do not implicitly prohibit recovery to the retained

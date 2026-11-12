@@ -16,35 +16,15 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
 
-func TestCoreHostStagesAliasedPayloadsAndRetainsSignedSelection(t *testing.T) {
-	testCoreHostStages(t, false)
-}
-
-func TestCoreHostStagesHashNamedReleaseWithoutTransportCache(t *testing.T) {
-	t.Setenv("YOUEYE_RELEASE_CACHE", t.TempDir())
-	testCoreHostStages(t, true)
-}
-
-func testCoreHostStages(t *testing.T, blobOnly bool) {
+func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 	f := newManagerFixture(t)
 	f.manager.config.CoreStatePath = filepath.Join(f.dir, "core")
-	source := "https://forge.example/owner/YouEye"
-	// Rewrite the host fixture under a development source. The current image
-	// retains the same selected source, so no source transition is implicit.
-	current, _ := os.ReadFile(f.manager.config.CurrentManifestPath)
-	current = bytes.ReplaceAll(current, []byte(releasecache.OfficialRepository), []byte(source))
-	if err := os.Chmod(f.manager.config.CurrentManifestPath, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(f.manager.config.CurrentManifestPath, current, 0600); err != nil {
-		t.Fatal(err)
-	}
-	f.update.ReleaseSet.Source = source
+	repository := useBoxRepository(t)
 	hostRaw, _ := json.Marshal(f.update)
 	if err := os.WriteFile(f.manifestPath, hostRaw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,12 +32,11 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Source, r.Branch, r.Channel, r.Version, r.Tag = source, "dev", "dev", "0.6.0-dev.28", "youeye-v0.6.0-dev.28"
+	r.Version, r.Tag = "0.6.0-rc.28", "youeye-v0.6.0-rc.28"
 	responses := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source, m.Branch, m.SourceCommit = source, "dev", targetCommit
-		m.Tag, m.BuildVersion = "youeye-v0.6.0-dev.27", "0.6.0-dev.27"
+		m.SourceTree, m.BuildVersion = targetCommit, "0.6.0-dev.27"
 		if m.Role == "system-update" {
 			m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = "system-update-manifest.json", checksum(hostRaw), int64(len(hostRaw))
 		}
@@ -66,28 +45,18 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 				m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = a.Path, a.SHA256, a.SizeBytes
 			}
 		}
+		// Unchanged host files are reused from the earlier release.
 		for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
 			if b != nil {
-				b.URL = source + "/releases/download/" + m.Tag + "/appliance-" + b.Name
+				b.Release = "youeye-v0.6.0-rc.27"
 			}
 		}
 		if m.Role == "system-update" {
-			responses[m.Artifact.URL] = hostRaw
+			responses[releasecache.AssetURL(repository, r.Tag, m.Artifact)] = hostRaw
 		}
 		if data, ok := f.files[m.Artifact.Name]; ok {
-			responses[m.Artifact.URL] = data
+			responses[releasecache.AssetURL(repository, r.Tag, m.Artifact)] = data
 		}
-	}
-	if blobOnly {
-		mirrored := map[string][]byte{}
-		for _, member := range r.Members {
-			for _, blob := range []releasecache.CoreBlob{member.Artifact} {
-				if data, ok := responses[blob.URL]; ok {
-					mirrored[r.Source+"/releases/download/"+r.Tag+"/blob-"+blob.SHA256] = data
-				}
-			}
-		}
-		responses = mirrored
 	}
 	raw, _ = json.Marshal(r)
 	selection := CoreHostSelection{Raw: raw}
@@ -97,9 +66,6 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 	}
 	f.manager.config.HTTPClient = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
 		data, ok := responses[req.URL.String()]
-		if !ok && blobOnly {
-			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("missing")), Header: http.Header{}, Request: req}, nil
-		}
 		if !ok {
 			return nil, fmt.Errorf("undeclared host URL %s", req.URL)
 		}
@@ -187,10 +153,9 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 	}
 	// Reconcile a lost blessing acknowledgement without blessing twice.
 	image := testApplianceManifest("0.6.0-dev.27", targetCommit)
-	image.ReleaseSet.Source = source
 	for _, member := range r.Members {
 		if member.Role == "spine" {
-			image.ReleaseSet.Spine = appliance.ComponentRelease{Version: member.BuildVersion, Tag: member.Tag, SourceCommit: member.SourceCommit, ArtifactSHA256: member.Artifact.SHA256}
+			image.ReleaseSet.Spine = appliance.ComponentRelease{Version: member.BuildVersion, SourceTree: member.SourceTree, ArtifactSHA256: member.Artifact.SHA256}
 		}
 	}
 	imageRaw, _ := json.Marshal(image)

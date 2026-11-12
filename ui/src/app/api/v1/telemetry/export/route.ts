@@ -8,6 +8,7 @@
  * DELETE /api/v1/telemetry/export — resets counters and starts fresh
  */
 
+import { uiVersion } from "@/lib/build-version";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getTelemetryReport, resetTelemetry } from "@/lib/telemetry/tracker";
@@ -24,7 +25,7 @@ export async function GET() {
   const exportData = {
     ...report,
     platform: {
-      ui_version: process.env.npm_package_version || "unknown",
+      ui_version: uiVersion(),
       node_version: process.version,
       export_date: new Date().toISOString(),
     },

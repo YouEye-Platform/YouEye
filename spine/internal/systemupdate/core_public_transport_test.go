@@ -6,19 +6,23 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-// Opt-in transport acceptance against an exact pinned public release.
+// Opt-in transport acceptance against the public head of a channel.
 func TestCorePublicTransportIntegration(t *testing.T) {
-	if os.Getenv("YOUEYE_TEST_CORE_TAG") == "" {
-		t.Skip("requires an explicit pinned tag and manifest digest")
+	channel := os.Getenv("YOUEYE_TEST_CORE_CHANNEL")
+	if channel == "" {
+		t.Skip("requires an explicit channel (YOUEYE_TEST_CORE_CHANNEL)")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	selection, release, digest, err := ResolveCoreRelease(ctx, nil, CoreReleaseSelection{
-		Source: "https://github.com/YouEye-Platform/YouEye", Branch: "main",
-		Tag: os.Getenv("YOUEYE_TEST_CORE_TAG"), ManifestSHA256: os.Getenv("YOUEYE_TEST_CORE_SHA256"),
-	})
+	repository := releasecache.OfficialRepository
+	old := BoxRepository
+	BoxRepository = func() (string, error) { return repository, nil }
+	t.Cleanup(func() { BoxRepository = old })
+	selection, release, digest, err := ResolveCoreRelease(ctx, nil, CoreReleaseSelection{Repository: repository, Channel: channel})
 	if err != nil {
 		t.Fatal(err)
 	}

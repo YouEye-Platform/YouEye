@@ -58,11 +58,8 @@ export function compareVersions(a: string, b: string): number {
     if (aVal > bVal) return 1;
   }
 
-  if (left.token !== right.token) {
-    if (!left.token) return 1;
-    if (!right.token) return -1;
-    return left.token < right.token ? -1 : 1;
-  }
+  // The suffix token never orders builds; see control-panel/src/lib/version.ts.
+  if (!left.token !== !right.token) return left.token ? -1 : 1;
   return Math.sign(left.counter - right.counter);
 }
 

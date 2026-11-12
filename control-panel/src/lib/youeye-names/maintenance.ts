@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { controlPanelVersion } from '@/lib/build-version';
 import { withIndependentCopyExclusion } from '@/lib/market/update-admission';
 import { tlsStorage } from '@/lib/acme/storage';
 import * as caddy from '@/lib/caddy/client';
@@ -149,7 +150,7 @@ export async function runNamesMaintenance(): Promise<void> {
         currentIp: metrics.primary_ip,
         certificateFingerprint: activeCertificate.brokerFingerprint,
         certificateExpiresAt: state.certificate.expiresAt,
-        youeyeVersion: process.env.YOUEYE_VERSION || undefined,
+        youeyeVersion: controlPanelVersion() === 'development' ? undefined : controlPanelVersion(),
         caddyStatus: caddyHealthy ? 'healthy' : 'unavailable',
         renewalNeeded,
       });

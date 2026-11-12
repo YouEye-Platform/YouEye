@@ -28,13 +28,7 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 			return input, fmt.Errorf("resume requires the original System answer; supply the retained answer")
 		}
 		policy := input.ReleasePolicy
-		channel := policy.Track
-		if policy.Mode == "exact" {
-			channel = "exact"
-		} else if channel == "branch" {
-			channel = "branch:" + policy.Branch
-		}
-		release, err := resolveApplianceRelease(ctx, client, policy.Provider, policy.ReleasesAPI, channel, policy.ExactTag)
+		release, err := resolveApplianceRelease(ctx, client, policy.Repository, policy.Channel, "", "")
 		if err != nil {
 			return input, err
 		}
@@ -61,9 +55,6 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 	if err := bindCoreInstallBundle(release, bundle); err != nil {
 		return input, err
 	}
-	if input.ReleasePolicy.Mode == "exact" && input.ReleasePolicy.ManifestSHA256 != bundle.ManifestSHA256 {
-		return input, fmt.Errorf("exact System answer differs from the verified media manifest")
-	}
 	return input, nil
 }
 
@@ -71,12 +62,12 @@ func bindCoreInstallBundle(release releasecache.CoreRelease, bundle verifiedAppl
 	for _, member := range release.Members {
 		switch member.Role {
 		case "appliance":
-			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.BuildVersion != bundle.Manifest.ImageVersion || member.SourceCommit != bundle.Manifest.SourceCommit || member.Source != bundle.Manifest.ReleaseSet.Source || member.Branch != bundle.Manifest.ReleaseSet.Branch {
+			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.BuildVersion != bundle.Manifest.ImageVersion || member.SourceTree != bundle.Manifest.SourceTree {
 				return fmt.Errorf("selected System does not contain this appliance media; use its matching ISO or an exact selection that contains this media")
 			}
 		case "spine":
 			spine := bundle.Manifest.ReleaseSet.Spine
-			if member.Artifact.SHA256 != spine.ArtifactSHA256 || member.BuildVersion != spine.Version || member.SourceCommit != spine.SourceCommit {
+			if member.Artifact.SHA256 != spine.ArtifactSHA256 || member.BuildVersion != spine.Version || member.SourceTree != spine.SourceTree {
 				return fmt.Errorf("selected System differs from the media's baked Spine")
 			}
 		}

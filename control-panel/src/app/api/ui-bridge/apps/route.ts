@@ -65,10 +65,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
+    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
-      spineClient.checkUpdates(),
       listInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
@@ -81,7 +80,6 @@ export async function GET(request: NextRequest) {
     );
 
     const status = spineStatus.status === 'fulfilled' ? spineStatus.value : null;
-    const updates = spineUpdates.status === 'fulfilled' ? spineUpdates.value : null;
     const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
     const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
     const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
@@ -148,22 +146,6 @@ export async function GET(request: NextRequest) {
 
         let updateAvailable = false;
         let updateInfo: string | undefined;
-
-        if (def.updatedBy === 'spine' && updates) {
-          if (def.id === 'spine' && updates.spine?.available) {
-            updateAvailable = true;
-            updateInfo = `${updates.spine.current} → ${updates.spine.latest}`;
-          }
-          if (def.id === 'control-panel' && updates.control?.available) {
-            updateAvailable = true;
-            updateInfo = `${updates.control.current} → ${updates.control.latest}`;
-          }
-          if (def.id === 'host-system' && updates.system?.upgradeable_count) {
-            updateAvailable = true;
-            updateInfo = `${updates.system.upgradeable_count} package${updates.system.upgradeable_count !== 1 ? 's' : ''} upgradeable`;
-          }
-          // Incus updates disabled for now
-        }
 
         // Market system apps (Caddy/Pi-Hole/Postgres): tracked via the pinned
         // Market system manifests, not the moving-tag OCI checker.

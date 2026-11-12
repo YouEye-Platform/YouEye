@@ -58,13 +58,13 @@ test('profile presets, self-password change, and explicit People form are wired 
   assert.doesNotMatch(people, /showSystem|isSystemUser|Emergency local access/);
 });
 
-test('SSH, IP address, per-app channels, and background update polling are represented', () => {
+test('SSH, IP address, and background update polling are represented; per-app channels are gone', () => {
   const system = read('src/components/settings-shell/system-client.tsx');
   const about = read('src/components/settings-shell/about-client.tsx');
   const apps = read('src/components/settings-shell/apps-client.tsx');
   assert.match(system, /settings\/system\/ssh/);
   assert.match(about, /primary_ip/);
-  assert.match(apps, /updateChannelKey/);
+  assert.doesNotMatch(apps, /updateChannelKey/);
   assert.match(apps, /hasActiveUpdate/);
   assert.doesNotMatch(system, /UpdateChannels/);
 });

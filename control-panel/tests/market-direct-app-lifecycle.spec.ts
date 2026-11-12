@@ -17,7 +17,8 @@ test('direct manifests become instance-local Market entries and open the normal 
   const marketPage = await source('src/app/market/page.tsx');
 
   assert.match(validator, /requireAdmin\(\)/);
-  assert.match(validator, /repository\.origin.*api\/v1\/repos/);
+  assert.match(validator, /repository\.origin.*raw\/branch\/main\/youeye-app\.yaml/);
+  assert.doesNotMatch(validator, /api\/v1\/repos/);
   assert.doesNotMatch(validator, /git\.potemk\.in/);
   assert.match(validator, /saveDirectMarketApp/);
   assert.match(dialog, /router\.push\(data\.href\)/);
@@ -49,6 +50,6 @@ test('Market preflight precedes app-network mutation and core LXD keeps mandator
   const mutate = engine.indexOf('createAppNetwork(appId');
   assert.ok(stage >= 0 && mutate > stage, 'native artifact staging must happen before app network creation');
   assert.match(deployer, /export async function deployMarketLXDContainer/);
-  assert.match(deployer, /releaseArtifactVerificationShell\(releaseURL/);
+  assert.match(deployer, /releaseArtifactVerificationShell\('\/tmp\/app\.tar', expected\)/);
   assert.doesNotMatch(deployer, /skipVerification/);
 });

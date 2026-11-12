@@ -52,9 +52,10 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(systemUpdatesApi, /updateSystemFromMarket/);
   assert.match(systemUpdatesApi, /forceLegacy/);
   assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
-  assert.match(source, /DEFAULT_MARKET_REPO_URL = 'https:\/\/github\.com\/YouEye-Platform\/Market'/);
+  // The official Market is the channel index's catalog release; no repository is built in.
+  assert.match(source, /kind: 'channel'/);
+  assert.doesNotMatch(source, /YouEye-Platform\/Market|git\.potemk\.in/);
   assert.doesNotMatch(engine, /private forge/i);
-  assert.match(engine, /getMarketSource/);
   assert.match(resolver, /resolveSystemImageOverrides/);
   assert.match(resolver, /Required Market system manifest/);
   assert.match(resolver, /recordSystemContainerManifest/);

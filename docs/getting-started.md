@@ -53,36 +53,28 @@ curl -fsSL https://releases.youeye.me/install.sh | \
 ```
 
 Options: `--repository <https URL>` (default
-`https://github.com/YouEye-Platform/YouEye`), `--channel stable|dev|branch|exact`
-(default `stable`), `--release-branch <name>` for `branch`, and
-`--release-tag youeye-vX.Y.Z[-label.N]` plus optional `--core-manifest-sha256` for
-`exact`.
+`https://github.com/YouEye-Platform/YouEye`) and `--channel dev|alpha|beta|stable`
+(default `stable`). `--release-tag youeye-vX.Y.Z-rc.N` with its
+`--core-manifest-sha256` installs one exact release of the channel.
 
-The bootstrap lists releases through the GitHub API
-(`https://api.github.com/repos/<owner>/<repo>/releases`) or the Forgejo API
-(`https://<host>/api/v1/repos/<owner>/<repo>/releases`) and picks one release:
-
-- `stable`: the newest non-prerelease `youeye-vX.Y.Z*` release whose
-  `core-release.json` names branch `main`;
-- `dev`: the newest prerelease whose tag contains `-dev.` and whose document
-  names branch `dev`;
-- `branch`: the newest `youeye-v*` release built from `--release-branch`;
-- `exact`: the release named by `--release-tag`.
-
-It never falls back to another channel. It downloads that release's
-`core-release.json`, then the `installer` member's artifact
-(`youeye-installer-linux-amd64`), checks its SHA-256 and size against the
-document and runs it. The Installer resolves the same release, records the
-`core-release.json` SHA-256 in the installed release policy, and checks the image
-manifest and ISO against the digests in that document. Release signing is not
-used: integrity comes from HTTPS with normal certificate checks and SHA-256. GitHub
+The bootstrap reads the channel index — `https://releases.youeye.me/v1/channels/<channel>.json`
+for the official beta and stable channels, otherwise
+`<repository>/releases/download/channel-<channel>/index.json` — and never calls a
+release-listing API. It downloads the indexed release's `core-release.json`,
+checks it against the index digest, then downloads the `installer` member
+(`youeye-installer-linux-amd64`), checks its SHA-256 and size and runs it. The
+Installer records the repository, the channel and the `core-release.json` SHA-256
+in the installed release policy, and checks the image manifest and ISO against
+the digests in that document. A release host that refuses or rate-limits a
+request (HTTP 403/429) is retried with backoff. Release signing is not used:
+integrity comes from HTTPS with normal certificate checks and SHA-256. GitHub
 downloads may redirect only to GitHub's asset hosts; other repositories may not
-redirect to another host.
+redirect to another host. See [releases.md](releases.md).
 
 Quick mode creates a 4-vCPU, 8-GiB Q35/OVMF VM with one 128-GiB installation
 drive and DHCP. Advanced mode can select the VMID, name, storage pools, a
 32-GiB-or-larger drive, bridge, static IPv4 settings, public SSH keys, release
-provider and channel, or an exact release. Drives below 64 GiB receive a strong
+source and channel. Drives below 64 GiB receive a strong
 capacity warning; the 32 GiB minimum leaves about 7 GiB for `YE-DATA`. Reinstall
 accepts only a stopped, compatible, one-drive YouEye VM and
 requires confirmation naming the exact target whose contents were inspected.

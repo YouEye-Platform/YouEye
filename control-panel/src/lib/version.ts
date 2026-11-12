@@ -58,11 +58,10 @@ export function compareVersions(a: string, b: string): number {
     if (aVal > bVal) return 1;
   }
 
-  if (left.token !== right.token) {
-    if (!left.token) return 1;
-    if (!right.token) return -1;
-    return left.token < right.token ? -1 : 1;
-  }
+  // The suffix token never orders builds (it never names a channel): a
+  // version without a suffix sorts after every suffixed build of its line,
+  // otherwise the build number N decides. Matches releasecache.CompareVersions.
+  if (!left.token !== !right.token) return left.token ? -1 : 1;
   return Math.sign(left.counter - right.counter);
 }
 

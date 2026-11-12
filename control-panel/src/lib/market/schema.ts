@@ -91,13 +91,14 @@ export const PostDeployStepSchema = z.object({
   timeout: z.number().int().positive().default(30_000),
 });
 
-// ─── Container Source (LXD-only release repo deploy) ───────
+// ─── Container Source (LXD native app runtime) ─────────────
+// The archive is the app's product release on the box's channel; `repo` is
+// informational only and never used to locate releases.
 
 export const ContainerSourceSchema = z.object({
-  repo: z.string().min(1),
+  repo: z.string().min(1).optional(),
   nodeVersion: z.string().optional(),
   appDir: z.string().default('/opt/app'),
-  tagPrefix: z.string().optional(),
   artifactSHA256: z.string().regex(/^[0-9a-fA-F]{64}$/, 'artifactSHA256 must be a SHA-256 digest').optional(),
 });
 
@@ -608,15 +609,6 @@ export const AppManifestSchema = z
     },
     { message: 'Multi-container apps must have exactly one primary container' }
   )
-  .refine(
-    (data) => {
-      for (const c of data.containers) {
-        if (c.type === 'lxd' && c.source && !c.source.repo) return false;
-      }
-      return true;
-    },
-    { message: 'LXD containers with source must specify a repo' }
-  )
   .superRefine((data, ctx) => {
     // F2: roleClaim scope coherence check at schema level
     if (data.sso?.adminMapping?.type === 'roleClaim') {
@@ -649,8 +641,8 @@ export const CatalogEntrySchema = z.object({
   /**
    * New per-app folder layout: the app's folder in this store (e.g. `apps/redlib`). The
    * manifest is read from `<path>/<manifest>` and assets (icon.svg, screenshots/) are
-   * resolved relative to `<path>/`. Coexists with the legacy `file:`/`repo:` fields — an
-   * entry uses exactly one of `path` | `file` | `repo`.
+   * resolved relative to `<path>/`. An entry uses exactly one of `path` | `file` | `repo`,
+   * except an official native entry, which names only its id (`integration: native`).
    */
   path: z.string().optional(),
   manifest: z.string().default('youeye-app.yaml'),

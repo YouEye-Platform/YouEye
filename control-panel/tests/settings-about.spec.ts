@@ -42,10 +42,10 @@ test('telemetry export removed from About (moves to Privacy per D18)', () => {
   assert.doesNotMatch(c, /Usage Report/);
 });
 
-test('About page injects CP version from package.json and is admin-gated', () => {
+test('About page shows the CP build version (version.json, never package.json) and is admin-gated', () => {
   const p = read('src/app/settings/(shell)/about/page.tsx');
-  assert.match(p, /import pkg from/);
-  assert.match(p, /cpVersion=\{pkg\.version\}/);
+  assert.doesNotMatch(p, /package\.json/);
+  assert.match(p, /cpVersion=\{controlPanelVersion\(\)\}/);
   assert.match(p, /session\?\.isAdmin/);
 });
 

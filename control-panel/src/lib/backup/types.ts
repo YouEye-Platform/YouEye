@@ -152,7 +152,6 @@ export interface BackupSourceIdentity {
   runtime_kind: 'mutable-host' | 'appliance-image';
   image_version?: string;
   source_commit?: string;
-  release_branch?: string;
   state_schema_version?: number;
   data_schema_version?: number;
   disk_layout_version?: number;

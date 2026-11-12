@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
-import {
-  inspectMarketNativeArchive,
-  downloadMarketNativeArtifact,
-} from '../src/lib/market/native-artifact';
+import { inspectMarketNativeArchive } from '../src/lib/market/native-artifact';
+import { downloadReleaseFile } from '../src/lib/releases/channel-index';
+
+const MAX = 256 * 1024 * 1024;
 
 const execFileAsync = promisify(execFile);
 test('Market-native archive inspection accepts a regular server.js payload', async () => {
@@ -77,7 +77,7 @@ test('Market-native archive inspection rejects escaping links, hard links and mi
 });
 
 
-test('native downloads allow GitHub release CDN and private same-origin redirects only', async () => {
+test('release downloads allow the GitHub release CDN and same-origin redirects only', async () => {
   const source = 'https://github.com/YouEye-Platform/Search/releases/download/v0.5.1/standalone.tar';
   const cdn = 'https://release-assets.githubusercontent.com/asset?signature=example';
   const calls: string[] = [];
@@ -85,18 +85,18 @@ test('native downloads allow GitHub release CDN and private same-origin redirect
     calls.push(String(input));
     return String(input) === source ? new Response(null, {status:302,headers:{location:cdn}}) : new Response('archive');
   };
-  assert.equal((await downloadMarketNativeArtifact(source, fetcher as typeof fetch)).toString(), 'archive');
+  assert.equal((await downloadReleaseFile(source, MAX, fetcher as typeof fetch)).toString(), 'archive');
   assert.deepEqual(calls, [source, cdn]);
   for (const location of ['https://evil.test/file', 'http://release-assets.githubusercontent.com/file',
     'https://release-assets.githubusercontent.com.evil.test/file', 'https://release-assets.githubusercontent.com:444/file',
     'https://user:password@release-assets.githubusercontent.com/file', cdn+'#fragment']) {
     let count = 0;
-    await assert.rejects(downloadMarketNativeArtifact(source, (async () => {count++;return new Response(null,{status:302,headers:{location}});}) as typeof fetch), /outside its release source/);
+    await assert.rejects(downloadReleaseFile(source, MAX, (async () => {count++;return new Response(null,{status:302,headers:{location}});}) as typeof fetch), /outside its release host/);
     assert.equal(count, 1);
   }
-  await assert.rejects(downloadMarketNativeArtifact('https://forge.example.test/a/b/releases/download/v1/standalone.tar', (async()=>new Response(null,{status:302,headers:{location:cdn}})) as typeof fetch), /outside its release source/);
-  assert.equal((await downloadMarketNativeArtifact('https://forge.example.test/a/b/releases/download/v1/standalone.tar', (async input=>String(input).endsWith('/attachments/file') ? new Response('private') : new Response(null,{status:302,headers:{location:'/attachments/file'}})) as typeof fetch)).toString(), 'private');
-  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response(null,{status:302,headers:{location:source}})) as typeof fetch), /redirect chain/);
-  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response('bad',{headers:{'content-length':String(257*1024*1024)}})) as typeof fetch), /256 MiB/);
-  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response('<html>',{headers:{'content-type':'text/html'}})) as typeof fetch), /HTML/);
+  await assert.rejects(downloadReleaseFile('https://forge.example.test/a/b/releases/download/v1/standalone.tar', MAX, (async()=>new Response(null,{status:302,headers:{location:cdn}})) as typeof fetch), /outside its release host/);
+  assert.equal((await downloadReleaseFile('https://forge.example.test/a/b/releases/download/v1/standalone.tar', MAX, (async input=>String(input).endsWith('/attachments/file') ? new Response('private') : new Response(null,{status:302,headers:{location:'/attachments/file'}})) as typeof fetch)).toString(), 'private');
+  await assert.rejects(downloadReleaseFile(source, MAX, (async()=>new Response(null,{status:302,headers:{location:source}})) as typeof fetch), /redirect chain/);
+  await assert.rejects(downloadReleaseFile(source, MAX, (async()=>new Response('bad',{headers:{'content-length':String(257*1024*1024)}})) as typeof fetch), /exceeds/);
+  await assert.rejects(downloadReleaseFile(source, MAX, (async()=>new Response('<html>',{headers:{'content-type':'text/html'}})) as typeof fetch), /HTML/);
 });

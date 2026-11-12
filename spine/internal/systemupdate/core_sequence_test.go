@@ -3,14 +3,15 @@ package systemupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-func TestCoreSequenceSurvivesCancellationAndRestoredInstalledReceipt(t *testing.T) {
+func TestCoreVersionFloorRisesOnlyOnCommit(t *testing.T) {
 	m, _, target := coreJournalFixture(t)
-	target.Sequence = 10
+	target.Version, target.Tag = "0.5.39", "youeye-v0.5.39"
 	j := prepareCoreFixture(t, m, target)
 	if _, err := m.Cancel(context.Background(), j.RequestID); err != nil {
 		t.Fatal(err)
@@ -20,36 +21,62 @@ func TestCoreSequenceSurvivesCancellationAndRestoredInstalledReceipt(t *testing.
 		_, err := m.Prepare(context.Background(), id, raw, checksum(raw))
 		return err
 	}
-	// The installed receipt is still sequence 1; preparation's sequence 10
-	// remains a durable floor even though there was no committed data change.
-	target.Sequence = 9
-	if err := prepare("older-after-cancel", target); err == nil {
-		t.Fatal("forgot accepted higher sequence")
+	// A cancelled 0.5.39 never committed: a later, lower release (still above
+	// the installed one) must stay installable, e.g. after a channel switch back.
+	older := target
+	older.Version, older.Tag = "0.5.38", "youeye-v0.5.38"
+	if err := prepare("older-after-cancel", older); err != nil {
+		t.Fatal("a cancelled request raised the floor:", err)
 	}
-	target.Sequence = 10
-	target.Version, target.Tag = "0.5.39", "youeye-v0.5.39"
-	if err := prepare("equivocation", target); err == nil {
-		t.Fatal("same sequence changed bytes")
-	}
-	target.Sequence = 11
-	if err := prepare("next", target); err != nil {
+	if _, err := m.Cancel(context.Background(), "older-after-cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Cancel(context.Background(), "next"); err != nil {
+	// A committed release raises the floor: older versions and another build of
+	// the same version are refused.
+	raw, _ := json.Marshal(target)
+	if err := m.retainSequence(target, checksum(raw), true); err != nil {
 		t.Fatal(err)
 	}
-	installed, err := m.ReadReceipt()
-	if err != nil {
+	if err := prepare("older-after-commit", older); err == nil {
+		t.Fatal("forgot the committed higher version")
+	}
+	other := target
+	other.Sequence++
+	if err := prepare("equivocation", other); err == nil {
+		t.Fatal("same version with another digest accepted")
+	}
+	next := target
+	next.Version, next.Tag = "0.5.40", "youeye-v0.5.40"
+	if err := prepare("next", next); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepare("installed-no-op", installed.Release); err != nil {
-		t.Fatal("no-op was treated as a downgrade", err)
+}
+
+func TestCorePrepareRefusesVersionBelowInstalled(t *testing.T) {
+	m, _, target := coreJournalFixture(t)
+	target.Version, target.Tag = "0.5.36", "youeye-v0.5.36"
+	raw, _ := json.Marshal(target)
+	if _, err := m.Prepare(context.Background(), "downgrade", raw, checksum(raw)); err == nil {
+		t.Fatal("downgrade below installed accepted")
 	}
-	if _, err := m.Cancel(context.Background(), "installed-no-op"); err != nil {
-		t.Fatal(err)
+	target.Version, target.Tag = "0.5.37-rc.9", "youeye-v0.5.37-rc.9"
+	raw, _ = json.Marshal(target)
+	if _, err := m.Prepare(context.Background(), "prerelease-downgrade", raw, checksum(raw)); err == nil {
+		t.Fatal("rc build of the installed line accepted as newer than the final build")
 	}
-	target.Sequence = 10
-	if err := prepare("still-older", target); err == nil {
-		t.Fatal("no-op lowered retained floor")
+}
+
+func TestRefuseDowngrade(t *testing.T) {
+	if err := RefuseDowngrade("stable", "0.6.1-rc.2", "0.6.1-rc.10"); err != nil {
+		t.Fatal("numeric rc order", err)
+	}
+	if err := RefuseDowngrade("stable", "0.6.1-rc.2", "0.6.1-rc.2"); err != nil {
+		t.Fatal("same version is not a downgrade", err)
+	}
+	if err := RefuseDowngrade("beta", "0.6.1-rc.10", "0.6.1-rc.9"); !errors.Is(err, ErrChannelBehind) {
+		t.Fatalf("older rc: %v", err)
+	}
+	if err := RefuseDowngrade("dev", "0.10.0-rc.1", "0.9.9-rc.5"); !errors.Is(err, ErrChannelBehind) {
+		t.Fatalf("older minor: %v", err)
 	}
 }

@@ -4,10 +4,10 @@
  * POST /api/apps/[name]/update
  *
  * Streams real-time update progress via Server-Sent Events.
- * - Infrastructure LXD apps (UI) → apps/lxd-updater (tarball download + service restart)
+ * - Managed Pointer → apps/lxd-updater (its release on the box's channel)
  * - Infrastructure OCI apps (Caddy, Pi-Hole, Postgres) → apps/updater (Incus rebuild)
  * - Market-installed/native apps → market/updater (unified: OCI rebuild or LXD tarball + migrations)
- * - System components (Spine, Incus, host) → Spine API proxy
+ * - Incus and host packages → Spine API proxy (Spine, CP and UI update with the System release)
  */
 
 import { type NextRequest } from 'next/server';
@@ -15,7 +15,6 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
-import { resolveLxdAppChannel } from '@/lib/apps/lxd-updates';
 import { handleMarketUpdate } from '@/lib/market/update-http';
 import { spineClient } from '@/lib/spine/client';
 
@@ -43,14 +42,6 @@ export async function POST(
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  let confirmSwitch = false;
-  try {
-    const body = await req.json();
-    confirmSwitch = body?.confirm_switch === true;
-  } catch {
-    confirmSwitch = false;
-  }
-
   // SSE stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -65,26 +56,7 @@ export async function POST(
 
       try {
         if (appDef.updatedBy === 'control-panel' && appDef.type === 'lxd') {
-          // Infrastructure LXD apps (UI) or native apps in static definitions
-          const resolved = await resolveLxdAppChannel(appDef);
-          if (resolved) {
-            if (!resolved.candidate) {
-              throw new Error(`Channel for ${appDef.id} has no resolvable release`);
-            }
-            const switching = !!resolved.installed?.tag && resolved.installed.tag !== resolved.candidate.tag;
-            if (switching && !confirmSwitch) {
-              throw new Error(`Channel switch for ${appDef.id} requires confirmation`);
-            }
-            await updateLXDApp(appDef, emit, {
-              version: resolved.candidate.version,
-              tag: resolved.candidate.tag,
-              branch: resolved.candidate.branch,
-              source: resolved.channel.source,
-              artifactSHA256: resolved.candidate.artifactSHA256,
-            });
-          } else {
-            await updateLXDApp(appDef, emit);
-          }
+          await updateLXDApp(appDef, emit);
         } else if (appDef.updatedBy === 'control-panel') {
           // Infrastructure OCI apps
           await updateOCIApp(appDef, emit);
@@ -122,12 +94,6 @@ async function handleSpineUpdate(
 
   let result;
   switch (appId) {
-    case 'spine':
-      result = await spineClient.updateSelf();
-      break;
-    case 'control-panel':
-      result = await spineClient.updateControl();
-      break;
     case 'incus':
       result = await spineClient.updateIncus();
       break;

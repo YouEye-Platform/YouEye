@@ -5,11 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
 )

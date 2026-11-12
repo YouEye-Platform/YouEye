@@ -148,6 +148,7 @@ function routeFixture() {
     read: async () => structuredClone(config),
     write: async (value) => { config = structuredClone(value); writes.push(structuredClone(value)); },
     verify: async () => { verified++; },
+    pointerDeployed: async () => true,
   };
   return { dependencies, writes, read: () => config, verified: () => verified };
 }
@@ -193,6 +194,43 @@ test('Pointer discovery failure preserves every existing route with zero writes'
   }), /Incus not ready/);
   assert.equal(fixture.writes.length, 0);
   assert.deepEqual(fixture.read(), before);
+});
+
+test('Control Panel routes reconcile without Pointer: no Pointer discovery, route, or /v1 probe', async () => {
+  for (const options of [{ pointer: false }, {}] as const) {
+    const fixture = routeFixture();
+    const resolved: string[] = [];
+    const verifyOptions: Array<{ pointer: boolean }> = [];
+    await reconcileManagedRoutes('example.test', {
+      ...fixture.dependencies,
+      pointerDeployed: async () => false,
+      resolve: async (name, port) => {
+        resolved.push(name);
+        if (name === 'youeye-pointer') throw new Error('Pointer is not deployed');
+        return fixture.dependencies.resolve(name, port);
+      },
+      verify: async (_domain, _config, verify) => { verifyOptions.push(verify); },
+    }, options);
+    assert.ok(!resolved.includes('youeye-pointer'));
+    assert.deepEqual(verifyOptions, [{ pointer: false }]);
+    const routes = fixture.read().apps!.http!.servers!.srv0.routes!;
+    assert.ok(routes.some((route) => route['@id'] === 'control-settings-route'));
+    assert.ok(!routes.some((route) => route['@id'] === 'pointer-inference-route'));
+    // An existing Pointer route is left as it is, not rewritten or removed.
+    assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'legacy-pointer')), /youeye-pointer\.incus:4002/);
+  }
+});
+
+test('Pointer routes are managed when requested even if deployment detection says otherwise', async () => {
+  const fixture = routeFixture();
+  const verifyOptions: Array<{ pointer: boolean }> = [];
+  await reconcileManagedRoutes('example.test', {
+    ...fixture.dependencies,
+    pointerDeployed: async () => false,
+    verify: async (_domain, _config, verify) => { verifyOptions.push(verify); },
+  }, { pointer: true });
+  assert.deepEqual(verifyOptions, [{ pointer: true }]);
+  assert.ok(fixture.read().apps!.http!.servers!.srv0.routes!.some((route) => route['@id'] === 'pointer-inference-route'));
 });
 
 test('managed DNS or invalid IP returned by discovery is rejected before writes', async () => {
@@ -368,8 +406,11 @@ test('real TLS proxy verification trusts the installed Caddy CA, validates hostn
     '-out', certPath, '-subj', '/CN=example.test', '-addext', 'subjectAltName=DNS:example.test', '-days', '1'], { stdio: 'ignore' });
   const certificate = await readFile(certPath);
   let broken = false;
+  let pointerDown = false;
+  const probed: string[] = [];
   const server = https.createServer({ key: await readFile(keyPath), cert: certificate }, (req, res) => {
-    res.statusCode = broken ? 502 : req.url === '/v1/models' ? 401 : req.url === '/settings/api/auth/mode' ? 200 : 307;
+    probed.push(req.url ?? '');
+    res.statusCode = broken ? 502 : req.url === '/v1/models' ? (pointerDown ? 502 : 401) : req.url === '/settings/api/auth/mode' ? 200 : 307;
     res.end();
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -380,6 +421,13 @@ test('real TLS proxy verification trusts the installed Caddy CA, validates hostn
       ? certificate : { type: 'error', error: 'not found' }, async () => {
       await withAdmin(fixtureConfig(), async () => {
         await verifyManagedProxy('example.test', fixtureConfig(), address.port);
+        assert.ok(probed.includes('/v1/models'));
+        pointerDown = true;
+        await assert.rejects(verifyManagedProxy('example.test', fixtureConfig(), address.port), /\/v1\/models \(HTTP 502\)/);
+        probed.length = 0;
+        await verifyManagedProxy('example.test', fixtureConfig(), address.port, { pointer: false });
+        assert.deepEqual(probed, ['/settings/api/auth/mode', '/settings', '/market']);
+        pointerDown = false;
         await assert.rejects(verifyManagedProxy('wrong.example.test', fixtureConfig(), address.port), /proxy probe failed/);
         broken = true;
         await assert.rejects(verifyManagedProxy('example.test', fixtureConfig(), address.port), /HTTP 502/);

@@ -42,8 +42,6 @@
   "[\"src/components/settings-shell/settings-shell.tsx\",\"System\"]": 1,
   "[\"src/components/settings-shell/system-client.tsx\",\"CPU\"]": 1,
   "[\"src/components/settings-shell/system-client.tsx\",\"SSH\"]": 1,
-  "[\"src/components/settings-shell/update-channels.tsx\",\"main, dev\"]": 1,
-  "[\"src/components/settings-shell/update-channels.tsx\",\"main\"]": 1,
   "[\"src/components/setup/SetupDnsExplainer.tsx\",\"Android\"]": 1,
   "[\"src/components/setup/SetupDnsExplainer.tsx\",\"iOS\"]": 1,
   "[\"src/components/setup/SetupDnsExplainer.tsx\",\"Linux\"]": 1,

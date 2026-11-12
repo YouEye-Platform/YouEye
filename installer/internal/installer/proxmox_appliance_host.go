@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net"
 	"net/http"
@@ -24,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 
 	"github.com/kdomanski/iso9660"
 )
@@ -69,15 +70,12 @@ type proxmoxApplianceConfig struct {
 	SSHKeysPath        string
 	EraseConfirmed     bool
 	Channel            string
-	ReleaseBranch      string
-	Freshness          string
 	ServiceSelection   string
 	ReleaseTag         string
 	CoreManifestSHA256 string
 	ISOSHA256          string
 	RepositoryURL      string
 	ReleaseProvider    string
-	ReleasesAPI        string
 	CacheRoot          string
 	Development        developmentAccessPolicy
 }
@@ -214,11 +212,11 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		EraseConfirmed: opts.ProxmoxEraseConfirmed,
 		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
 		CoreManifestSHA256: opts.CoreManifestSHA256,
-		ReleaseBranch:      opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness, ServiceSelection: opts.ApplianceServiceSelection,
-		ISOSHA256: opts.ApplianceISOSHA256, ReleaseProvider: opts.ApplianceReleaseProvider,
-		RepositoryURL: opts.ApplianceRepository, ReleasesAPI: opts.ApplianceReleasesAPI,
-		CacheRoot:   "/var/cache/youeye-installer/releases",
-		Development: defaultDevelopmentAccessPolicy(),
+		ServiceSelection:   opts.ApplianceServiceSelection,
+		ISOSHA256:          opts.ApplianceISOSHA256, ReleaseProvider: defaultApplianceProvider,
+		RepositoryURL: opts.ApplianceRepository,
+		CacheRoot:     "/var/cache/youeye-installer/releases",
+		Development:   defaultDevelopmentAccessPolicy(),
 	}
 	if opts.ApplianceRepository != "" && opts.ApplianceRepository != releasecache.OfficialRepository {
 		config.ReleaseProvider = "custom"
@@ -229,26 +227,11 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 	return config
 }
 
-func (config proxmoxApplianceConfig) releasePolicy(manifestSHA256 string) applianceReleasePolicy {
-	provider, _, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI)
-	if err != nil {
-		provider = config.ReleaseProvider
+func (config proxmoxApplianceConfig) releasePolicy() applianceReleasePolicy {
+	return applianceReleasePolicy{
+		Schema: releasePolicySchema, Repository: config.RepositoryURL, Channel: config.Channel,
+		CoreManifestSHA256: config.CoreManifestSHA256, ServiceSelection: config.ServiceSelection,
 	}
-	policy := applianceReleasePolicy{
-		CoreManifestSHA256: config.CoreManifestSHA256,
-		Schema:             releasePolicySchema, Provider: provider,
-		ReleasesAPI: nonDefaultReleaseAPI(provider, config.ReleasesAPI),
-		Mode:        "track", Track: config.Channel, Branch: config.ReleaseBranch,
-		Freshness: config.Freshness, ServiceSelection: config.ServiceSelection,
-	}
-	if policy.Freshness == "" {
-		policy.Freshness = "require-current"
-	}
-	if config.Channel == "exact" {
-		policy.Mode, policy.Track, policy.Branch = "exact", "", ""
-		policy.ExactTag, policy.ManifestSHA256 = config.ReleaseTag, manifestSHA256
-	}
-	return policy
 }
 
 func (config proxmoxApplianceConfig) developmentPolicy() developmentAccessPolicy {
@@ -269,13 +252,6 @@ func firstSelected(selected string, values []string) string {
 	return values[0]
 }
 
-func nonDefaultReleaseAPI(provider, apiURL string) string {
-	if strings.EqualFold(strings.TrimSpace(provider), defaultApplianceProvider) && (apiURL == "" || apiURL == defaultApplianceReleasesAPI) {
-		return ""
-	}
-	return strings.TrimSpace(apiURL)
-}
-
 func releaseProviderLabel(provider string) string {
 	if provider == defaultApplianceProvider {
 		return "Official releases"
@@ -283,12 +259,11 @@ func releaseProviderLabel(provider string) string {
 	return "Repository URL"
 }
 
-func repositoryInputValue(provider, api string) string {
-	if provider == defaultApplianceProvider && (api == "" || api == defaultApplianceReleasesAPI) {
+func repositoryInputValue(provider, repository string) string {
+	if provider == defaultApplianceProvider || repository == releasecache.OfficialRepository {
 		return ""
 	}
-	value, _ := releasecache.RepositoryURLFromAPI(provider, api)
-	return value
+	return repository
 }
 
 func estimatedProxmoxDataGiB(targetGiB int) int {
@@ -329,7 +304,7 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 	}
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET", Network: config.Network,
-		ReleasePolicy: config.releasePolicy(strings.Repeat("0", 64)), Development: config.developmentPolicy(),
+		ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
 	}
 	// The core selection is checked after discovery; this preflight answer
 	// checks the remaining policy, network and development-access fields.
@@ -337,38 +312,16 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
-	if config.Freshness != "require-current" && config.Freshness != "prefer-current" {
-		return fmt.Errorf("freshness must be require-current or prefer-current")
+	if !releasecache.ValidChannel(config.Channel) {
+		return fmt.Errorf("appliance channel must be dev, alpha, beta or stable")
 	}
-	switch config.Channel {
-	case "stable", "development", "dev":
-		if config.ReleaseBranch != "" || config.ISOSHA256 != "" || !validTrackPin(config.ReleaseTag, config.CoreManifestSHA256) {
-			return fmt.Errorf("channel selection can only pin one release by its youeye-v tag together with its core-release.json SHA-256")
-		}
-	case "branch":
-		if !validApplianceReleaseBranch(config.ReleaseBranch) || config.ISOSHA256 != "" || !validTrackPin(config.ReleaseTag, config.CoreManifestSHA256) {
-			return fmt.Errorf("branch selection requires a safe release branch and can only pin one release by its tag together with its core-release.json SHA-256")
-		}
-	case "exact":
-		if config.ReleaseBranch != "" || !validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256) || config.ISOSHA256 != "" && !validSHA256Hex(config.ISOSHA256) {
-			return fmt.Errorf("exact selection requires a youeye-v release tag and the lowercase core-release.json SHA-256")
-		}
-	default:
-		return fmt.Errorf("appliance channel must be stable, development, branch, or exact")
+	if (config.ReleaseTag == "") != (config.CoreManifestSHA256 == "") || config.ReleaseTag != "" && (!validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256)) {
+		return fmt.Errorf("an exact release needs its youeye-v tag together with its core-release.json SHA-256")
 	}
-	if _, _, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI); err != nil {
-		return err
+	if config.ISOSHA256 != "" && !validSHA256Hex(config.ISOSHA256) {
+		return fmt.Errorf("ISO SHA-256 must be 64 lowercase hexadecimal characters")
 	}
 	return nil
-}
-
-// validTrackPin reports whether a tracking selection carries either no pin or
-// one exact release named by its youeye-v tag and core-release.json SHA-256.
-func validTrackPin(tag, digest string) bool {
-	if tag == "" && digest == "" {
-		return true
-	}
-	return validCoreTag(tag) && validSHA256Hex(digest)
 }
 
 func containsString(values []string, value string) bool {
@@ -403,30 +356,17 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		return fmt.Errorf("no compatible SSH public key was found; choose no SSH-key import explicitly or provide a supported key")
 	}
 	emitProxmoxProgress(progress, "Check SSH keys", fmt.Sprintf("%d compatible key(s); %d restricted or invalid entry/entries will be skipped", len(keyPreflight.Accepted), keyPreflight.RejectedTotal()), 0.02)
-	emitProxmoxProgress(progress, "Resolve release", "Selecting one exact release without channel fallback", 0.03)
-	selection := config.Channel
-	if config.Channel == "branch" {
-		selection = "branch:" + config.ReleaseBranch
-	}
-	if config.ReleaseTag != "" {
-		// A pinned track installs exactly the release the bootstrap verified
-		// (never a newer head) and still records the track for updates.
-		selection = "exact"
-	}
-	release, err := resolveApplianceRelease(ctx, client, config.ReleaseProvider, config.ReleasesAPI, selection, config.ReleaseTag)
+	emitProxmoxProgress(progress, "Resolve release", "Reading the "+config.Channel+" channel index", 0.03)
+	// A given tag and digest (from install.sh) installs exactly that release;
+	// the box still records its channel for updates.
+	release, err := resolveApplianceRelease(ctx, client, config.RepositoryURL, config.Channel, config.ReleaseTag, config.CoreManifestSHA256)
 	if err != nil {
 		return err
-	}
-	if config.CoreManifestSHA256 != "" && release.coreSHA256 != config.CoreManifestSHA256 {
-		return fmt.Errorf("selected core-release.json differs from the exact requested digest")
 	}
 	emitProxmoxProgress(progress, "Verify release", "Downloading the image manifest and ISO for "+release.TagName, 0.08)
 	verified, err := downloadVerifiedApplianceRelease(ctx, client, release, config.CacheRoot, config.ISOSHA256)
 	if err != nil {
 		return err
-	}
-	if config.Channel != "exact" && release.core.Branch != coreTrackBranch(config.Channel, config.ReleaseBranch) {
-		return fmt.Errorf("release branch %q does not match requested track %q", release.core.Branch, config.Channel)
 	}
 	emitProxmoxProgress(progress, "Verify release", "Manifest and ISO verified by SHA-256 for "+verified.Manifest.ImageVersion, 0.35)
 
@@ -460,7 +400,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true,
 		TransactionID: transactionID, TargetSerial: targetSerial,
-		Network: config.Network, ReleasePolicy: config.releasePolicy(verified.ManifestSHA), Development: config.developmentPolicy(),
+		Network: config.Network, ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
 		AuthorizedKeys: keyFinal.Accepted,
 	}
 	if config.Operation != "create" {
@@ -1234,16 +1174,4 @@ func RunProxmoxApplianceSilent(opts CLIOptions) error {
 		}
 	}
 	return nil
-}
-
-func (config proxmoxApplianceConfig) releaseRepositoryURL() string {
-	provider, api, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI)
-	if err != nil {
-		return "Invalid repository"
-	}
-	source, err := releasecache.RepositoryURLFromAPI(provider, api.String())
-	if err != nil {
-		return "Invalid repository"
-	}
-	return source
 }

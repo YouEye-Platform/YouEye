@@ -7,19 +7,19 @@ import path from 'node:path';
 import { AppUpdateJournalStore } from '../src/lib/market/update-journal';
 import { AppUpdateTransaction } from '../src/lib/market/update-transaction';
 import { ReleaseMetadataUpdateProvider, updateIdenticalProductRelease, type ReleaseMetadataIO } from '../src/lib/market/update-release-metadata';
-import { productReceipt, verifyProductRelease, acceptProductSequence, type ProductBuild, type ProductRelease } from '../src/lib/releases/product-release';
+import { productReceipt, productTag, verifyProductRelease, acceptProductSequence } from '../src/lib/releases/product-release';
+import { productFixture } from './fixtures/release-fixtures';
 import type { AppManifest, InstallMetadata } from '../src/lib/market/types';
 import type { InstalledApp } from '../src/lib/market/installed-apps';
 
 const hash = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 test('release-only adoption and ambiguous publication recovery use the durable journal', async t => {
   const source = 'https://github.com/YouEye-Platform/Notes';
-  const build: ProductBuild = {schema:'youeye.product-build.v1',product:'notes',kind:'native',build_version:'1.0.0',source,branch:'main',source_commit:'a'.repeat(40),tag:'v1.0.0',input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'standalone.tar',assets:[]};
-  build.assets = ['standalone.tar'].map(name => ({name,url:`${source}/releases/download/v1.0.0/${name}`,sha256:hash(name),size_bytes:name.length}));
-  const buildRaw = Buffer.from(JSON.stringify(build));
+  const base = productFixture('notes','1.0.0',source,{'standalone.tar':Buffer.from('standalone.tar')});
+  const build = base.build;
   function release(version: string, sequence: number) {
-    const r: ProductRelease = {schema:'youeye.product-release.v1',product:'notes',version,source,branch:'main',tag:`v${version}`,channel:'stable',sequence,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
-    return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'notes',source,tag:r.tag});
+    const r = {...base.release,version,tag:productTag('notes',version),sequence};
+    return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'notes',repository:source,tag:r.tag});
   }
   const old = release('1.0.0',1), selected = release('1.0.1',2);
   const oldManifest = {metadata:{id:'notes'},version:'1.0.0',containers:[{name:'server',type:'lxd'}]} as AppManifest;
@@ -44,7 +44,7 @@ test('release-only adoption and ambiguous publication recovery use the durable j
       const io: ReleaseMetadataIO = {
         metadata:async()=>structuredClone(metadata),save:async m=>{metadata=structuredClone(m);after('metadata');},
         installed:async()=>structuredClone(installed),restoreInstalled:async(_,state)=>{Object.assign(installed,state);},
-        provenance:async(_,s)=>{Object.assign(installed,{installedVersion:s.release.version,installedTag:s.release.tag,installedBranch:s.release.branch,channelSource:s.release.source,updateAvailable:false});after('provenance');},
+        provenance:async(_,s)=>{Object.assign(installed,{installedVersion:s.release.version,installedTag:s.release.tag,installedBranch:null,channelSource:s.repository,updateAvailable:false});after('provenance');},
         manifest:async()=>structuredClone(registration),syncManifest:async(_,m)=>{registration=structuredClone(m);after('manifest');},
         verifyProjection:async p=>{assert.deepEqual(projection,p.receipt);if(p.receipt.manifestSHA256===selected.manifestSHA256)after('verification');},
         publishProjection:async p=>{projection=structuredClone(p.receipt);metadata.domain='current-owner.test';after('projection');},
@@ -74,7 +74,7 @@ test('release-only adoption and ambiguous publication recovery use the durable j
         assert.ok(journal.resources.every(r=>!r.mutable || r.kind==='metadata'));
         assert.equal(store.isReserved(journal.resources[0]),false);
         if (['none','metadata','provenance','verification'].includes(fault)) {
-          assert.throws(()=>acceptProductSequence(metadata.productReleaseFloors,old),/rollback/);
+          assert.throws(()=>acceptProductSequence(metadata.productReleaseFloors,old),/older notes release/);
         }
       } finally { rmSync(root,{recursive:true,force:true}); }
     });

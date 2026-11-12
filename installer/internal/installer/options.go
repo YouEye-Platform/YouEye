@@ -3,18 +3,20 @@ package installer
 import (
 	"flag"
 	"fmt"
-	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 const (
 	InstallerVersion             = "0.5.7.0.0.0.1"
 	defaultApplianceArtifactRoot = "/run/youeye-appliance/artifacts"
 	defaultApplianceManifestPath = defaultApplianceArtifactRoot + "/appliance-manifest.json"
-	defaultApplianceProvider     = "github"
-	defaultApplianceReleasesAPI  = "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
+	// defaultApplianceProvider selects the official public repository in the
+	// interactive installers; "custom" means a repository URL was entered.
+	defaultApplianceProvider = "github"
 )
 
 type InstallerMode string
@@ -61,15 +63,11 @@ type CLIOptions struct {
 	ProxmoxSSHKeysPath        string
 	ProxmoxEraseConfirmed     bool
 	ApplianceChannel          string
-	ApplianceReleaseBranch    string
-	ApplianceFreshness        string
 	ApplianceServiceSelection string
 	ApplianceReleaseTag       string
 	CoreManifestSHA256        string
 	ApplianceISOSHA256        string
 	ApplianceRepository       string
-	ApplianceReleaseProvider  string
-	ApplianceReleasesAPI      string
 	ConsoleKind               string
 }
 
@@ -86,7 +84,6 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 		ProxmoxNetworkMode:       "dhcp",
 		ProxmoxImportHostSSHKeys: true,
 		ApplianceChannel:         "stable",
-		ApplianceFreshness:       "require-current",
 		ApplianceRepository:      repository,
 	}
 
@@ -120,14 +117,12 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.BoolVar(&opts.ProxmoxImportHostSSHKeys, "import-host-ssh-keys", opts.ProxmoxImportHostSSHKeys, "import Proxmox root public keys")
 	fs.StringVar(&opts.ProxmoxSSHKeysPath, "ssh-keys-file", "", "additional public SSH keys file")
 	fs.BoolVar(&opts.ProxmoxEraseConfirmed, "erase-confirmed", false, "confirm destructive reinstall disk erasure")
-	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "release track: stable, development, branch, or exact")
-	fs.StringVar(&opts.ApplianceReleaseBranch, "release-branch", "", "branch-associated release track (never a raw branch checkout)")
+	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "release channel the box follows: dev, alpha, beta or stable")
 	fs.StringVar(&opts.ApplianceServiceSelection, "service-selection", opts.ApplianceServiceSelection, "first-boot services: current selection or sealed image pins")
-	fs.StringVar(&opts.ApplianceFreshness, "freshness", opts.ApplianceFreshness, "first-boot policy: require-current or prefer-current")
-	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact youeye-v release tag")
-	fs.StringVar(&opts.CoreManifestSHA256, "core-manifest-sha256", "", "exact core-release.json SHA-256 for exact selection")
+	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "install this exact youeye-v release of the channel (needs --core-manifest-sha256)")
+	fs.StringVar(&opts.CoreManifestSHA256, "core-manifest-sha256", "", "core-release.json SHA-256 of --release-tag")
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "optional ISO SHA-256 for exact selection")
-	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL for releases (defaults to official releases)")
+	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL (default: the official public repository)")
 	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
 
 	if err := fs.Parse(args); err != nil {
@@ -159,16 +154,20 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	opts.ProxmoxOperation = strings.ToLower(strings.TrimSpace(opts.ProxmoxOperation))
 	opts.ProxmoxNetworkMode = strings.ToLower(strings.TrimSpace(opts.ProxmoxNetworkMode))
 	opts.ApplianceChannel = strings.ToLower(strings.TrimSpace(opts.ApplianceChannel))
-	opts.ApplianceReleaseBranch = strings.TrimSpace(opts.ApplianceReleaseBranch)
-	opts.ApplianceFreshness = strings.ToLower(strings.TrimSpace(opts.ApplianceFreshness))
 	opts.ApplianceReleaseTag = strings.TrimSpace(opts.ApplianceReleaseTag)
 	opts.ApplianceISOSHA256 = strings.ToLower(strings.TrimSpace(opts.ApplianceISOSHA256))
 	opts.ConsoleKind = strings.ToLower(strings.TrimSpace(opts.ConsoleKind))
-	source, err := releasecache.ParseRepositorySource(opts.ApplianceRepository)
+	repository, err := releasecache.CanonicalRepository(opts.ApplianceRepository)
 	if err != nil {
 		return opts, err
 	}
-	opts.ApplianceRepository, opts.ApplianceReleaseProvider, opts.ApplianceReleasesAPI = source.URL, source.Adapter, source.ReleasesAPI
+	opts.ApplianceRepository = repository
+	if !releasecache.ValidChannel(opts.ApplianceChannel) {
+		return opts, fmt.Errorf("--channel must be dev, alpha, beta or stable")
+	}
+	if (opts.ApplianceReleaseTag == "") != (opts.CoreManifestSHA256 == "") {
+		return opts, fmt.Errorf("--release-tag and --core-manifest-sha256 go together")
+	}
 	return opts, nil
 }
 

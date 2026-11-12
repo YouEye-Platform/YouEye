@@ -61,14 +61,7 @@ func convergeFreshCore(ctx context.Context, policyPath string, resumeOnly bool) 
 	if err != nil {
 		return out, err
 	}
-	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, baseline, func(ctx context.Context) (systemupdate.CoreHostSelection, error) {
-		current, err := currentCoreSelection()
-		if err != nil {
-			return systemupdate.CoreHostSelection{}, err
-		}
-		selected, _, _, err := systemupdate.ResolveCoreRelease(ctx, runtime.Cache.Client, current)
-		return selected, err
-	})
+	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, baseline)
 	if err != nil {
 		return out, err
 	}

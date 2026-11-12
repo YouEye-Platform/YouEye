@@ -10,7 +10,6 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/logging"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
-	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 // Version and BuildDate are set at build time via ldflags:
@@ -18,7 +17,7 @@ import (
 //	go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.2.4.1 -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 //
 // Defaults here are used only for development builds.
-var Version = "0.6.0"
+var Version = "0.0.0" // set at build time from YOUEYE_VERSION
 var BuildDate = "dev"
 
 // Global configuration
@@ -91,8 +90,6 @@ func init() {
 	rootCmd.AddCommand(cleanupCmd)
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(repoCmd)
-	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(channelCmd)
 	rootCmd.AddCommand(languageCmd)
 	rootCmd.AddCommand(networkCmd)
@@ -164,17 +161,7 @@ var versionCmd = &cobra.Command{
 				output.StatusLine("System image", "image-managed; in-place Spine updates unavailable", output.Green)
 				return nil
 			}
-			if update, newVer := checkSpineUpdate(cfg); update {
-				cmp := version.CompareVersions(newVer, Version)
-				if cmp > 0 {
-					fmt.Printf("Update available: v%s -> v%s\n", Version, newVer)
-					fmt.Println("Run 'youeye update self' to update.")
-				} else {
-					fmt.Printf("Remote version v%s is not newer than current v%s\n", newVer, Version)
-				}
-			} else {
-				output.Success("Spine is up to date")
-			}
+			output.StatusLine("Updates", "run 'youeye update core check'", output.Green)
 		}
 		return nil
 	},

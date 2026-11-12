@@ -58,7 +58,7 @@ type runtimeCacheHTTPFixture struct {
 func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCacheHTTPFixture {
 	t.Helper()
 	f := &runtimeCacheHTTPFixture{payloadStarted: make(chan struct{})}
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +66,13 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Source = "https://forge.example/owner/YouEye"
+	repository := useBoxRepository(t)
 	files := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source = r.Source
 		blob := func(name string, data []byte) releasecache.CoreBlob {
-			b := releasecache.CoreBlob{Name: name, URL: m.Source + "/releases/download/" + m.Tag + "/" + m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
-			u, err := url.Parse(b.URL)
+			b := releasecache.CoreBlob{Name: m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
+			u, err := url.Parse(releasecache.AssetURL(repository, r.Tag, b))
 			if err != nil {
 				t.Fatal(err)
 			}

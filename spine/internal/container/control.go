@@ -13,7 +13,6 @@ import (
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
-	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
@@ -561,15 +560,10 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	appDir := cfg.Deployment.ControlPanel.AppDir
 	port := cfg.Deployment.ControlPanel.Port
 
-	// Get download URL from release assets.
-	util.LogSubStep("Fetching latest release info...")
-	effectiveChannel, err := controlPanelReleaseChannel(cfg)
+	// The Control Panel is the cp member of the accepted System release.
+	downloadURL, member, err := releases.SelectedCoreArtifact("cp")
 	if err != nil {
-		return fmt.Errorf("failed to load release channel: %w", err)
-	}
-	downloadURL, err := releases.AssetURLForChannel(cfg, effectiveChannel, cfg.Releases.Repositories.ControlPanel, "standalone.tar", cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if err != nil {
-		return fmt.Errorf("failed to get download URL: %w", err)
+		return fmt.Errorf("locate the selected Control Panel: %w", err)
 	}
 
 	util.LogSubStep(fmt.Sprintf("Downloading from %s", downloadURL))
@@ -600,7 +594,7 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	}
 	util.LogSuccess(fmt.Sprintf("Downloaded %.2f MB", float64(written)/1024/1024))
 	defer os.Remove(tmpFile)
-	if err := releases.VerifyReleaseArtifact(downloadURL, tmpFile, effectiveChannel.ArtifactSHA256, "cp"); err != nil {
+	if err := releases.VerifyArtifactFile(tmpFile, member.Artifact); err != nil {
 		return fmt.Errorf("verify Control Panel release artifact: %w", err)
 	}
 
@@ -791,50 +785,26 @@ func verifyControlPanelArtifact(containerName, appDir string) error {
 	return nil
 }
 
-func controlPanelReleaseChannel(cfg *config.Config) (channels.Channel, error) {
-	chCfg, err := channels.Load()
-	if err != nil {
-		return channels.Channel{}, err
-	}
-	return chCfg.Effective(channels.ComponentControl, cfg), nil
-}
-
-// recordControlProvenance records the installed Control Panel release into the
-// core provenance file after a deploy. Resolution failures are non-fatal — the
-// deploy already succeeded — but are logged.
+// recordControlProvenance records the installed Control Panel release.
 func recordControlProvenance(cfg *config.Config, containerName, appDir string) {
-	chCfg, err := channels.Load()
+	_, member, err := releases.SelectedCoreArtifact("cp")
 	if err != nil {
-		util.LogDebug(fmt.Sprintf("provenance: load channels failed: %v", err))
+		util.LogDebug(fmt.Sprintf("provenance: selected Control Panel unknown: %v", err))
 		return
 	}
-	cand, err := releases.ResolveComponent(cfg, channels.ComponentControl, cfg.Releases.Repositories.ControlPanel, cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if err != nil {
-		util.LogDebug(fmt.Sprintf("provenance: resolve control failed: %v", err))
-		return
-	}
-	// Prefer the actually-installed package.json version when available.
-	installedVer := GetInstalledVersion(containerName, appDir)
-	ver := cand.Version
-	if installedVer != "" && installedVer != "unknown" {
-		ver = installedVer
-	}
-	_ = chCfg
-	if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
-		Version:        ver,
-		Tag:            cand.Tag,
-		Branch:         cand.Branch,
-		Source:         cand.Source,
-		ArtifactSHA256: cand.ArtifactSHA256,
+	if err := update.WriteProvenance("control", update.ProvenanceEntry{
+		Version:        GetInstalledVersion(containerName, appDir),
+		ArtifactSHA256: member.Artifact.SHA256,
 	}); err != nil {
 		util.LogDebug(fmt.Sprintf("provenance: write control failed: %v", err))
 	}
 }
 
-// GetInstalledVersion gets the version from the installed package.json.
+// GetInstalledVersion reads version.json, which the build writes into the
+// package from YOUEYE_VERSION. package.json carries only a placeholder.
 func GetInstalledVersion(containerName, appDir string) string {
 	out, err := exec.Command("incus", "exec", containerName, "--",
-		"cat", appDir+"/package.json").Output()
+		"cat", appDir+"/version.json").Output()
 	if err != nil {
 		return "unknown"
 	}

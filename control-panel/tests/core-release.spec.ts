@@ -4,35 +4,57 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync, unlinkSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { parseCoreRelease, coreArtifactVerificationShell, validCoreBranch, selectedCoreArtifact, selectedCoreRole, loadSelectedCoreDocument, verifyCoreArtifactBuffer, coreBlobTransportURL } from '../src/lib/releases/core-release';
-import { releaseArtifactVerificationShell, verifyReleaseArtifactBuffer } from '../src/lib/releases/artifact';
+import { canonicalReleaseRepository, parseCoreRelease, coreArtifactVerificationShell, releaseAssetURL, selectedCoreRole, loadSelectedCoreDocument, verifyCoreArtifactBuffer } from '../src/lib/releases/core-release';
+import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '../src/lib/releases/artifact';
 
-const fixture = readFileSync(new URL('../../releasecache/testdata/core-release-v1.json', import.meta.url));
+// The same fixture the Go reader (releasecache) parses: one document, one interpretation.
+const fixture = readFileSync(new URL('../../releasecache/testdata/core-release.json', import.meta.url));
 const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 const mutate = (change: (r: any) => void) => { const r = JSON.parse(fixture.toString()); change(r); return Buffer.from(JSON.stringify(r)); };
 
-test('the unsigned core release document is strict and has one interpretation', () => {
+test('the shared host-independent core release fixture parses strictly', () => {
   const r = parseCoreRelease(fixture);
-  assert.equal(r.version,'0.5.38');
+  assert.equal(r.version,'0.6.1-rc.1');
+  assert.equal(r.tag,'youeye-v0.6.1-rc.1');
+  assert.match(r.source_tree,/^[0-9a-f]{40}$/);
   assert.equal(r.authority,'digest');
-  assert.equal(r.members.find(m => m.role === 'appliance')?.build_version,'0.5.37');
-  assert.equal(r.members.find(m => m.role === 'appliance')?.build_inputs?.name,'build-inputs.json');
   assert.equal(r.members.length,14);
-  for (const raw of [fixture.toString().replace('"sequence": 2','"sequence": 1, "sequence": 2'), fixture.toString().replace('"state_min": 1','"state_min": 2, "state_min": 1')]) assert.throws(() => parseCoreRelease(Buffer.from(raw)), /Duplicate/);
+  assert.equal(r.members.find(m => m.role === 'appliance')?.build_inputs?.name,'build-inputs.json');
+  for (const member of r.members) {
+    assert.match(member.source_tree,/^[0-9a-f]{40}$/);
+    assert.equal(Object.hasOwn(member.artifact,'url'),false);
+  }
+  for (const raw of [fixture.toString().replace('"sequence": 1762950000','"sequence": 1, "sequence": 1762950000'), fixture.toString().replace('"state_min": 2','"state_min": 1, "state_min": 2')]) assert.throws(() => parseCoreRelease(Buffer.from(raw)), /Duplicate/);
   assert.throws(() => parseCoreRelease(mutate(r => r.members.pop())), /Incomplete/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.authority; })), /identity/);
-  assert.throws(() => parseCoreRelease(mutate(r => { r.authority = 'signature'; })), /identity/);
-  // Removed signature fields are unknown fields now, never silently accepted.
-  assert.throws(() => parseCoreRelease(mutate(r => { r.unexpected = true; })), /fields/);
-  for (const field of ['checksums','signature','provenance','sbom','key_id','document_signature','release_lock']) {
-    assert.throws(() => parseCoreRelease(mutate(r => { r.members[0][field] = r.members[0].artifact; })), /fields/, field);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.source_tree = 'abc'; })), /identity/);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].source_tree = 'x'.repeat(40); })), /member/);
+  // Per-host fields are gone: they are unknown fields now, never silently accepted.
+  for (const field of ['source','branch','source_commit','channel','previous_manifest_sha256']) {
+    assert.throws(() => parseCoreRelease(mutate(r => { r[field] = 'x'; })), /fields/, field);
   }
+  for (const field of ['source','branch','source_commit','tag']) {
+    assert.throws(() => parseCoreRelease(mutate(r => { r.members[0][field] = 'x'; })), /fields/, field);
+  }
+  assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.url = 'https://github.com/YouEye-Platform/YouEye/releases/download/x/y'; })), /fields/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.members.find((m: any) => m.role === 'appliance').build_inputs; })), /build inputs/);
-  assert.throws(() => parseCoreRelease(mutate(r => { r.members.find((m: any) => m.role === 'ui').build_inputs = r.members[0].artifact; })), /build inputs/);
-  assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.url = 'https://github.com/YouEye-Platform/YouEye/releases/download/other/x'; })), /blob/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.size_bytes = 1.5; })), /integer/);
-  for (const b of ['Team/Fix','main','f-x']) assert.ok(validCoreBranch(b));
-  for (const b of ['x/../main','x@{1}','x.lock','x//y','main\n',' a','x..y']) assert.equal(validCoreBranch(b),false);
+  // A blob may live in another youeye-v release of the same repository, nothing else.
+  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'youeye-v0.6.0-rc.3'; })));
+  assert.throws(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'v0.6.0'; })), /blob/);
+});
+
+test('assets are located only by repository, tag and name', () => {
+  const r = parseCoreRelease(fixture);
+  const repository = canonicalReleaseRepository('https://git.example.test/owner/YouEye');
+  const ui = r.members.find(m => m.role === 'ui')!;
+  assert.equal(releaseAssetURL(repository, r.tag, ui.artifact), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.1-rc.1/${ui.artifact.name}`);
+  assert.equal(releaseAssetURL(repository, r.tag, {...ui.artifact, release:'youeye-v0.6.0-rc.2'}), `https://git.example.test/owner/YouEye/releases/download/youeye-v0.6.0-rc.2/${ui.artifact.name}`);
+  for (const bad of ['http://x.test/a/b','https://x.test/a','https://x.test/a/b/c','https://u:p@x.test/a/b','https://x.test/a/b?x=1']) {
+    assert.throws(() => canonicalReleaseRepository(bad), undefined, bad);
+  }
+  assert.match(releaseDownloadShell(releaseAssetURL(repository, r.tag, ui.artifact), '/tmp/app.tar'), /--proto '=https'/);
+  assert.throws(() => releaseDownloadShell('https://api.github.com/repos/a/b/releases', '/tmp/x'), /release assets/);
 });
 
 test('CP/UI artifacts bind by digest and size to the selection Spine accepted', () => {
@@ -41,24 +63,15 @@ test('CP/UI artifacts bind by digest and size to the selection Spine accepted', 
     const payload = Buffer.from('ui standalone payload');
     const raw = mutate(r => { const ui = r.members.find((m: any) => m.role === 'ui'); ui.artifact.sha256 = sha(payload); ui.artifact.size_bytes = payload.length; });
     writeFileSync(join(root,'core-release.json'),raw,{mode:0o600});
-    const ui = parseCoreRelease(raw).members.find(m => m.role === 'ui')!;
-    const selected = selectedCoreArtifact(ui.artifact.url,ui.artifact.sha256,'ui',root)!;
+    const selected = selectedCoreRole('ui',root);
     assert.equal(selected.member.role,'ui');
     assert.equal(selected.manifestSHA256,sha(raw));
-    assert.equal(selectedCoreRole('ui',root).member.artifact.name,ui.artifact.name);
-    assert.throws(() => selectedCoreArtifact(ui.artifact.url,ui.artifact.sha256,'cp',root), /differs/);
-    assert.throws(() => selectedCoreArtifact(ui.artifact.url,'f'.repeat(64),'ui',root), /differs/);
-    assert.equal(selectedCoreArtifact('https://forge.example.test/a/b/releases/download/ui-v1.0.0/standalone.tar','f'.repeat(64),'ui',root),null);
     assert.equal(verifyCoreArtifactBuffer(selected,payload),sha(payload));
     assert.throws(() => verifyCoreArtifactBuffer(selected,Buffer.from('tampered payload!!!!!')), /differs/);
     assert.throws(() => verifyCoreArtifactBuffer(selected,Buffer.concat([payload,Buffer.from('x')])), /differs/);
     const shell = coreArtifactVerificationShell(selected,'/tmp/app.tar');
     assert.match(shell,/stat -c %s/);
     assert.match(shell,new RegExp(sha(payload)));
-    assert.doesNotMatch(shell,/openssl|curl/);
-    assert.equal(coreBlobTransportURL(selected.release,ui.artifact),ui.artifact.url);
-    assert.equal(coreBlobTransportURL(selected.release,ui.artifact,true),`${selected.release.source}/releases/download/${selected.release.tag}/blob-${sha(payload)}`);
-    assert.throws(() => coreBlobTransportURL(selected.release,{...ui.artifact,sha256:'f'.repeat(64)}), /outside/);
     unlinkSync(join(root,'core-release.json'));
     writeFileSync(join(root,'real-manifest.json'),raw,{mode:0o600});
     symlinkSync(join(root,'real-manifest.json'),join(root,'core-release.json'));
@@ -66,16 +79,16 @@ test('CP/UI artifacts bind by digest and size to the selection Spine accepted', 
   } finally { rmSync(root,{recursive:true}); }
 });
 
-test('non-core artifacts are checked against their pinned digest only', () => {
-  const url = 'https://forge.example.test/a/b/releases/download/ui-dev-v1.0.0/standalone.tar';
+test('release artifacts are checked against the exact document digest and size', () => {
   const bytes = Buffer.from('component');
-  assert.equal(verifyReleaseArtifactBuffer(url,bytes,sha(bytes)),sha(bytes));
-  assert.equal(verifyReleaseArtifactBuffer(url,bytes),sha(bytes));
-  assert.throws(() => verifyReleaseArtifactBuffer(url,Buffer.from('tampered'),sha(bytes)), /channel digest/);
-  assert.throws(() => verifyReleaseArtifactBuffer(url,bytes,'not-a-digest'), /malformed/);
-  const shell = releaseArtifactVerificationShell(url,'/tmp/app.tar',sha(bytes));
+  assert.equal(verifyReleaseArtifactBuffer(bytes,{sha256:sha(bytes),size_bytes:bytes.length}),sha(bytes));
+  assert.equal(verifyReleaseArtifactBuffer(bytes),sha(bytes));
+  assert.throws(() => verifyReleaseArtifactBuffer(Buffer.from('tampered'),{sha256:sha(bytes)}), /digest/);
+  assert.throws(() => verifyReleaseArtifactBuffer(bytes,{sha256:sha(bytes),size_bytes:bytes.length + 1}), /digest/);
+  assert.throws(() => verifyReleaseArtifactBuffer(bytes,{sha256:'not-a-digest'}), /malformed/);
+  const shell = releaseArtifactVerificationShell('/tmp/app.tar',{sha256:sha(bytes),size_bytes:9});
   assert.match(shell,/sha256sum/);
+  assert.match(shell,/stat -c %s/);
   assert.match(shell,new RegExp(sha(bytes)));
-  assert.doesNotMatch(shell,/openssl|SHA256SUMS|\.pub/);
-  assert.doesNotMatch(releaseArtifactVerificationShell(url,'/tmp/app.tar'),/sha256sum/);
+  assert.doesNotMatch(releaseArtifactVerificationShell('/tmp/app.tar'),/sha256sum/);
 });

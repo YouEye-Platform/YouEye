@@ -12,6 +12,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -43,21 +44,15 @@ type applianceAnswerNetwork struct {
 	DNS        string `json:"dns,omitempty"`
 }
 
-// applianceReleasePolicy is persisted on YE-STATE and consumed by the sealed
-// first-boot bootstrap. A branch identifies a release track; it never
-// authorizes a mutable branch archive or raw source checkout.
+// applianceReleasePolicy is persisted on YE-STATE (release-policy.json). The
+// box follows Channel of Repository; the repository never changes after
+// installation. CoreManifestSHA256 is the root of trust.
 type applianceReleasePolicy struct {
+	Schema             string `json:"schema"`
+	Repository         string `json:"repository"`
+	Channel            string `json:"channel"`
 	CoreManifestSHA256 string `json:"core_manifest_sha256,omitempty"`
 	ServiceSelection   string `json:"service_selection,omitempty"`
-	Schema             string `json:"schema"`
-	Provider           string `json:"provider"`
-	ReleasesAPI        string `json:"releases_api,omitempty"`
-	Mode               string `json:"mode"`
-	Track              string `json:"track,omitempty"`
-	Branch             string `json:"branch,omitempty"`
-	ExactTag           string `json:"exact_tag,omitempty"`
-	ManifestSHA256     string `json:"manifest_sha256,omitempty"`
-	Freshness          string `json:"freshness"`
 }
 
 type developmentAccessPolicy struct {
@@ -69,10 +64,7 @@ type developmentAccessPolicy struct {
 }
 
 func defaultApplianceReleasePolicy() applianceReleasePolicy {
-	return applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: defaultApplianceProvider,
-		Mode: "track", Track: "stable", Freshness: "require-current",
-	}
+	return applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: "stable"}
 }
 
 func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
@@ -174,46 +166,17 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 	if policy.Schema != releasePolicySchema {
 		return fmt.Errorf("release policy schema must be %s", releasePolicySchema)
 	}
-	provider := strings.ToLower(strings.TrimSpace(policy.Provider))
-	if provider != "github" && provider != "custom" {
-		return fmt.Errorf("release policy provider must be a supported repository URL")
+	if repository, err := releasecache.CanonicalRepository(policy.Repository); err != nil || repository != policy.Repository {
+		return fmt.Errorf("release policy repository must be a canonical https://host/owner/repository URL")
 	}
-	api := strings.TrimSpace(policy.ReleasesAPI)
-	if _, _, err := normalizeApplianceReleaseSource(provider, api); err != nil {
-		return err
+	if !releasecache.ValidChannel(policy.Channel) {
+		return fmt.Errorf("release policy channel must be dev, alpha, beta or stable")
 	}
 	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
 		return fmt.Errorf("service selection must be sealed or current")
 	}
 	if policy.CoreManifestSHA256 != "" && !validSHA256Hex(policy.CoreManifestSHA256) {
 		return fmt.Errorf("core manifest digest must be exact lowercase SHA-256")
-	}
-	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
-		return fmt.Errorf("release policy freshness must be require-current or prefer-current")
-	}
-	switch policy.Mode {
-	case "track":
-		if policy.ExactTag != "" || policy.ManifestSHA256 != "" {
-			return fmt.Errorf("tracking release policy cannot include an exact identity")
-		}
-		switch policy.Track {
-		case "stable", "development":
-			if policy.Branch != "" {
-				return fmt.Errorf("stable and development release tracks cannot include a branch")
-			}
-		case "branch":
-			if !validApplianceReleaseBranch(policy.Branch) {
-				return fmt.Errorf("branch-associated release policy requires a safe branch name")
-			}
-		default:
-			return fmt.Errorf("release policy track must be stable, development, or branch")
-		}
-	case "exact":
-		if policy.Track != "" || policy.Branch != "" || !validCoreTag(policy.ExactTag) || !validSHA256Hex(policy.ManifestSHA256) {
-			return fmt.Errorf("exact release policy requires a youeye-v release tag and lowercase manifest SHA-256")
-		}
-	default:
-		return fmt.Errorf("release policy mode must be track or exact")
 	}
 	return nil
 }

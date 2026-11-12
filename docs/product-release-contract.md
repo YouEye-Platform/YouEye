@@ -1,32 +1,38 @@
 # Product releases (native apps, Pointer, Market catalog)
 
-Independently versioned products — the native apps (Notes, Wiki, Search,
-Translate, Weather, Cinema), Canvas, Pointer and the Market catalog — are
-published as releases in their own repositories. Nothing is signed; integrity
+The native apps (Notes, Wiki, Search, Translate, Weather, Cinema), Pointer and the Market catalog are released from
+their own repositories and promoted like the System (see [releases.md](releases.md)). Nothing is signed; integrity
 comes from HTTPS and SHA-256.
 
-## Tags
+## Tags and versions
 
-The tag is derived from the branch and version: `v<version>` on `main`,
-`<branch>-v<version>` on any other branch, with a `catalog-` prefix for the
-Market catalog (for example `catalog-v0.5.24-alpha.3`). The Control Panel picks
-the newest tag for the branch it follows; for native apps that is the branch of
-the selected Market source.
+- Apps and Pointer: `v<version>`; Market catalog: `catalog-v<version>`. Versions are `X.Y.Z-rc.N` and never name a
+  channel; there are no branch-prefixed tags.
+- The Control Panel finds a product only through the box's channel index (Spine `GET /api/releases/index`); it
+  never lists releases and never derives a repository from an app manifest.
 
-## Two accepted shapes
+## The document
 
-1. **Plain archive.** A release with `standalone.tar` (native apps, Pointer on
-   first install). Its digest can be pinned by the app manifest's
-   `artifactSHA256`; otherwise HTTPS alone protects it.
-2. **Product release document.** `product-release.json`
-   (`youeye.product-release.v1`, `authority: "digest"`) embeds the immutable
-   build description `youeye.product-build.v1` (base64), which lists every asset
-   by name, URL, SHA-256 and size, names the primary asset and records
-   `contract_sha256`: the digest of the installer contract (`youeye-app.yaml` for
-   native apps, `pointer-build-contract.json` for Pointer, `catalog-snapshot.json`
-   for the Market catalog). The release `sequence` only moves forward per source
-   and branch. The accepted document's SHA-256 is the installed identity.
+`product-release.json` (`youeye.product-release.v1`, `authority: "digest"`):
 
-The reader is `control-panel/src/lib/releases/product-release.ts`. Unknown
-fields and duplicate JSON keys are rejected. Asset files that older releases
-carried (`.sig`, `.pub`, `SHA256SUMS`, provenance, SBOM) are ignored.
+```json
+{"schema":"youeye.product-release.v1","product":"notes","version":"0.6.1-rc.1","tag":"v0.6.1-rc.1",
+ "source_tree":"<40 hex>","sequence":1762950000,"minimum_reader":1,"authority":"digest",
+ "build_manifest_base64":"<base64 of youeye.product-build.v1>"}
+```
+
+The embedded `youeye.product-build.v1` lists every asset as `{name, sha256, size_bytes, release?}`, names the
+primary asset and records `contract_sha256`: the digest of the installer contract (`youeye-app.yaml` for native
+apps, `pointer-build-contract.json` for Pointer, `catalog-snapshot.json` for the Market catalog). No source,
+branch, channel, commit or URL is inside, so the bytes are the same on every host. The accepted document's SHA-256
+(which must equal the channel index entry) is the installed identity.
+
+## Market catalog
+
+The catalog release carries `catalog-snapshot.json` (the contract), `catalog.tar` (the primary asset: a plain,
+deterministic tar of exactly the files the snapshot lists) and `product-release.json`. The official Market is read
+from `catalog.tar`; every file is checked against the snapshot. Native-app entries in `catalog.yaml` name only the
+app id (`- id: notes` with `integration: native`); the box resolves them through its channel index.
+
+The reader is `control-panel/src/lib/releases/product-release.ts`. Unknown fields and duplicate JSON keys are
+rejected.

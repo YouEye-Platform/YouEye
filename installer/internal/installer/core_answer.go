@@ -3,7 +3,6 @@ package installer
 import (
 	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 )
@@ -17,22 +16,6 @@ type coreAnswerSelection struct {
 
 func coreAnswerFromRelease(release applianceRelease) *coreAnswerSelection {
 	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), ManifestSHA256: release.coreSHA256}
-}
-
-// coreAnswerSource derives the exact repository URL from a release policy.
-func coreAnswerSource(policy applianceReleasePolicy) (string, error) {
-	provider, api, err := normalizeApplianceReleaseSource(policy.Provider, policy.ReleasesAPI)
-	if err != nil {
-		return "", err
-	}
-	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
-	if provider == "github" && len(parts) == 4 {
-		return "https://github.com/" + parts[1] + "/" + parts[2], nil
-	}
-	if provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
-		return api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4], nil
-	}
-	return "", fmt.Errorf("core release source must be an exact supported repository")
 }
 
 func decodeCoreAnswer(c *coreAnswerSelection) (releasecache.CoreRelease, []byte, error) {
@@ -58,37 +41,8 @@ func validateCoreAnswer(answer applianceAnswer) error {
 	if c == nil || answer.ReleasePolicy.CoreManifestSHA256 != c.ManifestSHA256 {
 		return fmt.Errorf("core answer requires one exact selection bound by the release policy")
 	}
-	r, _, err := decodeCoreAnswer(c)
-	if err != nil {
+	if _, _, err := decodeCoreAnswer(c); err != nil {
 		return err
 	}
-	policy := answer.ReleasePolicy
-	source, err := coreAnswerSource(policy)
-	if err != nil {
-		return err
-	}
-	if r.Source != source {
-		return fmt.Errorf("core answer source differs from selected repository")
-	}
-	if policy.Mode == "exact" && policy.ExactTag != r.Tag {
-		return fmt.Errorf("core answer differs from exact release policy")
-	}
-	if policy.Mode == "track" {
-		if branch := coreTrackBranch(policy.Track, policy.Branch); r.Branch != branch {
-			return fmt.Errorf("core answer differs from selected branch")
-		}
-	}
-	return nil
-}
-
-// coreTrackBranch maps a release track to the source branch its core release
-// documents must name. Spine applies the same rule to the recorded policy.
-func coreTrackBranch(track, branch string) string {
-	switch track {
-	case "stable":
-		return "main"
-	case "development", "dev":
-		return "dev"
-	}
-	return branch
+	return validateApplianceReleasePolicy(answer.ReleasePolicy)
 }

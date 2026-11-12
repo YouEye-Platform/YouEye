@@ -16,8 +16,6 @@ import (
 var installerSeedPaths = []string{
 	filepath.Join("config", "config.yaml"),
 	filepath.Join("config", "youeye.yaml"),
-	"market-source.json",
-	"market-sources.json",
 }
 
 type installerSeed struct {

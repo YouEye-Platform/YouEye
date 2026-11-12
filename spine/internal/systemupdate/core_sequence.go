@@ -1,7 +1,6 @@
 package systemupdate
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,50 +10,52 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-type coreSequenceFloor struct {
+type coreVersionFloor struct {
 	Schema         string `json:"schema"`
-	Source         string `json:"source"`
-	Branch         string `json:"branch"`
-	Sequence       uint64 `json:"sequence"`
+	Version        string `json:"version"`
 	ManifestSHA256 string `json:"manifest_sha256"`
 }
 
-// Caller holds the coordinator lock and has verified current selection authority.
-// The floor lives outside paired data restoration and follows the exact source
-// track even when a failed update rolls back or the owner changes channels.
+// retainSequence keeps the highest accepted version. A box never downgrades,
+// whichever channel it follows, and one version is one build: the same
+// version with another document digest is refused.
+// Caller holds the coordinator lock.
 func (m CoreManager) retainSequence(r releasecache.CoreRelease, digest string, requireAdvance bool) error {
-	key := sha256.Sum256([]byte(r.Source + "\x00" + r.Branch))
-	path := filepath.Join(m.Root, "sequence-floors", fmt.Sprintf("%x.json", key))
+	return m.versionFloor(r, digest, requireAdvance, true)
+}
+
+// checkSequence applies the floor without raising it.
+func (m CoreManager) checkSequence(r releasecache.CoreRelease, digest string, requireAdvance bool) error {
+	return m.versionFloor(r, digest, requireAdvance, false)
+}
+
+func (m CoreManager) versionFloor(r releasecache.CoreRelease, digest string, requireAdvance, write bool) error {
+	path := filepath.Join(m.Root, "version-floor.json")
 	raw, err := ReadCoreState(path, 16384)
 	if err == nil {
-		var old coreSequenceFloor
-		if json.Unmarshal(raw, &old) != nil || old.Schema != "youeye.core-sequence.v1" || old.Source != r.Source || old.Branch != r.Branch || old.Sequence == 0 || old.Sequence > 9007199254740991 || !validSHA256(old.ManifestSHA256) {
-			return fmt.Errorf("retained core sequence is invalid")
+		var old coreVersionFloor
+		if json.Unmarshal(raw, &old) != nil || old.Schema != "youeye.core-version-floor.v1" || !releasecache.ValidCoreVersion(old.Version) || !validSHA256(old.ManifestSHA256) {
+			return fmt.Errorf("retained version floor is invalid")
 		}
-		frozen, err := ReadCoreState(filepath.Join(m.Root, "targets", old.ManifestSHA256+".json"), 1<<20)
-		if err != nil {
-			return err
-		}
-		prior, hash, err := releasecache.ParseCoreRelease(frozen)
-		if err != nil || hash != old.ManifestSHA256 || prior.Source != old.Source || prior.Branch != old.Branch || prior.Sequence != old.Sequence {
-			return fmt.Errorf("retained sequence lost its frozen input")
-		}
-		if r.Sequence < old.Sequence {
+		switch c := releasecache.CompareVersions(r.Version, old.Version); {
+		case c < 0:
 			if requireAdvance {
-				return fmt.Errorf("core release is older than the retained source-track sequence")
+				return fmt.Errorf("core release %s is older than the accepted %s", r.Version, old.Version)
 			}
 			return nil
-		}
-		if r.Sequence == old.Sequence {
+		case c == 0:
 			if digest != old.ManifestSHA256 {
-				return fmt.Errorf("core source-track sequence conflicts")
+				return fmt.Errorf("core release %s differs from the accepted build of that version", r.Version)
 			}
 			return nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	raw, err = json.Marshal(coreSequenceFloor{Schema: "youeye.core-sequence.v1", Source: r.Source, Branch: r.Branch, Sequence: r.Sequence, ManifestSHA256: digest})
+	if !write {
+		return nil
+	}
+	raw, err = json.Marshal(coreVersionFloor{Schema: "youeye.core-version-floor.v1", Version: r.Version, ManifestSHA256: digest})
 	if err != nil {
 		return err
 	}

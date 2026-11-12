@@ -25,7 +25,8 @@
     {"a": "1.0.0-dev.1", "b": "1.0.0", "result": -1},
     {"a": "1.0.1-alpha.1", "b": "1.0.0", "result": 1},
     {"a": "1.0.0-worker-sebastian42.10", "b": "1.0.0-worker-sebastian42.9", "result": 1},
-    {"a": "1.0.0-beta.1", "b": "1.0.0-alpha.9", "result": 1}
+    {"a": "1.0.0-rc.10", "b": "1.0.0-rc.2", "result": 1},
+    {"a": "0.6.1-rc.4", "b": "0.6.1", "result": -1}
   ],
   "format": [
     {"input": "0.5.0.0.0.0.0.0.0", "display": "0.5", "tag": "0.5.0"},

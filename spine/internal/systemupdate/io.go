@@ -142,7 +142,7 @@ func (m *Manager) verifyTargetMarker(ctx context.Context, device string, update 
 		return fmt.Errorf("parse target sealed marker: %w", err)
 	}
 	if target.ReleaseSet == nil || target.ImageVersion != update.TargetImageVersion ||
-		target.BuildID != update.BuildID || target.SourceCommit != update.SourceCommit || target.Architecture != update.Architecture ||
+		target.BuildID != update.BuildID || target.SourceTree != update.SourceTree || target.Architecture != update.Architecture ||
 		target.FirmwareMode != update.FirmwareMode || target.DiskLayoutVersion != update.DiskLayoutVersion ||
 		target.RecoveryVersion != update.RecoveryVersion || target.ArtifactKind != update.ArtifactKind ||
 		!reflect.DeepEqual(*target.ReleaseSet, update.ReleaseSet) {

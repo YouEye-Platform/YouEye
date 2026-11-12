@@ -4,52 +4,11 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func TestReleaseSourceRejectsUnsafeProviders(t *testing.T) {
-	for _, tc := range []struct{ provider, api string }{
-		{"custom", "http://updates.test/releases"},
-		{"forgejo", ""},
-		{"unknown", "https://updates.test/releases"},
-	} {
-		if _, _, err := normalizeReleaseSource(tc.provider, tc.api); err == nil {
-			t.Fatalf("unsafe release source accepted: %+v", tc)
-		}
-	}
-}
-
-func TestValidateReleaseAssetURLRejectsAttachmentAndEncodedSlash(t *testing.T) {
-	api, err := url.Parse(DefaultReleasesAPI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range []string{
-		"https://github.com/YouEye-Platform/YouEye/attachments/uuid",
-		"https://github.com/YouEye-Platform/YouEye/releases/download/appliance-dev-v1.2.3/nested%2Fsystem-update-manifest.json",
-		"https://github.com/another/YouEye/releases/download/appliance-dev-v1.2.3/system-update-manifest.json",
-	} {
-		if err := validateReleaseAssetURL("github", api, "appliance-dev-v1.2.3", "system-update-manifest.json", raw); err == nil {
-			t.Fatalf("unsafe asset URL accepted: %s", raw)
-		}
-	}
-}
-
-func TestValidateReleaseAssetURLAllowsEncodedSlashOnlyInsideSafeReleaseTag(t *testing.T) {
-	api, err := url.Parse(DefaultReleasesAPI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag := "appliance-codex/phase1-repository-builds-v1.2.3"
-	raw := "https://github.com/YouEye-Platform/YouEye/releases/download/appliance-codex%2Fphase1-repository-builds-v1.2.3/system-update-manifest.json"
-	if err := validateReleaseAssetURL("github", api, tag, "system-update-manifest.json", raw); err != nil {
-		t.Fatalf("encoded multi-segment release tag was rejected: %v", err)
-	}
-}
 
 func TestSystemUpdateRedirectsStayOnTheReleaseOrigin(t *testing.T) {
 	request := func(raw string) *http.Request {

@@ -31,8 +31,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
   const body = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? { ...parsed, ...(routeAppId ? { appId: routeAppId } : {}) } : null;
   if (!body || typeof body.appId !== 'string'
-    || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.appId)
-    || (body.confirm_switch !== undefined && typeof body.confirm_switch !== 'boolean')) {
+    || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.appId)) {
     return NextResponse.json({ error: 'Invalid update request' }, { status: 400 });
   }
   const appId: string = body.appId;
@@ -52,7 +51,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
 
   if (format === 'json') {
     try {
-      const result = await updateMarketApp({ appId, confirmSwitch: body.confirm_switch === true }, () => {});
+      const result = await updateMarketApp({ appId }, () => {});
       const operation = getAppUpdateOperation(appId);
       if (operation?.pending) {
         return NextResponse.json({ status: 'pending', code: 'operation_pending',
@@ -80,7 +79,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
       };
       try {
         const result = await updateMarketApp(
-          { appId, confirmSwitch: body.confirm_switch === true },
+          { appId },
           (event) => {
             // Provider messages can contain command output, paths or secrets.
             emit('rebuilding', 'Updating application...', event.totalSteps > 0

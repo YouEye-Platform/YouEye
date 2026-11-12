@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { SpineAPIError, spineClient, type CoreUpdateAction, type CoreUpdateRequest } from '@/lib/spine/client';
 import { readCoreComponentJSON } from '../../../../../../../shared/core-component-http';
+import { describeReleaseError, isReleaseRateLimited } from '@/lib/releases/channel-index';
 export const dynamic = 'force-dynamic';
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ action: string }> }) {
   if (!(await getSession())?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   if ((await params).action !== 'check') return NextResponse.json({ error: 'Unknown System query' }, { status: 404 });
   try { return NextResponse.json(await spineClient.checkCoreUpdate(), { headers: { 'Cache-Control': 'no-store' } }); }
-  catch { return NextResponse.json({ error: 'A complete signed System release could not be checked.' }, { status: 503 }); }
+  catch (error) {
+    // 403/429 from a release host is rate limiting, never a network failure.
+    if (isReleaseRateLimited(error)) return NextResponse.json({ error: describeReleaseError(error), code: 'rate_limited' }, { status: 502 });
+    return NextResponse.json({ error: error instanceof SpineAPIError ? error.message : 'The System release of this channel could not be checked.', code: 'unavailable' }, { status: 502 });
+  }
 }
 export async function POST(request: NextRequest, { params }: { params: Promise<{ action: string }> }) {
   if (!(await getSession())?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });

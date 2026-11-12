@@ -16,45 +16,25 @@ if ! build_inputs_validate "$build_inputs"; then
 fi
 input_value() { jq -er "$1" "$build_inputs"; }
 snapshot="$(input_value '.debian_snapshot')"
-release_source="$(input_value '.release_source')"
-release_branch="$(input_value '.release_branch')"
 image_version="$(input_value '.version')"
 minimum_current_image_version="$(input_value '.minimum_current_version')"
-market_source="$(input_value '.market.source')"
-market_branch="$(input_value '.market.branch')"
-market_source_commit="$(input_value '.market.commit')"
 spine_version="$(input_value '.components.spine.version')"
-spine_tag="$(input_value '.components.spine.tag')"
-spine_commit="$(input_value '.components.spine.source_commit')"
+spine_tree="$(input_value '.components.spine.source_tree')"
 spine_source_date_epoch="$(input_value '.components.spine.source_date_epoch')"
 spine_expected_sha256="$(input_value '.components.spine.artifact_sha256')"
 cp_version="$(input_value '.components.control_panel.version')"
-cp_tag="$(input_value '.components.control_panel.tag')"
-cp_commit="$(input_value '.components.control_panel.source_commit')"
+cp_tree="$(input_value '.components.control_panel.source_tree')"
 cp_sha256="$(input_value '.components.control_panel.artifact_sha256')"
 ui_version="$(input_value '.components.ui.version')"
-ui_tag="$(input_value '.components.ui.tag')"
-ui_commit="$(input_value '.components.ui.source_commit')"
+ui_tree="$(input_value '.components.ui.source_tree')"
 ui_sha256="$(input_value '.components.ui.artifact_sha256')"
 live_build_attempts="${LIVE_BUILD_ATTEMPTS:-3}"
 live_build_apt_proxy="${LIVE_BUILD_APT_PROXY:-}"
-# The image channel follows the version suffix: no suffix is stable, -beta.N is
-# beta and every other suffix is a development build. ARTIFACT_KIND=test marks a
-# development build as test-only.
-case "$image_version" in
-    *-beta.*) release_kind=beta ;;
-    *-*) release_kind=development ;;
-    *) release_kind=stable ;;
-esac
-artifact_kind="${ARTIFACT_KIND:-$release_kind}"
+# A build is promoted unchanged through every channel, so the image names no
+# channel. ARTIFACT_KIND=test marks a test-only build.
+artifact_kind="${ARTIFACT_KIND:-stable}"
 test_fault="${APPLIANCE_TEST_FAULT:-none}"
 
-for source in "$release_source" "$market_source"; do
-    if [[ $source != https://* || $source == *'?'* || $source == *'#'* ]]; then
-        printf 'Build-input sources must use credential-free HTTPS repository URLs.\n' >&2
-        exit 1
-    fi
-done
 
 
 for path in "$output_dir" "$work_dir"; do
@@ -75,8 +55,8 @@ if [[ -n $live_build_apt_proxy && ! $live_build_apt_proxy =~ ^http://(127\.0\.0\
     printf 'LIVE_BUILD_APT_PROXY must be an uncredentialed builder-local HTTP endpoint.\n' >&2
     exit 1
 fi
-if [[ $artifact_kind != "$release_kind" && ! ( $release_kind == development && $artifact_kind == test ) ]]; then
-	printf 'ARTIFACT_KIND may only mark a development version as test.\n' >&2
+if [[ $artifact_kind != stable && $artifact_kind != test ]]; then
+	printf 'ARTIFACT_KIND may only be stable (default) or test.\n' >&2
 	exit 1
 fi
 if [[ $test_fault != none && $test_fault != system-health ]]; then
@@ -87,16 +67,8 @@ if [[ $test_fault != none && $artifact_kind != test ]]; then
 	printf 'APPLIANCE_TEST_FAULT requires ARTIFACT_KIND=test.\n' >&2
 	exit 1
 fi
-if [[ $market_source != https://* || $market_source == *'?'* || $market_source == *'#'* ]]; then
-	printf 'market.source must be an HTTPS repository URL without a query or fragment.\n' >&2
-	exit 1
-fi
-if [[ ! $market_source_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'market.commit must be a full lowercase Git commit.\n' >&2
-	exit 1
-fi
-if [[ ! $spine_commit =~ ^[0-9a-f]{40}$ ]]; then
-    printf 'components.spine.source_commit must be the exact Spine release commit.\n' >&2
+if [[ ! $spine_tree =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'components.spine.source_tree must be the exact Spine source tree.\n' >&2
     exit 1
 fi
 if [[ ! $spine_source_date_epoch =~ ^[1-9][0-9]*$ ]]; then
@@ -107,16 +79,16 @@ if [[ ! $spine_expected_sha256 =~ ^[0-9a-f]{64}$ ]]; then
 	printf 'components.spine.artifact_sha256 must be the exact Spine binary SHA-256.\n' >&2
 	exit 1
 fi
-if [[ ! $cp_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'components.control_panel.source_commit must be the exact Control Panel release commit.\n' >&2
+if [[ ! $cp_tree =~ ^[0-9a-f]{40}$ ]]; then
+	printf 'components.control_panel.source_tree must be the exact Control Panel source tree.\n' >&2
 	exit 1
 fi
 if [[ ! $cp_sha256 =~ ^[0-9a-f]{64}$ ]]; then
 	printf 'components.control_panel.artifact_sha256 must be the exact Control Panel cp-standalone.tar SHA-256.\n' >&2
 	exit 1
 fi
-if [[ ! $ui_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'components.ui.source_commit must be the exact UI release commit.\n' >&2
+if [[ ! $ui_tree =~ ^[0-9a-f]{40}$ ]]; then
+	printf 'components.ui.source_tree must be the exact UI source tree.\n' >&2
 	exit 1
 fi
 if [[ ! $ui_sha256 =~ ^[0-9a-f]{64}$ ]]; then
@@ -130,42 +102,39 @@ for command in git go mmdebstrap lb ukify jq tar mkfs.ext4 debugfs modinfo zstd 
     fi
 done
 
-source_commit="${YOUEYE_SOURCE_COMMIT:-}"
-if git_commit="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null)"; then
-    if [[ -n $source_commit && $source_commit != "$git_commit" ]]; then
-        printf 'YOUEYE_SOURCE_COMMIT does not match the checked-out source commit.\n' >&2
+# The build is identified by its git tree, which is the same on every host a
+# release is promoted to. build_id and filesystem UUIDs derive from it.
+source_tree="${YOUEYE_SOURCE_TREE:-}"
+if git_tree="$(git -C "$source_dir" rev-parse 'HEAD^{tree}' 2>/dev/null)"; then
+    if [[ -n $source_tree && $source_tree != "$git_tree" ]]; then
+        printf 'YOUEYE_SOURCE_TREE does not match the checked-out source tree.\n' >&2
         exit 1
     fi
-    source_commit="$git_commit"
+    source_tree="$git_tree"
     if [[ -n $(git -C "$source_dir" status --porcelain --untracked-files=normal) ]]; then
         printf 'Refusing appliance build from a dirty source tree; commit the exact source first.\n' >&2
         exit 1
     fi
 fi
-if [[ ! $source_commit =~ ^[0-9a-f]{40}$ ]]; then
-    printf 'YOUEYE_SOURCE_COMMIT must provide the exact source commit when Git metadata is absent.\n' >&2
+if [[ ! $source_tree =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'YOUEYE_SOURCE_TREE must provide the exact source tree when Git metadata is absent.\n' >&2
     exit 1
 fi
 source_date_epoch="${SOURCE_DATE_EPOCH:-}"
-if [[ -z $source_date_epoch ]] && git -C "$source_dir" cat-file -e "$source_commit^{commit}" 2>/dev/null; then
-    source_date_epoch="$(git -C "$source_dir" show -s --format=%ct "$source_commit")"
+if [[ -z $source_date_epoch ]] && git -C "$source_dir" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    source_date_epoch="$(git -C "$source_dir" show -s --format=%ct HEAD)"
 fi
 if [[ ! $source_date_epoch =~ ^[1-9][0-9]*$ ]]; then
     printf 'SOURCE_DATE_EPOCH must be a positive integer when Git metadata is absent.\n' >&2
     exit 1
 fi
 export SOURCE_DATE_EPOCH="$source_date_epoch"
-build_id="appliance-${source_commit:0:12}-${source_date_epoch}"
-source_spine_version="$(sed -n 's/^var Version = "\([^"]*\)"/\1/p' "$source_dir/spine/internal/cmd/root.go")"
-if [[ -z $source_spine_version || $source_spine_version != "$spine_version" ]]; then
-    printf 'Source Spine version must match the build-input Spine version.\n' >&2
-    exit 1
-fi
+build_id="appliance-${source_tree:0:12}-${source_date_epoch}"
 
 rootfs="$work_dir/rootfs"
 artifacts="$work_dir/artifacts"
 work_key="$(printf '%s' "$work_dir" | sha256sum | cut -c1-16)"
-live_dir="/var/tmp/youeye-appliance-live-${source_commit:0:12}-${work_key}"
+live_dir="/var/tmp/youeye-appliance-live-${source_tree:0:12}-${work_key}"
 bin_dir="$work_dir/bin"
 snapshot_url="https://snapshot.debian.org/archive/debian/$snapshot"
 mmdebstrap_proxy_options=()
@@ -269,7 +238,6 @@ install -D -m 0644 "$source_dir/TRADEMARK.md" "$rootfs/usr/share/doc/youeye/TRAD
 install -D -m 0644 "$source_dir/THIRD_PARTY_NOTICES.txt" "$rootfs/usr/share/doc/youeye/THIRD_PARTY_NOTICES.txt"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-first-deploy" "$rootfs/usr/local/libexec/youeye-first-deploy"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-bootstrap-network" "$rootfs/usr/local/libexec/youeye-bootstrap-network"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-seed-market" "$rootfs/usr/local/libexec/youeye-seed-market"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-appliance-bless" "$rootfs/usr/local/libexec/youeye-appliance-bless"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-setup-gate" "$rootfs/usr/local/libexec/youeye-setup-gate"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery" "$rootfs/usr/local/libexec/youeye-recovery"
@@ -300,7 +268,6 @@ install -d -m 0755 \
     "$rootfs/efi" "$rootfs/etc/youeye" "$rootfs/etc/systemd/network" "$rootfs/root/.ssh" \
     "$rootfs/usr/lib/youeye" "$rootfs/var/lib/youeye/config" \
     "$rootfs/var/lib/youeye-state" "$rootfs/var/lib/incus" "$rootfs/var/log/journal"
-install -d -m 0755 "$rootfs/usr/lib/youeye/market"
 rm -f "$rootfs/etc/ssh/ssh_host_"*
 : > "$rootfs/etc/machine-id"
 : > "$rootfs/etc/hostid"
@@ -341,34 +308,29 @@ EOF
 jq -S -n \
     --arg image_version "$image_version" \
     --arg build_id "$build_id" \
-    --arg source_commit "$source_commit" \
-    --arg release_source "$release_source" \
-    --arg release_branch "$release_branch" \
+    --arg source_tree "$source_tree" \
     --arg spine_version "$spine_version" \
-    --arg spine_tag "$spine_tag" \
-    --arg spine_commit "$spine_commit" \
+    --arg spine_tree "$spine_tree" \
     --arg spine_sha256 "$spine_sha256" \
     --arg cp_version "$cp_version" \
-    --arg cp_tag "$cp_tag" \
-    --arg cp_commit "$cp_commit" \
+    --arg cp_tree "$cp_tree" \
     --arg cp_sha256 "$cp_sha256" \
     --arg ui_version "$ui_version" \
-    --arg ui_tag "$ui_tag" \
-	--arg ui_commit "$ui_commit" \
+    --arg ui_tree "$ui_tree" \
 	--arg ui_sha256 "$ui_sha256" \
 	--arg artifact_kind "$artifact_kind" \
     '{
       schema_version:1,image_version:$image_version,build_id:$build_id,
-      source_commit:$source_commit,architecture:"amd64",firmware_mode:"uefi",
+      source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
       disk_layout_version:3,state_schema_min:2,state_schema_max:2,
       data_schema_min:1,data_schema_max:1,kernel_compatibility:">=6.12",
       zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
 	  artifact_kind:$artifact_kind,supported_actions:["recovery","image-update"],
-      release_set:{source:$release_source,branch:$release_branch,fallback:[],
-        spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256},
-        control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
-        ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}}
+      release_set:{
+        spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256},
+        control_panel:{version:$cp_version,source_tree:$cp_tree,artifact_sha256:$cp_sha256},
+        ui:{version:$ui_version,source_tree:$ui_tree,artifact_sha256:$ui_sha256}}
     }' > "$rootfs/usr/lib/youeye/appliance-release"
 chmod 0444 "$rootfs/usr/lib/youeye/appliance-release"
 install -d -m 0755 "$rootfs/usr/share/youeye"
@@ -383,49 +345,19 @@ ConditionPathExists=/usr/lib/youeye/test-health-pass
 EOF
 fi
 
-cat > "$rootfs/var/lib/youeye/config/youeye.yaml" <<EOF
-releases:
-  repo_url: $release_source
-release_branch: $release_branch
-release_channels:
-  default:
-    source: $release_source
-    branch: $release_branch
-    fallback: []
-  spine:
-    source: $release_source
-    branch: $release_branch
-    fallback: []
-  control:
-    source: $release_source
-    branch: $release_branch
-    pin_origin: installation
-    tag: $cp_tag
-    artifact_sha256: $cp_sha256
-    fallback: []
-  ui:
-    source: $release_source
-    branch: $release_branch
-    pin_origin: installation
-    tag: $ui_tag
-    artifact_sha256: $ui_sha256
-    fallback: []
+# The image bakes no release repository, channel or Market source: the
+# installer records the repository and channel in protected State, and the
+# Control Panel finds the official Market through the channel index.
+cat > "$rootfs/var/lib/youeye/config/youeye.yaml" <<'EOF'
+# Site settings, written by Spine and the Control Panel.
 EOF
-cat > "$rootfs/var/lib/youeye/config/config.yaml" <<EOF
-releases:
-  repo_url: $release_source
+cat > "$rootfs/var/lib/youeye/config/config.yaml" <<'EOF'
+# Spine settings. Release repository and channel live in protected State.
 EOF
 chmod 0600 "$rootfs/var/lib/youeye/config/youeye.yaml" "$rootfs/var/lib/youeye/config/config.yaml"
 install -d -m 0755 "$rootfs/usr/lib/youeye/config-seeds"
 install -m 0444 "$rootfs/var/lib/youeye/config/config.yaml" "$rootfs/usr/lib/youeye/config-seeds/config.yaml"
 install -m 0444 "$rootfs/var/lib/youeye/config/youeye.yaml" "$rootfs/usr/lib/youeye/config-seeds/youeye.yaml"
-
-jq -S -n --arg repo "$market_source" --arg commit "$market_source_commit" --arg branch "$market_branch" \
-	'{id:"official",name:"Official YouEye Market",repo_url:$repo,branch:$branch,resolved_commit:$commit,bootstrap_commit:$commit,enabled:true,priority:0,trust:"official"}' > "$rootfs/usr/lib/youeye/market/market-source.json"
-jq -S -n --arg repo "$market_source" --arg commit "$market_source_commit" --arg branch "$market_branch" \
-	'{active_sources:[{id:"official",name:"Official YouEye Market",repo_url:$repo,branch:$branch,resolved_commit:$commit,bootstrap_commit:$commit,enabled:true,priority:0,trust:"official"}]}' \
-	> "$rootfs/usr/lib/youeye/market/market-sources.json"
-chmod 0444 "$rootfs/usr/lib/youeye/market/market-source.json" "$rootfs/usr/lib/youeye/market/market-sources.json"
 
 chroot "$rootfs" passwd -l root >/dev/null
 systemctl --root="$rootfs" enable systemd-networkd.service systemd-networkd-wait-online.service ssh.service qemu-guest-agent.service >/dev/null
@@ -489,8 +421,8 @@ deterministic_uuid() {
     hash="$(printf '%s' "$1" | sha256sum | awk '{print $1}')"
     printf '%s-%s-4%s-a%s-%s\n' "${hash:0:8}" "${hash:8:4}" "${hash:13:3}" "${hash:17:3}" "${hash:20:12}"
 }
-system_uuid="$(deterministic_uuid "$source_commit-system")"
-recovery_uuid="$(deterministic_uuid "$source_commit-recovery")"
+system_uuid="$(deterministic_uuid "$source_tree-system")"
+recovery_uuid="$(deterministic_uuid "$source_tree-recovery")"
 make_ext4_image "$artifacts/system-root.img" 8G YE-SYSTEM-IMAGE "$system_uuid"
 make_ext4_image "$artifacts/internal-recovery.img" 4G YE-RECOVERY-IMG "$recovery_uuid"
 # Compression is a source-owned reproducibility input, never host-adaptive.
@@ -566,37 +498,35 @@ jq -s '.' \
 jq -S -n \
     --slurpfile artifacts "$work_dir/assets.json" \
     --arg image_version "$image_version" --arg build_id "$build_id" \
-    --arg source_commit "$source_commit" \
-    --arg release_source "$release_source" --arg release_branch "$release_branch" \
-    --arg spine_version "$spine_version" --arg spine_tag "$spine_tag" --arg spine_commit "$spine_commit" --arg spine_sha256 "$spine_sha256" \
-    --arg cp_version "$cp_version" --arg cp_tag "$cp_tag" --arg cp_commit "$cp_commit" --arg cp_sha256 "$cp_sha256" \
-    --arg ui_version "$ui_version" --arg ui_tag "$ui_tag" --arg ui_commit "$ui_commit" --arg ui_sha256 "$ui_sha256" \
+    --arg source_tree "$source_tree" \
+    --arg spine_version "$spine_version" --arg spine_tree "$spine_tree" --arg spine_sha256 "$spine_sha256" \
+    --arg cp_version "$cp_version" --arg cp_tree "$cp_tree" --arg cp_sha256 "$cp_sha256" \
+    --arg ui_version "$ui_version" --arg ui_tree "$ui_tree" --arg ui_sha256 "$ui_sha256" \
     --argjson source_date_epoch "$source_date_epoch" \
     '{schema:"youeye.appliance.manifest.v1",image_version:$image_version,build_id:$build_id,
-      source_commit:$source_commit,architecture:"amd64",firmware_mode:"uefi",
+      source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
       disk_layout:{version:3,target_min_gib:32,esp_gib:1,recovery_gib:4,root_slot_gib:8,state_gib:4},
       state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
       kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
-      release_set:{source:$release_source,branch:$release_branch,fallback:[],
-        spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256},
-        control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
-        ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
+      release_set:{
+        spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256},
+        control_panel:{version:$cp_version,source_tree:$cp_tree,artifact_sha256:$cp_sha256},
+        ui:{version:$ui_version,source_tree:$ui_tree,artifact_sha256:$ui_sha256}},
       artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/appliance-manifest.json"
 
 jq -S -n \
 	--slurpfile artifacts "$work_dir/system-update-assets.json" \
 	--arg target_image_version "$image_version" \
-	--arg build_id "$build_id" --arg source_commit "$source_commit" \
+	--arg build_id "$build_id" --arg source_tree "$source_tree" \
 	--arg minimum_current_image_version "$minimum_current_image_version" \
 	--arg artifact_kind "$artifact_kind" \
-	--arg release_source "$release_source" --arg release_branch "$release_branch" \
-	--arg spine_version "$spine_version" --arg spine_tag "$spine_tag" --arg spine_commit "$spine_commit" --arg spine_sha256 "$spine_sha256" \
-	--arg cp_version "$cp_version" --arg cp_tag "$cp_tag" --arg cp_commit "$cp_commit" --arg cp_sha256 "$cp_sha256" \
-	--arg ui_version "$ui_version" --arg ui_tag "$ui_tag" --arg ui_commit "$ui_commit" --arg ui_sha256 "$ui_sha256" \
+	--arg spine_version "$spine_version" --arg spine_tree "$spine_tree" --arg spine_sha256 "$spine_sha256" \
+	--arg cp_version "$cp_version" --arg cp_tree "$cp_tree" --arg cp_sha256 "$cp_sha256" \
+	--arg ui_version "$ui_version" --arg ui_tree "$ui_tree" --arg ui_sha256 "$ui_sha256" \
 	--argjson source_date_epoch "$source_date_epoch" \
 	'{schema:"youeye.system-update.v1",target_image_version:$target_image_version,
-	  build_id:$build_id,source_commit:$source_commit,
+	  build_id:$build_id,source_tree:$source_tree,
 	  architecture:"amd64",firmware_mode:"uefi",hardware_profile:"youeye-appliance-amd64-v1",
 	  disk_layout_version:3,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
 	  recovery_version:"1",minimum_current_image_version:$minimum_current_image_version,
@@ -604,10 +534,10 @@ jq -S -n \
 	  boot_attempts:3,health_profile:"operational",artifact_kind:$artifact_kind,
 	  rollback:{supported:true,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
 	    preserve_state:true,preserve_data:true,preserve_recovery:true},
-	  release_set:{source:$release_source,branch:$release_branch,fallback:[],
-	    spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256},
-	    control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
-	    ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
+	  release_set:{
+	    spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256},
+	    control_panel:{version:$cp_version,source_tree:$cp_tree,artifact_sha256:$cp_sha256},
+	    ui:{version:$ui_version,source_tree:$ui_tree,artifact_sha256:$ui_sha256}},
 	  artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/system-update-manifest.json"
 
 
@@ -822,7 +752,7 @@ if [[ ! -f $hybrid_tree/boot/grub/efi.img ]]; then
     exit 1
 fi
 iso_timestamp="$(date -u -d "@$source_date_epoch" +%Y%m%d%H%M%S00)"
-iso_disk_guid="$(deterministic_uuid "$source_commit-installer-media-gpt")"
+iso_disk_guid="$(deterministic_uuid "$source_tree-installer-media-gpt")"
 xorriso -as mkisofs \
     -r -iso-level 3 -V YOUEYE_INSTALLER \
     -A 'YouEye Installer' -publisher YouEye \

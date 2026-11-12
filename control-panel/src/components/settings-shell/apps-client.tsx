@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
 import Link from "next/link";
 import * as LucideIcons from "lucide-react";
-import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, GitBranch, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -19,7 +19,6 @@ import { Switch } from "@/components/ui/switch";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
-import { UpdateChannels } from "./update-channels";
 
 interface DrawerApp {
   id: string;
@@ -59,7 +58,6 @@ interface UnifiedApp {
   healthDetail?: string | null;
   healthCheckedAt?: string | null;
   autoRestart?: boolean;
-  updateChannelKey?: string;
 }
 
 interface UpdateStatus {
@@ -99,7 +97,7 @@ interface Permission {
   scopes?: string[];
 }
 
-type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling" | "update-channel";
+type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling";
 type BrandingScope = "user" | "server";
 
 const DEFAULT_APP_WORDART: SiteNameStyle = {
@@ -1092,7 +1090,6 @@ function permissionDescription(permission: Permission) {
     { id: "branding", label: translateInterface("md417aa16da36"), icon: <Palette className="h-4 w-4" />, userOnly: true },
     { id: "permissions", label: translateInterface("mabccc78cc93c"), icon: <Shield className="h-4 w-4" />, userOnly: true },
     { id: "network", label: translateInterface("m1744b96470b5"), icon: <Network className="h-4 w-4" />, adminOnly: true },
-    { id: "update-channel", label: translateInterface("md4fc42307306"), icon: <GitBranch className="h-4 w-4" />, adminOnly: true, hide: !unifiedApp?.updateChannelKey },
     { id: "link-handling", label: translateInterface("mca153aaec316"), icon: <Unplug className="h-4 w-4" />, userOnly: true },
   ] satisfies Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean; userOnly?: boolean; hide?: boolean }>;
   const visibleTabs = tabs.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || hasUserContext) && !item.hide);
@@ -1259,10 +1256,6 @@ function permissionDescription(permission: Permission) {
       {tab === "network" && isAdmin && (
         <div className="rounded-lg border p-4 text-sm text-muted-foreground">
           {translateInterface("m0daef8af935c")}</div>
-      )}
-
-      {tab === "update-channel" && isAdmin && unifiedApp?.updateChannelKey && (
-        <UpdateChannels componentId={unifiedApp.updateChannelKey} />
       )}
 
       {tab === "link-handling" && (

@@ -36,6 +36,10 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 		}
 	}
 	out.Release, out.ManifestSHA256 = release, digest
+	if err := systemupdate.RefuseDowngrade(policy.Channel, installed.Release.Version, release.Version); err != nil {
+		out.Behind, out.Message = true, err.Error()
+		return out, nil
+	}
 	for _, role := range []string{"appliance", "spine", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
 		before, after := "", ""
 		for _, m := range installed.Release.Members {

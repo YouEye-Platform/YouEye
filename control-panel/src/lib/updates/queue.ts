@@ -256,12 +256,6 @@ async function runSpineUpdate(
 
   let result;
   switch (component) {
-    case 'spine':
-      result = await spineClient.updateSelf();
-      break;
-    case 'control-panel':
-      result = await spineClient.updateControl();
-      break;
     case 'incus':
       result = await spineClient.updateIncus();
       break;

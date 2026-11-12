@@ -6,21 +6,25 @@ import { parseReleaseVersion } from '../version';
 /**
  * Reader for the unsigned System release document (`youeye.core-release.v1`).
  *
+ * The document is host-independent: it names artifacts, never locates them.
+ * An artifact is downloaded from `<repository>/releases/download/<tag>/<name>`
+ * where repository and tag come from where the document was found (the box's
+ * channel index), unless the blob names another `release` tag of the same
+ * repository.
+ *
  * The Control Panel never decides release trust itself. Spine accepts the
  * document by its exact SHA-256 and records it in protected State; this module
  * only reads those accepted bytes and binds CP/UI artifacts to their member
  * entry by SHA-256 and size.
  */
-export type CoreBlob = { name: string; url: string; sha256: string; size_bytes: number };
+export type CoreBlob = { name: string; sha256: string; size_bytes: number; release?: string };
 export type CoreRole = 'cp' | 'ui';
 export type CoreMember = {
-  role: string; build_version: string; source: string; branch: string; source_commit: string;
-  tag: string; input_sha256: string; depends_on?: string[];
+  role: string; build_version: string; source_tree: string; input_sha256: string; depends_on?: string[];
   artifact: CoreBlob; build_inputs?: CoreBlob;
 };
 export type CoreRelease = {
-  schema: 'youeye.core-release.v1'; version: string; tag: string; source: string; branch: string;
-  source_commit: string; channel: string; sequence: number; previous_manifest_sha256?: string;
+  schema: 'youeye.core-release.v1'; version: string; tag: string; source_tree: string; sequence: number;
   minimum_reader: number; authority: 'digest';
   compatibility: { state_min: number; state_max: number; data_min: number; data_max: number; minimum_release: string; capabilities: string[] };
   members: CoreMember[];
@@ -31,32 +35,24 @@ export type SelectedCoreArtifact = SelectedCoreDocument & { member: CoreMember }
 const ROLES = ['installer', 'media', 'appliance', 'system-update', 'system-root', 'system-a-uki', 'system-b-uki', 'system-updater', 'internal-recovery', 'recovery-uki', 'update-bootstrap', 'spine', 'cp', 'ui'];
 const SELECTION_ROOT = '/var/lib/youeye-state/core-selection';
 const hash = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
-const commit = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
+export const validSourceTree = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
 const sha = (raw: Buffer) => createHash('sha256').update(raw).digest('hex');
-const asset = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(s);
+export const validAssetName = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(s);
+export const validReleaseTag = (s: unknown): s is string => validAssetName(s) && s.length <= 128 && !s.includes('..');
 export const canonicalCoreTag = (s: string) => s.startsWith('youeye-v') && !!parseReleaseVersion(s.slice(8));
 
-export function validReleaseBranch(s: unknown): s is string {
-  return typeof s === 'string' && s.length > 0 && s.length <= 128 && !/[ ~^:?*[\\%\x00-\x1f\x7f]/.test(s) && !s.includes('..') && !s.includes('@{') && s.split('/').every(p => p && !p.startsWith('.') && !p.endsWith('.') && !p.endsWith('.lock'));
-}
-export const validCoreBranch = validReleaseBranch;
-
-/** Exact HTTPS owner/repository URL; release blob URLs must sit beneath it. */
+/** Exact HTTPS owner/repository URL. */
 export function canonicalReleaseRepository(raw: string): string {
   const u = new URL(raw);
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash || /[%\\\s]/.test(raw)) throw new Error('Release repository must be an exact HTTPS owner/repository URL');
   const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
-  if (parts.length !== 2 || parts.some(p => !p || p === '.' || p === '..')) throw new Error('Release repository must name one owner and repository');
+  if (parts.length !== 2 || parts.some(p => !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(p) || p.endsWith('.'))) throw new Error('Release repository must name one owner and repository');
   return `${u.origin}/${parts.join('/')}`;
 }
 
-/** Public members must come from the public branch matching their version. */
-function coreMemberChannel(member: CoreMember, assemblyChannel: string): string {
-  if (member.source !== 'https://github.com/YouEye-Platform/YouEye') return assemblyChannel;
-  const version = parseReleaseVersion(member.build_version);
-  if (version && member.branch === 'main' && !version.token) return 'stable';
-  if (version && member.branch === 'beta' && version.token === 'beta') return 'beta';
-  throw new Error('Core member has no compatible public source branch');
+/** `<repository>/releases/download/<blob.release ?? tag>/<name>`: the only way an asset is located. */
+export function releaseAssetURL(repository: string, tag: string, blob: { name: string; release?: string }): string {
+  return `${repository}/releases/download/${encodeURIComponent(blob.release ?? tag)}/${encodeURIComponent(blob.name)}`;
 }
 
 function fields(value: unknown, allowed: string[]) {
@@ -95,24 +91,19 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
   if (!raw.length || raw.length > 1024 * 1024) throw new Error('Core manifest size is invalid');
   uniqueJSON(raw.toString('utf8'), true);
   const r = JSON.parse(raw.toString('utf8')) as CoreRelease;
-  fields(r, ['schema','version','tag','source','branch','source_commit','channel','sequence','previous_manifest_sha256','minimum_reader','authority','compatibility','members']);
-  const v = parseReleaseVersion(r.version);
-  if (r.schema !== 'youeye.core-release.v1' || r.authority !== 'digest' || !v || r.tag !== `youeye-v${r.version}` || r.minimum_reader !== 1 || canonicalReleaseRepository(r.source) !== r.source || !validCoreBranch(r.branch) || !commit(r.source_commit) || !Number.isSafeInteger(r.sequence) || r.sequence < 1 || r.previous_manifest_sha256 !== undefined && !hash(r.previous_manifest_sha256)) throw new Error('Invalid core identity');
-  if (r.channel === 'stable' ? !!v.token : ['alpha','beta','dev'].includes(r.channel) ? v.token !== r.channel : r.channel !== 'feature' || !v.token || ['alpha','beta','dev'].includes(v.token)) throw new Error('Core channel and version differ');
+  fields(r, ['schema','version','tag','source_tree','sequence','minimum_reader','authority','compatibility','members']);
+  if (r.schema !== 'youeye.core-release.v1' || r.authority !== 'digest' || !parseReleaseVersion(r.version) || r.tag !== `youeye-v${r.version}` || r.minimum_reader !== 1 || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid core identity');
   const c = r.compatibility;
   fields(c, ['state_min','state_max','data_min','data_max','minimum_release','capabilities']);
   if (![c.state_min,c.state_max,c.data_min,c.data_max].every(n => Number.isSafeInteger(n) && n > 0) || c.state_min > c.state_max || c.data_min > c.data_max || !parseReleaseVersion(c.minimum_release) || !Array.isArray(c.capabilities) || !c.capabilities.includes('core-release-v1') || c.capabilities.some(x => typeof x !== 'string' || !x) || new Set(c.capabilities).size !== c.capabilities.length) throw new Error('Unsupported core compatibility');
   if (!Array.isArray(r.members) || r.members.length !== ROLES.length) throw new Error('Incomplete core membership');
   const seen = new Set<string>();
   for (const m of r.members) {
-    fields(m, ['role','build_version','source','branch','source_commit','tag','input_sha256','depends_on','artifact','build_inputs']);
-    if (!ROLES.includes(m.role) || seen.has(m.role) || !parseReleaseVersion(m.build_version) || canonicalReleaseRepository(m.source) !== m.source || !validCoreBranch(m.branch) || !commit(m.source_commit) || !hash(m.input_sha256) || typeof m.tag !== 'string' || !m.tag) throw new Error('Invalid core member');
-    if (['stable','beta'].includes(r.channel)) coreMemberChannel(m, r.channel);
+    fields(m, ['role','build_version','source_tree','input_sha256','depends_on','artifact','build_inputs']);
+    if (!ROLES.includes(m.role) || seen.has(m.role) || !parseReleaseVersion(m.build_version) || !validSourceTree(m.source_tree) || !hash(m.input_sha256)) throw new Error('Invalid core member');
     const blob = (b: CoreBlob) => {
-      fields(b, ['name','url','sha256','size_bytes']);
-      const prefix = `${m.source}/releases/download/${encodeURIComponent(m.tag)}/`;
-      const u = new URL(b.url), name = decodeURIComponent(b.url.slice(prefix.length));
-      if (!asset(b.name) || !hash(b.sha256) || !Number.isSafeInteger(b.size_bytes) || b.size_bytes <= 0 || !b.url.startsWith(prefix) || u.username || u.password || u.search || u.hash || /[\\\x00]/.test(decodeURIComponent(u.pathname)) || !name || name === '.' || name === '..' || /[/\\\x00]/.test(name)) throw new Error('Invalid exact core blob');
+      fields(b, ['name','sha256','size_bytes','release']);
+      if (!validAssetName(b.name) || !hash(b.sha256) || !Number.isSafeInteger(b.size_bytes) || b.size_bytes <= 0 || b.release !== undefined && !canonicalCoreTag(b.release)) throw new Error('Invalid exact core blob');
     };
     blob(m.artifact);
     if (m.role === 'appliance') { if (!m.build_inputs) throw new Error('Missing appliance build inputs'); blob(m.build_inputs); }
@@ -146,59 +137,12 @@ export function selectedCoreRole(role: CoreRole, root?: string): SelectedCoreArt
   if (!member) throw new Error('Selected core role is missing');
   return { ...document, member };
 }
-/** The member of the accepted selection for this exact URL, or null for a non-core artifact. */
-export function selectedCoreArtifact(url: string, digest: string | undefined, role: CoreRole | undefined, root?: string): SelectedCoreArtifact | null {
-  const tag = decodeURIComponent(new URL(url).pathname.split('/')[5] ?? '');
-  const canonical = canonicalCoreTag(tag);
-  if (!canonical && !['cp','ui'].includes(role ?? '')) return null;
-  let document: SelectedCoreDocument;
-  try { document = loadSelectedCoreDocument(root); }
-  catch (error) { if (!canonical && (error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
-  const member = document.release.members.find(m => m.role === role);
-  if (!member || member.artifact.url !== url) {
-    if (!canonical) return null;
-    throw new Error('Artifact differs from frozen core selection');
-  }
-  if (!digest || member.artifact.sha256 !== digest) throw new Error('Artifact differs from frozen core selection');
-  return { ...document, member };
-}
-function coreBlobs(release: CoreRelease): CoreBlob[] {
-  return release.members.flatMap(m => [m.artifact, ...(m.build_inputs ? [m.build_inputs] : [])]);
-}
-export function coreBlobTransportURL(release: CoreRelease, blob: CoreBlob, mirror = false): string {
-  if (!coreBlobs(release).some(b => b.url === blob.url && b.name === blob.name && b.sha256 === blob.sha256 && b.size_bytes === blob.size_bytes)) throw new Error('Transport blob is outside the accepted core selection');
-  if (mirror || !blob.url.startsWith(`${release.source}/releases/download/`)) return `${release.source}/releases/download/${release.tag}/blob-${blob.sha256}`;
-  return blob.url;
-}
-export function selectedCoreTransportURL(url: string, mirror = false, root?: string): string {
-  const parts = new URL(url).pathname.split('/').filter(Boolean);
-  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download') return url;
-  let release: CoreRelease;
-  try { release = loadSelectedCore(root); }
-  catch (error) { if (!canonicalCoreTag(parts[4]) && (error as NodeJS.ErrnoException).code === 'ENOENT') return url; throw error; }
-  const blob = coreBlobs(release).find(b => b.url === url);
-  return blob ? coreBlobTransportURL(release, blob, mirror) : url;
-}
 export function verifyCoreArtifactBuffer(selected: SelectedCoreArtifact, bytes: Buffer): string {
   const { artifact } = selected.member;
   if (bytes.length !== artifact.size_bytes || sha(bytes) !== artifact.sha256) throw new Error('Core artifact differs from the accepted selection');
   return artifact.sha256;
 }
 const quote = (s: string) => `'${s.replace(/'/g, `'"'"'`)}'`;
-function coreDownloadShell(primary: string, mirror: string, destination: string): string {
-  const options = `--max-time 120 --max-redirs 5 --proto '=https' --proto-redir '=https' -fsSL`;
-  if (primary === mirror) return `curl ${options} ${quote(primary)} -o ${destination}`;
-  return `if ! core_http_status=$(curl ${options} -w '%{http_code}' ${quote(primary)} -o ${destination}); then
-  if [ "$core_http_status" = 404 ]; then
-    curl ${options} ${quote(mirror)} -o ${destination}
-  else
-    false
-  fi
-fi`;
-}
-export function selectedCoreDownloadShell(url: string, destination: string): string {
-  return coreDownloadShell(selectedCoreTransportURL(url),selectedCoreTransportURL(url,true),quote(destination));
-}
 export function coreArtifactVerificationShell(selected: SelectedCoreArtifact, path: string): string {
   const { artifact } = selected.member;
   return `

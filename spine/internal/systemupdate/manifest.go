@@ -29,7 +29,7 @@ type Manifest struct {
 	Schema                     string               `json:"schema"`
 	TargetImageVersion         string               `json:"target_image_version"`
 	BuildID                    string               `json:"build_id"`
-	SourceCommit               string               `json:"source_commit"`
+	SourceTree                 string               `json:"source_tree"`
 	Architecture               string               `json:"architecture"`
 	FirmwareMode               string               `json:"firmware_mode"`
 	HardwareProfile            string               `json:"hardware_profile"`
@@ -118,7 +118,7 @@ func (m Manifest) Validate() error {
 	}
 	for name, value := range map[string]string{
 		"target_image_version": m.TargetImageVersion, "build_id": m.BuildID,
-		"source_commit": m.SourceCommit, "architecture": m.Architecture,
+		"source_tree": m.SourceTree, "architecture": m.Architecture,
 		"firmware_mode": m.FirmwareMode, "hardware_profile": m.HardwareProfile,
 		"recovery_version": m.RecoveryVersion, "minimum_current_image_version": m.MinimumCurrentImageVersion,
 		"health_profile": m.HealthProfile, "artifact_kind": m.ArtifactKind,
@@ -127,8 +127,8 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("system update manifest %s is required", name)
 		}
 	}
-	if len(m.SourceCommit) != 40 || !lowerHex(m.SourceCommit) {
-		return errors.New("system update source_commit must be a full lowercase Git commit")
+	if len(m.SourceTree) != 40 || !lowerHex(m.SourceTree) {
+		return errors.New("system update source_tree must be a full lowercase git tree id")
 	}
 	if err := ordering.ValidateIdentity(m.TargetImageVersion); err != nil {
 		return fmt.Errorf("system update target identity: %w", err)
@@ -254,7 +254,6 @@ type CurrentCompatibilityError struct {
 	Message        string
 	ManifestSHA256 string
 	TargetImage    string
-	ReleaseBranch  string
 }
 
 func (err *CurrentCompatibilityError) Error() string { return err.Message }
@@ -276,14 +275,6 @@ func (m Manifest) Artifact(role string) (Artifact, bool) {
 func validateReleaseSet(set appliance.ReleaseSet) error {
 	if err := set.Validate(); err != nil {
 		return fmt.Errorf("system update release_set: %w", err)
-	}
-	for name, component := range map[string]appliance.ComponentRelease{"spine": set.Spine, "control_panel": set.ControlPanel, "ui": set.UI} {
-		if strings.TrimSpace(component.Version) == "" || len(component.SourceCommit) != 40 || !lowerHex(component.SourceCommit) || !validSHA256(component.ArtifactSHA256) {
-			return fmt.Errorf("system update release_set %s identity is incomplete", name)
-		}
-		if name != "spine" && strings.TrimSpace(component.Tag) == "" {
-			return fmt.Errorf("system update release_set %s tag is required", name)
-		}
 	}
 	return nil
 }

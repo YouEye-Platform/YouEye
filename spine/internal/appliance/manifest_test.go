@@ -11,7 +11,7 @@ const validManifest = `{
   "schema_version": 1,
   "image_version": "1.0.0",
   "build_id": "build-1",
-  "source_commit": "0123456789012345678901234567890123456789",
+  "source_tree": "0123456789012345678901234567890123456789",
   "architecture": "amd64",
   "firmware_mode": "uefi",
   "disk_layout_version": 3,
@@ -94,12 +94,9 @@ func TestManifestRejectsUnknownAndTrailingContent(t *testing.T) {
 func exactReleaseSetManifest() string {
 	return strings.Replace(validManifest, `"supported_actions": ["recovery"]`, `"supported_actions": ["recovery"],
   "release_set": {
-    "source": "https://github.com/YouEye-Platform/YouEye",
-    "branch": "dev",
-    "fallback": [],
-    "spine": {"version":"1.0.0","source_commit":"0123456789012345678901234567890123456789","artifact_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-    "control_panel": {"version":"2.0.0","tag":"cp-dev-v2.0.0","source_commit":"1123456789012345678901234567890123456789","artifact_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-    "ui": {"version":"3.0.0","tag":"ui-dev-v3.0.0","source_commit":"2123456789012345678901234567890123456789","artifact_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+    "spine": {"version":"1.0.0","source_tree":"0123456789012345678901234567890123456789","artifact_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "control_panel": {"version":"2.0.0","source_tree":"1123456789012345678901234567890123456789","artifact_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    "ui": {"version":"3.0.0","source_tree":"2123456789012345678901234567890123456789","artifact_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
   }`, 1)
 }
 
@@ -108,31 +105,20 @@ func TestManifestAcceptsExactReleaseSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.ReleaseSet == nil || m.ReleaseSet.ControlPanel.Tag != "cp-dev-v2.0.0" {
+	if m.ReleaseSet == nil || m.ReleaseSet.ControlPanel.Version != "2.0.0" {
 		t.Fatalf("unexpected release set: %+v", m.ReleaseSet)
-	}
-}
-
-func TestManifestAcceptsSafeMultiSegmentReleaseBranch(t *testing.T) {
-	raw := strings.NewReplacer(
-		`"branch": "dev"`, `"branch": "codex/phase1-repository-builds"`,
-		`cp-dev-v2.0.0`, `cp-codex/phase1-repository-builds-v2.0.0`,
-		`ui-dev-v3.0.0`, `ui-codex/phase1-repository-builds-v3.0.0`,
-	).Replace(exactReleaseSetManifest())
-	if _, err := ParseManifest([]byte(raw)); err != nil {
-		t.Fatalf("safe multi-segment Forgejo branch was rejected: %v", err)
 	}
 }
 
 func TestManifestKeepsApplianceAndComponentSourceIdentitiesIndependent(t *testing.T) {
 	raw := strings.Replace(exactReleaseSetManifest(),
-		`"source_commit":"0123456789012345678901234567890123456789"`,
-		`"source_commit":"3123456789012345678901234567890123456789"`, 1)
+		`"source_tree":"0123456789012345678901234567890123456789"`,
+		`"source_tree":"3123456789012345678901234567890123456789"`, 1)
 	m, err := ParseManifest([]byte(raw))
 	if err != nil {
 		t.Fatalf("exact independently released Spine commit was rejected: %v", err)
 	}
-	if m.ReleaseSet.Spine.SourceCommit == m.SourceCommit {
+	if m.ReleaseSet.Spine.SourceTree == m.SourceTree {
 		t.Fatal("test fixture did not preserve distinct signed source identities")
 	}
 }
@@ -140,13 +126,13 @@ func TestManifestKeepsApplianceAndComponentSourceIdentitiesIndependent(t *testin
 func TestManifestReleaseSetFailsClosed(t *testing.T) {
 	base := exactReleaseSetManifest()
 	for _, mutation := range []string{
-		strings.Replace(base, `"fallback": []`, `"fallback": ["main"]`, 1),
-		strings.Replace(base, `cp-dev-v2.0.0`, `cp-v2.0.0`, 1),
+		// The image is host- and channel-neutral: no source, branch or tag.
+		strings.Replace(base, `"release_set": {`, `"release_set": {"source": "https://github.com/YouEye-Platform/YouEye",`, 1),
+		strings.Replace(base, `"release_set": {`, `"release_set": {"branch": "dev",`, 1),
+		strings.Replace(base, `"version":"2.0.0",`, `"version":"2.0.0","tag":"v2.0.0",`, 1),
+		strings.Replace(base, `"version":"2.0.0",`, `"version":"latest",`, 1),
 		strings.Replace(base, strings.Repeat("b", 64), "bad", 1),
-		strings.Replace(base, `"branch": "dev"`, `"branch": "codex//escape"`, 1),
-		strings.Replace(base, `"branch": "dev"`, `"branch": "../escape"`, 1),
-		strings.Replace(base, `"branch": "dev"`, `"branch": "codex/bad.lock"`, 1),
-		strings.Replace(base, `"branch": "dev"`, `"branch": "codex/bad~ref"`, 1),
+		strings.Replace(base, "1123456789012345678901234567890123456789", "1123456", 1),
 	} {
 		if _, err := ParseManifest([]byte(mutation)); err == nil {
 			t.Fatal("expected invalid release set to fail")

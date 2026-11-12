@@ -24,14 +24,18 @@ The entrypoints in `.youeye/build/` build one component each (see
 | Native apps | any Linux | the app repo's own `.youeye/build/app` |
 | Appliance image | **as root** on Debian | needs `mmdebstrap`, `live-build`, `ukify`, `xorriso`, `zstd` 1.5.7, and an APT cache on `127.0.0.1:3142`. Takes about 15 minutes on 4 cores. |
 
+Every entrypoint needs `YOUEYE_VERSION` (the build version `X.Y.Z-rc.N`; `X.Y.Z` must equal `VERSION`) and builds
+from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`). Nothing in the source tree carries the rc
+number; see [releases.md](releases.md).
+
 The image build takes `YOUEYE_BUILD_INPUTS`, a `youeye.build-inputs.v1` file:
 
-- the Spine, CP and UI artifacts by version, tag, commit and SHA-256;
-- the release source and branch baked into the image;
-- the Market source, branch and commit;
+- the Spine, CP and UI artifacts by version, source tree and SHA-256;
 - the Debian snapshot and minimum update version, which come from `appliance/recipe.json`.
 
-Pass the Spine you already built as `YOUEYE_SPINE_FILE`; its SHA-256 must match the inputs.
+The image bakes no repository, branch, channel or Market source: the installer records the repository and channel
+in protected State, so one image is promoted unchanged through every channel. Pass the Spine you already built as
+`YOUEYE_SPINE_FILE`; its SHA-256 must match the inputs.
 
 ## Publishing a System release
 
@@ -40,28 +44,25 @@ Pass the Spine you already built as `YOUEYE_SPINE_FILE`; its SHA-256 must match 
    - `spine-linux-amd64`;
    - `cp-standalone.tar`;
    - `ui-standalone.tar`.
-2. Run `scripts/assemble-core-release.py` with the version, repository URL, branch, commit, channel and a sequence
-   that only increases (for example the current Unix time). It writes `core-release.json` and `SHA256SUMS`.
-3. Create release `youeye-v<version>` in that repository. Mark it as a prerelease unless it is Stable. Upload
-   every file.
-
-The document's blob URLs embed the repository, so a release published to two hosts gets one `core-release.json` per
-host over identical artifact bytes. Each published release needs a new version: the version is still set in
-`spine/internal/cmd/root.go`, `control-panel/package.json`, `ui/package.json` and `.youeye/release/versioning.json`.
+2. Run `scripts/assemble-core-release.py --version <X.Y.Z-rc.N> --source-tree <tree> --minimum-release <v>
+   --artifacts <dir>`. It writes `core-release.json` and `SHA256SUMS`.
+3. Create release `youeye-v<version>` (prerelease) in the development repository, upload every file plus
+   `installer/scripts/install.sh`, and point the `dev` channel index at it.
+4. Promote it to alpha, beta and stable without rebuilding: the same bytes are uploaded to the next host and the
+   channel indexes move (see [releases.md](releases.md)).
 
 ## Installing a development build
 
 On a Proxmox host, as root:
 
 ```sh
-curl -fsSL https://<forge>/<owner>/YouEye/raw/branch/dev/installer/scripts/install.sh | \
+curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
   sh -s -- --repository https://<forge>/<owner>/YouEye --channel dev
 ```
 
 - **Unattended test installs:** add `--silent --yes --erase-confirmed --vmid <id> --target-storage <storage>
   --iso-storage <storage> --cpu 4 --memory 8192 --target-disk-gb 64`.
-- **Native apps** follow the Market source's branch. A `dev` image uses Market branch `dev`, so apps resolve their
-  newest `dev-v*` releases.
+- **Native apps, Pointer and the Market catalog** come from the box's channel index, like the System.
 - **Spine changes** need a new image today, because the image refuses a Spine that differs from its own. Separating
   Spine from the image removes that.
 

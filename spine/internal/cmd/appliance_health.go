@@ -329,10 +329,7 @@ func collectApplianceHealth(profile string) applianceHealthResult {
 }
 
 type installedReleaseIdentity struct {
-	Source         string
 	Version        string
-	Tag            string
-	Branch         string
 	ArtifactSHA256 string
 }
 
@@ -344,58 +341,40 @@ type firstDeployReleaseComponent struct {
 	appDir    string
 	expected  appliance.ComponentRelease
 	key       string
-	source    string
-	branch    string
 }
 
 func firstDeployReleaseComponents(releaseSet appliance.ReleaseSet) []firstDeployReleaseComponent {
 	return []firstDeployReleaseComponent{
-		{name: "Server interface", container: "youeye-control", appDir: "/opt/app", expected: releaseSet.ControlPanel, key: "control", branch: releaseSet.ComponentBranch(releaseSet.ControlPanel)},
-		{name: "YouEye interface", container: "youeye-ui", appDir: "/opt/youeye-ui", expected: releaseSet.UI, key: "ui", branch: releaseSet.ComponentBranch(releaseSet.UI)},
+		{name: "Server interface", container: "youeye-control", appDir: "/opt/app", expected: releaseSet.ControlPanel, key: "control"},
+		{name: "YouEye interface", container: "youeye-ui", appDir: "/opt/youeye-ui", expected: releaseSet.UI, key: "ui"},
 	}
 }
 
 func firstDeploymentServiceComponents(image appliance.Manifest) (appliance.Manifest, []firstDeployReleaseComponent, error) {
 	policy, err := systemupdate.LoadReleasePolicy(deploymentPolicyPath)
-	if err == nil && policy.CoreManifestSHA256 != "" {
-		r, _, err := coreDeploymentSelection(image, policy)
-		if err != nil {
-			return image, nil, err
-		}
-		components := firstDeployReleaseComponents(*image.ReleaseSet)
-		for i := range components {
-			for _, member := range r.Members {
-				if member.Role != "cp" && member.Role != "ui" || member.Role == "cp" && components[i].key != "control" || member.Role == "ui" && components[i].key != "ui" {
-					continue
-				}
-				components[i].source, components[i].branch = member.Source, member.Branch
-				components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, Tag: member.Tag, SourceCommit: member.SourceCommit, ArtifactSHA256: member.Artifact.SHA256}
-			}
-		}
-		return image, components, nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return image, nil, err
 	}
-	selected, err := pinnedDeploymentManifest(image)
-	if err != nil || selected.ReleaseSet == nil {
-		return selected, nil, err
+	r, _, err := coreDeploymentSelection(image, policy)
+	if err != nil {
+		return image, nil, err
 	}
-	return selected, firstDeployReleaseComponents(*selected.ReleaseSet), nil
+	components := firstDeployReleaseComponents(*image.ReleaseSet)
+	for i := range components {
+		role := map[string]string{"control": "cp", "ui": "ui"}[components[i].key]
+		if member, ok := r.Member(role); ok {
+			components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, SourceTree: member.SourceTree, ArtifactSHA256: member.Artifact.SHA256}
+		}
+	}
+	return image, components, nil
 }
 
-func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, expectedBranch string, installed installedReleaseIdentity) error {
+func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, installed installedReleaseIdentity) error {
 	if strings.TrimSpace(installed.Version) != expected.Version {
-		return fmt.Errorf("%s version %q does not match selected bundle version %q", name, installed.Version, expected.Version)
-	}
-	if expected.Tag != "" && installed.Tag != expected.Tag {
-		return fmt.Errorf("%s tag %q does not match selected bundle tag %q", name, installed.Tag, expected.Tag)
-	}
-	if installed.Branch != expectedBranch {
-		return fmt.Errorf("%s branch %q does not match selected bundle branch %q", name, installed.Branch, expectedBranch)
+		return fmt.Errorf("%s version %q does not match selected release version %q", name, installed.Version, expected.Version)
 	}
 	if strings.ToLower(strings.TrimSpace(installed.ArtifactSHA256)) != expected.ArtifactSHA256 {
-		return fmt.Errorf("%s artifact digest does not match the selected bundle", name)
+		return fmt.Errorf("%s artifact digest does not match the selected release", name)
 	}
 	return nil
 }
@@ -431,25 +410,21 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		provenance, ok := update.GetProvenance(component.key)
 		installed := installedReleaseIdentity{Version: version}
 		if ok {
-			installed.Source = provenance.Source
-			installed.Tag = provenance.Tag
-			installed.Branch = provenance.Branch
 			installed.ArtifactSHA256 = provenance.ArtifactSHA256
 		}
 		if !ok {
 			add(component.name+" provenance", "fail", "installed release provenance is missing")
-		} else if component.source != "" && installed.Source != component.source {
-			add(component.name+" provenance", "fail", "installed service source differs from its authenticated original Core member")
-		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, component.branch, installed); err != nil {
+		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
-			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected bundle")
+			add(component.name+" provenance", "pass", "the installed version and digest match the selected release")
 		}
 	}
 }
 
 func containerPackageVersion(containerName, appDir string) string {
-	raw, err := exec.Command("incus", "exec", containerName, "--", "cat", filepath.Join(appDir, "package.json")).Output()
+	// version.json is written by the build from YOUEYE_VERSION.
+	raw, err := exec.Command("incus", "exec", containerName, "--", "cat", filepath.Join(appDir, "version.json")).Output()
 	if err != nil || len(raw) > 1<<20 {
 		return ""
 	}

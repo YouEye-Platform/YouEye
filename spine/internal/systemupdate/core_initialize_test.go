@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -63,24 +62,13 @@ func TestCoreInitializeRequiresFreshNativeEvidenceAndPreservesMachineBinding(t *
 
 func copyFixture(t *testing.T) (CoreHostSelection, string) {
 	t.Helper()
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, _, err := releasecache.ParseCoreRelease(raw)
 	if err != nil {
 		t.Fatal(err)
-	}
-	oldSource := r.Source
-	r.Source = "https://forge.example/owner/YouEye"
-	for i := range r.Members {
-		member := &r.Members[i]
-		member.Source = r.Source
-		for _, b := range []*releasecache.CoreBlob{&member.Artifact, member.BuildInputs} {
-			if b != nil {
-				b.URL = strings.Replace(b.URL, oldSource, r.Source, 1)
-			}
-		}
 	}
 	raw, _ = json.Marshal(r)
 	return CoreHostSelection{Raw: raw}, t.TempDir()

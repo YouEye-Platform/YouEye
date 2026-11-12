@@ -76,7 +76,7 @@ test('Pointer is a managed core service with isolated listeners, database, secre
   assert.match(lxdDeployer, /digest-verified release artifact/);
   assert.match(lxdDeployer, /test -x .*appDir.*\/bun/);
   assert.doesNotMatch(lxdDeployer, /bun\.sh\/install/);
-  assert.match(definitions, /giteaRepo: 'Pointer'/);
+  assert.match(definitions, /appDir: '\/opt\/pointer'/);
   assert.match(definitions, /migrationCommand:/);
   assert.match(definitions, /\/opt\/pointer\/bun \/opt\/pointer\/migrate\.js/);
   assert.match(definitions, /installStyledJsx: false/);

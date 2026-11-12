@@ -24,26 +24,19 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "https://forge.example/owner/YouEye"
 	makeRelease := func(version, commit string, sequence uint64) releasecache.CoreRelease {
 		raw, _ := json.Marshal(previous.Release)
 		var r releasecache.CoreRelease
 		_ = json.Unmarshal(raw, &r)
-		r.Source, r.Branch, r.Channel, r.Version, r.Tag, r.SourceCommit = source, "dev", "dev", version, "youeye-v"+version, commit
+		r.Version, r.Tag, r.SourceTree = version, "youeye-v"+version, commit
 		r.Sequence = sequence
 		r.Compatibility.MinimumRelease = "0.6.0-dev.26"
 		for i := range r.Members {
 			m := &r.Members[i]
-			m.Source, m.Branch, m.SourceCommit, m.BuildVersion, m.Tag = source, "dev", commit, version, r.Tag
+			m.SourceTree, m.BuildVersion = commit, version
 			if m.Role == "spine" {
 				m.BuildVersion = "0.6.0"
-				m.Tag = "youeye-v0.6.0"
 				m.Artifact.SHA256 = strings.Repeat("a", 64)
-			}
-			for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
-				if b != nil {
-					b.URL = source + "/releases/download/" + m.Tag + "/" + b.Name
-				}
 			}
 		}
 		return r
@@ -59,7 +52,6 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 		t.Fatal(err)
 	}
 	target := makeRelease("0.6.0-dev.27", targetCommit, 2)
-	target.PreviousManifestSHA256 = previous.ManifestSHA256
 	target.Members[2].Artifact.SHA256 = strings.Repeat("e", 64)
 	j := prepareCoreFixture(t, cm, target)
 	j.Phase, j.ActivationRequested = "recovering", true
@@ -99,7 +91,6 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 			version, commit, slot = "0.6.0-dev.27", targetCommit, "B"
 		}
 		image := testApplianceManifest(version, commit)
-		image.ReleaseSet.Source = source
 		f.setCurrentManifest(t, image)
 		if err := os.WriteFile(f.manager.config.KernelCmdlinePath, []byte("root=PARTLABEL=YE-SYSTEM-"+slot+" ro"), 0600); err != nil {
 			t.Fatal(err)

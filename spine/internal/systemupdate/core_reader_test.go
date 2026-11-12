@@ -22,8 +22,8 @@ func coreReaderFixture(t *testing.T) (CoreManager, string, string) {
 			member = &target.Members[i]
 		}
 	}
-	member.BuildVersion, member.Tag = target.Version, target.Tag
-	member.Artifact = releasecache.CoreBlob{Name: "spine-linux-amd64", URL: member.Source + "/releases/download/" + member.Tag + "/spine-linux-amd64", SHA256: checksum(parts["youeye"]), SizeBytes: int64(len(parts["youeye"]))}
+	member.BuildVersion = target.Version
+	member.Artifact = releasecache.CoreBlob{Name: "spine-linux-amd64", SHA256: checksum(parts["youeye"]), SizeBytes: int64(len(parts["youeye"]))}
 	raw, _ := json.Marshal(target)
 	digest := checksum(raw)
 	parts["core-release.json"] = raw

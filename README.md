@@ -34,15 +34,14 @@ curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
 Run this command from the Proxmox host's root shell; `sudo` is not required.
-The bootstrap selects the newest Stable `youeye-v` release, downloads its
-`core-release.json` over HTTPS and checks the installer's SHA-256 and size
-against it before running it; any mismatch fails closed. The bootstrap defaults to the official GitHub Stable lane and supports
-a pasted HTTPS repository URL without prefilled private endpoints.
-[Release discovery](docs/release-distribution.md) uses the provider's public
-release listing without a GitHub token. The bootstrap then opens the YouEye
+The bootstrap reads the stable [channel index](docs/releases.md), downloads that
+release's `core-release.json` over HTTPS, checks it against the index digest and
+checks the installer's SHA-256 and size before running it; any mismatch fails
+closed. It never calls a release-listing API. `--repository <url> --channel
+dev|alpha|beta|stable` selects another repository or channel. The bootstrap then opens the YouEye
 Installer TUI pinned to the exact release it verified (its tag and
 `core-release.json` digest), so the Installer cannot pick another release; the
-machine still follows the selected track for later updates. Quick mode creates a
+machine still follows the selected channel for later updates. Quick mode creates a
 Q35/OVMF VM with 4 vCPU, 8 GiB RAM, and one 128 GiB installation drive. The
 host-side flow provisions the VM and media; the booted ISO owns disk discovery,
 destructive confirmation, imaging, and installed-system setup.
@@ -223,11 +222,10 @@ Quick mode uses six focused pages: VM, resources, storage/network, read-only
 Official GitHub Stable software policy, access, and review. It defaults to 4
 vCPU, 8 GiB RAM, one 128 GiB installation drive and wired DHCP. Advanced mode
 uses eight pages and adds independent storage, network, software source, SSH,
-and Development-access controls. It supports Stable, Development, a safe
-branch-associated release track, or an immutable exact tag/digest.
-See [repository releases](docs/repository-installation-and-releases.md) for trust and tracked-installation details.
+and Development-access controls. It offers the Stable, Beta, Alpha and Dev
+channels. See [releases](docs/releases.md) for channels, versions and promotion.
 
-Branches select published releases only; raw source and mutable branch
+Channels select published releases only; raw source and mutable branch
 archives are never installed, and no missing or invalid selection falls back.
 
 The mutable Debian/Ubuntu host installer and Debian-cloud Proxmox VM/LXC
@@ -238,7 +236,7 @@ Create provisions a new Q35/OVMF VM with persistent EFI variables, serial consol
 
 Recovery boots from its own read-only image and can inspect the offline appliance, select either System slot once, verify and repair digest-bound boot assets, and export support evidence. Its interactive session remains on the local tty1 display and is mirrored read-only to the serial console for remote observation and acceptance. For support export, prepare a FAT32, ext4, or exFAT filesystem labelled `YOUEYE-SUP`; Recovery mounts it with restrictive options, writes one timestamped evidence file, syncs it, and unmounts it. The earlier `YOUEYE-SUPPORT` ext4 label remains accepted for development compatibility.
 
-System updates install one complete System release from the track the Installer recorded. Its host part is the exact `youeye.system-update.v1` manifest listed in `core-release.json`; artifacts are cached on `YE-DATA`, only the inactive 8 GiB System slot is written and read back, and a three-attempt systemd-boot trial is armed. Operationally healthy trials are explicitly blessed; failed trials automatically return to the prior known-good slot while State, Recovery, and `YE-DATA` remain unchanged. Settings shows the newest release on the recorded track; download/preparation and restart always require an administrator action. The CLI equivalent is `youeye update core check`, `stage`, and `activate`.
+System updates install one complete System release from the channel the box follows (`youeye channel get|set`; it never downgrades). Its host part is the exact `youeye.system-update.v1` manifest listed in `core-release.json`; artifacts are cached on `YE-DATA`, only the inactive 8 GiB System slot is written and read back, and a three-attempt systemd-boot trial is armed. Operationally healthy trials are explicitly blessed; failed trials automatically return to the prior known-good slot while State, Recovery, and `YE-DATA` remain unchanged. Settings shows the current release of the box's channel; download/preparation and restart always require an administrator action. The CLI equivalent is `youeye update core check`, `stage`, and `activate`.
 
 Appliance builds also seal one exact official Market commit into the
 System root. First deployment seeds that immutable catalog identity before

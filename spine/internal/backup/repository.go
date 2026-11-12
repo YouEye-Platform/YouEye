@@ -15,7 +15,7 @@ import (
 const backupSetsRoot = "/var/lib/youeye/backups/sets"
 
 var repositoryBackupID = regexp.MustCompile(`^backup-\d{8}T\d{6}Z-[0-9a-f]{8}$`)
-var repositorySourceCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var repositorySourceTree = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type RecoveryPoint struct {
 	BackupID   string                `json:"backup_id"`
@@ -31,7 +31,7 @@ type BackupSourceIdentity struct {
 	Schema              string `json:"schema"`
 	RuntimeKind         string `json:"runtime_kind"`
 	ImageVersion        string `json:"image_version,omitempty"`
-	SourceCommit        string `json:"source_commit,omitempty"`
+	SourceTree        string `json:"source_tree,omitempty"`
 	ReleaseBranch       string `json:"release_branch,omitempty"`
 	StateSchemaVersion  int    `json:"state_schema_version,omitempty"`
 	DataSchemaVersion   int    `json:"data_schema_version,omitempty"`
@@ -175,13 +175,13 @@ func validateBackupSource(source BackupSourceIdentity) error {
 	if source.RuntimeKind != "appliance-image" && source.RuntimeKind != "mutable-host" {
 		return fmt.Errorf("invalid backup runtime kind")
 	}
-	if source.RuntimeKind == "appliance-image" && (source.ImageVersion == "" || source.SourceCommit == "" || source.StateSchemaVersion < 1 || source.DataSchemaVersion < 1) {
+	if source.RuntimeKind == "appliance-image" && (source.ImageVersion == "" || source.SourceTree == "" || source.StateSchemaVersion < 1 || source.DataSchemaVersion < 1) {
 		return fmt.Errorf("incomplete appliance backup source identity")
 	}
-	if source.SourceCommit != "" && !repositorySourceCommit.MatchString(source.SourceCommit) {
+	if source.SourceTree != "" && !repositorySourceTree.MatchString(source.SourceTree) {
 		return fmt.Errorf("invalid backup source commit")
 	}
-	for _, value := range []string{source.ImageVersion, source.SourceCommit, source.ReleaseBranch, source.ControlPanelVersion, source.UIVersion} {
+	for _, value := range []string{source.ImageVersion, source.SourceTree, source.ReleaseBranch, source.ControlPanelVersion, source.UIVersion} {
 		if len(value) > 256 {
 			return fmt.Errorf("backup source identity field is too long")
 		}

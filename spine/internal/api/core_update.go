@@ -46,17 +46,17 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		"manifest_sha256": receipt.ManifestSHA256, "accepted_at": receipt.AcceptedAt, "machine_bound": true,
 		"payload_observation": "not-observed", // A retained receipt is not a fresh installed scan.
 		"release": map[string]any{"version": receipt.Release.Version, "tag": receipt.Release.Tag,
-			"source": receipt.Release.Source, "branch": receipt.Release.Branch, "sequence": receipt.Release.Sequence, "source_commit": receipt.Release.SourceCommit},
+			"sequence": receipt.Release.Sequence, "source_tree": receipt.Release.SourceTree},
 	}}
 	// The System update source is read-only here: it is the installer-recorded
 	// release policy, never a setting the Control Panel can change.
 	if selection, err := systemupdate.PolicyCoreSelection(s.coreSelectionRoot()); err == nil {
-		out["selection"] = map[string]any{"source": selection.Source, "branch": selection.Branch, "tag": selection.Tag, "manifest_sha256": selection.ManifestSHA256}
+		out["selection"] = map[string]any{"repository": selection.Repository, "channel": selection.Channel}
 	}
 	installed := out["installed"].(map[string]any)
 	members := []map[string]string{}
 	for _, member := range receipt.Release.Members {
-		members = append(members, map[string]string{"role": member.Role, "version": member.BuildVersion, "source": member.Source, "branch": member.Branch, "tag": member.Tag, "commit": member.SourceCommit, "sha256": member.Artifact.SHA256})
+		members = append(members, map[string]string{"role": member.Role, "version": member.BuildVersion, "source_tree": member.SourceTree, "sha256": member.Artifact.SHA256})
 	}
 	installed["members"] = members
 	// Ordinary status polling stays cheap. A machine observation explicitly

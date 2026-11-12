@@ -1,12 +1,12 @@
 {
   "name": "ye-controlpanel",
-  "version": "0.6.0",
+  "version": "0.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "typecheck": "tsc --noEmit --pretty false",
-    "build": "pnpm run i18n:check && pnpm run typecheck && node scripts/build-production.js",
-    "postbuild": "node scripts/bundle-node-runtime.mjs",
+    "build": "node scripts/write-version.mjs --check && pnpm run i18n:check && pnpm run typecheck && node scripts/build-production.js",
+    "postbuild": "node scripts/bundle-node-runtime.mjs && node scripts/write-version.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "CONTROL_PANEL_ROOT=\"$PWD\" node --import tsx --test tests/*.ts tests/*.mjs",

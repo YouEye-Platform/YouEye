@@ -8,51 +8,57 @@ where it will attach.
 
 The System release document is `youeye.core-release.v1`, published as the
 release asset `core-release.json` (reader: `releasecache/core_release.go`,
-writer: `scripts/assemble-core-release.py`). Top level: `schema`, `version`,
-`tag` (`youeye-v<version>`), `source`, `branch`, `source_commit`, `channel`
-(`dev`, `alpha`, `beta`, `stable` or `feature`), `sequence`, optional
-`previous_manifest_sha256`, `minimum_reader` (1), `authority` (only `"digest"`
-is accepted), `compatibility` and `members`.
+writer: `scripts/assemble-core-release.py`; the Control Panel reader parses the
+same fixture, `releasecache/testdata/core-release.json`). Top level: `schema`,
+`version` (`X.Y.Z-rc.N`), `tag` (`youeye-v<version>`), `source_tree` (the git
+tree of the build), `sequence` (publish time), `minimum_reader` (1), `authority`
+(only `"digest"` is accepted), `compatibility` and `members`.
 
 Exactly 14 roles are required: `installer`, `media`, `appliance`,
 `system-update`, `system-root`, `system-a-uki`, `system-b-uki`,
 `system-updater`, `internal-recovery`, `recovery-uki`, `update-bootstrap`,
-`spine`, `cp` and `ui`. Each member records `role`, `build_version`, `source`,
-`branch`, `source_commit`, `tag`, `input_sha256`, optional `depends_on` and an
-`artifact` blob (`name`, `url`, `sha256`, `size_bytes`). The `appliance` member
-also has a `build_inputs` blob (`build-inputs.json`); no other role may. Every
-blob URL must be exactly `<member source>/releases/download/<member tag>/<name>`.
-Unknown fields, duplicate JSON keys (at any depth), unknown or duplicate roles,
-missing members, cycles and malformed identities fail before any effect. CP
-depends on Spine and UI on CP.
+`spine`, `cp` and `ui`. Each member records `role`, `build_version`,
+`source_tree`, `input_sha256`, optional `depends_on` and an `artifact` blob
+(`name`, `sha256`, `size_bytes`, optional `release`). The `appliance` member
+also has a `build_inputs` blob (`build-inputs.json`); no other role may. Unknown
+fields, duplicate JSON keys (at any depth), unknown or duplicate roles, missing
+members, cycles and malformed identities fail before any effect. CP depends on
+Spine and UI on CP.
 
-A release may reuse members built earlier or elsewhere; they keep their original
-build version, source, branch, tag and URL. When the original asset is not
-reachable (HTTP 404 only), the hash-named mirror
-`<release source>/releases/download/<release tag>/blob-<sha256>` on the selected
-release is used. Mirrors never change identity, and size and SHA-256 are always
-checked.
+The document is **host-independent**: it names assets and never locates them.
+A client downloads `<repository>/releases/download/<tag>/<name>`, where the
+repository and tag are where it found the document; a blob's optional `release`
+names another `youeye-v` release of the same repository (to reuse unchanged
+files). There is no source, branch, channel, commit or URL inside, so the same
+bytes (and digest) are published on every host a release is promoted to. See
+[releases.md](releases.md).
 
 ## Root of trust
 
 `ParseCoreRelease` validates structure and returns the exact-byte SHA-256. That
 digest is the root of trust:
 
-- The installer fetches `core-release.json` over HTTPS, and records its exact
-  digest as `core_manifest_sha256` in the protected State release policy
-  (`/var/lib/youeye-state/bootstrap/release-policy.json`) beside the bytes
-  (`bootstrap/core-release.json`). Spine reads that selection only when the
-  digest matches (`ReadAcceptedCoreSelection`).
-- An update resolves a newer document over HTTPS from the same source and raw
-  branch (or an exact tag plus digest pin), then freezes its digest in the
-  update journal and the protected `targets/<digest>.json` copy.
+- The installer gets `core-release.json` through the channel index (whose entry
+  names its digest), and records the digest as `core_manifest_sha256` in the
+  protected State release policy
+  (`/var/lib/youeye-state/bootstrap/release-policy.json`, with the box's
+  `repository` and `channel`) beside the bytes (`bootstrap/core-release.json`).
+  Spine reads that selection only when the digest matches
+  (`ReadAcceptedCoreSelection`).
+- An update reads the channel index of the box's repository and channel, checks
+  the document against the index digest, then freezes its digest in the update
+  journal and the protected `targets/<digest>.json` copy.
 - Everything below is bound by SHA-256 and size: member artifacts, the
   `appliance-manifest.json` and `system-update-manifest.json` image manifests
   (the `appliance` and `system-update` member artifacts), and the image payloads
-  listed in those manifests. Neither image manifest has a `trust` key.
+  listed in those manifests. Neither image manifest has a `trust` key; both name
+  the build by `source_tree`.
 
-Version ordering, `minimum_release`, the sequence floor per source/branch and
-the State/Data compatibility ranges still apply.
+Version ordering, `minimum_release` and the State/Data compatibility ranges still
+apply. A box never installs an older version than the one it has: the update
+check reports a channel that is behind, and the version floor
+(`core-update/version-floor.json`) refuses older or same-version-different-digest
+releases.
 
 ## Installer answer and installed State
 
@@ -383,12 +389,11 @@ pending and exact native preparation children have settled. The retained activat
 intent is preserved. Checkpointed requests still require paired
 recovery; unknown or foreign native ownership keeps cancellation unfinished.
 
-The piped Installer bootstrap (`installer/scripts/install.sh`) selects one
-`youeye-v` release by channel, checks that its `core-release.json` names the
-selected source, tag and branch, and runs the `installer` member only after its
-SHA-256 and size match. Exact bootstrap passes the tag and the
-`core-release.json` digest to the native Installer, which refuses any other
-document. See `docs/release-distribution.md` for the channel rules.
+The piped Installer bootstrap (`installer/scripts/install.sh`) reads the
+channel index, checks `core-release.json` against the index digest, and runs the
+`installer` member only after its SHA-256 and size match. It passes the tag and
+the `core-release.json` digest to the native Installer, which refuses any other
+document. See [releases.md](releases.md) for channels and the index.
 
 ### Stable reader bootstrap
 

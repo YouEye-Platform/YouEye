@@ -20,8 +20,7 @@ interface MarketSourceConfig {
   name: string;
   repo_url: string;
   branch: string;
-  resolved_commit?: string;
-  release?: { version: string; channel: string; build_version: string } | null;
+  release?: { version: string; build_version: string } | null;
   resolved_at?: string;
   refresh_error?: string;
   enabled: boolean;
@@ -96,7 +95,8 @@ export default function MarketSourcesPage() {
             repo_url: s.repo_url?.trim(),
             priority: Number.isFinite(Number(s.priority)) ? Number(s.priority) : i,
           }))
-          .filter((s) => s.repo_url);
+          // The official source (the channel's catalog) has no repository but is always kept.
+          .filter((s) => s.repo_url || s.trust === 'official');
         const res = await authenticatedFetch('/api/market/source', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -211,13 +211,13 @@ export default function MarketSourcesPage() {
                     {s.enabled ? '' : translateInterface("m79fb364bd287")}
                   </div>
                   <div className="truncate font-mono text-[11px] text-muted-foreground">
-                    {s.release ? translateInterface("mc5f6e623ca5e", { value0: String(s.release.version), value1: String(s.release.channel) }) : translateInterface("mf88be6e8f5ec", { value0: String(s.branch || 'main') })}
+                    {s.release ? translateInterface("ma18745121bb8", { version: String(s.release.version) }) : s.branch ? translateInterface("ma28bdb69b7f1", { value0: String(s.branch) }) : ''}
                     {s.release && s.release.build_version !== s.release.version ? translateInterface("mfc726829e740", { value0: String(s.release.build_version) }) : ''}
-                    {s.resolved_commit ? translateInterface("mde69ff0342d2", { value0: String(s.resolved_commit.slice(0, 12)) }) : translateInterface("md5cbfa88ca8f")}
                   </div>
                   {s.refresh_error && <div className="truncate text-[11px] text-destructive">{translateInterface("mef30471405f6")}{s.refresh_error}</div>}
                 </div>
                 <Switch checked={s.enabled} disabled={saving} onCheckedChange={(v) => toggle(i, v)} aria-label={translateInterface("me6e7a76be787", { value0: String(s.name) })} />
+                {!official && (
                 <button
                   type="button"
                   onClick={() => remove(i)}
@@ -227,6 +227,7 @@ export default function MarketSourcesPage() {
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
+                )}
               </div>
             );
           })

@@ -6,7 +6,6 @@ journal="$state_dir/progress.json"
 complete="$state_dir/complete"
 lock="$state_dir/lock"
 setup_gate=${YOUEYE_SETUP_GATE:-/usr/local/libexec/youeye-setup-gate}
-seed_market=${YOUEYE_SEED_MARKET:-/usr/local/libexec/youeye-seed-market}
 bootstrap_network=${YOUEYE_BOOTSTRAP_NETWORK:-/usr/local/libexec/youeye-bootstrap-network}
 release_policy=${YOUEYE_RELEASE_POLICY:-/var/lib/youeye-state/bootstrap/release-policy.json}
 sealed_release=${YOUEYE_FIRST_DEPLOY_SEALED_RELEASE:-/usr/lib/youeye/appliance-release}
@@ -120,9 +119,6 @@ if jq -e '.reboot_requested == true' "$convergence" >/dev/null; then
 fi
 
 write_progress preparing "Preparing the verified installation selection" 30
-current_stage=seeding_market
-write_progress market_seed "Preparing the signed Market source" 32
-"$seed_market"
 control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
 if [ -n "$control_state" ]; then
     if [ "$control_state" != RUNNING ]; then

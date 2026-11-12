@@ -13,7 +13,7 @@ import (
 )
 
 func TestCorePrepareRetryUsesFrozenRequestWithoutDiscovery(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}

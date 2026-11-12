@@ -44,44 +44,29 @@ func TestVerifyApplianceBundleRejectsCorruptPayload(t *testing.T) {
 	}
 }
 
-func TestParseApplianceManifestRejectsFallbackAndPathEscape(t *testing.T) {
+func TestParseApplianceManifestRejectsRemovedReleaseKeysAndPathEscape(t *testing.T) {
 	bundle := writeTestApplianceBundle(t)
 	raw, err := os.ReadFile(bundle.manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := parseApplianceBundleManifest(raw)
-	if err != nil {
+	if _, err := parseApplianceBundleManifest(raw); err != nil {
 		t.Fatal(err)
 	}
-	manifest.ReleaseSet.Fallback = []string{"stable"}
-	if err := validateApplianceBundleManifest(manifest); err == nil || !strings.Contains(err.Error(), "fallback") {
-		t.Fatalf("expected fallback rejection, got %v", err)
+	for _, removed := range []string{`"fallback": ["stable"], `, `"branch": "dev", `, `"source": "custom", `} {
+		mutated := strings.Replace(string(raw), `"release_set": {`, `"release_set": {`+removed, 1)
+		if mutated == string(raw) {
+			t.Fatal("test manifest has no release_set")
+		}
+		if _, err := parseApplianceBundleManifest([]byte(mutated)); err == nil {
+			t.Fatalf("manifest with removed release_set key %s accepted", removed)
+		}
+	}
+	if _, err := parseApplianceBundleManifest([]byte(strings.Replace(string(raw), `"source_tree"`, `"source_commit": "x", "source_tree"`, 1))); err == nil {
+		t.Fatal("manifest with removed source_commit accepted")
 	}
 	if _, err := applianceAssetPath(filepath.Dir(bundle.manifestPath), "../escape"); err == nil {
 		t.Fatal("expected escaped artifact path rejection")
-	}
-}
-
-func TestApplianceManifestAcceptsOnlySafeMultiSegmentReleaseBranches(t *testing.T) {
-	bundle := writeTestApplianceBundle(t)
-	raw, err := os.ReadFile(bundle.manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := parseApplianceBundleManifest(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.ReleaseSet.Branch = "codex/phase1-repository-builds"
-	if err := validateApplianceBundleManifest(manifest); err != nil {
-		t.Fatalf("safe multi-segment branch was rejected: %v", err)
-	}
-	for _, branch := range []string{"codex//escape", "../escape", "codex/bad.lock", "codex/bad~ref"} {
-		manifest.ReleaseSet.Branch = branch
-		if err := validateApplianceBundleManifest(manifest); err == nil {
-			t.Fatalf("unsafe release branch %q was accepted", branch)
-		}
 	}
 }
 
@@ -122,7 +107,7 @@ func TestValidateApplianceManifestRejectsIncompatibleRuntimeContract(t *testing.
 		t.Fatalf("incompatible runtime result = %v", err)
 	}
 	manifest.KernelCompatibility = applianceKernelCompatibility
-	manifest.ReleaseSet.Spine.SourceCommit = strings.Repeat("c", 40)
+	manifest.ReleaseSet.Spine.SourceTree = strings.Repeat("c", 40)
 	if err := validateApplianceBundleManifest(manifest); err != nil {
 		t.Fatalf("independent exact appliance and Spine source identities were rejected: %v", err)
 	}

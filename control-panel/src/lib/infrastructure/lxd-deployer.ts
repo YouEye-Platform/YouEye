@@ -1,7 +1,7 @@
-import { selectedCoreDownloadShell } from '@/lib/releases/core-release';
 import { createHash } from 'crypto';
 import { cachedReleaseBytes } from '../releases/cache';
-import { selectedCoreArtifact } from '../releases/core-release';
+import { canonicalReleaseRepository, releaseAssetURL, selectedCoreRole } from '../releases/core-release';
+import { spineClient } from '../spine/client';
 /**
  * LXD container deployment via Incus REST API (v2).
  * Used for full-OS containers (Debian) that run Node.js apps.
@@ -15,15 +15,7 @@ import { incusRequest, execShell, incusUploadFile } from '../incus/server';
 import { applyStaticIP, getSystemStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
-import type { ReleaseSource } from '../apps/release-source';
-import {
-  resolveExactInfrastructureStandaloneRelease,
-  resolveInfrastructureStandaloneRelease,
-  infrastructureChannelSource,
-  type ResolvedInfrastructureRelease,
-} from './release-resolver';
-import { releaseArtifactVerificationShell, verifyReleaseArtifactBuffer } from '@/lib/releases/artifact';
-import { effectiveChannel } from '@/lib/updates/channels';
+import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '@/lib/releases/artifact';
 import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
   readStagedMarketNativeArtifact,
@@ -31,13 +23,16 @@ import {
 } from '@/lib/market/native-artifact';
 
 type LXDDeploymentConfig = {
-  spineSocketPath: string;
-  giteaBaseURL: string;
-  giteaOrg: string;
-  giteaRepo: string;
-  releaseChannelKey?: string;
-  tagPrefix?: string;
   exposeHostPort?: boolean;
+};
+
+/** The exact release artifact a container runs. */
+export type LXDRelease = {
+  tag: string;
+  version: string;
+  url: string;
+  artifactSHA256: string;
+  sizeBytes?: number;
 };
 
 function storageDevices(spec: LXDContainerSpec): Record<string, Record<string, string>> {
@@ -70,7 +65,7 @@ export async function deployLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
   return deployLXDContainerInternal(spec, cfg, nicDevices);
 }
 
@@ -86,7 +81,7 @@ export async function deployMarketLXDContainer(
   cfg: LXDDeploymentConfig,
   artifact: StagedMarketNativeArtifact,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
   return deployLXDContainerInternal(spec, cfg, nicDevices, artifact);
 }
 
@@ -95,8 +90,8 @@ async function deployLXDContainerInternal(
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
   marketArtifact?: StagedMarketNativeArtifact,
-  preparedRelease?: ResolvedInfrastructureRelease,
-): Promise<ResolvedInfrastructureRelease | null> {
+  preparedRelease?: LXDRelease,
+): Promise<LXDRelease | null> {
   if (await containerExists(spec.containerName)) return null;
 
   // Resolve the exact asset before mutating Incus. This avoids leaving a
@@ -109,7 +104,7 @@ async function deployLXDContainerInternal(
         url: '',
         artifactSHA256: marketArtifact.artifactSHA256,
       }
-    : await resolveLXDRelease(cfg));
+    : await resolveUIRelease());
 
   // The watchdog can observe the instance as soon as creation completes.
   // Pin system networking atomically and retain installation ownership through
@@ -208,12 +203,7 @@ async function deployLXDContainerInternal(
   }
 
   // Install Node.js and deploy the application
-  const artifactSHA256 = await installNodeAndApp(
-    spec,
-    release.url,
-    release.artifactSHA256,
-    marketArtifact,
-  );
+  const artifactSHA256 = await installNodeAndApp(spec, release, marketArtifact);
   const enabled = await incusRequest('PATCH', `/1.0/instances/${spec.containerName}`, {
     config: { 'boot.autostart': 'true' },
   });
@@ -286,37 +276,29 @@ export async function redeployLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<ResolvedInfrastructureRelease | null> {
+): Promise<LXDRelease | null> {
   await removeLXDContainer(spec);
   return deployLXDContainer(spec, cfg, nicDevices);
 }
 
-/** Managed Pointer may consume only its digest-bound Product archive or the
- * existing legacy archive. Market's manifest-only policy is not an
- * alternative here. Validate before deleting any partial prior runtime. */
+/** Managed Pointer consumes only its digest-bound product archive. Validate
+ * before deleting any partial prior runtime. */
 export async function deployPointerLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
-  release: ResolvedInfrastructureRelease,
-  artifact: StagedMarketNativeArtifact | undefined,
+  artifact: StagedMarketNativeArtifact,
   replaceExisting: boolean,
-): Promise<ResolvedInfrastructureRelease | null> {
-  if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun'
-    || cfg.releaseChannelKey !== 'app:pointer') throw new Error('Invalid managed Pointer installation');
-  if (artifact) {
-    if (!artifact.productRelease || artifact.verification.status !== 'product-release'
-      || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
-    const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer',source:artifact.sourceRepo,tag:release.tag});
-    if (selected.release.version !== release.version || selected.build.kind !== 'native'
-      || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
-      throw new Error('Pointer archive differs from its product release selection');
-    }
-    await readStagedMarketNativeArtifact(artifact);
-  } else if (new URL(release.url).pathname.split('/').at(-1) !== 'standalone.tar') {
-    throw new Error('Pointer release descriptor cannot be installed as a runtime archive');
+): Promise<LXDRelease | null> {
+  if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun') throw new Error('Invalid managed Pointer installation');
+  if (artifact.verification.status !== 'product-release' || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
+  const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer'});
+  if (selected.release.tag !== artifact.tag || selected.release.version !== artifact.version || selected.build.kind !== 'native'
+    || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
+    throw new Error('Pointer archive differs from its product release selection');
   }
+  await readStagedMarketNativeArtifact(artifact);
   if (replaceExisting) await removeLXDContainer(spec);
-  return deployLXDContainerInternal(spec, cfg, undefined, artifact, release);
+  return deployLXDContainerInternal(spec, cfg, undefined, artifact);
 }
 
 async function removeLXDContainer(spec: LXDContainerSpec): Promise<void> {
@@ -391,51 +373,21 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
   await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
-export async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
-  let releaseSource: ReleaseSource = {
-    provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
-    base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
-    api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
-    organization: cfg.giteaOrg,
+/**
+ * The UI artifact of the accepted System release, downloaded from the box's
+ * repository: `<repository>/releases/download/<tag>/<name>`.
+ */
+export async function resolveUIRelease(): Promise<LXDRelease> {
+  const selected = selectedCoreRole('ui');
+  const repository = canonicalReleaseRepository((await spineClient.getReleaseChannel()).repository);
+  const artifact = selected.member.artifact;
+  return {
+    tag: selected.release.tag,
+    version: selected.member.build_version,
+    url: releaseAssetURL(repository, selected.release.tag, artifact),
+    artifactSHA256: artifact.sha256,
+    sizeBytes: artifact.size_bytes,
   };
-
-  let releaseBranch = 'main';
-  let exactTag = '';
-  let artifactSHA256 = '';
-  let channelSource = '';
-  let repository = cfg.giteaRepo;
-  try {
-    const key = cfg.releaseChannelKey || 'ui';
-    const channel = await effectiveChannel(key, key.startsWith('app:') ? {
-      appDefaultSource: `${releaseSource.base_url}/${releaseSource.organization}/${repository}`,
-    } : undefined);
-    if (/^[a-zA-Z0-9._/-]+$/.test(channel.branch)) releaseBranch = channel.branch;
-    exactTag = channel.tag || '';
-    artifactSHA256 = channel.artifact_sha256 || '';
-    channelSource = channel.source;
-  } catch {
-    // Stable main remains the explicit fallback when Spine config is unavailable.
-  }
-  ({ source: releaseSource, repository } = infrastructureChannelSource(releaseSource, repository, channelSource));
-
-  if (exactTag || artifactSHA256) {
-    if (!exactTag || !artifactSHA256) {
-      throw new Error('Exact UI release requires both a tag and artifact SHA-256');
-    }
-    return resolveExactInfrastructureStandaloneRelease(
-      releaseSource,
-      repository,
-      exactTag,
-      artifactSHA256,
-    );
-  }
-
-  return resolveInfrastructureStandaloneRelease(
-    releaseSource,
-    repository,
-    cfg.tagPrefix || '',
-    releaseBranch,
-  );
 }
 
 function shellQuote(value: string): string {
@@ -445,18 +397,22 @@ function shellQuote(value: string): string {
 /** Install Node.js and deploy the app from the configured release source. */
 async function installNodeAndApp(
   spec: LXDContainerSpec,
-  releaseURL: string,
-  artifactSHA256?: string,
+  release: LXDRelease,
   marketArtifact?: StagedMarketNativeArtifact,
 ): Promise<string> {
   const cn = spec.containerName;
-  const coreRole = spec.name === 'ui' ? 'ui' as const : undefined;
-  const selectedCore = spec.name === 'ui' ? selectedCoreArtifact(releaseURL, artifactSHA256, 'ui') : null;
+  const releaseURL = release.url;
+  const artifactSHA256 = release.artifactSHA256;
+  const selectedCore = spec.name === 'ui' ? selectedCoreRole('ui') : null;
+  if (selectedCore && (selectedCore.member.artifact.sha256 !== artifactSHA256 || release.sizeBytes !== selectedCore.member.artifact.size_bytes)) {
+    throw new Error('UI artifact differs from the accepted System release');
+  }
+  const expected = { sha256: artifactSHA256, size_bytes: release.sizeBytes };
   const digestPath = selectedCore ? '/etc/youeye/core-artifact-sha256' : `${spec.appDir}/.youeye-artifact-sha256`;
   const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
-  if (cachedRelease) verifyReleaseArtifactBuffer(releaseURL, cachedRelease, artifactSHA256, coreRole);
+  if (cachedRelease) verifyReleaseArtifactBuffer(cachedRelease, expected);
   const releaseVerification = !marketArtifact && !cachedRelease
-    ? releaseArtifactVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, coreRole)
+    ? releaseArtifactVerificationShell('/tmp/app.tar', expected)
     : '';
 
   if (selectedCore) {
@@ -483,8 +439,8 @@ async function installNodeAndApp(
     await execShell(cn, 'apt-get install -y nodejs', { timeout: 60_000 });
   }
 
-  // The Control Panel resolves the exact release across every API page before
-  // creating the container. The container only downloads that selected asset.
+  // The Control Panel selected the exact release asset before creating the
+  // container. The container only downloads that asset and checks its digest.
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
   if (marketArtifact) {
@@ -496,7 +452,7 @@ async function installNodeAndApp(
     await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
   }
   const artifactPreparation = cachedRelease
-    ? `test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(artifactSHA256 || createHash('sha256').update(cachedRelease).digest('hex'))}`
+    ? `test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(createHash('sha256').update(cachedRelease).digest('hex'))}`
     : marketArtifact
     ? `
     echo "Using preflighted Market artifact..."
@@ -505,7 +461,7 @@ async function installNodeAndApp(
     : `
     echo "Downloading selected standalone release..."
     download_selected_release() {
-      ${selectedCoreDownloadShell(releaseURL, '/tmp/app.tar')}
+      ${releaseDownloadShell(releaseURL, '/tmp/app.tar')}
     }
     retry 3 5 download_selected_release
     ${releaseVerification}
@@ -555,7 +511,7 @@ async function installNodeAndApp(
     }
   }
 
-  if (marketArtifact?.productRelease) {
+  if (marketArtifact) {
     const { publishProductProjection } = await import('../releases/product-projection');
     marketArtifact.runtimeUUID = await publishProductProjection(cn,marketArtifact.productRelease);
   }

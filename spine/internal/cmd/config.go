@@ -105,13 +105,13 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 # Documentation: https://github.com/YouEye-Platform/YouEye/src/branch/main/spine
 #
 # Configuration precedence (highest to lowest):
-#   1. CLI flags (--port, release source URL, etc.)
-#   2. Environment variables (SPINE_RELEASES_BASE_URL, etc.)
+#   1. CLI flags (--port, etc.)
+#   2. Environment variables (SPINE_API_SOCKET_PATH, etc.)
 #   3. This config file
 #   4. Default values
 #
 # To use environment variables, replace dots with underscores and prefix with SPINE_
-# Example: releases.repo_url -> SPINE_RELEASES_REPO_URL
+# Example: api.socket_path -> SPINE_API_SOCKET_PATH
 #
 
 `
@@ -143,7 +143,6 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Configuration file created: %s\n", configOutputPath)
 	fmt.Println("\nYou can now edit this file to customize your installation.")
 	fmt.Println("Common customizations:")
-	fmt.Println("  - releases.repo_url: Change the core platform release repository")
 	fmt.Println("  - deployment.control_panel.port: Change from default 3000")
 	fmt.Println("  - deployment.container.name: For multi-instance setups")
 
@@ -207,8 +206,6 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 	// Additional validation checks
 	fmt.Println("\nChecking configuration values...")
 
-	// Check releases URL is reachable (optional)
-	fmt.Printf("  ✓ releases.repo_url: %s\n", testCfg.CoreReleaseRepo().RepoURL)
 	fmt.Printf("  ✓ deployment.container.name: %s\n", testCfg.Deployment.Container.Name)
 	fmt.Printf("  ✓ deployment.control_panel.port: %d\n", testCfg.Deployment.ControlPanel.Port)
 	fmt.Printf("  ✓ api.socket_path: %s\n", testCfg.API.SocketPath)

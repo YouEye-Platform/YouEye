@@ -347,8 +347,8 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 	if err != nil {
 		return CoreJournal{}, fmt.Errorf("installed core receipt required: %w", err)
 	}
-	if previous.ManifestSHA256 != digest && previous.Release.Source == target.Source && previous.Release.Branch == target.Branch && target.Sequence <= previous.Release.Sequence {
-		return CoreJournal{}, fmt.Errorf("release sequence does not advance the installed source track")
+	if previous.ManifestSHA256 != digest && releasecache.CompareVersions(target.Version, previous.Release.Version) < 0 {
+		return CoreJournal{}, fmt.Errorf("release %s is older than the installed %s; a box never downgrades", target.Version, previous.Release.Version)
 	}
 	j := CoreJournal{Schema: CoreJournalSchema, RequestID: requestID, ManifestSHA256: digest, Target: target, Previous: previous, Phase: "prepared", NoOp: previous.ManifestSHA256 == digest}
 	j.MetadataOnly = !j.NoOp && sameCorePayloads(previous.Release, target)
@@ -380,7 +380,10 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 	if err := m.retainSequence(previous.Release, previous.ManifestSHA256, false); err != nil {
 		return j, err
 	}
-	if err := m.retainSequence(target, digest, !j.NoOp); err != nil {
+	// Check the target against the floor, but raise the floor only when the
+	// release commits: a cancelled or rolled-back request never blocks a later,
+	// lower release.
+	if err := m.checkSequence(target, digest, !j.NoOp); err != nil {
 		return j, err
 	}
 	if old.RequestID != "" {
@@ -532,6 +535,9 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 		if err := atomicWrite(filepath.Join(m.Root, "committed.json"), append(raw, '\n'), 0600); err != nil {
 			return j, err
 		}
+	}
+	if err := m.retainSequence(j.Target, j.ManifestSHA256, false); err != nil {
+		return j, err
 	}
 	j.Phase = "committed"
 	j.Error = ""

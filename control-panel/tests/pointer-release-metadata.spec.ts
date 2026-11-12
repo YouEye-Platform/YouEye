@@ -1,24 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acceptProductSequence, productReceipt, verifyProductRelease, type ProductBuild, type ProductRelease } from '../src/lib/releases/product-release';
+import { acceptProductSequence, productReceipt, productTag, verifyProductRelease } from '../src/lib/releases/product-release';
+import { productFixture } from './fixtures/release-fixtures';
 import { AppUpdateJournalStore } from '../src/lib/market/update-journal';
 import { withAppLifecycle } from '../src/lib/market/update-admission';
 import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease, type PointerReleaseIO, type PointerReleaseState } from '../src/lib/pointer/release-metadata';
 
-const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 test('Pointer release-only transaction commits and recovers without payload or engine operations', async () => {
   const root = await mkdtemp(join(tmpdir(),'youeye-pointer-label-'));
   try {
-    const source = 'https://github.com/YouEye-Platform/Pointer';
-    const build: ProductBuild = {schema:'youeye.product-build.v1',product:'pointer',kind:'native',build_version:'1.2.3',source,branch:'main',source_commit:'a'.repeat(40),tag:'v1.2.3',input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'standalone.tar',assets:['standalone.tar','pointer-build-contract.json'].map(name=>({name,url:`${source}/releases/download/v1.2.3/${name}`,sha256:sha(name),size_bytes:name.length}))};
-    const buildRaw = Buffer.from(JSON.stringify(build));
+    const repository = 'https://github.com/YouEye-Platform/Pointer';
+    const base = productFixture('pointer','1.2.3',repository,{'standalone.tar':Buffer.from('standalone.tar'),'pointer-build-contract.json':Buffer.from('contract')});
+    // One build, relabelled by later releases (promotion without rebuild).
     const release = (version: string, sequence: number) => {
-      const r: ProductRelease = {schema:'youeye.product-release.v1',product:'pointer',version,source,branch:'main',tag:`v${version}`,channel:'stable',sequence,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
-      return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'pointer',source,tag:r.tag});
+      const r = {...base.release,version,tag:productTag('pointer',version),sequence};
+      return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'pointer',repository,tag:r.tag});
     };
     const original = release('1.2.3',3), next = release('1.2.4',4), later = release('1.2.5',5);
     const file = join(root,'pointer-release','installed.json'), store = new AppUpdateJournalStore(join(root,'journal'));
@@ -41,9 +40,9 @@ test('Pointer release-only transaction commits and recovers without payload or e
     await assert.rejects(withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,later,io),{store}),/lost projection acknowledgement/);
     assert.equal(pointerRelease(await io.read())?.release.version,'1.2.4');
     assert.equal(projection.receipt.manifestSHA256,next.manifestSHA256);
-    assert.equal(Object.values((await io.read()).floors)[0].sequence,5);
+    assert.equal((await io.read()).floors.pointer.sequence,5);
     assert.equal(store.list().filter(r=>r.rollbackVerifiedAt && r.cleanupComplete).length,1);
-    await assert.rejects(withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,next,io),{store}),/rollback/);
+    await assert.rejects(withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,next,io),{store}),/older pointer release/);
     replaced = true;
     const writes = effects.filter(e=>e === 'save' || e === 'publish').length;
     await assert.rejects(withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,later,io),{store}),/runtime replaced/);

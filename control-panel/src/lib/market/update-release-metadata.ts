@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { AppManifest, InstallMetadata } from './types';
-import { sameMarketInstallContract } from './native-artifact';
 import type { InstalledApp, InstalledAppUpdateState } from './installed-apps';
 import { AppUpdateWorkspace, updateDigest } from './update-workspace';
 import { updateResourceKey, type AppUpdateRecord, type UpdateResource, type UpdateCheckpoint, type AppUpdateJournalStore } from './update-journal';
@@ -38,8 +37,8 @@ const runtimeIO: ReleaseMetadataIO = {
   save: async m => (await import('./metadata')).saveInstallMetadata(m),
   installed: async id => (await import('./installed-apps')).getInstalledApp(id),
   restoreInstalled: async (id, state) => (await import('./installed-apps')).restoreInstalledAppUpdateState(id, state),
-  provenance: async (id, {release:r}) => (await import('./installed-apps')).recordAppProvenance(id,
-    {version:r.version, tag:r.tag, branch:r.branch, source:r.source}),
+  provenance: async (id, selected) => (await import('./installed-apps')).recordAppProvenance(id,
+    {version:selected.release.version, tag:selected.release.tag, branch:null, source:selected.repository}),
   manifest: async (id, version) => (await import('./frozen-manifest')).readFrozenUpdateManifest(id, version),
   syncManifest: async (id, m) => (await import('./ui-manifest-sync')).syncAppManifestObjectToUI(id, m as unknown as Record<string, unknown>),
   verifyProjection: async p => (await import('../releases/product-projection')).verifyProductProjection(p.container, p.receipt, p.runtimeUUID),
@@ -132,13 +131,13 @@ export async function updateIdenticalProductRelease(
 ): Promise<{success:true;previousVersion:string;newVersion:string;migrationsRun:0} | null> {
   const artifacts = before.nativeArtifacts ?? [];
   if (!artifacts.length || artifacts.some(a => !a.productRelease || !a.runtimeUUID)) return null;
-  const originals = artifacts.map(a => verifyInstalledProductReceipt(a.productRelease!,
-    {product:before.appId, source:a.sourceRepo, tag:a.releaseTag}));
+  const originals = artifacts.map(a => verifyInstalledProductReceipt(a.productRelease!, {product:before.appId}));
   if (!originals.every(p => identicalProductPayloads(p, selected))) return null;
   const installedVersion = before.installedVersion;
   if (!installedVersion) throw new Error('Installed product release version is missing');
   const oldManifest = await io.manifest(before.appId, installedVersion);
-  if (!await sameMarketInstallContract(manifest, oldManifest, before)) throw new Error('Identical product payload has a different install contract');
+  // Identical payloads share one installer contract; only the version label differs.
+  if (!isDeepStrictEqual({...manifest, version:''}, {...oldManifest, version:''})) return null;
   // Keep the already accepted catalog presentation/source projection when only
   // the release label changes. Its exact original build contract is unchanged.
   manifest = {...oldManifest, version:selected.release.version};
@@ -154,7 +153,7 @@ export async function updateIdenticalProductRelease(
   next.installedVersion = r.version;
   next.manifestPath = reference.path; next.manifestRepo = reference.repo;
   next.manifestBranch = reference.branch; next.manifestDigest = reference.digest;
-  next.nativeArtifacts = artifacts.map(a => ({...a,sourceRepo:r.source, releaseTag:r.tag, version:r.version, productRelease:productReceipt(selected)}));
+  next.nativeArtifacts = artifacts.map(a => ({...a,sourceRepo:selected.repository, releaseTag:r.tag, version:r.version, productRelease:productReceipt(selected)}));
   const targetProjections = projections.map(p => ({...p,receipt:productReceipt(selected)}));
   const resources: UpdateResource[] = [
     {kind:'app',scope:'market',name:before.appId,ownerAppId:before.appId,mutable:false},
@@ -189,7 +188,7 @@ export async function updateIdenticalProductRelease(
     const saved = await io.metadata(before.appId), registered = await io.installed(before.appId);
     if (!saved || !registered || !isDeepStrictEqual(registration(saved),registration(next))
       || registered.installedVersion !== r.version || registered.installedTag !== r.tag
-      || registered.installedBranch !== r.branch || registered.channelSource !== r.source
+      || registered.channelSource !== selected.repository
       || !isDeepStrictEqual(await io.manifest(before.appId,r.version),manifest)) throw new Error('Release metadata did not converge');
     return {value:{success:true,previousVersion:installedVersion,newVersion:r.version,migrationsRun:0},metadataDigest:updateDigest(JSON.stringify(saved))};
   });

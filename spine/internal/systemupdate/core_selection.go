@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"syscall"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -91,45 +90,15 @@ func ReadAcceptedCoreSelection(root string) (CoreHostSelection, releasecache.Cor
 	return selection, r, digest, nil
 }
 
-// PolicyCoreSelection derives the System update selection from the protected
-// installer-recorded release policy and the release document it accepted. The
-// host owns this choice: no configuration writable through the Spine API (and
-// so by the Control Panel) participates. A track follows its recorded source
-// and raw branch without fallback; an exact installation stays on its digest.
+// PolicyCoreSelection is what the box follows: the repository and channel in
+// its protected, installer-written policy. No configuration writable through
+// the Spine API (and so by the Control Panel) participates.
 func PolicyCoreSelection(root string) (CoreReleaseSelection, error) {
 	policy, err := LoadReleasePolicy(filepath.Join(root, "release-policy.json"))
 	if err != nil {
 		return CoreReleaseSelection{}, err
 	}
-	_, r, digest, err := ReadAcceptedCoreSelection(root)
-	if err != nil {
-		return CoreReleaseSelection{}, err
-	}
-	if err = ValidateCorePolicy(policy, r, digest); err != nil {
-		return CoreReleaseSelection{}, err
-	}
-	selection := CoreReleaseSelection{Source: r.Source, Branch: r.Branch, Fallback: []string{}}
-	if policy.Mode == "exact" {
-		selection.Tag, selection.ManifestSHA256 = r.Tag, digest
-	}
-	return selection, nil
-}
-
-// policyCoreSource maps the recorded provider and releases API back to the
-// repository URL every core release document of that source carries.
-func policyCoreSource(policy ReleasePolicy) (string, error) {
-	_, api, err := normalizeReleaseSource(policy.Provider, policy.ReleasesAPI)
-	if err != nil {
-		return "", err
-	}
-	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
-	if policy.Provider == "github" && len(parts) == 4 {
-		return "https://github.com/" + parts[1] + "/" + parts[2], nil
-	}
-	if policy.Provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
-		return api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4], nil
-	}
-	return "", fmt.Errorf("release policy does not name a repository")
+	return CoreReleaseSelection{Repository: policy.Repository, Channel: policy.Channel}, nil
 }
 
 func ValidateCorePolicy(policy ReleasePolicy, r releasecache.CoreRelease, digest string) error {
@@ -138,26 +107,6 @@ func ValidateCorePolicy(policy ReleasePolicy, r releasecache.CoreRelease, digest
 	}
 	if policy.CoreManifestSHA256 != digest {
 		return fmt.Errorf("core selection differs from frozen release policy")
-	}
-	source, err := policyCoreSource(policy)
-	if err != nil || r.Source != source {
-		return fmt.Errorf("core selection differs from selected repository")
-	}
-	if policy.Mode == "exact" {
-		if policy.ExactTag != r.Tag {
-			return fmt.Errorf("core selection differs from exact policy tag")
-		}
-	} else {
-		branch := policy.Branch
-		if policy.Track == "stable" {
-			branch = "main"
-		}
-		if policy.Track == "development" {
-			branch = "dev"
-		}
-		if r.Branch != branch {
-			return fmt.Errorf("core selection differs from selected raw branch")
-		}
 	}
 	return nil
 }
@@ -171,12 +120,12 @@ func BindCoreImage(r releasecache.CoreRelease, image appliance.Manifest) error {
 	for _, member := range r.Members {
 		switch member.Role {
 		case "appliance":
-			if member.BuildVersion != image.ImageVersion || member.SourceCommit != image.SourceCommit || member.Source != image.ReleaseSet.Source || member.Branch != image.ReleaseSet.Branch {
+			if member.BuildVersion != image.ImageVersion || member.SourceTree != image.SourceTree {
 				return fmt.Errorf("core host member differs from running immutable image")
 			}
 		case "spine":
 			c := image.ReleaseSet.Spine
-			if member.Artifact.SHA256 != c.ArtifactSHA256 || member.SourceCommit != c.SourceCommit || member.BuildVersion != c.Version {
+			if member.Artifact.SHA256 != c.ArtifactSHA256 || member.SourceTree != c.SourceTree || member.BuildVersion != c.Version {
 				return fmt.Errorf("core Spine member differs from baked binary")
 			}
 		}
@@ -217,11 +166,11 @@ func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath 
 		return ConvergenceResult{}, err
 	}
 	bundleDigest := fmt.Sprintf("%x", sha256.Sum256(bundleRaw))
-	if member.Artifact.SHA256 != bundleDigest || member.Artifact.SizeBytes != int64(len(bundleRaw)) || policy.Mode == "exact" && policy.ManifestSHA256 != bundleDigest {
+	if member.Artifact.SHA256 != bundleDigest || member.Artifact.SizeBytes != int64(len(bundleRaw)) {
 		return ConvergenceResult{}, fmt.Errorf("core selection differs from installed bundle")
 	}
 	var bundle exactBundleManifest
-	if json.Unmarshal(bundleRaw, &bundle) != nil || bundle.Schema != "youeye.appliance.manifest.v1" || bundle.ImageVersion != image.ImageVersion || bundle.SourceCommit != image.SourceCommit || !reflect.DeepEqual(bundle.ReleaseSet, *image.ReleaseSet) {
+	if json.Unmarshal(bundleRaw, &bundle) != nil || bundle.Schema != "youeye.appliance.manifest.v1" || bundle.ImageVersion != image.ImageVersion || bundle.SourceTree != image.SourceTree || !reflect.DeepEqual(bundle.ReleaseSet, *image.ReleaseSet) {
 		return ConvergenceResult{}, fmt.Errorf("installed bundle differs from sealed image provenance")
 	}
 	status := Status{Schema: StatusSchema, State: PhaseHealthy, CurrentImage: image.ImageVersion, RunningImage: image.ImageVersion, TargetImage: image.ImageVersion}

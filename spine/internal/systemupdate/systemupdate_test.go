@@ -23,10 +23,9 @@ const (
 
 func testReleaseSet(commit string) appliance.ReleaseSet {
 	return appliance.ReleaseSet{
-		Source: "https://github.com/YouEye-Platform/YouEye", Branch: "dev", Fallback: []string{},
-		Spine:        appliance.ComponentRelease{Version: "0.6.0", SourceCommit: commit, ArtifactSHA256: strings.Repeat("a", 64)},
-		ControlPanel: appliance.ComponentRelease{Version: "1.0.0", Tag: "cp-dev-v1.0.0", SourceCommit: strings.Repeat("2", 40), ArtifactSHA256: strings.Repeat("b", 64)},
-		UI:           appliance.ComponentRelease{Version: "1.0.0", Tag: "ui-dev-v1.0.0", SourceCommit: strings.Repeat("3", 40), ArtifactSHA256: strings.Repeat("c", 64)},
+		Spine:        appliance.ComponentRelease{Version: "0.6.0", SourceTree: commit, ArtifactSHA256: strings.Repeat("a", 64)},
+		ControlPanel: appliance.ComponentRelease{Version: "1.0.0", SourceTree: strings.Repeat("2", 40), ArtifactSHA256: strings.Repeat("b", 64)},
+		UI:           appliance.ComponentRelease{Version: "1.0.0", SourceTree: strings.Repeat("3", 40), ArtifactSHA256: strings.Repeat("c", 64)},
 	}
 }
 
@@ -34,7 +33,7 @@ func testApplianceManifest(version, commit string) appliance.Manifest {
 	set := testReleaseSet(commit)
 	return appliance.Manifest{
 		SchemaVersion: 1, ImageVersion: version,
-		BuildID: "build-" + version, SourceCommit: commit, Architecture: "amd64", FirmwareMode: "uefi",
+		BuildID: "build-" + version, SourceTree: commit, Architecture: "amd64", FirmwareMode: "uefi",
 		DiskLayoutVersion: appliance.CurrentDiskLayout, StateSchemaMin: 2, StateSchemaMax: 2,
 		DataSchemaMin: 1, DataSchemaMax: 1, KernelCompatibility: ">=6.12", ZFSCompatibility: ">=2.3",
 		ZFSFeatureProfile: "openzfs-2.2", IncusCompatibility: ">=7.0", RecoveryVersion: "1",
@@ -80,7 +79,7 @@ func testUpdateManifest(files map[string][]byte) Manifest {
 	}
 	return Manifest{
 		Schema: ManifestSchema, TargetImageVersion: "0.6.0-dev.27",
-		BuildID: "build-target", SourceCommit: targetCommit, Architecture: "amd64", FirmwareMode: "uefi",
+		BuildID: "build-target", SourceTree: targetCommit, Architecture: "amd64", FirmwareMode: "uefi",
 		HardwareProfile: "youeye-appliance-amd64-v1", DiskLayoutVersion: appliance.CurrentDiskLayout,
 		StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, RecoveryVersion: "1",
 		MinimumCurrentImageVersion: "0.6.0-dev.26",
@@ -363,7 +362,7 @@ func TestManifestRejectsOversizeIncompatibleAndUnsafeInputs(t *testing.T) {
 	}
 	base := testUpdateManifest(files)
 	sourceMismatch := base
-	sourceMismatch.SourceCommit = strings.Repeat("4", 40)
+	sourceMismatch.SourceTree = strings.Repeat("4", 40)
 	if err := sourceMismatch.Validate(); err != nil {
 		t.Fatalf("independent exact appliance and Spine source commits were rejected: %v", err)
 	}
@@ -673,7 +672,7 @@ func TestCandidateBlessingAndAutomaticFallbackState(t *testing.T) {
 func TestDiscoverInstalledReleaseIsNoOpAndStageStillRejectsReplay(t *testing.T) {
 	fixture := newManagerFixture(t)
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
-	fixture.update.SourceCommit = baselineCommit
+	fixture.update.SourceTree = baselineCommit
 	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
 	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	status, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions())
@@ -697,18 +696,5 @@ func TestDiscoverRejectsSameVersionDifferentSignedIdentity(t *testing.T) {
 	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	if _, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions()); err == nil || !strings.Contains(err.Error(), "installed identity") {
 		t.Fatalf("same-version replacement result: %v", err)
-	}
-}
-
-func TestDiscoverInstalledReleaseStillChecksRequestedBranch(t *testing.T) {
-	fixture := newManagerFixture(t)
-	fixture.update.TargetImageVersion = "0.6.0-dev.26"
-	fixture.update.SourceCommit = baselineCommit
-	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
-	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
-	options := fixture.sourceOptions()
-	options.ExpectedReleaseBranch = "main"
-	if _, err := fixture.manager.Discover(context.Background(), options); err == nil || !strings.Contains(err.Error(), "requested branch") {
-		t.Fatalf("wrong-branch result: %v", err)
 	}
 }

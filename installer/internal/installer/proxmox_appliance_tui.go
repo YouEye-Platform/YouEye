@@ -2,10 +2,11 @@ package installer
 
 import (
 	"fmt"
-	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -70,11 +71,7 @@ var proxmoxAdvancedFields = []proxmoxFormField{
 	{Label: "Continue", Kind: "continue", Page: 2},
 	{Label: "Release source", Kind: "release-provider", Page: 3},
 	{Label: "Repository URL", Kind: "input", InputKey: "releases-api", Page: 3},
-	{Label: "Release track", Kind: "channel", Page: 3},
-	{Label: "Branch", Kind: "input", InputKey: "branch", Page: 3},
-	{Label: "Freshness", Kind: "freshness", Page: 3},
-	{Label: "Exact tag", Kind: "input", InputKey: "tag", Page: 3},
-	{Label: "core-release.json SHA-256", Kind: "input", InputKey: "digest", Page: 3},
+	{Label: "Release channel", Kind: "channel", Page: 3},
 	{Label: "Continue", Kind: "continue", Page: 3},
 	{Label: "Host SSH keys", Kind: "ssh-toggle", Page: 4},
 	{Label: "Extra SSH keys", Kind: "input", InputKey: "keys", Page: 4},
@@ -176,21 +173,14 @@ func (m proxmoxApplianceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.config.TargetDiskGiB = proxmoxQuickTargetGiB
 					m.config.Channel = "stable"
 					m.config.ReleaseProvider = defaultApplianceProvider
-					m.config.ReleasesAPI = defaultApplianceReleasesAPI
-					m.config.ReleaseBranch = ""
+					m.config.RepositoryURL = releasecache.OfficialRepository
 					m.config.ReleaseTag = ""
 					m.config.CoreManifestSHA256 = ""
-					for _, key := range []string{"branch", "tag", "digest"} {
-						input := m.inputs[key]
-						input.SetValue("")
-						m.inputs[key] = input
-					}
 					if m.opts.ApplianceRepository != "" {
 						selected := proxmoxApplianceConfigFromOptions(m.opts, m.inventory)
-						m.config.RepositoryURL, m.config.ReleaseProvider, m.config.ReleasesAPI = selected.RepositoryURL, selected.ReleaseProvider, selected.ReleasesAPI
-						m.config.Channel, m.config.ReleaseBranch, m.config.ReleaseTag, m.config.CoreManifestSHA256 = selected.Channel, selected.ReleaseBranch, selected.ReleaseTag, selected.CoreManifestSHA256
+						m.config.RepositoryURL, m.config.ReleaseProvider = selected.RepositoryURL, selected.ReleaseProvider
+						m.config.Channel, m.config.ReleaseTag, m.config.CoreManifestSHA256 = selected.Channel, selected.ReleaseTag, selected.CoreManifestSHA256
 					}
-					m.config.Freshness = "require-current"
 					m.config.EraseConfirmed = false
 					m.eraseChoice = 0
 					m.page, m.cursor = 0, 0
@@ -316,8 +306,8 @@ func (m *proxmoxApplianceModel) initAdvancedInputs() {
 		"cpu": strconv.Itoa(m.config.CPUCores), "ram": strconv.Itoa(m.config.RAMMiB),
 		"target-size": strconv.Itoa(m.config.TargetDiskGiB),
 		"address":     m.config.Network.Address, "gateway": m.config.Network.Gateway, "dns": m.config.Network.DNS,
-		"releases-api": repositoryInputValue(m.config.ReleaseProvider, m.config.ReleasesAPI),
-		"branch":       m.config.ReleaseBranch, "tag": m.config.ReleaseTag, "digest": m.config.CoreManifestSHA256, "keys": m.config.SSHKeysPath,
+		"releases-api":  repositoryInputValue(m.config.ReleaseProvider, m.config.RepositoryURL),
+		"keys":          m.config.SSHKeysPath,
 		"root-password": "", "root-password-confirm": "",
 	}
 	for key, value := range values {
@@ -325,9 +315,6 @@ func (m *proxmoxApplianceModel) initAdvancedInputs() {
 		input.SetValue(value)
 		input.Width = 42
 		input.CharLimit = 256
-		if key == "digest" {
-			input.CharLimit = 64
-		}
 		if key == "root-password" || key == "root-password-confirm" {
 			input.EchoMode = textinput.EchoPassword
 			input.EchoCharacter = '•'
@@ -482,27 +469,11 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 		return nil
 	}
 	validateSoftware := func() error {
-		if _, _, err := normalizeApplianceReleaseSource(m.config.ReleaseProvider, m.config.ReleasesAPI); err != nil {
+		if _, err := releasecache.CanonicalRepository(m.config.RepositoryURL); err != nil {
 			return err
 		}
-		switch m.config.Channel {
-		case "stable", "development":
-			if m.config.ReleaseBranch != "" || !validTrackPin(m.config.ReleaseTag, m.config.CoreManifestSHA256) {
-				return fmt.Errorf("this track cannot include a branch, and a pinned release needs its tag and core-release.json SHA-256")
-			}
-		case "branch":
-			if !validApplianceReleaseBranch(m.config.ReleaseBranch) {
-				return fmt.Errorf("enter a safe release branch")
-			}
-			if !validTrackPin(m.config.ReleaseTag, m.config.CoreManifestSHA256) {
-				return fmt.Errorf("a pinned release needs its tag and core-release.json SHA-256")
-			}
-		case "exact":
-			if !validCoreTag(m.config.ReleaseTag) || !validSHA256Hex(m.config.CoreManifestSHA256) {
-				return fmt.Errorf("Exact requires a youeye-v release tag and the lowercase core-release.json SHA-256")
-			}
-		default:
-			return fmt.Errorf("select Stable, Development, branch, or Exact")
+		if !releasecache.ValidChannel(m.config.Channel) {
+			return fmt.Errorf("select Stable, Beta, Alpha or Dev")
 		}
 		return nil
 	}
@@ -624,18 +595,18 @@ func (m *proxmoxApplianceModel) applyAdvancedInputs() error {
 	m.config.Network.Gateway = strings.TrimSpace(m.inputs["gateway"].Value())
 	m.config.Network.DNS = strings.TrimSpace(m.inputs["dns"].Value())
 	if m.config.ReleaseProvider == defaultApplianceProvider {
-		m.config.ReleasesAPI = defaultApplianceReleasesAPI
+		m.config.RepositoryURL = releasecache.OfficialRepository
 	} else {
-		source, sourceErr := releasecache.ParseRepositorySource(m.inputs["releases-api"].Value())
+		repository, sourceErr := releasecache.CanonicalRepository(m.inputs["releases-api"].Value())
 		if sourceErr != nil {
 			return sourceErr
 		}
-		m.config.RepositoryURL, m.config.ReleasesAPI = source.URL, source.ReleasesAPI
-		m.releaseAPIs[m.config.ReleaseProvider] = source.URL
+		if repository != m.config.RepositoryURL {
+			m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
+		}
+		m.config.RepositoryURL = repository
+		m.releaseAPIs[m.config.ReleaseProvider] = repository
 	}
-	m.config.ReleaseTag = strings.TrimSpace(m.inputs["tag"].Value())
-	m.config.ReleaseBranch = strings.TrimSpace(m.inputs["branch"].Value())
-	m.config.CoreManifestSHA256 = strings.ToLower(strings.TrimSpace(m.inputs["digest"].Value()))
 	m.config.SSHKeysPath = strings.TrimSpace(m.inputs["keys"].Value())
 	return nil
 }
@@ -661,12 +632,6 @@ func (m proxmoxApplianceModel) visibleAdvancedFields() []proxmoxFormField {
 			continue
 		}
 		if (field.InputKey == "address" || field.InputKey == "gateway" || field.InputKey == "dns") && m.config.Network.Mode != "static" {
-			continue
-		}
-		if (field.InputKey == "tag" || field.InputKey == "digest") && m.config.Channel != "exact" {
-			continue
-		}
-		if field.InputKey == "branch" && m.config.Channel != "branch" {
 			continue
 		}
 		if field.InputKey == "releases-api" && m.config.ReleaseProvider == defaultApplianceProvider {
@@ -770,36 +735,24 @@ func (m *proxmoxApplianceModel) cycleAdvancedSelection(kind string, forward bool
 			m.releaseAPIs[current] = strings.TrimSpace(m.inputs["releases-api"].Value())
 		}
 		m.config.ReleaseProvider = cycle(current, []string{"github", "custom"})
+		// A pinned release belongs to the repository it was chosen from.
+		m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
 		if m.config.ReleaseProvider == defaultApplianceProvider {
-			m.config.ReleasesAPI = defaultApplianceReleasesAPI
+			m.config.RepositoryURL = releasecache.OfficialRepository
 			input := m.inputs["releases-api"]
 			input.SetValue("")
 			m.inputs["releases-api"] = input
 		} else {
 			value := m.releaseAPIs[m.config.ReleaseProvider]
-			m.config.ReleasesAPI = value
+			m.config.RepositoryURL = value
 			input := m.inputs["releases-api"]
 			input.SetValue(value)
 			m.inputs["releases-api"] = input
 		}
 	case "channel":
-		m.config.Channel = cycle(m.config.Channel, []string{"stable", "development", "branch", "exact"})
-		if m.config.Channel != "branch" {
-			m.config.ReleaseBranch = ""
-			branch := m.inputs["branch"]
-			branch.SetValue("")
-			m.inputs["branch"] = branch
-		}
-		if m.config.Channel != "exact" {
-			m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
-			for _, key := range []string{"tag", "digest"} {
-				input := m.inputs[key]
-				input.SetValue("")
-				m.inputs[key] = input
-			}
-		}
-	case "freshness":
-		m.config.Freshness = cycle(m.config.Freshness, []string{"require-current", "prefer-current"})
+		m.config.Channel = cycle(m.config.Channel, []string{"stable", "beta", "alpha", "dev"})
+		// A pinned release belongs to the channel it was chosen from.
+		m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
 	case "ssh-toggle":
 		m.config.ImportHostSSHKeys = !m.config.ImportHostSSHKeys
 	case "development-local":
@@ -828,11 +781,6 @@ func (m proxmoxApplianceModel) advancedFieldValue(field proxmoxFormField) string
 		return releaseProviderLabel(m.config.ReleaseProvider)
 	case "channel":
 		return strings.Title(m.config.Channel)
-	case "freshness":
-		if m.config.Freshness == "prefer-current" {
-			return "Use media if current release is temporarily unavailable"
-		}
-		return "Require current release"
 	case "ssh-toggle":
 		if m.config.ImportHostSSHKeys {
 			return "Import"
@@ -965,14 +913,11 @@ func (m proxmoxApplianceModel) reviewView() string {
 		fmt.Sprintf("Drive              %s · %d GiB", m.config.TargetStorage, m.config.TargetDiskGiB),
 		fmt.Sprintf("Network            %s · %s", m.config.Bridge, strings.ToUpper(m.config.Network.Mode)),
 		fmt.Sprintf("Release source     %s", releaseProviderLabel(m.config.ReleaseProvider)),
-		fmt.Sprintf("Repository         %s", m.config.releaseRepositoryURL()),
-		fmt.Sprintf("Release track      %s", strings.Title(m.config.Channel)),
+		fmt.Sprintf("Repository         %s", m.config.RepositoryURL),
+		fmt.Sprintf("Release channel    %s", strings.Title(m.config.Channel)),
 	}
-	if m.config.Channel == "branch" {
-		rows = append(rows, fmt.Sprintf("Release branch     %s", m.config.ReleaseBranch))
-	}
-	if m.config.Channel == "exact" {
-		rows = append(rows, fmt.Sprintf("Exact release      %s", m.config.ReleaseTag))
+	if m.config.ReleaseTag != "" {
+		rows = append(rows, fmt.Sprintf("Release            %s", m.config.ReleaseTag))
 	}
 	rows = append(rows,
 		fmt.Sprintf("SSH keys           %d compatible · %d skipped", len(m.keyPreflight.Accepted), m.keyPreflight.RejectedTotal()),

@@ -15,6 +15,10 @@ type CoreUpdateCandidate struct {
 	Release         releasecache.CoreRelease `json:"release"`
 	ManifestSHA256  string                   `json:"manifest_sha256"`
 	RestartRequired bool                     `json:"restart_required"`
+	// Behind is set when the channel head is older than the installed
+	// release: the box never downgrades and waits for the channel.
+	Behind  bool   `json:"behind,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 type CoreUpdateRequest struct {
 	RequestID      string `json:"request_id"`
@@ -53,7 +57,8 @@ func (s *Server) handleCoreUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	candidate, err := s.coreUpdateOperations.Check(r.Context())
 	if err != nil {
-		errorResponse(w, "complete System discovery requires reconciliation", http.StatusConflict)
+		code, message := releaseErrorCode(err)
+		jsonStatusResponse(w, map[string]string{"error": message, "code": code}, http.StatusBadGateway)
 		return
 	}
 	jsonResponse(w, candidate)

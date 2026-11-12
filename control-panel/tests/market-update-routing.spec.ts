@@ -4,9 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   catalogUpdateState,
-  catalogRepoReferenceToUrl,
   classifyAppUpdateRouting,
-  isChannelSwitchConfirmationRequired,
   projectUpdateAvailability,
   recordedCatalogSourceIds,
   repositoriesMatch,
@@ -17,25 +15,14 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8');
 
 const officialCatalog = {
   sourceId: 'official',
-  sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-AppMarket',
-  sourceRepoUrls: [
-    'https://forgejo.example.test/potemsla/YE-AppMarket',
-    'https://forgejo.example.test/example/Community-Market',
-  ],
+  sourceRepoUrl: '',
+  sourceRepoUrls: ['https://forgejo.example.test/example/Community-Market'],
   entry: {
     path: 'apps/searxng',
     integration: 'basic' as const,
   },
   manifestIntegration: 'basic' as const,
 };
-
-test('relative catalog repositories require the configured Market origin', () => {
-  assert.equal(catalogRepoReferenceToUrl('owner/App', undefined), undefined);
-  assert.equal(
-    catalogRepoReferenceToUrl('owner/App', 'https://forgejo.example.test/markets/Official'),
-    'https://forgejo.example.test/owner/App',
-  );
-});
 
 test('recorded source identities prefer install metadata and fall back across legacy state', () => {
   assert.deepEqual(recordedCatalogSourceIds(
@@ -59,11 +46,10 @@ test('legacy SearXNG state stays on its recorded external Market source', () => 
       sourceId: 'official',
       catalogKey: 'official:app:searxng',
       manifestPath: 'apps/searxng/youeye-app.yaml',
-      manifestRepo: 'potemsla/YE-AppMarket',
+      manifestRepo: 'official',
       integration: 'basic',
     },
     catalog: officialCatalog,
-    hasExplicitChannelOverride: false,
   });
 
   assert.deepEqual(decision, {
@@ -78,43 +64,38 @@ test('Market repository provenance is not mistaken for an app release repository
     appId: 'searxng',
     installed: {
       sourceId: 'official',
-      sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-AppMarket.git',
-      channelSource: 'https://forgejo.example.test/potemsla/YE-AppMarket/',
+      sourceRepoUrl: 'https://forgejo.example.test/owner/YE-AppMarket.git',
+      channelSource: 'https://forgejo.example.test/owner/YE-AppMarket/',
       installedBranch: 'main',
     },
     installMetadata: {
       sourceId: 'official',
-      sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-AppMarket',
+      sourceRepoUrl: 'https://forgejo.example.test/owner/YE-AppMarket',
       manifestPath: 'apps/searxng/youeye-app.yaml',
       integration: 'basic',
     },
     catalog: officialCatalog,
-    hasExplicitChannelOverride: false,
   });
 
   assert.equal(decision.kind, 'catalog');
   assert.equal(repositoriesMatch(
-    'https://forgejo.example.test/potemsla/YE-AppMarket.git',
-    'https://forgejo.example.test/potemsla/YE-AppMarket/',
+    'https://forgejo.example.test/owner/YE-AppMarket.git',
+    'https://forgejo.example.test/owner/YE-AppMarket/',
   ), true);
 });
 
-test('a sourceRepoUrl outside every configured Market source remains explicit release provenance', () => {
+test('a recorded release repository never turns a catalog app into a channel app', () => {
   const decision = classifyAppUpdateRouting({
     appId: 'standalone',
     installed: {
       sourceId: 'official',
-      sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-App-Standalone',
-      installedBranch: 'main',
+      sourceRepoUrl: 'https://forgejo.example.test/team/Standalone',
+      channelSource: 'https://forgejo.example.test/team/Standalone',
     },
     installMetadata: { sourceId: 'official', integration: 'basic' },
     catalog: officialCatalog,
-    hasExplicitChannelOverride: false,
   });
-
-  assert.equal(decision.kind, 'channel');
-  assert.equal(decision.reason, 'legacy-release-source');
-  assert.equal(decision.channelDefaultSource, 'https://forgejo.example.test/potemsla/YE-App-Standalone');
+  assert.equal(decision.kind, 'catalog');
 });
 
 test('installedBranch alone never selects native release resolution', () => {
@@ -123,45 +104,23 @@ test('installedBranch alone never selects native release resolution', () => {
     installed: { installedBranch: 'main' },
     installMetadata: {},
     catalog: null,
-    hasExplicitChannelOverride: false,
   });
   assert.equal(decision.kind, 'catalog');
 });
 
-test('native repo entries use the app repository, not the Market repository', () => {
+test('native apps resolve through the channel index by id', () => {
   const decision = classifyAppUpdateRouting({
     appId: 'search',
-    installed: {
-      type: 'native',
-      sourceId: 'official',
-      sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-AppMarket',
-      installedBranch: 'main',
-    },
+    installed: { type: 'native', sourceId: 'official' },
     installMetadata: { sourceId: 'official', integration: 'native' },
     catalog: {
       sourceId: 'official',
-      sourceRepoUrl: 'https://forgejo.example.test/potemsla/YE-AppMarket',
-      entry: { repo: 'potemsla/YE-App-Search', integration: 'native' },
+      sourceRepoUrl: '',
+      entry: { integration: 'native' },
       manifestIntegration: 'native',
     },
-    hasExplicitChannelOverride: false,
   });
-
-  assert.equal(decision.kind, 'channel');
-  assert.equal(decision.reason, 'native-repo-catalog-entry');
-  assert.equal(decision.channelDefaultSource, 'https://forgejo.example.test/potemsla/YE-App-Search');
-});
-
-test('explicit per-app override remains authoritative for an owner-managed channel', () => {
-  const decision = classifyAppUpdateRouting({
-    appId: 'searxng',
-    installed: { sourceId: 'official' },
-    installMetadata: { sourceId: 'official', integration: 'basic' },
-    catalog: officialCatalog,
-    hasExplicitChannelOverride: true,
-  });
-  assert.equal(decision.kind, 'channel');
-  assert.equal(decision.reason, 'explicit-channel-override');
+  assert.deepEqual(decision, { kind: 'channel', reason: 'native-app', catalogSourceId: 'official' });
 });
 
 test('external availability never exposes native branch or switch state', () => {
@@ -170,14 +129,12 @@ test('external availability never exposes native branch or switch state', () => 
     installed: { sourceId: 'official', installedBranch: 'main' },
     installMetadata: { sourceId: 'official', integration: 'basic' },
     catalog: officialCatalog,
-    hasExplicitChannelOverride: false,
   });
   const result = projectUpdateAvailability({
     routing,
     installedVersion: '2026.7.26',
-    installedBranch: 'main',
     catalogVersion: '2026.7.28',
-    candidate: { version: '0.1.0', branch: 'dev', tag: 'v0.1.0' },
+    candidate: { version: '0.1.0', tag: 'v0.1.0' },
   });
 
   assert.deepEqual(result, {
@@ -190,36 +147,24 @@ test('external availability never exposes native branch or switch state', () => 
   });
 });
 
-test('not-newer native branch changes remain switch-pending and confirm-gated', () => {
-  const routing = {
-    kind: 'channel' as const,
-    reason: 'native-repo-catalog-entry' as const,
-    channelDefaultSource: 'https://forgejo.example.test/potemsla/YE-App-Search',
-  };
-  const result = projectUpdateAvailability({
+test('a native channel head older than the installed version is never offered', () => {
+  const routing = { kind: 'channel' as const, reason: 'native-app' as const };
+  const behind = projectUpdateAvailability({
     routing,
-    installedVersion: '1.2.0',
-    installedBranch: 'main',
+    installedVersion: '0.6.2-rc.1',
     catalogVersion: null,
-    candidate: { version: '1.1.0', branch: 'dev', tag: 'dev-v1.1.0' },
+    candidate: { version: '0.6.1-rc.4', tag: 'v0.6.1-rc.4' },
   });
-
-  assert.equal(result.updateAvailable, false);
-  assert.equal(result.switchPending, true);
-  assert.equal(isChannelSwitchConfirmationRequired({
-    force: false,
-    confirmSwitch: false,
-    installedBranch: 'main',
-    candidateBranch: 'dev',
-    candidateIsNewer: false,
-  }), true);
-  assert.equal(isChannelSwitchConfirmationRequired({
-    force: false,
-    confirmSwitch: true,
-    installedBranch: 'main',
-    candidateBranch: 'dev',
-    candidateIsNewer: false,
-  }), false);
+  assert.equal(behind.updateAvailable, false);
+  assert.equal(behind.switchPending, false);
+  const ahead = projectUpdateAvailability({
+    routing,
+    installedVersion: '0.6.1-rc.4',
+    catalogVersion: null,
+    candidate: { version: '0.6.2-rc.1', tag: 'v0.6.2-rc.1' },
+  });
+  assert.equal(ahead.updateAvailable, true);
+  assert.equal(ahead.candidateTag, 'v0.6.2-rc.1');
 });
 
 test('successful catalog updates clear synthetic native provenance for the next update', () => {
@@ -241,7 +186,6 @@ test('successful catalog updates clear synthetic native provenance for the next 
     installed: { sourceId: 'official', ...nextState },
     installMetadata: { sourceId: 'official', integration: 'basic' },
     catalog: officialCatalog,
-    hasExplicitChannelOverride: false,
   }).kind, 'catalog');
 });
 

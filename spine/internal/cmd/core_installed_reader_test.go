@@ -53,9 +53,9 @@ func TestInstalledReaderHostWrapperUsesVerifiedObservation(t *testing.T) {
 	}
 }
 
-func productionInstalledReaderFixture(t *testing.T) (coreInstalledReaderObserver, string, *mixedCoreDeploymentFixture) {
+func productionInstalledReaderFixture(t *testing.T) (coreInstalledReaderObserver, string, *coreDeploymentFixture) {
 	t.Helper()
-	f := newMixedCoreDeploymentFixture(t)
+	f := newCoreDeploymentFixture(t)
 	var member releasecache.CoreMember
 	for _, m := range f.release.Members {
 		if m.Role == "spine" {
@@ -68,7 +68,7 @@ func productionInstalledReaderFixture(t *testing.T) (coreInstalledReaderObserver
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := mixedCoreHash(raw)
+	digest := coreTestHash(raw)
 	previous := f.release
 	previous.Members = append([]releasecache.CoreMember(nil), f.release.Members...)
 	for index := range previous.Members {

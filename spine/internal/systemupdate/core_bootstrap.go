@@ -81,16 +81,8 @@ func (m CoreManager) VerifyBootstrapReader(executable, digest string) error {
 	if err != nil {
 		return err
 	}
-	if actual != digest || target.Source != releasecache.OfficialRepository || target.Branch != "main" || target.Channel != "stable" {
-		return fmt.Errorf("reader requires the exact official Stable selection")
-	}
-	member, err := coreServiceMember(target, "spine")
-	if err != nil || member.Source != releasecache.OfficialRepository || member.Branch != "main" {
-		return fmt.Errorf("reader requires an original Stable Spine")
-	}
-	channel, err := releasecache.CoreMemberChannel(member, target.Channel)
-	if err != nil || channel != "stable" {
-		return fmt.Errorf("reader requires an original Stable Spine")
+	if actual != digest {
+		return fmt.Errorf("reader differs from the exact selected release")
 	}
 	verified, err := m.verifyBootstrapMember(target, artifact)
 	if err != nil {

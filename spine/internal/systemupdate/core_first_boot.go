@@ -13,19 +13,19 @@ import (
 )
 
 type CoreFirstBootSelection struct {
-	Schema          string              `json:"schema"`
-	RequestID       string              `json:"request_id"`
-	PolicySHA256    string              `json:"policy_sha256"`
-	BaselineSHA256  string              `json:"baseline_sha256"`
-	ManifestSHA256  string              `json:"manifest_sha256"`
-	OfflineBaseline bool                `json:"offline_baseline,omitempty"`
-	Machine         CoreMachineIdentity `json:"machine"`
+	Schema         string              `json:"schema"`
+	RequestID      string              `json:"request_id"`
+	PolicySHA256   string              `json:"policy_sha256"`
+	BaselineSHA256 string              `json:"baseline_sha256"`
+	ManifestSHA256 string              `json:"manifest_sha256"`
+	Machine        CoreMachineIdentity `json:"machine"`
 }
 
-// FreezeFirstBoot starts only from a verified fresh baseline. It retains one
-// complete digest-bound target before creating a normal core transaction. A restart
-// never selects a newer head or replaces the installer/baseline provenance.
-func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, baseline CoreHostSelection, resolve func(context.Context) (CoreHostSelection, error)) (CoreFirstBootSelection, CoreHostSelection, error) {
+// FreezeFirstBoot starts only from a verified fresh baseline: the release the
+// installer resolved from the channel moments earlier. First boot deploys
+// exactly that release and needs no release host; newer releases arrive
+// through a normal update afterwards.
+func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, baseline CoreHostSelection) (CoreFirstBootSelection, CoreHostSelection, error) {
 	var record CoreFirstBootSelection
 	unlock, err := m.lockCore()
 	if err != nil {
@@ -39,7 +39,9 @@ func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, 
 	if err = ValidateCorePolicy(policy, initial, initialDigest); err != nil {
 		return record, CoreHostSelection{}, err
 	}
-	policyRaw, _ := json.Marshal(policy)
+	// Bind to what the installer decided, not to the channel: the owner may
+	// change channel before first deployment finishes.
+	policyRaw, _ := json.Marshal(struct{ Repository, CoreManifestSHA256 string }{policy.Repository, policy.CoreManifestSHA256})
 	policyDigest := fmt.Sprintf("%x", sha256.Sum256(policyRaw))
 	installed, err := m.ReadReceipt()
 	if err != nil {
@@ -66,31 +68,8 @@ func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, 
 	if _, err = m.Read(); !errors.Is(err, os.ErrNotExist) {
 		return record, CoreHostSelection{}, fmt.Errorf("another core transaction precedes fresh convergence")
 	}
-	selected := baseline
-	offlineBaseline := false
-	if policy.Mode != "exact" {
-		if resolve == nil {
-			return record, CoreHostSelection{}, fmt.Errorf("tracked first boot requires current release discovery")
-		}
-		selected, err = resolve(ctx)
-		if err != nil {
-			if ctx.Err() != nil || policy.Freshness != "prefer-current" || !coreDiscoveryUnavailable(err) {
-				return record, CoreHostSelection{}, err
-			}
-			selected, offlineBaseline = baseline, true
-		}
-	}
-	target, digest, err := releasecache.ParseCoreRelease(selected.Raw)
-	if err != nil {
-		return record, CoreHostSelection{}, err
-	}
-	if target.Source != initial.Source || target.Branch != initial.Branch || target.Sequence < initial.Sequence || (target.Sequence == initial.Sequence && digest != initialDigest) {
-		return record, CoreHostSelection{}, fmt.Errorf("fresh selection changed source/branch or rolled back the release sequence")
-	}
-	if policy.Mode == "exact" && digest != initialDigest {
-		return record, CoreHostSelection{}, fmt.Errorf("exact installation cannot converge to a different release")
-	}
-	record = CoreFirstBootSelection{OfflineBaseline: offlineBaseline, Schema: "youeye.core-first-boot.v1", PolicySHA256: policyDigest, BaselineSHA256: initialDigest, ManifestSHA256: digest, Machine: installed.Machine}
+	selected, digest := baseline, initialDigest
+	record = CoreFirstBootSelection{Schema: "youeye.core-first-boot.v1", PolicySHA256: policyDigest, BaselineSHA256: initialDigest, ManifestSHA256: digest, Machine: installed.Machine}
 	record.RequestID = coreFirstBootRequest(record)
 	if err = m.retainSelection(selected, digest); err != nil {
 		return record, CoreHostSelection{}, err

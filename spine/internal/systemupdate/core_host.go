@@ -23,9 +23,12 @@ func (m *Manager) CoreHostOptions(selection CoreHostSelection) (SourceOptions, e
 	}
 	for _, member := range r.Members {
 		if member.Role == "system-update" {
-			return SourceOptions{ManifestSource: member.Artifact.URL,
-				ExpectedManifestSHA256: member.Artifact.SHA256, ExpectedReleaseBranch: member.Branch,
-				Channel: r.Channel, ReleaseTag: r.Tag, Core: &selection}, nil
+			source, err := CoreBlobURL(r, member.Artifact)
+			if err != nil {
+				return SourceOptions{}, err
+			}
+			return SourceOptions{ManifestSource: source,
+				ExpectedManifestSHA256: member.Artifact.SHA256, ReleaseTag: r.Tag, Core: &selection}, nil
 		}
 	}
 	return SourceOptions{}, fmt.Errorf("core release has no host update")
@@ -41,12 +44,9 @@ func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, err
 	if err != nil {
 		return nil, err
 	}
+	_ = r
 	client := *m.config.HTTPClient
-	transport, err := releasecache.CoreTransport(client.Transport, r)
-	if err != nil {
-		return nil, err
-	}
-	client.Transport = releasecache.Wrap(transport)
+	client.Transport = releasecache.Wrap(client.Transport)
 	bound := *m
 	bound.config.HTTPClient = &client
 	return &bound, nil
@@ -78,14 +78,13 @@ func (m *Manager) verifyCoreHost(selection CoreHostSelection, verified VerifiedM
 	host := members["system-update"]
 	manifest := verified.Manifest
 	if host.Artifact.SHA256 != verified.SHA256 || host.Artifact.SizeBytes != int64(len(verified.Raw)) ||
-		host.BuildVersion != manifest.TargetImageVersion || host.SourceCommit != manifest.SourceCommit ||
-		host.Source != manifest.ReleaseSet.Source || host.Branch != manifest.ReleaseSet.Branch {
+		host.BuildVersion != manifest.TargetImageVersion || host.SourceTree != manifest.SourceTree {
 		return r, "", fmt.Errorf("host update differs from core release membership")
 	}
 	for _, artifact := range manifest.Artifacts {
 		member, ok := members[artifact.Role]
 		if !ok || member.Artifact.Name != artifact.Path || member.Artifact.SHA256 != artifact.SHA256 || member.Artifact.SizeBytes != artifact.SizeBytes ||
-			member.BuildVersion != host.BuildVersion || member.SourceCommit != host.SourceCommit || member.Source != host.Source || member.Branch != host.Branch {
+			member.BuildVersion != host.BuildVersion || member.SourceTree != host.SourceTree {
 			return r, "", fmt.Errorf("host payload %s differs from core release membership", artifact.Role)
 		}
 	}
@@ -102,7 +101,7 @@ func (m *Manager) hostArtifactSource(options SourceOptions, artifact Artifact) (
 	}
 	for _, member := range r.Members {
 		if member.Role == artifact.Role && member.Artifact.Name == artifact.Path && member.Artifact.SHA256 == artifact.SHA256 && member.Artifact.SizeBytes == artifact.SizeBytes {
-			return member.Artifact.URL, nil
+			return CoreBlobURL(r, member.Artifact)
 		}
 	}
 	return "", fmt.Errorf("host artifact lacks exact core membership")

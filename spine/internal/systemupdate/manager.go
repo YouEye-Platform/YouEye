@@ -95,7 +95,6 @@ type SourceOptions struct {
 	Channel                string
 	ReleaseTag             string
 	ReleaseNotes           string
-	ExpectedReleaseBranch  string
 	AllowCurrent           bool
 	discoveryOnly          bool
 }
@@ -766,18 +765,14 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		if errors.As(err, &compatibility) && compatibility.Code == "bridge_required" {
 			compatibility.ManifestSHA256 = verified.SHA256
 			compatibility.TargetImage = verified.Manifest.TargetImageVersion
-			compatibility.ReleaseBranch = verified.Manifest.ReleaseSet.Branch
 		}
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
-	}
-	if expected := strings.TrimSpace(options.ExpectedReleaseBranch); expected != "" && verified.Manifest.ReleaseSet.Branch != expected {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("platform bundle branch %q does not match requested branch %q", verified.Manifest.ReleaseSet.Branch, expected)
 	}
 
 	if options.discoveryOnly && verified.Manifest.TargetImageVersion == current.ImageVersion {
 		// Equality is only a no-op for the installed signed source and component
 		// set. A same-version rebuild must not replace the installed identity.
-		if verified.Manifest.SourceCommit != current.SourceCommit || current.ReleaseSet == nil ||
+		if verified.Manifest.SourceTree != current.SourceTree || current.ReleaseSet == nil ||
 			!reflect.DeepEqual(verified.Manifest.ReleaseSet, *current.ReleaseSet) {
 			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("same-version system release does not match the installed identity")
 		}

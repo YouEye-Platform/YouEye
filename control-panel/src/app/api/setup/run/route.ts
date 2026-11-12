@@ -72,6 +72,7 @@ import { syncByoDomainDns } from '@/lib/dns-providers/sync';
 import { validateDnsProvider } from '@/lib/dns-providers/validation';
 import type { ByoDnsProviderConfig } from '@/lib/dns-providers/types';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
+import { nextSetupStepErrors, setupStepReason, type SetupStepErrors } from '@/lib/setup/step-reason';
 
 /** True for the private/VPN IPv4 ranges YouEye Names accepts. */
 function isPrivateIPv4(ip: string): boolean {
@@ -166,21 +167,32 @@ async function checkConnectivity(name: string, url: string): Promise<boolean> {
   }
 }
 
-/** Read persisted setup step state from youeye.yaml */
-async function getSetupSteps(): Promise<SetupSteps> {
+async function getSetupConfig(): Promise<Record<string, unknown>> {
   try {
-    const raw = await spineClient.getConfig();
-    return (raw as Record<string, unknown>).setup_steps as SetupSteps || {};
+    return await spineClient.getConfig() as Record<string, unknown>;
   } catch {
     return {};
   }
 }
 
-/** Persist step completion to youeye.yaml */
-async function saveStepState(stepId: string, state: StepState): Promise<void> {
-  const current = await getSetupSteps();
-  const updated = { ...current, [stepId]: state };
-  await spineClient.patchConfig({ setup_steps: updated });
+/** Read persisted setup step state from youeye.yaml */
+async function getSetupSteps(): Promise<SetupSteps> {
+  return (await getSetupConfig()).setup_steps as SetupSteps || {};
+}
+
+/**
+ * Persist step completion to youeye.yaml. A failed step may carry a short,
+ * sanitized reason (`setup_step_errors.<step>`); any other state clears it.
+ */
+async function saveStepState(stepId: string, state: StepState, reason?: string): Promise<void> {
+  const raw = await getSetupConfig();
+  const updated = { ...(raw.setup_steps as SetupSteps || {}), [stepId]: state };
+  const currentErrors = raw.setup_step_errors as SetupStepErrors | undefined;
+  const errors = nextSetupStepErrors(currentErrors || {}, stepId, state, reason);
+  await spineClient.patchConfig({
+    setup_steps: updated,
+    ...(errors || currentErrors ? { setup_step_errors: errors } : {}),
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -291,27 +303,6 @@ export async function POST(request: NextRequest) {
         } else {
           stepUpdate('config', 'done', 'Already completed');
         }
-
-        let pointerAttempted = false;
-        const prepareSetupPointer = async () => {
-          if (pointerAttempted) return;
-          pointerAttempted = true;
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('ai', 'running');
-          try {
-            // Stable issuer settings were saved above. Final Caddy acceptance
-            // follows TLS preparation and provisioning, never a missing backend.
-            const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
-            await saveStepState('ai', 'done');
-            stepUpdate('ai', 'done', result === 'deployed'
-              ? 'YouEye AI service deployed and connected to YouEye ID'
-              : 'YouEye AI service identity configuration refreshed');
-          } catch {
-            await saveStepState('ai', 'error');
-            stepUpdate('ai', 'error', 'YouEye AI service setup failed; check service health and retry');
-            hasError = true;
-          }
-        };
 
         // ── Step 2: Caddy reverse proxy ──────────────────────────────
         if (shouldRunStep('caddy')) {
@@ -771,9 +762,6 @@ export async function POST(request: NextRequest) {
           }
 
           if (!hasError || retryStep === 'caddy') {
-            if (completedSteps.ai !== 'done' || shouldRunStep('ai')) {
-              await prepareSetupPointer();
-            }
             if (!subs.identity) {
               throw new Error('Identity provider subdomain is missing. Set subdomains.identity before provisioning.');
             }
@@ -824,8 +812,10 @@ export async function POST(request: NextRequest) {
 
             // Root domain /settings route to Control Panel. This must be separate from
             // generic path routing because UI and CP both serve Next.js /_next assets.
+            // Pointer's /v1 routes belong to the AI step, so a missing or still
+            // starting AI service never fails reverse-proxy setup.
             try {
-              await caddy.reconcileManagedRoutes(domain);
+              await caddy.reconcileManagedRoutes(domain, {}, { pointer: false });
             } catch (err) {
               console.error('Failed to create root domain /settings CP route:', err);
               routeErrors.push(`youeye-control (/settings): ${err instanceof Error ? err.message : String(err)}`);
@@ -910,14 +900,26 @@ export async function POST(request: NextRequest) {
         // Pointer's issuer is the setup-selected identity URL. It must not be
         // started during pre-Web bootstrap with a placeholder issuer because
         // that would either crash-loop or retain an invalid trust boundary.
+        // Its apex inference routes (/v1/*) are added here, after it is ready;
+        // any failure is reported once, by this step.
         if (shouldRunStep('ai')) {
-          await prepareSetupPointer();
+          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
+          stepUpdate('ai', 'running');
+          let stage = 'setup';
           try {
-            // Also verify the existing Caddy configuration when retrying only AI.
-            await caddy.reconcileManagedRoutes(body.domain);
-          } catch {
-            await saveStepState('caddy', 'error');
-            stepUpdate('caddy', 'error', 'Managed proxy routes are not verified; retry Caddy setup');
+            // Stable issuer settings were saved above; TLS and proxy routes precede this.
+            const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
+            stage = 'API route setup';
+            await caddy.reconcileManagedRoutes(body.domain, {}, { pointer: true });
+            await saveStepState('ai', 'done');
+            stepUpdate('ai', 'done', result === 'deployed'
+              ? 'YouEye AI service deployed and connected to YouEye ID'
+              : 'YouEye AI service identity configuration refreshed');
+          } catch (err) {
+            console.error(`[setup] YouEye AI service ${stage} failed:`, err);
+            const reason = setupStepReason(err);
+            await saveStepState('ai', 'error', reason);
+            stepUpdate('ai', 'error', `YouEye AI service ${stage} failed: ${reason}`);
             hasError = true;
           }
         } else {
@@ -1064,7 +1066,7 @@ export async function POST(request: NextRequest) {
             tls_choice: body.tls_choice || 'selfsigned',
           });
           // Clear setup_steps on successful completion
-          await spineClient.patchConfig({ setup_steps: {} });
+          await spineClient.patchConfig({ setup_steps: {}, setup_step_errors: null });
           await saveStepState('finalize', 'done');
           stepUpdate('finalize', 'done', 'Setup marked as complete');
         } else {

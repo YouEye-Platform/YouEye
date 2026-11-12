@@ -23,11 +23,11 @@ func TestAssembleCoreReleaseScriptOutputParses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run := func(extra ...string) ([]byte, error) {
-		args := append([]string{"../scripts/assemble-core-release.py", "--version", "0.6.0-dev.3", "--source", "https://forge.example.test/owner/YouEye", "--branch", "dev", "--source-commit", strings.Repeat("a", 40), "--channel", "dev", "--sequence", "3", "--minimum-release", "0.6.0-dev.1", "--artifacts", dir}, extra...)
-		return exec.Command(python, args...).CombinedOutput()
+	tree := strings.Repeat("a", 40)
+	run := func(version string) ([]byte, error) {
+		return exec.Command(python, "../scripts/assemble-core-release.py", "--version", version, "--source-tree", tree, "--sequence", "3", "--minimum-release", "0.6.1-rc.1", "--artifacts", dir).CombinedOutput()
 	}
-	if out, err := run(); err != nil {
+	if out, err := run("0.6.1-rc.3"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "core-release.json"))
@@ -38,28 +38,27 @@ func TestAssembleCoreReleaseScriptOutputParses(t *testing.T) {
 	if err != nil {
 		t.Fatal("assembled document rejected:", err)
 	}
-	if r.Authority != CoreReleaseAuthority || r.Tag != "youeye-v0.6.0-dev.3" || r.Channel != "dev" || len(r.Members) != 14 {
+	if r.Authority != CoreReleaseAuthority || r.Tag != "youeye-v0.6.1-rc.3" || r.SourceTree != tree || len(r.Members) != 14 {
 		t.Fatalf("unexpected identity %+v", r)
+	}
+	for _, forbidden := range []string{"source\"", "branch", "channel", "source_commit", "url", "https://"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("host-specific field %q in assembled document", forbidden)
+		}
 	}
 	for _, m := range r.Members {
 		file, err := os.ReadFile(filepath.Join(dir, m.Artifact.Name))
 		h := sha256.Sum256(file)
-		if err != nil || m.Artifact.SHA256 != hex.EncodeToString(h[:]) || m.Artifact.SizeBytes != int64(len(file)) {
+		if err != nil || m.Artifact.SHA256 != hex.EncodeToString(h[:]) || m.Artifact.SizeBytes != int64(len(file)) || m.SourceTree != tree {
 			t.Fatalf("%s artifact binding is wrong", m.Role)
-		}
-		if m.Artifact.URL != "https://forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.3/"+m.Artifact.Name {
-			t.Fatalf("%s artifact URL is %s", m.Role, m.Artifact.URL)
 		}
 	}
 	sums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
 	if err != nil || !strings.Contains(string(sums), digest+"  core-release.json\n") || strings.Count(string(sums), "\n") != len(names)+1 {
 		t.Fatalf("SHA256SUMS is incomplete: %s %v", sums, err)
 	}
-	if out, err := run("--channel", "stable"); err == nil {
-		t.Fatalf("stable channel accepted a dev version: %s", out)
-	}
 	os.Remove(filepath.Join(dir, "ui-standalone.tar"))
-	if out, err := run(); err == nil {
+	if out, err := run("0.6.1-rc.3"); err == nil {
 		t.Fatalf("missing artifact accepted: %s", out)
 	}
 }

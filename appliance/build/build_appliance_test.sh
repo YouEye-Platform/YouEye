@@ -33,7 +33,6 @@ bash -n \
     "$root/appliance/scripts/youeye-bootstrap-network" \
     "$root/appliance/scripts/youeye-console-status" \
     "$root/appliance/scripts/youeye-apply-development-access" \
-	"$root/appliance/scripts/youeye-seed-market" \
     "$root/appliance/scripts/youeye-appliance-bless" \
     "$root/appliance/scripts/youeye-setup-gate" \
 	"$root/appliance/scripts/youeye-recovery" \
@@ -80,24 +79,25 @@ for removed in SPINE_VERSION SPINE_TAG SPINE_COMMIT SPINE_SOURCE_DATE_EPOCH SPIN
 done
 
 for text in \
-    'YOUEYE_SOURCE_COMMIT must provide the exact source commit when Git metadata is absent.' \
+    'YOUEYE_SOURCE_TREE must provide the exact source tree when Git metadata is absent.' \
     'SOURCE_DATE_EPOCH must be a positive integer when Git metadata is absent.' \
     'Appliance build must emit exactly twelve regular files' \
-    'components.spine.source_commit must be the exact Spine release commit.' \
+    'components.spine.source_tree must be the exact Spine source tree.' \
     'components.spine.source_date_epoch must be the exact Spine source epoch.' \
     'components.spine.artifact_sha256 must be the exact Spine binary SHA-256.' \
-    'Source Spine version must match the build-input Spine version.' \
     'Embedded Spine binary does not match the exact released Spine asset.' \
-    'components.control_panel.source_commit must be the exact Control Panel release commit.' \
+    'components.control_panel.source_tree must be the exact Control Panel source tree.' \
     'components.control_panel.artifact_sha256 must be the exact Control Panel cp-standalone.tar SHA-256.' \
-    'components.ui.source_commit must be the exact UI release commit.' \
+    'components.ui.source_tree must be the exact UI source tree.' \
     'components.ui.artifact_sha256 must be the exact UI ui-standalone.tar SHA-256.'; do
     require_text "$build" "$text"
 done
 
-if grep -Fq 'source_commit != "$spine_commit"' "$build"; then
-    fail 'an appliance-only follow-up commit must not invalidate an exact Spine release pin'
-fi
+for retired in release_source release_branch market_source release_channels youeye-seed-market; do
+    if grep -Fq "$retired" "$build"; then
+        fail "the image must stay host- and channel-neutral; found $retired"
+    fi
+done
 require_text "$build" 'spine_sha256 != "$spine_expected_sha256"'
 require_text "$build" '@$spine_source_date_epoch'
 
@@ -141,7 +141,7 @@ for text in \
 	'cp -a "$artifacts/." config/includes.binary/appliance/' \
 	'preserve_state:true,preserve_data:true,preserve_recovery:true' \
 	'artifact_kind:$artifact_kind,supported_actions:["recovery","image-update"]' \
-    'spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256}' \
+    'spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256}' \
 	'disk_layout:{version:3,target_min_gib:32' \
     'state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1' \
     'kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2"' \
@@ -179,7 +179,7 @@ for text in \
     'e2fsck -fyD' \
     'set_current_time @' \
     'work_key="$(printf '\''%s'\'' "$work_dir" | sha256sum | cut -c1-16)"' \
-    'live_dir="/var/tmp/youeye-appliance-live-${source_commit:0:12}-${work_key}"' \
+    'live_dir="/var/tmp/youeye-appliance-live-${source_tree:0:12}-${work_key}"' \
     'LIVE_BUILD_ATTEMPTS must be a positive integer.' \
     'live-build attempt %d/%d failed; cleaning and retrying.' \
     'lb clean || true' \
@@ -243,10 +243,6 @@ require_text "$root/appliance/scripts/youeye-first-deploy" 'YOUEYE_FIRST_DEPLOY_
 require_text "$root/appliance/scripts/youeye-bootstrap-network" 'youeye.bootstrap-network.v1'
 require_text "$root/appliance/scripts/youeye-bootstrap-network" 'previous network configuration was restored'
 require_text "$root/appliance/scripts/youeye-first-deploy" '"$setup_gate" open'
-require_text "$root/appliance/scripts/youeye-first-deploy" '"$seed_market"'
-require_text "$root/appliance/scripts/youeye-seed-market" 'test("^[0-9a-f]{40}$")'
-require_text "$build" 'market.commit must be a full lowercase Git commit.'
-require_text "$build" 'usr/lib/youeye/market/market-sources.json'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'Before=incus.service incus-startup.service youeye.service youeye-first-deploy.service'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr/local/libexec/youeye-setup-gate close'
 require_text "$root/appliance/scripts/youeye-setup-gate" 'tcp dport { 80, 443 } drop'
@@ -378,7 +374,6 @@ bash "$root/appliance/scripts/youeye-appliance-bless_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-access_test.sh"
 bash "$root/appliance/scripts/youeye-console-status_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-overlay_test.sh"
-bash "$root/appliance/scripts/youeye-seed-market_test.sh"
 bash "$root/appliance/scripts/youeye-setup-gate_test.sh"
 bash "$root/appliance/scripts/youeye-recovery_test.sh"
 bash "$root/appliance/scripts/youeye-recovery-apply_test.sh"

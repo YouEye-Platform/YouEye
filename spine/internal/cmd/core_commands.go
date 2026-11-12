@@ -49,7 +49,13 @@ func installCoreCommands(parent *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"release": release, "manifest_sha256": digest})
+		out := map[string]any{"release": release, "manifest_sha256": digest, "channel": selection.Channel}
+		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
+			if err := systemupdate.RefuseDowngrade(selection.Channel, receipt.Release.Version, release.Version); err != nil {
+				out["behind"], out["message"] = true, err.Error()
+			}
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}})
 	for _, action := range []string{"stage", "activate", "resume", "recover", "cancel"} {
 		action := action

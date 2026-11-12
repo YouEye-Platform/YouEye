@@ -134,5 +134,6 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
 
 test('C2: System page passes the running CP version for the Server interface row', () => {
   const page = read('src/app/settings/(shell)/system/page.tsx');
-  assert.match(page, /cpVersion=\{pkg\.version\}/);
+  assert.match(page, /cpVersion=\{controlPanelVersion\(\)\}/);
+  assert.doesNotMatch(page, /package\.json/);
 });

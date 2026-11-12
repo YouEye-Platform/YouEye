@@ -26,6 +26,7 @@ import { getContainerIP } from '@/lib/incus/container-ip';
 import { incusDownloadFile } from '@/lib/incus/server';
 import { waitForIncusReady } from '@/lib/incus/readiness';
 import { isUsableIPv4 } from '@/lib/incus/ipv4';
+import { containerExists } from '@/lib/infrastructure/oci-deployer';
 
 /**
  * Default Caddy admin API URL
@@ -1612,7 +1613,7 @@ export async function ensurePointerInferenceRoutes(
   port: number = 4002,
 ): Promise<void> {
   if (containerName === 'youeye-pointer' && port === 4002) {
-    return reconcileManagedRoutes(domain);
+    return reconcileManagedRoutes(domain, {}, { pointer: true });
   }
   const config = await getConfig();
   const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
@@ -1645,7 +1646,16 @@ function canonicalConfig(value: unknown): string {
     : item);
 }
 
-export async function verifyManagedProxy(domain: string, config: CaddyConfig, port = 443): Promise<void> {
+/**
+ * Probe the managed apex routes through Caddy. The Pointer inference contract
+ * (`/v1/models` answering 401) is probed only when its route is being managed.
+ */
+export async function verifyManagedProxy(
+  domain: string,
+  config: CaddyConfig,
+  port = 443,
+  options: { pointer?: boolean } = {},
+): Promise<void> {
   const ca = [...rootCertificates];
   try {
     ca.push((await incusDownloadFile('youeye-caddy', '/data/caddy/pki/authorities/local/root.crt')).toString('utf8'));
@@ -1656,12 +1666,13 @@ export async function verifyManagedProxy(domain: string, config: CaddyConfig, po
     if (typeof cert.certificate === 'string') ca.push(cert.certificate);
   }
   const address = new URL(await getCaddyUrl()).hostname;
-  for (const [path, expected] of [
+  const probes: Array<readonly [string, readonly number[]]> = [
     ['/settings/api/auth/mode', [200]],
     ['/settings', [200, 302, 303, 307, 308]],
     ['/market', [200, 302, 303, 307, 308]],
-    ['/v1/models', [401]],
-  ] as const) {
+  ];
+  if (options.pointer !== false) probes.push(['/v1/models', [401]]);
+  for (const [path, expected] of probes) {
     const status = await new Promise<number>((resolve, reject) => {
       const request = https.get({
         hostname: address, port, servername: domain, path,
@@ -1673,7 +1684,7 @@ export async function verifyManagedProxy(domain: string, config: CaddyConfig, po
       request.on('error', () => reject(new Error(`Managed proxy probe failed for ${path}`)));
       request.on('timeout', () => request.destroy(new Error('Managed proxy probe timeout')));
     });
-    if (!(expected as readonly number[]).includes(status)) {
+    if (!expected.includes(status)) {
       throw new Error(`Managed proxy probe failed for ${path} (HTTP ${status})`);
     }
   }
@@ -1684,7 +1695,18 @@ export interface ManagedRouteDependencies {
   resolve: (name: string, port: number) => Promise<string>;
   read: () => Promise<CaddyConfig>;
   write: (config: CaddyConfig, expected: CaddyConfig) => Promise<void>;
-  verify: (domain: string, config: CaddyConfig) => Promise<void>;
+  verify: (domain: string, config: CaddyConfig, options: { pointer: boolean }) => Promise<void>;
+  /** Whether the Pointer runtime is deployed; consulted only when `pointer` is not given. */
+  pointerDeployed: () => Promise<boolean>;
+}
+
+export interface ManagedRouteOptions {
+  /**
+   * Manage and verify Pointer's apex inference routes (`/v1/*`). `false` leaves
+   * any existing Pointer route untouched and skips its probe, so Control Panel
+   * routes never depend on the AI service. Default: only when Pointer is deployed.
+   */
+  pointer?: boolean;
 }
 
 let managedRouteTail: Promise<void> = Promise.resolve();
@@ -1693,24 +1715,32 @@ let managedRouteTail: Promise<void> = Promise.resolve();
  * Resolve every required managed address before one atomic Caddy load. All
  * control-surface callers use this operation so Pointer failure cannot leave
  * newly written Settings routes behind. Read-back and proxy checks are required.
+ * Pointer's inference routes are included only when requested (or, by default,
+ * when Pointer is deployed), so a missing AI service never blocks these routes.
  */
 export async function reconcileManagedRoutes(
   domain: string,
   overrides: Partial<ManagedRouteDependencies> = {},
+  options: ManagedRouteOptions = {},
 ): Promise<void> {
   const dependencies: ManagedRouteDependencies = {
     ready: () => waitForIncusReady(),
     resolve: resolveCaddyUpstreamDial, read: getConfig, write: setConfigExact,
-    verify: verifyManagedProxy, ...overrides,
+    verify: (target, config, verifyOptions) => verifyManagedProxy(target, config, 443, verifyOptions),
+    pointerDeployed: () => containerExists('youeye-pointer'),
+    ...overrides,
   };
   const operation = managedRouteTail.then(async () => {
     await dependencies.ready();
+    const pointer = options.pointer ?? await dependencies.pointerDeployed();
     const replacements = new Map<string, string>();
     const dials = new Map<string, string>();
-    for (const [name, port] of [
-      ['youeye-control', 3000], ['youeye-control', 3001], ['youeye-pointer', 4002],
+    const upstreams: Array<readonly [string, number]> = [
+      ['youeye-control', 3000], ['youeye-control', 3001],
       ['youeye-ui', 3000], ['youeye-pihole', 80],
-    ] as const) {
+    ];
+    if (pointer) upstreams.push(['youeye-pointer', 4002]);
+    for (const [name, port] of upstreams) {
       const dial = await dependencies.resolve(name, port);
       if (!isUsableIPv4(dial.split(':')[0]) || dial.split(':')[1] !== String(port)) {
         throw new Error('Managed route discovery returned an invalid IPv4 dial');
@@ -1723,7 +1753,7 @@ export async function reconcileManagedRoutes(
     const before = await dependencies.read();
     const candidate = structuredClone(before);
     configureControlSettingsRoutes(candidate, domain, dials.get('youeye-control:3000')!);
-    configurePointerInferenceRoutes(candidate, domain, dials.get('youeye-pointer:4002')!);
+    if (pointer) configurePointerInferenceRoutes(candidate, domain, dials.get('youeye-pointer:4002')!);
     rewriteDial(candidate, replacements);
     if (canonicalConfig(await dependencies.read()) !== canonicalConfig(before)) {
       throw new Error('Caddy configuration changed during reconciliation; retry without overwriting it');
@@ -1738,7 +1768,7 @@ export async function reconcileManagedRoutes(
       if (canonicalConfig(await dependencies.read()) !== canonicalConfig(candidate)) {
         throw new Error('Managed route read-back verification failed');
       }
-      await dependencies.verify(domain, candidate);
+      await dependencies.verify(domain, candidate, { pointer });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Caddy API error: 412')) {
         throw new Error('Caddy configuration changed concurrently; retry without overwriting owner routes');

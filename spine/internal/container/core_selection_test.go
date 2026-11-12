@@ -15,7 +15,7 @@ import (
 )
 
 func TestControlReconciliationUsesAcceptedSparseMember(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,22 +23,14 @@ func TestControlReconciliationUsesAcceptedSparseMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldSource := release.Source
-	release.Source = "https://forge.example/owner/YouEye"
-	image := appliance.Manifest{ReleaseSet: &appliance.ReleaseSet{Source: release.Source, Branch: "main"}}
+	image := appliance.Manifest{ReleaseSet: &appliance.ReleaseSet{}}
 	for i := range release.Members {
 		m := &release.Members[i]
-		m.Source = release.Source
-		for _, blob := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
-			if blob != nil {
-				blob.URL = strings.Replace(blob.URL, oldSource, release.Source, 1)
-			}
-		}
 		switch m.Role {
 		case "appliance":
-			image.ImageVersion, image.SourceCommit = m.BuildVersion, m.SourceCommit
+			image.ImageVersion, image.SourceTree = m.BuildVersion, m.SourceTree
 		case "spine":
-			image.ReleaseSet.Spine = appliance.ComponentRelease{Version: m.BuildVersion, SourceCommit: m.SourceCommit, ArtifactSHA256: m.Artifact.SHA256}
+			image.ReleaseSet.Spine = appliance.ComponentRelease{Version: m.BuildVersion, SourceTree: m.SourceTree, ArtifactSHA256: m.Artifact.SHA256}
 		case "cp":
 			image.ReleaseSet.ControlPanel.Version = "0.5.36"
 		}
@@ -48,7 +40,7 @@ func TestControlReconciliationUsesAcceptedSparseMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := fmt.Sprintf(`{"schema":"youeye.release-policy.v1","provider":"custom","releases_api":"https://forge.example/api/v1/repos/owner/YouEye/releases","mode":"track","track":"stable","core_manifest_sha256":"%x","freshness":"require-current"}`, sha256.Sum256(raw))
+	policy := fmt.Sprintf(`{"schema":"youeye.release-policy.v1","repository":"https://forge.example/owner/YouEye","channel":"stable","core_manifest_sha256":"%x"}`, sha256.Sum256(raw))
 	for name, contents := range map[string][]byte{"core-release.json": raw, "release-policy.json": []byte(policy)} {
 		if err := os.WriteFile(filepath.Join(root, name), contents, 0600); err != nil {
 			t.Fatal(err)
@@ -101,7 +93,7 @@ func TestControlReconciliationLegacyAndMissingSelection(t *testing.T) {
 	}
 	// A retained new-format policy cannot become a legacy fallback after loss of
 	// its release document, even when the installed version matches the image.
-	policy := fmt.Sprintf(`{"schema":"youeye.release-policy.v1","provider":"github","mode":"exact","exact_tag":"youeye-v0.5.38","manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","core_manifest_sha256":"%s","freshness":"require-current"}`, strings.Repeat("a", 64))
+	policy := fmt.Sprintf(`{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"%s"}`, strings.Repeat("a", 64))
 	if err := os.WriteFile(filepath.Join(root, "release-policy.json"), []byte(policy), 0600); err != nil {
 		t.Fatal(err)
 	}

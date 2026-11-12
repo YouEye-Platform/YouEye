@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -54,7 +55,7 @@ func TestCoreMetadataPromotionRejectsChangedInputsOrForgedGraph(t *testing.T) {
 	}{
 		{"payload", func(r *releasecache.CoreRelease) { r.Members[0].Artifact.SizeBytes++ }},
 		{"compatibility", func(r *releasecache.CoreRelease) { r.Compatibility.DataMax++ }},
-		{"authority", func(r *releasecache.CoreRelease) { r.Members[0].Branch = "beta" }},
+		{"build", func(r *releasecache.CoreRelease) { r.Members[0].SourceTree = strings.Repeat("9", 40) }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			m, _, target := coreJournalFixture(t)

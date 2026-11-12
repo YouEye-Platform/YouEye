@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
-	"gopkg.in/yaml.v3"
 )
 
 var cleanupYes bool
@@ -267,37 +266,8 @@ func runCleanup() error {
 		step++
 		fmt.Printf("[%d/%d] Removing YouEye app data...\n", step, totalSteps)
 
-		// BUG-014 (alisa-v0.2.21.1): preserve release branch config.
-		// The branch setting lives at /var/lib/youeye/config/youeye.yaml
-		// and is NOT deployment state — it's a user/operator choice about
-		// which release channel this VM tracks. Wiping it forces a manual
-		// `spine branch set` after every cleanup→deploy cycle.
-		//
-		// FIXED (iris-v0.3.1.3): only preserve release_branch, not the
-		// entire file. Preserving everything (setup_completed, domain,
-		// site_name, etc.) caused spine deploy to skip the setup wizard
-		// after cleanup because setup_completed was still true.
-		var savedBranch string
-		if data, err := os.ReadFile(youeyeConfigPath); err == nil {
-			var cfg branchConfig
-			if err := yaml.Unmarshal(data, &cfg); err == nil && cfg.ReleaseBranch != "" {
-				savedBranch = cfg.ReleaseBranch
-				fmt.Printf("  Preserving release branch: %s\n", savedBranch)
-			}
-		}
-
 		os.RemoveAll("/var/lib/youeye")
 
-		// Restore only the release branch
-		if savedBranch != "" {
-			os.MkdirAll("/var/lib/youeye/config", 0755)
-			minimal := fmt.Sprintf("release_branch: %s\n", savedBranch)
-			if err := os.WriteFile(youeyeConfigPath, []byte(minimal), 0644); err != nil {
-				fmt.Printf("  Warning: could not restore branch config: %v\n", err)
-			} else {
-				fmt.Println("  ✓ Release branch configuration restored")
-			}
-		}
 	}
 
 	// ── New cleanup steps (v0.2.18.1, revised in 0.2.18.9) ────

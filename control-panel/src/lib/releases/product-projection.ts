@@ -5,8 +5,7 @@ import { installedProductProjection, parseProductRelease, verifyInstalledProduct
 export function productProjection(receipt: InstalledProductReceipt) {
   // Parse only to identify the separately scoped trust lookup, then authenticate.
   const { release } = parseProductRelease(Buffer.from(receipt.manifestBase64,'base64'));
-  return installedProductProjection(verifyInstalledProductReceipt(receipt,
-    {product:release.product,source:release.source,tag:release.tag}));
+  return installedProductProjection(verifyInstalledProductReceipt(receipt, {product:release.product}));
 }
 export async function productRuntimeIdentity(container: string): Promise<string> {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(container)) throw new Error('Invalid product runtime identity');

@@ -173,7 +173,7 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 	}
 	manifest := applianceBundleManifest{
 		Schema: applianceBundleSchema, ImageVersion: "0.6.0-dev.1", BuildID: "test-build",
-		SourceCommit: strings.Repeat("b", 40), Architecture: "amd64", FirmwareMode: "uefi",
+		SourceTree: strings.Repeat("b", 40), Architecture: "amd64", FirmwareMode: "uefi",
 		DiskLayout: applianceManifestLayout{
 			Version: 3, TargetMinGiB: 32,
 			ESPGiB: 1, RecoveryGiB: 4, RootSlotGiB: 8, StateGiB: 4,
@@ -184,10 +184,9 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 		ZFSFeatureProfile: applianceZFSFeatureProfile, IncusCompatibility: applianceIncusCompatibility,
 		RecoveryVersion: applianceRecoveryVersion,
 		ReleaseSet: applianceManifestReleases{
-			Source: "custom", Branch: "dev", Fallback: []string{},
-			Spine:        applianceManifestComponent{Version: "0.5.17.0.0.9", SourceCommit: strings.Repeat("b", 40), ArtifactSHA256: validSHA256()},
-			ControlPanel: applianceManifestComponent{Version: "0.5.0", Tag: "cp-dev-v0.5.0", SourceCommit: strings.Repeat("d", 40), ArtifactSHA256: validSHA256()},
-			UI:           applianceManifestComponent{Version: "0.5.0", Tag: "ui-dev-v0.5.0", SourceCommit: strings.Repeat("e", 40), ArtifactSHA256: validSHA256()},
+			Spine:        applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("b", 40), ArtifactSHA256: validSHA256()},
+			ControlPanel: applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("d", 40), ArtifactSHA256: validSHA256()},
+			UI:           applianceManifestComponent{Version: "0.6.0-dev.1", SourceTree: strings.Repeat("e", 40), ArtifactSHA256: validSHA256()},
 		},
 		Artifacts: assets, SourceDateEpoch: 1,
 	}

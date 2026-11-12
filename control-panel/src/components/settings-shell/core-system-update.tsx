@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { UpdateChannels } from "./update-channels";
+import { ReleaseChannelSetting } from "./release-channel";
 import type { CoreUpdateAction, CoreUpdateCandidate, CoreUpdateRequest, CoreUpdateStatus } from "@/lib/spine/client";
 
 type Pending = { action: CoreUpdateAction; request: CoreUpdateRequest };
@@ -81,7 +81,8 @@ async function headers() {
     setBusy("check"); setError(""); setNotice("");
     try {
       const response = await fetch("/settings/api/appliance/core-update/check", { cache: "no-store" });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? translateInterface("m5f82ba024447"));
+      const body = await response.json();
+      if (!response.ok) { setError(body.code === "rate_limited" ? translateInterface("m4d6bfb83f08f") : translateInterface("m5f82ba024447")); return; }
       setCandidate(body);
     } catch (cause) { setError(translateInterface("m5f82ba024447")); }
     finally { setBusy(null); }
@@ -118,7 +119,8 @@ async function headers() {
   const state = transaction?.complete
     ? transaction.phase === "rolled-back" ? translateInterface("m84ef651255fb") : transaction.phase === "cancelled" ? translateInterface("m92e1f6f46f0d") : translateInterface("m2ca13025d60c")
     : transaction ? phaseLabels[transaction.phase] ?? translateInterface("m01ea9b2b1311") : translateInterface("m06f9580f5c7b");
-  const available = candidate && candidate.manifest_sha256 !== status.installed?.manifest_sha256;
+  // The box never downgrades: a channel behind the installed version offers nothing.
+  const available = candidate && !candidate.behind && candidate.manifest_sha256 !== status.installed?.manifest_sha256;
   return <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
@@ -140,7 +142,7 @@ async function headers() {
       <p className="text-sm">{translateInterface("mdacfb2679d3b", {version: candidate.release.version})} {candidate.restart_required ? translateInterface("mddd9af48f331") : translateInterface("m435af341384a")}</p>
       <Button disabled={!!busy || !!pending} onClick={() => void submit("stage")}>{candidate.restart_required ? translateInterface("mb1025ed60c51", { value0: String(candidate.release.version) }) : translateInterface("mfa4031f94844", { value0: String(candidate.release.version) })}</Button>
     </div>}
-    {candidate && !available && !unfinished && <p className="text-sm text-muted-foreground">{translateInterface("m1ae973cac2cc")}</p>}
+    {candidate && !available && !unfinished && <p className="text-sm text-muted-foreground">{candidate.behind && candidate.message ? candidate.message : translateInterface("m1ae973cac2cc")}</p>}
     {unfinished && <div className="space-y-3">
       <p className="text-sm text-muted-foreground">{translateInterface("m9da15bdd0599", {version: transaction.target_version})}</p>
       {waitingForApps && <p className="text-sm text-muted-foreground">{translateInterface("m7460797e6c6d")}</p>}
@@ -156,6 +158,6 @@ async function headers() {
       {transaction.phase === "awaiting-restart" && <p className="text-sm text-muted-foreground">{translateInterface("m4d6705344b6d")}</p>}
       {transaction.phase === "needs-recovery" && !canCancel && <p className="text-sm text-muted-foreground">{translateInterface("m03c18bc65c6d")}</p>}
     </div>}
-    {!unfinished && <details><summary className="cursor-pointer text-sm text-muted-foreground">{translateInterface("md4fc42307306")}</summary><div className="mt-3"><UpdateChannels componentId="system" appliance /></div></details>}
+    {!unfinished && <ReleaseChannelSetting />}
   </section>;
 }

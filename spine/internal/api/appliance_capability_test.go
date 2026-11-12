@@ -30,7 +30,7 @@ func TestApplianceHostUpdateHandlersReturnTypedConflictBeforeMutation(t *testing
 	s := NewServer("test", config.Default())
 	s.runtimeDetect = applianceTestRuntime
 	for name, handler := range map[string]http.HandlerFunc{
-		"spine": s.handleUpdateSelf, "incus": s.handleUpdateIncus, "system": s.handleUpdateSystem,
+		"incus": s.handleUpdateIncus, "system": s.handleUpdateSystem,
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/update/"+name, nil)

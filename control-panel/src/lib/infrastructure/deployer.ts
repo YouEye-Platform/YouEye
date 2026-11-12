@@ -21,10 +21,10 @@ import { reapplySavedUIConfiguration, reapplySavedUIBridgeToken, reconcileUIBrid
 import { spineClient } from '../spine/client';
 import { deployOCIContainer, containerExists } from './oci-deployer';
 import { getSystemStaticIP } from '../incus/static-ips';
-import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer, resolveLXDRelease } from './lxd-deployer';
+import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer } from './lxd-deployer';
 import { installPointerRelease } from '../pointer/initial-install';
 import { readPointerReleaseState, savePointerReleaseState } from '../pointer/release-metadata';
-import { resolveMarketProductRelease, stageVerifiedProductArtifact } from '../market/native-artifact';
+import { resolveNativeProduct, stageVerifiedProductArtifact } from '../market/native-artifact';
 import { publishProductProjection, verifyProductProjection } from '../releases/product-projection';
 import {
   repairThenVerify,
@@ -43,11 +43,9 @@ import {
 import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
-import { getReleaseSource } from '../apps/release-source';
 import { repairControlPanelProxy, repairUIEgressAcl } from './security-posture';
 import { sanitizeDeploymentDetail } from './deployment-safety';
 import { getCoreProvenance, recordCoreProvenance } from '@/lib/updates/provenance';
-import { effectiveChannel } from '@/lib/updates/channels';
 import {
   configurePointerService,
   deferPointerServiceUntilSetup,
@@ -126,26 +124,13 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
       manifestSHA256: selected.manifestSHA256, artifactSHA256: selected.member.artifact.sha256 };
     spec.deferStart = true;
   }
-  const releaseSource = await getReleaseSource();
-
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
-  const resolved = await deploy(spec, {
-    spineSocketPath: '/var/run/youeye/youeye.sock',
-    giteaBaseURL: releaseSource.base_url,
-    giteaOrg: releaseSource.organization,
-    giteaRepo: releaseSource.repository || 'YouEye',
-    releaseChannelKey: 'ui',
-    tagPrefix: 'ui',
-    exposeHostPort: false,
-  });
+  const resolved = await deploy(spec, { exposeHostPort: false });
   if (resolved) {
-    const channel = await effectiveChannel('ui');
     await recordCoreProvenance('ui', {
       version: resolved.version,
       tag: resolved.tag,
-      branch: channel.branch,
-      source: channel.source,
-      artifactSHA256: resolved.artifactSHA256 ?? null,
+      artifactSHA256: resolved.artifactSHA256,
     });
   }
   // Replacing the root filesystem also removes its SSO environment/drop-in.
@@ -211,67 +196,26 @@ async function restoreUIBridgeAuthority(required: boolean): Promise<void> {
   });
 }
 
-/**
- * Exact bootstrap channels are immutable release identities. A healthy UI
- * container without the matching durable provenance may be the residue of an
- * interrupted older deployment, so it must be replaced from the configured
- * digest-pinned artifact instead of being relabelled as current.
- */
-async function exactUIProvenanceMatchesConfiguredSource(): Promise<boolean | null> {
-  const channel = await effectiveChannel('ui');
-  if (!channel.tag && !channel.artifact_sha256) return null;
-  if (!channel.tag || !channel.artifact_sha256) {
-    throw new Error('Exact UI release requires both a tag and artifact SHA-256');
-  }
-  const provenance = await getCoreProvenance('ui');
-  return (
-    provenance?.tag === channel.tag &&
-    provenance.branch === channel.branch &&
-    provenance.artifact_sha256 === channel.artifact_sha256
-  );
-}
-
+/** Pointer is the `pointer` product of the box's channel index. */
 async function deployPointerContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
-  const releaseSource = await getReleaseSource();
-  const pointerRepoURL = `${releaseSource.base_url.replace(/\/$/, '')}/${releaseSource.organization}/Pointer`;
-  const channel = await effectiveChannel('app:pointer', { appDefaultSource: pointerRepoURL });
-  const cfg = {
-    spineSocketPath: '/var/run/youeye/youeye.sock',
-    giteaBaseURL: releaseSource.base_url,
-    giteaOrg: releaseSource.organization,
-    giteaRepo: 'Pointer',
-    releaseChannelKey: 'app:pointer',
-    exposeHostPort: false,
-  };
-  let resolved = await resolveLXDRelease(cfg);
   let stagingDirectory: string | undefined;
-  await installPointerRelease(resolved, channel, {
+  await installPointerRelease({
     read: readPointerReleaseState,
-    resolve: () => resolveMarketProductRelease('pointer', channel.source, resolved.tag),
+    resolve: () => resolveNativeProduct('pointer'),
     stage: async selected => {
       stagingDirectory = await mkdtemp(join(tmpdir(), 'youeye-pointer-install-'));
-      return stageVerifiedProductArtifact(stagingDirectory, 'youeye-pointer', selected, channel.artifact_sha256);
+      return stageVerifiedProductArtifact(stagingDirectory, 'youeye-pointer', selected);
     },
     deploy: async artifact => {
       await preparePointerStorage();
-      const installed = await deployPointerLXDContainer(pointerContainerSpec(), cfg, resolved, artifact, replaceExisting);
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), { exposeHostPort: false }, artifact, replaceExisting);
       if (!installed) throw new Error('Pointer runtime appeared during installation');
-      resolved = installed;
     },
     configure: () => configurePointerService(),
     healthy: () => waitForPointer(),
     publish: receipt => publishProductProjection('youeye-pointer', receipt),
     verify: (receipt, runtimeUUID) => verifyProductProjection('youeye-pointer', receipt, runtimeUUID),
     save: savePointerReleaseState,
-    recordLegacy: async () => {
-      await recordCoreProvenance('app:pointer', {
-        version: resolved.version,
-        tag: resolved.tag,
-        branch: channel.branch,
-        source: channel.source,
-        artifactSHA256: resolved.artifactSHA256 ?? null,
-      });
-    },
     cleanup: async () => { if (stagingDirectory) await rm(stagingDirectory, {recursive:true,force:true}); },
   });
 }
@@ -455,12 +399,6 @@ async function _deployInfrastructureInner(
   // ─── Step 4: YouEye UI ───────────────────────────────────
   emit(onEvent, 4, 'running', 'Deploying YouEye UI container...');
   try {
-    let provenanceRepaired = false;
-    if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-      emit(onEvent, 4, 'running', 'Replacing YouEye UI to restore its exact pinned release...');
-      await deployUIContainerFromConfiguredSource(true);
-      provenanceRepaired = true;
-    }
     const result = await repairThenVerify(
       'YouEye UI',
       (stage) => waitForYouEyeUI('youeye-ui', stage === 'initial' ? 10_000 : 120_000),
@@ -468,7 +406,7 @@ async function _deployInfrastructureInner(
     );
     await applyResourcePolicy('youeye-ui', 'critical');
     await repairUIEgressAcl();
-    emit(onEvent, 4, 'success', result === 'repaired' || provenanceRepaired
+    emit(onEvent, 4, 'success', result === 'repaired'
       ? 'YouEye UI container repaired, health-checked, and egress ACL verified'
       : 'YouEye UI service health and egress ACL verified');
   } catch (err) {
@@ -741,19 +679,11 @@ export async function reconcileInfrastructure(
   } else {
     remit(5, 'running', 'Verifying YouEye UI service and HTTP health...');
     try {
-      let provenanceRepaired = false;
-      if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-        remit(5, 'running', 'YouEye UI provenance does not match the exact pinned release; recreating the deployment container...');
-        await deployUIContainerFromConfiguredSource(true);
-        provenanceRepaired = true;
-      }
-      if (!provenanceRepaired && (await settingsService.getRaw()).setup_completed === true
+      if ((await settingsService.getRaw()).setup_completed === true
         && !(await spineClient.getUISSO()).configured) {
         await reapplySavedUIConfiguration(true, configuration => spineClient.setUISSO(configuration));
       }
-      if (!provenanceRepaired) {
-        await restoreUIBridgeAuthority((await settingsService.getRaw()).setup_completed === true);
-      }
+      await restoreUIBridgeAuthority((await settingsService.getRaw()).setup_completed === true);
       const result = await repairThenVerify(
         'YouEye UI',
         (stage) => waitForYouEyeUI('youeye-ui', stage === 'initial' ? 10_000 : 120_000),
@@ -764,7 +694,7 @@ export async function reconcileInfrastructure(
       );
       await applyResourcePolicy('youeye-ui', 'critical');
       await repairUIEgressAcl();
-      remit(5, 'success', result === 'repaired' || provenanceRepaired
+      remit(5, 'success', result === 'repaired'
         ? 'YouEye UI container repaired and HTTP health verified'
         : 'YouEye UI service and HTTP health verified');
     } catch (err) {

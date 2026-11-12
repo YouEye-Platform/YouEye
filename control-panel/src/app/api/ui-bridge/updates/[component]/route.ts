@@ -57,14 +57,6 @@ export async function POST(
     let result;
 
     switch (component) {
-      case 'spine':
-        await writeStatus(component, 'downloading', 20, 'Downloading Spine update...').catch(() => {});
-        result = await spineClient.updateSelf();
-        break;
-      case 'control':
-        await writeStatus(component, 'downloading', 20, 'Downloading Control Panel update...').catch(() => {});
-        result = await spineClient.updateControl();
-        break;
       case 'incus':
         await writeStatus(component, 'installing', 30, 'Updating Incus...').catch(() => {});
         result = await spineClient.updateIncus();
