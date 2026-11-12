@@ -294,6 +294,13 @@ func adoptReleaseSpine(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// An older image (for example a fresh install from older media) may not
+	// fit the release's Spine yet; System convergence installs the matching
+	// image first, and the next first-deployment run adopts it then.
+	if err := spineselect.Compatible(e, spineselect.ThisHost()); err != nil {
+		fmt.Fprintf(out, "Spine %s does not fit this image yet (%v); keeping the running Spine on slot %s\n", member.BuildVersion, err, slot)
+		return nil
+	}
 	if err := spineselect.ApplyTrial(ctx, spineRoot, slot, tmp, e, spineTrialHooks()); err != nil {
 		return err
 	}

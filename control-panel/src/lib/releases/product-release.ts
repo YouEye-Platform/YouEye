@@ -110,29 +110,50 @@ export function identicalProductPayloads(before: VerifiedProductRelease, after: 
   return before.release.product === after.release.product && before.release.build_manifest_base64 === after.release.build_manifest_base64;
 }
 
+/** SHA-256 of the embedded build manifest: one build, whatever release names it. */
+export function productBuildSHA256(selected: VerifiedProductRelease): string {
+  return digest(Buffer.from(selected.release.build_manifest_base64,'base64'));
+}
+
 export function installedProductProjection(selected: VerifiedProductRelease) {
   return {schema:'youeye.installed-product.v1',product:selected.release.product,version:selected.release.version,
     build_version:selected.build.build_version,source_tree:selected.release.source_tree,release_sha256:selected.manifestSHA256,
-    build_sha256:digest(Buffer.from(selected.release.build_manifest_base64,'base64'))};
+    build_sha256:productBuildSHA256(selected)};
 }
 
 /**
- * Replay floor per product: a box never accepts an older publication of a
- * product than the one it already runs (this is also the no-downgrade rule
- * when the box's channel changes; it waits for the channel to catch up).
+ * Replay floor per product: a box never accepts an older build of a product
+ * than the one it already runs (this is also the no-downgrade rule when the
+ * box's channel changes; it waits for the channel to catch up).
+ *
+ * Only build versions are ordered (X, Y, Z, then N); release names are for
+ * display. `build` and `buildSHA256` identify the accepted build;
+ * `manifestSHA256` is the release document last accepted for it.
  */
-export type ProductSequenceFloors = Record<string,{version:string;sequence:number;manifestSHA256:string}>;
-export function acceptProductSequence(floors: ProductSequenceFloors | undefined, selected: VerifiedProductRelease): ProductSequenceFloors {
-  const {release:r,manifestSHA256} = selected;
-  const previous = floors?.[r.product];
-  if (previous && (!Number.isSafeInteger(previous.sequence) || previous.sequence < 1 || !hash(previous.manifestSHA256) || typeof previous.version !== 'string')) throw new Error('Invalid installed product sequence floor');
-  // Versions order releases (X, Y, Z, then N); a box never downgrades. One
-  // version is one build, so the same version must be the same document.
-  const order = previous ? compareVersions(r.version, previous.version) : 1;
-  if (previous && (order < 0 || order === 0 && manifestSHA256 !== previous.manifestSHA256)) {
-    throw new Error(`The channel offers an older ${r.product} release (${r.version}) than the installed ${previous.version}; waiting for the channel to catch up`);
+export type ProductReleaseFloor = {build:string;buildSHA256:string;manifestSHA256:string};
+export type ProductSequenceFloors = Record<string,ProductReleaseFloor>;
+export function validProductFloor(floor: unknown): floor is ProductReleaseFloor {
+  const f = floor as ProductReleaseFloor | undefined;
+  return !!f && typeof f === 'object' && typeof f.build === 'string' && !!parseReleaseVersion(f.build) && hash(f.buildSHA256) && hash(f.manifestSHA256);
+}
+/** Order of the selected build against a floor: <0 older, 0 the same build, >0 newer. Throws on a different build with the same version. */
+export function compareToProductFloor(floor: ProductReleaseFloor, selected: VerifiedProductRelease): number {
+  const order = compareVersions(selected.build.build_version, floor.build);
+  if (order === 0 && productBuildSHA256(selected) !== floor.buildSHA256) {
+    throw new Error(`The channel offers ${selected.release.product} build ${selected.build.build_version} with other contents than the installed build of that version`);
   }
-  return {...floors,[r.product]:{version:r.version,sequence:r.sequence,manifestSHA256}};
+  return order;
+}
+export function acceptProductSequence(floors: ProductSequenceFloors | undefined, selected: VerifiedProductRelease): ProductSequenceFloors {
+  const {release:r,build,manifestSHA256} = selected;
+  const previous = floors?.[r.product];
+  if (previous && !validProductFloor(previous)) throw new Error('Invalid installed product sequence floor');
+  // The same build under another release name (a promotion) is not older;
+  // accepting it only changes the release document.
+  if (previous && compareToProductFloor(previous, selected) < 0) {
+    throw new Error(`The channel offers an older ${r.product} build (${build.build_version}, release ${r.version}) than the installed ${previous.build}; waiting for the channel to catch up`);
+  }
+  return {...floors,[r.product]:{build:build.build_version,buildSHA256:productBuildSHA256(selected),manifestSHA256}};
 }
 
 /** Download one named asset of a verified release and check its digest and size. */

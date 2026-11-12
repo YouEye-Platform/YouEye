@@ -25,10 +25,10 @@ youeye_prepare_contract() {
         youeye_build_fail 'YOUEYE_OUTPUT_DIR must be a dedicated non-root directory'
     [[ -n $YOUEYE_WORK_DIR && $YOUEYE_WORK_DIR != / && $YOUEYE_WORK_DIR != "$YOUEYE_SOURCE_DIR" ]] || \
         youeye_build_fail 'YOUEYE_WORK_DIR must be a dedicated non-root directory'
-    # The full build version (X.Y.Z-rc.N) comes from the publish tool; the
+    # The full build version (X.Y.Z-dev.N) comes from the publish tool; the
     # source tree only holds the line in VERSION.
-    [[ $YOUEYE_VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$ ]] || \
-        youeye_build_fail 'YOUEYE_VERSION must be the build version X.Y.Z-rc.N'
+    [[ $YOUEYE_VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*$ ]] || \
+        youeye_build_fail 'YOUEYE_VERSION must be the build version X.Y.Z-dev.N'
     if [[ -f $YOUEYE_SOURCE_DIR/VERSION && ${YOUEYE_VERSION%%-*} != "$(tr -d '[:space:]' < "$YOUEYE_SOURCE_DIR/VERSION")" ]]; then
         youeye_build_fail "YOUEYE_VERSION $YOUEYE_VERSION is not a build of the line in VERSION"
     fi

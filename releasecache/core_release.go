@@ -1,8 +1,11 @@
 package releasecache
 
-// A core release is a flat, immutable assembly. BuildVersion describes the
-// original bytes; Version identifies the complete installed selection. A
-// service-only release therefore never relabels its unchanged host image.
+// A core release is a flat, immutable assembly. A member's BuildVersion
+// describes its original bytes. Build is the build version (X.Y.Z-dev.N) of
+// the whole selection: the dev release it was published as; only builds are
+// ordered. Version is the release's name on its channel (X.Y.Z-dev.N on dev,
+// X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z on stable): a promotion writes a new
+// document with a new Version and identical members, never new files.
 import (
 	"bytes"
 	"crypto/sha256"
@@ -27,6 +30,7 @@ const CoreReleaseAuthority = "digest"
 type CoreRelease struct {
 	Schema        string            `json:"schema"`
 	Version       string            `json:"version"`
+	Build         string            `json:"build"`
 	Tag           string            `json:"tag"`
 	SourceTree    string            `json:"source_tree"`
 	Sequence      uint64            `json:"sequence"`
@@ -72,8 +76,8 @@ var installationHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 var coreVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$`)
 
-// ValidCoreVersion accepts X.Y.Z[-token.N]. Builds are X.Y.Z-rc.N; the suffix
-// never names a channel.
+// ValidCoreVersion accepts X.Y.Z[-token.N]: builds are X.Y.Z-dev.N, release
+// names X.Y.Z-dev.N, X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z.
 func ValidCoreVersion(value string) bool {
 	m := coreVersionPattern.FindStringSubmatch(value)
 	if m == nil || len(m[4]) > 63 {
@@ -91,9 +95,10 @@ func ValidCoreVersion(value string) bool {
 	return true
 }
 
-// CompareVersions orders X.Y.Z[-token.N] numerically: X, Y, Z, then N. A
-// version without a suffix sorts after every suffixed build of the same line.
-// Invalid versions sort first.
+// CompareVersions orders build versions X.Y.Z-dev.N numerically: X, Y, Z,
+// then N. Call it with builds only, never with release names (alpha.1 is not
+// "newer" than dev.5). A version without a suffix sorts after every suffixed
+// one of its line. Invalid versions sort first.
 func CompareVersions(a, b string) int {
 	key := func(v string) []uint64 {
 		m := coreVersionPattern.FindStringSubmatch(v)
@@ -165,7 +170,7 @@ func AssetURL(repository, tag string, blob CoreBlob) string {
 var CoreRoles = []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"}
 
 func (r CoreRelease) Validate() error {
-	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || r.Tag != "youeye-v"+r.Version || r.MinimumReader != CoreReleaseReader {
+	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || !ValidCoreVersion(r.Build) || r.Tag != "youeye-v"+r.Version || r.MinimumReader != CoreReleaseReader {
 		return fmt.Errorf("unsupported core release identity or reader")
 	}
 	if r.Authority != CoreReleaseAuthority {
@@ -240,6 +245,32 @@ func (r CoreRelease) Validate() error {
 		seen[member.Role] = true
 	}
 	return nil
+}
+
+// PayloadSHA256 identifies what a release installs, independent of its name
+// and of where its files live: the compatibility block and every member with
+// blob Release fields cleared. Two documents of the same build (dev, alpha,
+// beta, stable) have the same payload digest.
+func (r CoreRelease) PayloadSHA256() string {
+	members := make([]CoreMember, len(r.Members))
+	for i, m := range r.Members {
+		m.Artifact.Release = ""
+		if m.BuildInputs != nil {
+			inputs := *m.BuildInputs
+			inputs.Release = ""
+			m.BuildInputs = &inputs
+		}
+		m.DependsOn = append([]string{}, m.DependsOn...)
+		members[i] = m
+	}
+	raw, _ := json.Marshal(struct {
+		Schema        string            `json:"schema"`
+		MinimumReader int               `json:"minimum_reader"`
+		Compatibility CoreCompatibility `json:"compatibility"`
+		Members       []CoreMember      `json:"members"`
+	}{r.Schema, r.MinimumReader, r.Compatibility, members})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // Member returns the member with role.

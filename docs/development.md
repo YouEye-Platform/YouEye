@@ -24,7 +24,7 @@ The entrypoints in `.youeye/build/` build one component each (see
 | Native apps | any Linux | the app repo's own `.youeye/build/app` |
 | Appliance image | **as root** on Debian | needs `mmdebstrap`, `live-build`, `ukify`, `xorriso`, `zstd` 1.5.7, and an APT cache on `127.0.0.1:3142`. Takes about 15 minutes on 4 cores. |
 
-Every entrypoint needs `YOUEYE_VERSION` (the build version `X.Y.Z-rc.N`; `X.Y.Z` must equal `VERSION`) and builds
+Every entrypoint needs `YOUEYE_VERSION` (the build version `X.Y.Z-dev.N`; `X.Y.Z` must equal `VERSION`) and builds
 from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`). Nothing in the source tree carries the rc
 number; see [releases.md](releases.md).
 
@@ -44,7 +44,7 @@ in protected State, so one image is promoted unchanged through every channel. Pa
    - `spine-linux-amd64`;
    - `cp-standalone.tar`;
    - `ui-standalone.tar`.
-2. Run `scripts/assemble-core-release.py --version <X.Y.Z-rc.N> --source-tree <tree> --minimum-release <v>
+2. Run `scripts/assemble-core-release.py --version <X.Y.Z-dev.N> --source-tree <tree> --minimum-release <v>
    --artifacts <dir>`. It writes `core-release.json` and `SHA256SUMS`.
 3. Create release `youeye-v<version>` (prerelease) in the development repository, upload every file plus
    `installer/scripts/install.sh`, and point the `dev` channel index at it.

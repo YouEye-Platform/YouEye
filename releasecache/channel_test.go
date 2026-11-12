@@ -65,19 +65,19 @@ func TestFetchCoreReleaseThroughIndex(t *testing.T) {
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
 	repo := "https://forge.example.test/owner/YouEye"
-	entry := `"youeye":{"repository":"` + repo + `","tag":"youeye-v0.6.1-rc.1","version":"0.6.1-rc.1","document":"core-release.json","sha256":"` + digest + `"}`
+	entry := `"youeye":{"repository":"` + repo + `","tag":"youeye-v0.6.1-dev.1","version":"0.6.1-dev.1","build":"0.6.1-dev.1","document":"core-release.json","sha256":"` + digest + `"}`
 	client := serve(t, map[string]string{
-		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":               index("dev", entry),
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.1-rc.1/core-release.json": string(raw),
+		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":                index("dev", entry),
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.1-dev.1/core-release.json": string(raw),
 	}, nil)
 	_, release, got, err := FetchCoreRelease(context.Background(), client, repo, "dev")
-	if err != nil || got != digest || release.Version != "0.6.1-rc.1" {
+	if err != nil || got != digest || release.Version != "0.6.1-dev.1" {
 		t.Fatalf("resolve: %v %s", err, got)
 	}
 	// A document that differs from the index digest is refused.
 	client = serve(t, map[string]string{
-		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":               index("dev", entry),
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.1-rc.1/core-release.json": string(raw) + " ",
+		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":                index("dev", entry),
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.1-dev.1/core-release.json": string(raw) + " ",
 	}, nil)
 	if _, _, _, err := FetchCoreRelease(context.Background(), client, repo, "dev"); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("tampered document accepted: %v", err)
@@ -126,10 +126,10 @@ func TestRateLimitIsClassified(t *testing.T) {
 func TestChannelIndexValidation(t *testing.T) {
 	bad := []string{
 		index("nightly", ""),
-		index("dev", `"other":{"repository":"https://a.test/o/r","tag":"v1.0.0-rc.1","version":"1.0.0-rc.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
-		index("dev", `"notes":{"repository":"https://a.test/o/r","tag":"dev-v1.0.0-rc.1","version":"1.0.0-rc.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
-		index("dev", `"market":{"repository":"https://a.test/o/r","tag":"v1.0.0-rc.1","version":"1.0.0-rc.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
-		index("dev", `"notes":{"repository":"http://a.test/o/r","tag":"v1.0.0-rc.1","version":"1.0.0-rc.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
+		index("dev", `"other":{"repository":"https://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
+		index("dev", `"notes":{"repository":"https://a.test/o/r","tag":"dev-v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
+		index("dev", `"market":{"repository":"https://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
+		index("dev", `"notes":{"repository":"http://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`),
 		`{"schema":"youeye.channel.v1","channel":"dev","published_at":"2026-11-12T10:00:00Z","products":{},"extra":1}`,
 	}
 	for i, raw := range bad {
@@ -137,7 +137,7 @@ func TestChannelIndexValidation(t *testing.T) {
 			t.Errorf("case %d accepted", i)
 		}
 	}
-	good := index("beta", `"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1-rc.2","version":"0.6.1-rc.2","document":"product-release.json","sha256":"`+strings.Repeat("b", 64)+`"},"market":{"repository":"https://github.com/YouEye-Platform/YE-AppMarket","tag":"catalog-v0.6.1-rc.1","version":"0.6.1-rc.1","document":"product-release.json","sha256":"`+strings.Repeat("c", 64)+`"}`)
+	good := index("beta", `"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1-dev.2","version":"0.6.1-dev.2","build":"0.6.1-dev.2","document":"product-release.json","sha256":"`+strings.Repeat("b", 64)+`"},"market":{"repository":"https://github.com/YouEye-Platform/YE-AppMarket","tag":"catalog-v0.6.1-dev.1","version":"0.6.1-dev.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("c", 64)+`"}`)
 	if _, err := ParseChannelIndex([]byte(good)); err != nil {
 		t.Fatal(err)
 	}

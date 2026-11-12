@@ -5,8 +5,9 @@ export const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes
 export const tree = 'a'.repeat(40);
 
 /** A host-independent product release document over the given assets. */
-export function productFixture(product: string, version: string, repository: string, assets: Record<string, Buffer>, options: { kind?: ProductBuild['kind']; primary?: string; sequence?: number; contract?: Buffer } = {}) {
-  const build: ProductBuild = {schema:'youeye.product-build.v1',product,kind:options.kind ?? 'native',build_version:version,source_tree:tree,
+export function productFixture(product: string, version: string, repository: string, assets: Record<string, Buffer>, options: { kind?: ProductBuild['kind']; primary?: string; sequence?: number; contract?: Buffer; build?: string } = {}) {
+  // `build` defaults to `version` (a dev release); a promoted release passes the build it renames.
+  const build: ProductBuild = {schema:'youeye.product-build.v1',product,kind:options.kind ?? 'native',build_version:options.build ?? version,source_tree:tree,
     input_sha256:'b'.repeat(64),contract_sha256:sha(options.contract ?? Buffer.from('contract')),primary:options.primary ?? 'standalone.tar',
     assets:Object.entries(assets).map(([name, bytes]) => ({name,sha256:sha(bytes),size_bytes:bytes.length}))};
   const release: ProductRelease = {schema:'youeye.product-release.v1',product,version,tag:productTag(product,version),source_tree:tree,
@@ -37,9 +38,9 @@ export function fakeReleaseHost(files: Map<string, Buffer>, status: Record<strin
 }
 
 /** The Spine answer for GET /api/releases/index over the given entries. */
-export function spineIndex(repository: string, channel: string, entries: Record<string, { repository: string; tag: string; version: string; raw: Buffer; document?: string }>) {
+export function spineIndex(repository: string, channel: string, entries: Record<string, { repository: string; tag: string; version: string; build?: string; raw: Buffer; document?: string }>) {
   const products = Object.fromEntries(Object.entries(entries).map(([product, e]) => [product, {
-    repository: e.repository, tag: e.tag, version: e.version, document: e.document ?? 'product-release.json', sha256: sha(e.raw),
+    repository: e.repository, tag: e.tag, version: e.version, build: e.build ?? e.version, document: e.document ?? 'product-release.json', sha256: sha(e.raw),
   }]));
   const index = { schema: 'youeye.channel.v1', channel, published_at: '2026-11-12T10:00:00Z', products };
   return { repository, channel, index, index_sha256: sha(JSON.stringify(index)) };

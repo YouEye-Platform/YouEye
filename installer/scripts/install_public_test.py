@@ -92,7 +92,7 @@ class BootstrapTests(unittest.TestCase):
                 member["build_inputs"] = dict(member["artifact"], name="build-inputs.json")
             members.append(member)
             Handler.routes[base + name] = (200, served if served is not None and role == "installer" else body, {})
-        document = {"schema": "youeye.core-release.v1", "version": version, "tag": tag, "source_tree": "a" * 40,
+        document = {"schema": "youeye.core-release.v1", "version": version, "build": version, "tag": tag, "source_tree": "a" * 40,
                     "sequence": 1, "minimum_reader": 1, "authority": "digest",
                     "compatibility": {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1,
                                       "minimum_release": version, "capabilities": ["core-release-v1"]},
@@ -104,7 +104,7 @@ class BootstrapTests(unittest.TestCase):
 
     def index(self, channel, tag, repository=None):
         """Point channel's index at tag."""
-        entry = {"repository": repository or self.source, "tag": tag, "version": tag[len("youeye-v"):],
+        entry = {"repository": repository or self.source, "tag": tag, "version": tag[len("youeye-v"):], "build": tag[len("youeye-v"):],
                  "document": "core-release.json", "sha256": hashlib.sha256(self.documents[tag]).hexdigest()}
         body = json.dumps({"schema": "youeye.channel.v1", "channel": channel, "published_at": "2026-11-12T00:00:00Z",
                            "products": {"youeye": entry}}).encode()
@@ -141,7 +141,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn(retired, text)
 
     def test_channel_index_selects_its_release(self):
-        old, new = self.publish("0.6.1-rc.1"), self.publish("0.6.1-rc.2")
+        old, new = self.publish("0.6.1-dev.1"), self.publish("0.6.1-dev.2")
         self.index("dev", new)
         self.index("alpha", old)
         result, launched = self.run_bootstrap("--channel", "dev", "--vmid", "166")
@@ -153,14 +153,14 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(launched, "proxmox --silent " + self.pinned("alpha", old))
 
     def test_missing_channel_index_is_reported(self):
-        self.publish("0.6.1-rc.1")
+        self.publish("0.6.1-dev.1")
         result, launched = self.run_bootstrap("--channel", "beta")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no channel index yet", result.stderr)
         self.assertIsNone(launched)
 
     def test_index_of_another_repository_is_refused(self):
-        tag = self.publish("0.6.1-rc.1")
+        tag = self.publish("0.6.1-dev.1")
         self.index("dev", tag, repository="https://localhost:%d/other/YouEye" % self.port)
         result, launched = self.run_bootstrap("--channel", "dev")
         self.assertNotEqual(result.returncode, 0)
@@ -168,7 +168,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
 
     def test_document_must_match_index_digest(self):
-        tag = self.publish("0.6.1-rc.1")
+        tag = self.publish("0.6.1-dev.1")
         self.index("dev", tag)
         Handler.routes["/owner/YouEye/releases/download/%s/core-release.json" % tag] = (200, self.documents[tag] + b" ", {})
         result, launched = self.run_bootstrap("--channel", "dev")
@@ -177,7 +177,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
 
     def test_rate_limit_is_reported_as_such(self):
-        tag = self.publish("0.6.1-rc.1")
+        tag = self.publish("0.6.1-dev.1")
         Handler.routes["/owner/YouEye/releases/download/channel-dev/index.json"] = (429, b"", {})
         result, launched = self.run_bootstrap("--channel", "dev")
         self.assertNotEqual(result.returncode, 0)
@@ -187,7 +187,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertTrue(tag)
 
     def test_exact_release_passes_tag_and_document_digest(self):
-        tag = self.publish("0.6.1-rc.4")
+        tag = self.publish("0.6.1-dev.4")
         digest = hashlib.sha256(self.documents[tag]).hexdigest()
         result, launched = self.run_bootstrap("--channel", "beta", "--release-tag", tag, "--core-manifest-sha256", digest)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -198,7 +198,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
 
     def test_tampered_installer_is_refused(self):
-        tag = self.publish("0.6.1-rc.1", served=INSTALLER.replace(b"printf", b"PRINTF"))
+        tag = self.publish("0.6.1-dev.1", served=INSTALLER.replace(b"printf", b"PRINTF"))
         self.index("stable", tag)
         result, launched = self.run_bootstrap()
         self.assertNotEqual(result.returncode, 0)
@@ -207,7 +207,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(list((self.case / "cache").rglob("youeye-installer-linux-amd64")))
 
     def test_redirect_to_another_host_is_refused(self):
-        tag = self.publish("0.6.1-rc.1")
+        tag = self.publish("0.6.1-dev.1")
         self.index("stable", tag)
         path = "/owner/YouEye/releases/download/%s/youeye-installer-linux-amd64" % tag
         Handler.routes[path] = (302, b"", {"Location": "https://127.0.0.1:%d%s" % (self.port, path)})
@@ -217,7 +217,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
 
     def test_malformed_document_is_refused(self):
-        tag = self.publish("0.6.1-rc.1")
+        tag = self.publish("0.6.1-dev.1")
         raw = self.documents[tag].replace(b'"authority": "digest"', b'"authority": "ed25519"')
         self.documents[tag] = raw
         Handler.routes["/owner/YouEye/releases/download/%s/core-release.json" % tag] = (200, raw, {})
@@ -229,7 +229,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_option_errors(self):
         for args in (["--channel", "exact"], ["--channel", "nightly"], ["--channel", "branch"],
-                     ["--release-tag", "youeye-v1.0.0-rc.1"], ["--core-manifest-sha256", "a" * 64]):
+                     ["--release-tag", "youeye-v1.0.0-dev.1"], ["--core-manifest-sha256", "a" * 64]):
             result, launched = self.run_bootstrap(*args)
             self.assertNotEqual(result.returncode, 0, args)
             self.assertIsNone(launched)

@@ -7,7 +7,7 @@ import { AppUpdateExecutorLock } from './update-executor-lock';
 import { uniqueJSON } from '../releases/core-release';
 import { downloadProductAsset, resolveChannelProduct } from '../releases/channel-index';
 import {
-  acceptProductSequence, installedProductProjection, productReceipt, verifyInstalledProductReceipt,
+  acceptProductSequence, installedProductProjection, productBuildSHA256, productReceipt, verifyInstalledProductReceipt,
   type InstalledProductReceipt, type ProductSequenceFloors, type VerifiedProductRelease,
 } from '../releases/product-release';
 
@@ -149,7 +149,7 @@ export async function readAcceptedCatalog(directory = DIRECTORY): Promise<Accept
   const tar = await readProtected(tarFile(directory, asset.sha256), MAX_TAR_BYTES);
   if (!tar || tar.length !== asset.size_bytes || sha(tar) !== asset.sha256) throw new Error('Installed catalog.tar is missing or differs from its release');
   const floor = saved.floors?.market;
-  if (!floor || floor.sequence !== selected.release.sequence || floor.manifestSHA256 !== selected.manifestSHA256) throw new Error('Installed Market replay floor is missing or inconsistent');
+  if (!floor || floor.build !== selected.build.build_version || floor.buildSHA256 !== productBuildSHA256(selected) || floor.manifestSHA256 !== selected.manifestSHA256) throw new Error('Installed Market replay floor is missing or inconsistent');
   const accepted = {selected, snapshot, files: readCatalogTar(tar, snapshot), floors: saved.floors};
   memory = {key, accepted};
   return accepted;

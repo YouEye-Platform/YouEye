@@ -36,7 +36,7 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 		}
 	}
 	out.Release, out.ManifestSHA256 = release, digest
-	if err := systemupdate.RefuseDowngrade(policy.Channel, installed.Release.Version, release.Version); err != nil {
+	if err := systemupdate.RefuseDowngrade(policy.Channel, installed.Release, release); err != nil {
 		out.Behind, out.Message = true, err.Error()
 		return out, nil
 	}

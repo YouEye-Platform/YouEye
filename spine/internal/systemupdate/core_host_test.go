@@ -32,7 +32,7 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Version, r.Tag = "0.6.0-rc.28", "youeye-v0.6.0-rc.28"
+	r.Version, r.Build, r.Tag = "0.6.0-dev.28", "0.6.0-dev.28", "youeye-v0.6.0-dev.28"
 	responses := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
@@ -48,7 +48,7 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 		// Unchanged host files are reused from the earlier release.
 		for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
 			if b != nil {
-				b.Release = "youeye-v0.6.0-rc.27"
+				b.Release = "youeye-v0.6.0-dev.27"
 			}
 		}
 		if m.Role == "system-update" {

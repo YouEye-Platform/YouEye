@@ -54,7 +54,7 @@ curl -fsSL https://releases.youeye.me/install.sh | \
 
 Options: `--repository <https URL>` (default
 `https://github.com/YouEye-Platform/YouEye`) and `--channel dev|alpha|beta|stable`
-(default `stable`). `--release-tag youeye-vX.Y.Z-rc.N` with its
+(default `stable`). `--release-tag youeye-v<name>` with its
 `--core-manifest-sha256` installs one exact release of the channel.
 
 The bootstrap reads the channel index — `https://releases.youeye.me/v1/channels/<channel>.json`

@@ -1,7 +1,8 @@
 {
   "schema": "youeye.core-release.v1",
-  "version": "0.6.1-rc.1",
-  "tag": "youeye-v0.6.1-rc.1",
+  "version": "0.6.1-dev.1",
+  "build": "0.6.1-dev.1",
+  "tag": "youeye-v0.6.1-dev.1",
   "source_tree": "1111111111111111111111111111111111111111",
   "sequence": 1762950000,
   "minimum_reader": 1,
@@ -11,7 +12,7 @@
     "state_max": 2,
     "data_min": 1,
     "data_max": 1,
-    "minimum_release": "0.6.1-rc.1",
+    "minimum_release": "0.6.1-dev.1",
     "capabilities": [
       "core-release-v1"
     ]
@@ -19,7 +20,7 @@
   "members": [
     {
       "role": "installer",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "9b2abab70e1120c9d3805d4d0cfa612d8a94b34d9576476f7457f9ce7b716bcb",
       "artifact": {
@@ -30,7 +31,7 @@
     },
     {
       "role": "media",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "f42ddc970ce7d3397ab56e9f6c81e1b409d1c7b29af98a812c1a9336d5364f34",
       "artifact": {
@@ -41,7 +42,7 @@
     },
     {
       "role": "appliance",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "babd4b964bee91ec9c93f770c891f714551078c5494e59704b5a386583efb0a9",
       "artifact": {
@@ -57,7 +58,7 @@
     },
     {
       "role": "system-update",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "cb080e7d0beae6a05b14bbbeb67f3564252cd7fe6cc459c1f201281c92541510",
       "artifact": {
@@ -68,7 +69,7 @@
     },
     {
       "role": "system-root",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "f74b88ac35a076539e81a3526f736c65ed1e493c88ca1442fcb388d82278da72",
       "artifact": {
@@ -79,7 +80,7 @@
     },
     {
       "role": "system-a-uki",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "f4d330dc60b175d401a4725cf30edab5c79247422920f6d44d2c3284b407451a",
       "artifact": {
@@ -90,7 +91,7 @@
     },
     {
       "role": "system-b-uki",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "a21e4e86e8f88da3427059427fee99d59a0905ad01ae814b6ca090ab03119341",
       "artifact": {
@@ -101,7 +102,7 @@
     },
     {
       "role": "system-updater",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "c57563ccdb5017724f111326a6c061f137c650d91d4855af8977722fd64ecf9a",
       "artifact": {
@@ -112,7 +113,7 @@
     },
     {
       "role": "internal-recovery",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "d77080561296beb0c87a21d6ffcbf830eddd892c5741e5ea92d5b21f424f32a6",
       "artifact": {
@@ -123,7 +124,7 @@
     },
     {
       "role": "recovery-uki",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "fb89cf18df085ab699bede8b319cf1bd73e0a0bcb45411154dc18530e41a6d04",
       "artifact": {
@@ -134,7 +135,7 @@
     },
     {
       "role": "update-bootstrap",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "6337e2300c3769e0dee160d2edcc9c0147b44590ac95e6496e20016dd793358f",
       "artifact": {
@@ -145,7 +146,7 @@
     },
     {
       "role": "spine",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "439ad87d7ac631324c57ab3ffea8469fd7e5a3c2bc8bec2cc49388697a9134ef",
       "artifact": {
@@ -156,7 +157,7 @@
     },
     {
       "role": "cp",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "eb77797bf9b23acd7e0a5247bea3709331dd6391f3de5c5330165628c0e759ee",
       "artifact": {
@@ -170,7 +171,7 @@
     },
     {
       "role": "ui",
-      "build_version": "0.6.1-rc.1",
+      "build_version": "0.6.1-dev.1",
       "source_tree": "1111111111111111111111111111111111111111",
       "input_sha256": "5a879f1e4f17168fad33e3e5240f793c27dde0c199b07f86cf8a641967684319",
       "artifact": {

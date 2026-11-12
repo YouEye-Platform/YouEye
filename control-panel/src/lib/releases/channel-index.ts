@@ -21,7 +21,12 @@ export const isReleaseChannel = (value: unknown): value is ReleaseChannelName =>
 
 export const INDEX_PRODUCTS = ['youeye', 'pointer', 'market', 'notes', 'wiki', 'search', 'translate', 'weather', 'cinema'] as const;
 
-export type ChannelEntry = { repository: string; tag: string; version: string; document: string; sha256: string };
+/**
+ * `version` is the release name (display and tag); `build` is the build
+ * version it carries (core: the document's `build`; products: the build
+ * manifest's `build_version`). Only `build` orders entries.
+ */
+export type ChannelEntry = { repository: string; tag: string; version: string; build: string; document: string; sha256: string };
 export type ChannelIndex = { schema: 'youeye.channel.v1'; channel: ReleaseChannelName; published_at: string; products: Record<string, ChannelEntry> };
 export type BoxChannelIndex = { repository: string; channel: ReleaseChannelName; index: ChannelIndex; indexSHA256: string };
 
@@ -66,10 +71,10 @@ export function parseChannelIndex(value: unknown): ChannelIndex {
   }
   fields(index.products, [...INDEX_PRODUCTS]);
   for (const [product, entry] of Object.entries(index.products)) {
-    fields(entry, ['repository', 'tag', 'version', 'document', 'sha256']);
+    fields(entry, ['repository', 'tag', 'version', 'build', 'document', 'sha256']);
     let repository = '';
     try { repository = canonicalReleaseRepository(entry.repository); } catch { /* reported below */ }
-    if (repository !== entry.repository || !parseReleaseVersion(entry.version) || !validReleaseTag(entry.tag) || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
+    if (repository !== entry.repository || !parseReleaseVersion(entry.version) || typeof entry.build !== 'string' || !parseReleaseVersion(entry.build) || !validReleaseTag(entry.tag) || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
       throw new Error(`Channel index entry ${product} is invalid`);
     }
     const [tag, documentName] = product === 'youeye' ? [`youeye-v${entry.version}`, 'core-release.json']
@@ -206,7 +211,7 @@ export async function resolveChannelProduct(product: string, options: ProductRes
   const raw = await downloadReleaseFile(channelEntryDocumentURL(entry), 1024 * 1024, options.fetch);
   if (createHash('sha256').update(raw).digest('hex') !== entry.sha256) throw new Error(`${entry.document} of ${entry.tag} differs from the channel index digest`);
   const selected = verifyProductRelease(raw, { product, repository: entry.repository, tag: entry.tag });
-  if (selected.release.version !== entry.version) throw new Error(`${product} release differs from its channel index version`);
+  if (selected.release.version !== entry.version || selected.build.build_version !== entry.build) throw new Error(`${product} release differs from its channel index version`);
   return selected;
 }
 

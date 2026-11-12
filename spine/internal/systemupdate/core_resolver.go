@@ -33,10 +33,13 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 	return CoreHostSelection{Raw: raw}, release, digest, nil
 }
 
-// RefuseDowngrade returns ErrChannelBehind when target is older than installed.
-func RefuseDowngrade(channel, installed, target string) error {
-	if releasecache.CompareVersions(target, installed) < 0 {
-		return fmt.Errorf("%w: channel %s offers %s, installed is %s; waiting for it to catch up", ErrChannelBehind, channel, target, installed)
+// RefuseDowngrade returns ErrChannelBehind when target is an older build than
+// installed. Builds are compared, never release names: the same build under
+// another channel's name is not older.
+func RefuseDowngrade(channel string, installed, target releasecache.CoreRelease) error {
+	if releasecache.CompareVersions(target.Build, installed.Build) < 0 {
+		return fmt.Errorf("%w: channel %s offers %s (build %s), installed is %s (build %s); waiting for it to catch up",
+			ErrChannelBehind, channel, target.Version, target.Build, installed.Version, installed.Build)
 	}
 	return nil
 }

@@ -71,7 +71,7 @@ func TestCoreFirstBootFreezesInstalledBaselineAcrossRestart(t *testing.T) {
 				p.CoreManifestSHA256 = strings.Repeat("e", 64)
 			case "other-baseline":
 				r := release
-				r.Version, r.Tag = "0.6.1-rc.2", "youeye-v0.6.1-rc.2"
+				r.Version, r.Build, r.Tag = "0.6.1-dev.2", "0.6.1-dev.2", "youeye-v0.6.1-dev.2"
 				candidate.Raw, _ = json.Marshal(r)
 				p.CoreManifestSHA256 = checksum(candidate.Raw)
 			case "malformed":

@@ -6,8 +6,9 @@ comes from HTTPS and SHA-256.
 
 ## Tags and versions
 
-- Apps and Pointer: `v<version>`; Market catalog: `catalog-v<version>`. Versions are `X.Y.Z-rc.N` and never name a
-  channel; there are no branch-prefixed tags.
+- Apps and Pointer: `v<version>`; Market catalog: `catalog-v<version>`. A build is `X.Y.Z-dev.N`; promotion writes a
+  new document for the same build named `X.Y.Z-alpha.N`, `X.Y.Z-beta.N` or `X.Y.Z` (see [releases.md](releases.md)).
+  Ordering uses the embedded build manifest's `build_version`, never the release name.
 - The Control Panel finds a product only through the box's channel index (Spine `GET /api/releases/index`); it
   never lists releases and never derives a repository from an app manifest.
 
@@ -16,7 +17,7 @@ comes from HTTPS and SHA-256.
 `product-release.json` (`youeye.product-release.v1`, `authority: "digest"`):
 
 ```json
-{"schema":"youeye.product-release.v1","product":"notes","version":"0.6.1-rc.1","tag":"v0.6.1-rc.1",
+{"schema":"youeye.product-release.v1","product":"notes","version":"0.6.1","tag":"v0.6.1",
  "source_tree":"<40 hex>","sequence":1762950000,"minimum_reader":1,"authority":"digest",
  "build_manifest_base64":"<base64 of youeye.product-build.v1>"}
 ```
@@ -24,7 +25,8 @@ comes from HTTPS and SHA-256.
 The embedded `youeye.product-build.v1` lists every asset as `{name, sha256, size_bytes, release?}`, names the
 primary asset and records `contract_sha256`: the digest of the installer contract (`youeye-app.yaml` for native
 apps, `pointer-build-contract.json` for Pointer, `catalog-snapshot.json` for the Market catalog). No source,
-branch, channel, commit or URL is inside, so the bytes are the same on every host. The accepted document's SHA-256
+branch, channel, commit or URL is inside; a promotion changes only `version` and `tag` and keeps
+`build_manifest_base64` byte for byte. The accepted document's SHA-256
 (which must equal the channel index entry) is the installed identity.
 
 ## Market catalog

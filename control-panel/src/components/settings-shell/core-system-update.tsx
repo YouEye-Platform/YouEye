@@ -125,7 +125,7 @@ async function headers() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h3 className="text-sm font-medium">{translateInterface("m2a1ec4ff37ff")}</h3>
-        <p className="mt-1 text-sm">{status.installed?.release.version ?? translateInterface("mc0a7f647c17d")}</p>
+        <p className="mt-1 text-sm">{status.installed?.release.version ?? translateInterface("mc0a7f647c17d")}{status.installed?.release.build && status.installed.release.build !== status.installed.release.version ? <span className="ml-2 text-xs text-muted-foreground">{status.installed.release.build}</span> : null}</p>
         <p className="mt-1 text-sm text-muted-foreground" role="status">{waitingForApps ? translateInterface("m331f54039409") : canRetryAdmission ? translateInterface("me8d51f7276c8") : state}{unfinished && currentStep && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? translateInterface("m89f42c216c85")}` : ""}</p>
       </div>
       <Button variant="outline" disabled={!!busy || !!unfinished} onClick={() => void check()}>

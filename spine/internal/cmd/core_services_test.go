@@ -112,7 +112,7 @@ func (f *coreDeploymentFixture) writeSelection(t *testing.T) {
 	media, _ := f.release.Member("appliance")
 	spine, _ := f.release.Member("spine")
 	Version = spine.BuildVersion
-	older := appliance.ComponentRelease{Version: "0.6.0-rc.3", SourceTree: strings.Repeat("2", 40), ArtifactSHA256: strings.Repeat("b", 64)}
+	older := appliance.ComponentRelease{Version: "0.6.0-dev.3", SourceTree: strings.Repeat("2", 40), ArtifactSHA256: strings.Repeat("b", 64)}
 	f.image = appliance.Manifest{ImageVersion: media.BuildVersion, SourceTree: media.SourceTree, ReleaseSet: &appliance.ReleaseSet{
 		Spine:        appliance.ComponentRelease{Version: spine.BuildVersion, SourceTree: spine.SourceTree, ArtifactSHA256: spine.Artifact.SHA256},
 		ControlPanel: older, UI: older,
@@ -154,7 +154,7 @@ func TestCoreFirstDeploymentKeepsSealedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := spineselect.Entry{SHA256: coreTestHash(raw), Version: "0.6.1-rc.1", HelperContract: spineselect.HelperContract, DiskLayout: spineselect.DiskLayout}
+	entry := spineselect.Entry{SHA256: coreTestHash(raw), Version: "0.6.1-dev.1", HelperContract: spineselect.HelperContract, DiskLayout: spineselect.DiskLayout}
 	spineRoot := filepath.Join(f.root, "spine")
 	if err := spineselect.Stage(spineRoot, f.binary, entry); err != nil {
 		t.Fatal(err)

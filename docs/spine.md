@@ -8,7 +8,7 @@ Spine is the host agent and the `youeye` CLI. An appliance has two kinds of Spin
 
   ```json
   {"schema":"youeye.spine-selection.v1","slots":{
-    "A":{"current":{"sha256":"…","version":"0.6.2-rc.3","helper_contract":1,"disk_layout":1},
+    "A":{"current":{"sha256":"…","version":"0.6.2-dev.3","helper_contract":1,"disk_layout":1},
          "previous":{…},"trial":{…, "trial_starts":1}}},
    "updated_at":"…"}
   ```

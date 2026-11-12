@@ -210,7 +210,8 @@ export interface CoreUpdateStatus {
   selection?: { repository: string; channel: string };
   installed?: {
     manifest_sha256: string;
-    release: { version: string; tag: string; sequence: number; source_tree: string };
+    /** `version` is the release name (display); `build` the build version it carries. */
+    release: { version: string; build?: string; tag: string; sequence: number; source_tree: string };
     members?: { role: string; version: string; source_tree: string; sha256: string }[];
     accepted_at: string;
     machine_bound: boolean;
@@ -220,7 +221,7 @@ export interface CoreUpdateStatus {
 }
 
 export interface CoreUpdateCandidate {
-  release: { version: string; tag: string; sequence: number; source_tree?: string };
+  release: { version: string; build?: string; tag: string; sequence: number; source_tree?: string };
   manifest_sha256: string;
   restart_required: boolean;
   /** The channel head is older than the installed version; the box waits for it to catch up. */

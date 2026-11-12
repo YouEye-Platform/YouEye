@@ -51,7 +51,7 @@ func installCoreCommands(parent *cobra.Command) {
 		}
 		out := map[string]any{"release": release, "manifest_sha256": digest, "channel": selection.Channel}
 		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
-			if err := systemupdate.RefuseDowngrade(selection.Channel, receipt.Release.Version, release.Version); err != nil {
+			if err := systemupdate.RefuseDowngrade(selection.Channel, receipt.Release, release); err != nil {
 				out["behind"], out["message"] = true, err.Error()
 			}
 		}

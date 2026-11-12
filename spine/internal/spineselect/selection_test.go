@@ -76,7 +76,7 @@ func TestMissingRecordRunsSeed(t *testing.T) {
 
 func TestSlotsAreIndependent(t *testing.T) {
 	root := t.TempDir()
-	a := staged(t, root, "spine A", "1.0.0-rc.1")
+	a := staged(t, root, "spine A", "1.0.0-dev.1")
 	if err := Select(root, "A", a, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSlotsAreIndependent(t *testing.T) {
 	if res, err := Resolve(root, "B", ThisHost(), false, testNow); err != nil || res.Role != "seed" || res.Path != "" {
 		t.Fatalf("slot B without record must run its seed: %+v %v", res, err)
 	}
-	b := staged(t, root, "spine B", "1.0.0-rc.2")
+	b := staged(t, root, "spine B", "1.0.0-dev.2")
 	if err := BeginTrial(root, "B", b, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -115,11 +115,11 @@ func TestSlotsAreIndependent(t *testing.T) {
 
 func TestTrialStartsAreCountedAndAbandoned(t *testing.T) {
 	root := t.TempDir()
-	cur := staged(t, root, "current", "1.0.0-rc.1")
+	cur := staged(t, root, "current", "1.0.0-dev.1")
 	if err := Select(root, "A", cur, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
-	trial := staged(t, root, "trial", "1.0.0-rc.2")
+	trial := staged(t, root, "trial", "1.0.0-dev.2")
 	if err := BeginTrial(root, "A", trial, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +150,9 @@ func TestTrialStartsAreCountedAndAbandoned(t *testing.T) {
 
 func TestCommitAbortSelectRollbackUseSeed(t *testing.T) {
 	root := t.TempDir()
-	one := staged(t, root, "one", "1.0.0-rc.1")
-	two := staged(t, root, "two", "1.0.0-rc.2")
-	three := staged(t, root, "three", "1.0.0-rc.3")
+	one := staged(t, root, "one", "1.0.0-dev.1")
+	two := staged(t, root, "two", "1.0.0-dev.2")
+	three := staged(t, root, "three", "1.0.0-dev.3")
 
 	if err := Commit(root, "A", one.SHA256, testNow); err == nil {
 		t.Fatal("committed without a record")
@@ -235,7 +235,7 @@ func TestCommitAbortSelectRollbackUseSeed(t *testing.T) {
 
 func TestVerifyRefusesUnsafeOrIncompatiblePayloads(t *testing.T) {
 	root := t.TempDir()
-	e := staged(t, root, "verified", "1.0.0-rc.1")
+	e := staged(t, root, "verified", "1.0.0-dev.1")
 	if path, err := Verify(root, e, ThisHost()); err != nil || path != PayloadPath(root, e.SHA256) {
 		t.Fatalf("valid payload: %q %v", path, err)
 	}
@@ -272,7 +272,7 @@ func TestVerifyRefusesUnsafeOrIncompatiblePayloads(t *testing.T) {
 		t.Fatalf("digest mismatch: %v", err)
 	}
 
-	g := staged(t, root, "group writable", "1.0.0-rc.2")
+	g := staged(t, root, "group writable", "1.0.0-dev.2")
 	if err := os.Chmod(PayloadPath(root, g.SHA256), 0o570); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestVerifyRefusesUnsafeOrIncompatiblePayloads(t *testing.T) {
 		t.Fatalf("group-writable payload: %v", err)
 	}
 
-	missing, _ := source(t, "never staged", "1.0.0-rc.3")
+	missing, _ := source(t, "never staged", "1.0.0-dev.3")
 	if _, err := Verify(root, missing, ThisHost()); err == nil {
 		t.Fatal("accepted a missing payload")
 	}
@@ -293,7 +293,7 @@ func TestVerifyRefusesUnsafeOrIncompatiblePayloads(t *testing.T) {
 
 func TestStageRefusesDigestMismatch(t *testing.T) {
 	root := t.TempDir()
-	e, src := source(t, "real", "1.0.0-rc.1")
+	e, src := source(t, "real", "1.0.0-dev.1")
 	e.SHA256 = strings.Repeat("a", 64)
 	if err := Stage(root, src, e); err == nil {
 		t.Fatal("staged a binary under another digest")
@@ -305,8 +305,8 @@ func TestStageRefusesDigestMismatch(t *testing.T) {
 
 func TestResolveSkipsBrokenCurrentForPrevious(t *testing.T) {
 	root := t.TempDir()
-	one := staged(t, root, "one", "1.0.0-rc.1")
-	two := staged(t, root, "two", "1.0.0-rc.2")
+	one := staged(t, root, "one", "1.0.0-dev.1")
+	two := staged(t, root, "two", "1.0.0-dev.2")
 	for _, e := range []Entry{one, two} {
 		if err := Select(root, "A", e, ThisHost(), testNow); err != nil {
 			t.Fatal(err)
@@ -331,9 +331,9 @@ func TestRunning(t *testing.T) {
 	if err := Running(root, "A", other, seed); err == nil {
 		t.Fatal("accepted an unselected Spine without a record")
 	}
-	cur := staged(t, root, "current", "1.0.0-rc.1")
-	prev := staged(t, root, "previous", "1.0.0-rc.0")
-	trial := staged(t, root, "trial", "1.0.0-rc.2")
+	cur := staged(t, root, "current", "1.0.0-dev.1")
+	prev := staged(t, root, "previous", "1.0.0-dev.0")
+	trial := staged(t, root, "trial", "1.0.0-dev.2")
 	if err := Select(root, "A", prev, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestSeedOnly(t *testing.T) {
 
 func TestDecide(t *testing.T) {
 	root := t.TempDir()
-	trial := staged(t, root, "trial", "1.0.0-rc.2")
+	trial := staged(t, root, "trial", "1.0.0-dev.2")
 	if err := BeginTrial(root, "A", trial, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -460,11 +460,11 @@ func (f *fakeHooks) hooks(wait time.Duration) TrialHooks {
 
 func TestApplyTrialCommitsWhenHealthy(t *testing.T) {
 	root := t.TempDir()
-	cur := staged(t, root, "current", "1.0.0-rc.1")
+	cur := staged(t, root, "current", "1.0.0-dev.1")
 	if err := Select(root, "A", cur, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
-	next, src := source(t, "next", "1.0.0-rc.2")
+	next, src := source(t, "next", "1.0.0-dev.2")
 	f := &fakeHooks{healthyAfter: 1}
 	if err := ApplyTrial(context.Background(), root, "A", src, next, f.hooks(time.Minute)); err != nil {
 		t.Fatal(err)
@@ -479,11 +479,11 @@ func TestApplyTrialCommitsWhenHealthy(t *testing.T) {
 
 func TestApplyTrialAbortsWhenNeverHealthy(t *testing.T) {
 	root := t.TempDir()
-	cur := staged(t, root, "current", "1.0.0-rc.1")
+	cur := staged(t, root, "current", "1.0.0-dev.1")
 	if err := Select(root, "A", cur, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
-	next, src := source(t, "next", "1.0.0-rc.2")
+	next, src := source(t, "next", "1.0.0-dev.2")
 	f := &fakeHooks{}
 	err := ApplyTrial(context.Background(), root, "A", src, next, f.hooks(time.Nanosecond))
 	if err == nil || !strings.Contains(err.Error(), "rolled back") {
@@ -499,7 +499,7 @@ func TestApplyTrialAbortsWhenNeverHealthy(t *testing.T) {
 
 func TestApplyTrialRestartError(t *testing.T) {
 	root := t.TempDir()
-	next, src := source(t, "next", "1.0.0-rc.2")
+	next, src := source(t, "next", "1.0.0-dev.2")
 	f := &fakeHooks{restartErr: []error{errors.New("systemctl failed")}, healthyAfter: 1}
 	err := ApplyTrial(context.Background(), root, "A", src, next, f.hooks(time.Minute))
 	if err == nil || !strings.Contains(err.Error(), "systemctl failed") {
@@ -520,7 +520,7 @@ func TestApplyTrialRestartError(t *testing.T) {
 
 func TestApplyTrialRefusesIncompatibleEntry(t *testing.T) {
 	root := t.TempDir()
-	next, src := source(t, "next", "1.0.0-rc.2")
+	next, src := source(t, "next", "1.0.0-dev.2")
 	next.HelperContract++
 	f := &fakeHooks{healthyAfter: 1}
 	if err := ApplyTrial(context.Background(), root, "A", src, next, f.hooks(time.Minute)); err == nil {

@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { writeJsonAtomically } from '../bridges/atomic-json-store';
 import {
-  acceptProductSequence, identicalProductPayloads, productReceipt,
+  acceptProductSequence, compareToProductFloor, identicalProductPayloads, productReceipt, validProductFloor,
   verifyInstalledProductReceipt, type InstalledProductReceipt, type ProductSequenceFloors, type VerifiedProductRelease,
 } from '../releases/product-release';
 import { productRuntimeIdentity, publishProductProjection, verifyProductProjection } from '../releases/product-projection';
@@ -21,12 +21,12 @@ export type PointerReleaseState = {
 export function pointerRelease(state: PointerReleaseState): VerifiedProductRelease | null {
   if (!state.installed) return null;
   const selected = verifyInstalledProductReceipt(state.installed.receipt,{product:'pointer'});
-  const release = selected.release;
   if (selected.build.kind !== 'native' || !/^[a-f0-9-]{36}$/i.test(state.installed.runtimeUUID)) throw new Error('Invalid installed Pointer identity');
+  // The floor is never below the installed build; at the same build it names the same contents.
   const floor = state.floors.pointer;
-  if (!floor || !Number.isSafeInteger(floor.sequence)
-    || floor.sequence < release.sequence || !/^[0-9a-f]{64}$/.test(floor.manifestSHA256)
-    || floor.sequence === release.sequence && floor.manifestSHA256 !== selected.manifestSHA256) throw new Error('Invalid Pointer release replay floor');
+  let consistent = false;
+  try { consistent = validProductFloor(floor) && compareToProductFloor(floor, selected) <= 0; } catch { /* same version, other build */ }
+  if (!consistent) throw new Error('Invalid Pointer release replay floor');
   return selected;
 }
 export async function readPointerReleaseState(filePath = FILE): Promise<PointerReleaseState> {

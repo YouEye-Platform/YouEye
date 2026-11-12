@@ -24,7 +24,8 @@ export type CoreMember = {
   artifact: CoreBlob; build_inputs?: CoreBlob;
 };
 export type CoreRelease = {
-  schema: 'youeye.core-release.v1'; version: string; tag: string; source_tree: string; sequence: number;
+  /** `version` names the release (display, tag); `build` is the build version it carries (ordering). */
+  schema: 'youeye.core-release.v1'; version: string; build: string; tag: string; source_tree: string; sequence: number;
   minimum_reader: number; authority: 'digest';
   compatibility: { state_min: number; state_max: number; data_min: number; data_max: number; minimum_release: string; capabilities: string[] };
   members: CoreMember[];
@@ -91,8 +92,8 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
   if (!raw.length || raw.length > 1024 * 1024) throw new Error('Core manifest size is invalid');
   uniqueJSON(raw.toString('utf8'), true);
   const r = JSON.parse(raw.toString('utf8')) as CoreRelease;
-  fields(r, ['schema','version','tag','source_tree','sequence','minimum_reader','authority','compatibility','members']);
-  if (r.schema !== 'youeye.core-release.v1' || r.authority !== 'digest' || !parseReleaseVersion(r.version) || r.tag !== `youeye-v${r.version}` || r.minimum_reader !== 1 || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid core identity');
+  fields(r, ['schema','version','build','tag','source_tree','sequence','minimum_reader','authority','compatibility','members']);
+  if (r.schema !== 'youeye.core-release.v1' || r.authority !== 'digest' || !parseReleaseVersion(r.version) || typeof r.build !== 'string' || !parseReleaseVersion(r.build) || r.tag !== `youeye-v${r.version}` || r.minimum_reader !== 1 || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid core identity');
   const c = r.compatibility;
   fields(c, ['state_min','state_max','data_min','data_max','minimum_release','capabilities']);
   if (![c.state_min,c.state_max,c.data_min,c.data_max].every(n => Number.isSafeInteger(n) && n > 0) || c.state_min > c.state_max || c.data_min > c.data_max || !parseReleaseVersion(c.minimum_release) || !Array.isArray(c.capabilities) || !c.capabilities.includes('core-release-v1') || c.capabilities.some(x => typeof x !== 'string' || !x) || new Set(c.capabilities).size !== c.capabilities.length) throw new Error('Unsupported core compatibility');

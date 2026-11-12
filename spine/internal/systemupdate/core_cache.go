@@ -91,7 +91,7 @@ func (c CoreArtifactCache) StageUpdate(ctx context.Context, selection CoreHostSe
 		return target, "", err
 	}
 	selected := map[string]bool{}
-	if !reflect.DeepEqual(previous.Members, target.Members) {
+	if previous.PayloadSHA256() != target.PayloadSHA256() {
 		selected["spine"] = true // any payload change may select the release's Spine
 	}
 	for _, member := range target.Members {

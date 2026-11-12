@@ -1,5 +1,8 @@
 /**
  * Canonical X.Y.Z[-token.N] release identities plus retained numeric versions.
+ * Builds are X.Y.Z-dev.N; releases are named X.Y.Z-dev.N, X.Y.Z-alpha.N,
+ * X.Y.Z-beta.N or X.Y.Z. Only build versions are ever ordered; a release
+ * name is for display and tags.
  * Source/channel authority is selected before comparison. The shared vectors
  * in spine/internal/version/testdata/vectors.json verify Go/TypeScript parity.
  */
@@ -58,9 +61,10 @@ export function compareVersions(a: string, b: string): number {
     if (aVal > bVal) return 1;
   }
 
-  // The suffix token never orders builds (it never names a channel): a
-  // version without a suffix sorts after every suffixed build of its line,
-  // otherwise the build number N decides. Matches releasecache.CompareVersions.
+  // The suffix token never orders builds: callers compare build versions
+  // (X.Y.Z-dev.N), never release names, so N decides within a line. A version
+  // without a suffix sorts after every suffixed one of its line. Matches
+  // releasecache.CompareVersions.
   if (!left.token !== !right.token) return left.token ? -1 : 1;
   return Math.sign(left.counter - right.counter);
 }

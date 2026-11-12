@@ -26,6 +26,7 @@ func init() {
 		out := map[string]string{"repository": policy.Repository, "channel": policy.Channel}
 		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
 			out["installed_version"] = receipt.Release.Version
+			out["installed_build"] = receipt.Release.Build
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}})

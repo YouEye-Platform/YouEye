@@ -45,6 +45,7 @@ type ChannelEntry struct {
 	Repository string `json:"repository"`
 	Tag        string `json:"tag"`
 	Version    string `json:"version"`
+	Build      string `json:"build"`
 	Document   string `json:"document"`
 	SHA256     string `json:"sha256"`
 }
@@ -59,7 +60,7 @@ func (e ChannelEntry) validate(product string) error {
 	if err != nil || repository != e.Repository {
 		return fmt.Errorf("index entry %s: repository must be canonical https://host/owner/repository", product)
 	}
-	if !ValidCoreVersion(e.Version) || !validReleaseTag(e.Tag) || !installationHash.MatchString(e.SHA256) {
+	if !ValidCoreVersion(e.Version) || !ValidCoreVersion(e.Build) || !validReleaseTag(e.Tag) || !installationHash.MatchString(e.SHA256) {
 		return fmt.Errorf("index entry %s: invalid tag, version or digest", product)
 	}
 	switch {
@@ -254,8 +255,8 @@ func FetchCoreRelease(ctx context.Context, client *http.Client, repository, chan
 	if err != nil {
 		return nil, CoreRelease{}, "", err
 	}
-	if release.Tag != entry.Tag {
-		return nil, CoreRelease{}, "", fmt.Errorf("core-release.json of %s names tag %s", entry.Tag, release.Tag)
+	if release.Tag != entry.Tag || release.Build != entry.Build {
+		return nil, CoreRelease{}, "", fmt.Errorf("core-release.json of %s names tag %s build %s, the index build %s", entry.Tag, release.Tag, release.Build, entry.Build)
 	}
 	return raw, release, digest, nil
 }

@@ -24,7 +24,7 @@ func TestCoreResolverReadsChannelIndexOnly(t *testing.T) {
 	}
 	repository := "https://forge.example/owner/YouEye"
 	index, _ := json.Marshal(releasecache.ChannelIndex{Schema: releasecache.ChannelIndexSchema, Channel: "dev", PublishedAt: "2026-11-12T10:00:00Z", Products: map[string]releasecache.ChannelEntry{
-		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Document: "core-release.json", SHA256: digest},
+		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Build: r.Build, Document: "core-release.json", SHA256: digest},
 	}})
 	files := map[string][]byte{
 		repository + "/releases/download/channel-dev/index.json":          index,

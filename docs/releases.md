@@ -12,14 +12,24 @@ Every product is built once and promoted unchanged through four channels:
 Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema), Pointer and the
 Market catalog. Nothing is signed; integrity comes from HTTPS and SHA-256.
 
-## Versions
+## Versions: one build, a name per channel
 
-- Every build is `X.Y.Z-rc.N`. `VERSION` in each repository holds the line (`0.6.1`); the publish tool picks the
-  next free `N` for that line from the release tags and passes the full version to the build as `YOUEYE_VERSION`.
-  Nothing in the source tree carries the rc number.
-- A build keeps its version on every channel. A failed build bumps only `N`; the next line bumps `Z`.
-- Versions order by `X`, `Y`, `Z`, then `N`. **The suffix never names a channel.**
-- Go binaries get the version through `-ldflags`; the Control Panel, UI, apps and Pointer write it into a
+| What | Name | Example |
+|---|---|---|
+| A build (every publish; the dev channel) | `X.Y.Z-dev.N` | `0.6.2-dev.2` (the second build of 0.6.2) |
+| The same build on alpha | `X.Y.Z-alpha.N` | `0.6.2-alpha.1` |
+| The same build on beta | `X.Y.Z-beta.N` | `0.6.2-beta.1` |
+| The same build on stable | `X.Y.Z` | `0.6.2` |
+
+- `VERSION` in each repository holds the line (`0.6.2`); the publish tool picks the next free `dev.N` and passes the
+  full **build version** to the build as `YOUEYE_VERSION`. Binaries, `version.json` and build manifests carry the
+  build version. A failed build bumps `N`.
+- **Promotion never rebuilds and never changes a file.** It writes one new small release document that names the
+  build under the channel's name and binds the very same files by SHA-256. A fix found on alpha is new code: a new
+  build (`dev.3`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line.
+- **Only builds are ordered** (`X`, `Y`, `Z`, then `N` of `X.Y.Z-dev.N`). Release names are for people: a box on
+  alpha showing `0.6.2-alpha.1` may run an older build than a box on dev showing `0.6.2-dev.5`.
+- Go binaries get the build version through `-ldflags`; the Control Panel, UI, apps and Pointer write it into a
   `version.json` (or their build manifest) at build time. `package.json` versions are a `0.0.0` placeholder.
 
 ## Build identity
@@ -29,16 +39,20 @@ public GitHub repositories receive only one snapshot commit per beta or stable p
 tree and parented on the previous public commit. Development history never goes public, and Forgejo and GitHub
 never share commits.
 
-## Release documents (same bytes on every host)
+## Release documents
 
-- **System:** release `youeye-v<version>` with `core-release.json` (`youeye.core-release.v1`, see
-  [core-release-contract.md](core-release-contract.md)), every artifact, `SHA256SUMS` and `install.sh`.
-- **Apps and Pointer:** release `v<version>`; **Market:** `catalog-v<version>`. Each has `product-release.json`
-  (see [product-release-contract.md](product-release-contract.md)).
-- Documents **name** assets (`{name, sha256, size_bytes, release?}`) and never locate them. A client downloads
+- **System:** release `youeye-v<name>` with `core-release.json` (`youeye.core-release.v1`, see
+  [core-release-contract.md](core-release-contract.md)). Its `version` is the release name and its `build` the build
+  version; on dev they are equal.
+- **Apps and Pointer:** release `v<name>`; **Market:** `catalog-v<name>`. Each has `product-release.json` (see
+  [product-release-contract.md](product-release-contract.md)) embedding the immutable build manifest
+  (`build_version` = the build).
+- Documents **name** files (`{name, sha256, size_bytes, release?}`) and never locate them. A client downloads
   `<repository>/releases/download/<tag>/<name>`, using the repository and tag where it found the document (or the
-  blob's `release` tag in the same repository). No source, branch, channel, commit or URL is inside, so the
-  document — and its SHA-256 — is identical on Forgejo and GitHub.
+  blob's `release` tag in the same repository). No source, branch, channel or commit URL is inside.
+- Where the files are: a dev release holds its build's files (or names an earlier release for unchanged parts); an
+  alpha release on the development forge names the Forgejo releases that hold them (System) or holds copies
+  (products); beta and stable releases on GitHub hold a copy of every file, so a public release is self-contained.
 
 ## Channel index (no release listing)
 
@@ -48,15 +62,16 @@ per public IP; a home with two boxes used that up within hours). They read one s
 ```json
 {"schema":"youeye.channel.v1","channel":"stable","published_at":"2026-11-12T10:00:00Z",
  "products":{
-   "youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.6.1-rc.4","version":"0.6.1-rc.4","document":"core-release.json","sha256":"…"},
-   "notes": {"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1-rc.2","version":"0.6.1-rc.2","document":"product-release.json","sha256":"…"}
+   "youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.6.2","version":"0.6.2","build":"0.6.2-dev.2","document":"core-release.json","sha256":"…"},
+   "notes": {"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1","version":"0.6.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"…"}
  }}
 ```
 
 - Location: asset `index.json` of release `channel-<channel>` in the YouEye repository of the channel's host:
   `<youeye repository>/releases/download/channel-<channel>/index.json`. For the official repository's `beta` and
   `stable` channels a copy is served at `https://releases.youeye.me/v1/channels/<channel>.json` and tried first.
-- The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry.
+- The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry. `build` is the
+  entry's build version, used for ordering.
 - Products: `youeye`, `pointer`, `market`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`.
 - An HTTP 403 or 429 from a release host is reported as "release host refused or rate-limited the request" and
   retried with backoff — never as a network failure.
@@ -84,8 +99,9 @@ The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
   any other one (for example a development forge) is used only because `--repository` was given at install.
 - `youeye channel get|set <channel>` (or Settings in the Control Panel, through Spine `PUT /api/releases/channel`)
   switches between channels of the same repository.
-- **A box never downgrades.** If the channel's current release is older than the installed one, the update check
-  says so (`behind: true`) and the box waits for the channel to catch up.
+- **A box never downgrades.** If the channel's current build is older than the installed build, the update check
+  says so (`behind: true`) and the box waits for the channel to catch up. The same build under another channel's
+  name is not older; taking it only records the new document (no file changes).
 
 ## Install
 
@@ -100,11 +116,12 @@ release.
 
 ## Publishing and promotion (tools in the YouEye Mega workspace)
 
-- `Tools/release/publish` — next `rc.N`, build, `core-release.json`, Forgejo prerelease, dev index.
+- `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index.
 - `Tools/release/app-release <repo>` then `Tools/release/index set dev …` — the same for apps, Pointer, Market.
-- `Tools/release/promote <product|all> <alpha|beta|stable>` — never rebuilds:
-  - **alpha:** a promotion commit with the build's exact tree on the development forge's `main`; the alpha index
-    names the same release.
+- `Tools/release/promote <product|all> <alpha|beta|stable>` — never rebuilds; writes the channel's document
+  (`alpha.N`, `beta.N`, `X.Y.Z`) for the same build:
+  - **alpha:** a promotion commit with the build's exact tree on the development forge's `main`; the alpha release
+    and index on the development forge.
   - **beta / stable:** after a public hygiene check of the tree (no private host names), one GitHub snapshot commit
-    with that tree on `beta` / `main`; the GitHub release with the same tag gets the same bytes, each verified by
-    SHA-256; the GitHub index and the `releases.youeye.me` copy are updated (`install.sh` too on stable).
+    with that tree on `beta` / `main`; the GitHub release with a copy of every file, each verified by SHA-256; the
+    GitHub index and the `releases.youeye.me` copy (`install.sh` too on stable).

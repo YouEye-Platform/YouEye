@@ -227,9 +227,10 @@ func coreJournalStepNames(j CoreJournal) []string {
 // A promoted assembly may change its release/source/channel identity, but not
 // any signed payload, dependency or reader/schema requirement. Original member
 // identities remain intact. Authority is independently rechecked at each step.
+// sameCorePayloads: the same files and compatibility, wherever the files live
+// (a promoted document of the same build names other releases for them).
 func sameCorePayloads(previous, target releasecache.CoreRelease) bool {
-	return previous.Schema == target.Schema && previous.MinimumReader == target.MinimumReader &&
-		reflect.DeepEqual(previous.Compatibility, target.Compatibility) && reflect.DeepEqual(previous.Members, target.Members)
+	return previous.PayloadSHA256() == target.PayloadSHA256()
 }
 
 func validateCoreSteps(j CoreJournal) error {
@@ -353,8 +354,9 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 	if err != nil {
 		return CoreJournal{}, fmt.Errorf("installed core receipt required: %w", err)
 	}
-	if previous.ManifestSHA256 != digest && releasecache.CompareVersions(target.Version, previous.Release.Version) < 0 {
-		return CoreJournal{}, fmt.Errorf("release %s is older than the installed %s; a box never downgrades", target.Version, previous.Release.Version)
+	if previous.ManifestSHA256 != digest && releasecache.CompareVersions(target.Build, previous.Release.Build) < 0 {
+		return CoreJournal{}, fmt.Errorf("release %s (build %s) is older than the installed %s (build %s); a box never downgrades",
+			target.Version, target.Build, previous.Release.Version, previous.Release.Build)
 	}
 	j := CoreJournal{Schema: CoreJournalSchema, RequestID: requestID, ManifestSHA256: digest, Target: target, Previous: previous, Phase: "prepared", NoOp: previous.ManifestSHA256 == digest}
 	j.MetadataOnly = !j.NoOp && sameCorePayloads(previous.Release, target)

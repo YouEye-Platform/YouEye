@@ -10,6 +10,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/logging"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // Version and BuildDate are set at build time via ldflags:
@@ -127,6 +128,11 @@ var versionCmd = &cobra.Command{
 		}
 		output.Header("YouEye Versions")
 		if runtimeStatus.Kind == "appliance-image" {
+			// The installed release's name on its channel (0.6.2, 0.6.2-beta.1)
+			// and the build it is; the image line shows the image's own build.
+			if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
+				output.StatusLine("YouEye", receipt.Release.Version+" (build "+receipt.Release.Build+")", output.Cyan)
+			}
 			output.StatusLine("System image", runtimeStatus.ImageVersion+" (image-managed)", "")
 		}
 		if runtimeStatus.Kind == "appliance-image" {

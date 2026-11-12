@@ -19,9 +19,13 @@ test('the build writes version.json next to server.js from YOUEYE_VERSION only',
     writeFileSync(join(dir, 'control-panel', 'server.js'), '');
     assert.notEqual(run(['--check'], { YOUEYE_VERSION: undefined }).status, 0, 'an unset version fails the build');
     assert.notEqual(run(['--check'], { YOUEYE_VERSION: '0.6.1-dev' }).status, 0);
-    assert.equal(run(['--check'], { YOUEYE_VERSION: '0.6.1-rc.3' }).status, 0);
-    assert.equal(run([dir], { YOUEYE_VERSION: '0.6.1-rc.3' }).status, 0);
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'control-panel', 'version.json'), 'utf8')), { version: '0.6.1-rc.3' });
+    // Release names are never build versions.
+    for (const name of ['0.6.1-rc.3', '0.6.1-alpha.1', '0.6.1-beta.1', '0.6.1']) {
+      assert.notEqual(run(['--check'], { YOUEYE_VERSION: name }).status, 0, name);
+    }
+    assert.equal(run(['--check'], { YOUEYE_VERSION: '0.6.1-dev.3' }).status, 0);
+    assert.equal(run([dir], { YOUEYE_VERSION: '0.6.1-dev.3' }).status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'control-panel', 'version.json'), 'utf8')), { version: '0.6.1-dev.3' });
     assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version, '0.0.0');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

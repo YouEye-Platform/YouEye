@@ -6,8 +6,8 @@ the exact sha256 of core-release.json, and every member artifact below it is
 bound by sha256 and size. Python 3 standard library only.
 
 Usage:
-  assemble-core-release.py --version 0.6.1-rc.1 --source-tree <40 hex> \
-      --minimum-release 0.6.1-rc.1 --artifacts DIR [--sequence N] [--output DIR] \
+  assemble-core-release.py --version 0.6.1-dev.1 --source-tree <40 hex> \
+      --minimum-release 0.6.1-dev.1 --artifacts DIR [--sequence N] [--output DIR] \
       [--reuse PREVIOUS-core-release.json=ROLE[,ROLE…]]…
 
 --reuse keeps the named members of an earlier release of the same repository
@@ -64,6 +64,7 @@ SERVICE_ROLES = {"spine", "cp", "ui"}
 COMPATIBILITY = {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1}
 
 VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$")
+BUILD = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*")
 TREE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -93,8 +94,8 @@ def main():
     a = p.parse_args()
 
     tag = "youeye-v" + a.version
-    if not VERSION.fullmatch(a.version):
-        fail("version must be X.Y.Z-rc.N")
+    if not BUILD.fullmatch(a.version):
+        fail("version must be the build version X.Y.Z-dev.N")
     if not VERSION.fullmatch(a.minimum_release):
         fail("invalid --minimum-release")
     if not TREE.fullmatch(a.source_tree):
@@ -156,6 +157,7 @@ def main():
     document = {
         "schema": SCHEMA,
         "version": a.version,
+        "build": a.version,  # a published build is named by its build version; promotion renames, never rebuilds
         "tag": tag,
         "source_tree": a.source_tree,
         "sequence": a.sequence,
