@@ -22,7 +22,7 @@ test('the old 200px height cap is dropped (generous 480 guard)', () => {
   assert.doesNotMatch(t, /EMBED_MAX_HEIGHT = 200/);
 });
 
-test('hand-rolled iframe + legacy message handling removed (UnifiedEmbed owns the protocol)', () => {
+test('hand-rolled iframe and message handling removed (UnifiedEmbed owns the protocol)', () => {
   const t = read('src/components/timeline/timeline-embed.tsx');
   assert.doesNotMatch(t, /youeye-embed-ready/);
   assert.doesNotMatch(t, /addEventListener\("message"/);

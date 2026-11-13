@@ -13,7 +13,9 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
-// A missing legacy selection is allowed; incomplete new-format state is not.
+// optionalCoreSelection reads the accepted bootstrap selection. Only a host
+// without bootstrap State (a mutable host) has none; a selection that the
+// release policy names must be present and valid.
 func optionalCoreSelection(root string) (*releasecache.CoreRelease, string, error) {
 	release, digest, err := systemupdate.ReadCoreSelection(root)
 	if os.IsNotExist(err) {
@@ -45,16 +47,16 @@ func verifyExistingControlVersion(installed string, image appliance.Manifest, ro
 	if err != nil {
 		return err
 	}
-	expected := image.ReleaseSet.ControlPanel.Version
-	if selected != nil {
-		if err := systemupdate.BindCoreImage(*selected, image); err != nil {
-			return err
-		}
-		expected = ""
-		for _, member := range selected.Members {
-			if member.Role == "cp" {
-				expected = member.BuildVersion
-			}
+	if selected == nil {
+		return fmt.Errorf("Control Panel reconciliation requires the accepted System selection")
+	}
+	if err := systemupdate.BindCoreImage(*selected, image); err != nil {
+		return err
+	}
+	expected := ""
+	for _, member := range selected.Members {
+		if member.Role == "cp" {
+			expected = member.BuildVersion
 		}
 	}
 	if expected == "" || installed != expected {

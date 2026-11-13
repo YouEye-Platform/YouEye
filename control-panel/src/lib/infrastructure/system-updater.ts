@@ -18,7 +18,7 @@ import {
 
 type SystemId = keyof SystemImageOverrides;
 
-type TrackingStatus = 'tracked' | 'legacy-compatible' | 'legacy-untracked' | 'missing';
+type TrackingStatus = 'tracked' | 'untracked' | 'missing';
 
 interface IncusInstanceMetadata {
   config?: Record<string, string>;
@@ -47,7 +47,7 @@ export interface SystemUpdatePlan {
 export interface SystemUpdateOptions {
   systemId: SystemId;
   hostIP: string;
-  forceLegacy?: boolean;
+  adoptUntracked?: boolean;
   allowDatabaseUpdate?: boolean;
   confirmMaintenanceWindow?: boolean;
   confirmContainerName?: string;
@@ -112,21 +112,6 @@ async function isRunning(containerName: string): Promise<boolean> {
   }
 }
 
-function imageFromLegacyConfig(config: Record<string, string>, systemId: SystemId): string | undefined {
-  const imageId = config['image.id'];
-  if (!imageId) return undefined;
-  if (imageId.includes('/')) return `docker.io/${imageId}`;
-  if (systemId === 'caddy') return `docker.io/library/${imageId}`;
-  if (systemId === 'postgresql') return `docker.io/library/${imageId}`;
-  return `docker.io/${imageId}`;
-}
-
-function versionFromLegacyConfig(config: Record<string, string>, systemId: SystemId): string | undefined {
-  if (systemId === 'postgresql') return config['environment.PG_VERSION'];
-  if (systemId === 'caddy') return config['environment.CADDY_VERSION']?.replace(/^v/, '');
-  return undefined;
-}
-
 function describePlan(
   systemId: SystemId,
   desired: SystemImageOverrides[SystemId],
@@ -137,8 +122,6 @@ function describePlan(
   const config = metadata?.config ?? {};
   const recordedImage = config['user.youeye.market.image'];
   const recordedVersion = config['user.youeye.market.version'];
-  const currentVersion = recordedVersion ?? versionFromLegacyConfig(config, systemId);
-  const currentImage = recordedImage ?? imageFromLegacyConfig(config, systemId);
 
   if (!metadata) {
     return {
@@ -171,8 +154,8 @@ function describePlan(
       exists: true,
       running,
       trackingStatus: 'tracked',
-      currentImage,
-      currentVersion,
+      currentImage: recordedImage,
+      currentVersion: recordedVersion,
       recordedImage,
       recordedVersion,
       updateAvailable,
@@ -183,7 +166,6 @@ function describePlan(
     };
   }
 
-  const compatible = currentVersion === desired.version;
   return {
     id: systemId,
     containerName,
@@ -194,14 +176,10 @@ function describePlan(
     manifestDigest: desired.manifestDigest,
     exists: true,
     running,
-    trackingStatus: compatible ? 'legacy-compatible' : 'legacy-untracked',
-    currentImage,
-    currentVersion,
+    trackingStatus: 'untracked',
     updateAvailable: false,
     recreateRecommended: true,
-    reason: compatible
-      ? 'Container predates Market tracking but runtime version matches the Market manifest; force a legacy adoption recreate only during a maintenance window.'
-      : 'Container predates Market tracking and cannot be proven to match the Market manifest; force a legacy adoption recreate only during a maintenance window.',
+    reason: 'Container has no recorded Market system manifest; adopt it with a recreate only during a maintenance window.',
   };
 }
 
@@ -288,13 +266,13 @@ export async function updateSystemFromMarket(
     return { success: false, systemId: plan.id, message, plan, error: message };
   }
 
-  if (plan.trackingStatus !== 'tracked' && !options.forceLegacy) {
-    const message = `${plan.containerName} is ${plan.trackingStatus}; pass forceLegacy to adopt it into Market tracking during a maintenance window.`;
+  if (plan.trackingStatus !== 'tracked' && !options.adoptUntracked) {
+    const message = `${plan.containerName} is ${plan.trackingStatus}; pass adoptUntracked to adopt it into Market tracking during a maintenance window.`;
     emit(onEvent, 1, totalSteps, 'error', message);
     return { success: false, systemId: plan.id, message, plan, error: message };
   }
 
-  if (!plan.updateAvailable && plan.trackingStatus === 'tracked' && !options.forceLegacy) {
+  if (!plan.updateAvailable && plan.trackingStatus === 'tracked') {
     const message = `${plan.containerName} already matches the Market system manifest.`;
     emit(onEvent, 1, totalSteps, 'skipped', message);
     return {

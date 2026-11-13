@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 function fixture() {
-  const metadata = Array.from({ length: 17 }, (_, i) => ({ appId: `example${i}`, lifecycleState: 'active', subdomain: `example${i}`, domain: 'fixture.test', containers: [`app-example${i}`] }));
+  const metadata = Array.from({ length: 17 }, (_, i) => ({ appId: `example${i}`, lifecycleState: 'active', subdomain: `example${i}`, domain: 'fixture.test', containers: [{ name: 'main', containerName: `app-example${i}`, type: 'oci' }] }));
   const registrations = new Map(metadata.map(m => [m.appId, { unchanged: true }]));
   const operations = new Map<string, unknown>();
   const admitted: string[] = []; const writes: string[] = []; const visible: string[] = [];

@@ -332,7 +332,7 @@ async function cleanupAppByScanUnderLifecycle(
     ? { appId, installationId: recoveryMetadata.installationId }
     : undefined;
   const matchingInstances = [...new Set((recoveryMetadata.containers ?? [])
-    .map((container) => typeof container === 'string' ? container : container.containerName)
+    .map((container) => container.containerName)
     .filter((name): name is string => Boolean(name) && instances.includes(name)))];
   const matchingIPs = new Set<string>();
   for (const name of matchingInstances) {
@@ -665,10 +665,10 @@ async function listInstances(): Promise<string[]> {
   return (resp.metadata ?? []).map((instance) => String(instance.name ?? '')).filter(Boolean);
 }
 
-function normalizeContainers(containers: Array<ContainerMeta | string> | undefined, appId: string): string[] {
+function normalizeContainers(containers: ContainerMeta[] | undefined, appId: string): string[] {
   if (!containers || containers.length === 0) return [`app-${appId}`];
   return containers
-    .map((c) => typeof c === 'string' ? c : c?.containerName || c?.name)
+    .map((c) => c?.containerName || c?.name)
     .filter((name): name is string => typeof name === 'string' && name.length > 0);
 }
 

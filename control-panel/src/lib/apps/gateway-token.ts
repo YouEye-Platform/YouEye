@@ -13,8 +13,7 @@ export async function checkAppCapability(appId: string, capability: string): Pro
     const { readInstallMetadata } = await import('../market/metadata');
     const meta = await readInstallMetadata(appId);
     if (!meta) return false;
-    // For now, all installed apps are considered to have all capabilities
-    // Full capability checking from manifest will come in v2.1
+    // All installed apps are considered to have all capabilities.
     return true;
   } catch {
     return false;

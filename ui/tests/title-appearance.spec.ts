@@ -4,17 +4,17 @@ import { resolveTitle } from "@youeye/branding/appearance";
 import { defaultDesign } from "@youeye/branding";
 import { notifyAppearanceSaved, subscribeAppearanceChanges } from "@youeye/branding/appearance-events";
 
-test("Studio names and legacy styles resolve consistently without changing server identity", () => {
+test("Studio names and CSS-only styles resolve consistently without changing server identity", () => {
   const shared = { site_name: "Our server", site_name_style: { mytitle: { ...defaultDesign, name: "Our server" }, color: "teal" } };
   const personal = { mytitle: { ...defaultDesign, name: "My corner" }, color: "orange" };
-  const legacy = { color: "blue" };
+  const cssOnly = { color: "blue" };
   assert.deepEqual(resolveTitle(shared, null), { name: "Our server", style: shared.site_name_style });
   assert.deepEqual(resolveTitle(shared, personal), { name: "My corner", style: personal });
-  assert.deepEqual(resolveTitle(shared, legacy), { name: "Our server", style: legacy });
+  assert.deepEqual(resolveTitle(shared, cssOnly), { name: "Our server", style: cssOnly });
   const changed = { ...shared, site_name: "New shared title" };
   assert.equal(resolveTitle(changed, personal).name, "My corner");
   assert.equal(resolveTitle(changed, null).name, "New shared title");
-  assert.equal(resolveTitle(changed, legacy).name, "New shared title");
+  assert.equal(resolveTitle(changed, cssOnly).name, "New shared title");
   assert.equal(shared.site_name, "Our server");
   assert.equal(resolveTitle(shared, { mytitle: { name: "Unvalidated" } }).name, "Our server");
 });

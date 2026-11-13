@@ -1,6 +1,6 @@
 import { designSchema } from "./lib/design";
 
-/** A personal Studio document owns its text. Legacy overrides only own styling. */
+/** A personal Studio document owns its text; a personal style override owns only the styling. */
 export function resolveTitle<S extends object, P extends object>(
   shared: { site_name: string; site_name_style: S | null },
   personal: P | null | undefined,

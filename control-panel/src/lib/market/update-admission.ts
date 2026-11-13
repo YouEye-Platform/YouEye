@@ -366,7 +366,7 @@ async function withContainerLifecycleUnderCore<T>(
   };
   const { listInstalledApps } = await import('./metadata');
   const owners = (await listInstalledApps()).filter(meta => meta.containers.some(container =>
-    (typeof container === 'string' ? container : container.containerName) === name));
+    (container.containerName) === name));
   if (owners.length > 1) throw new Error('Container lifecycle ownership is ambiguous');
   if (owners.length === 1) {
     return withAppLifecycle(owners[0].appId, guardedWork, { ...options, store, resources: [resource] });

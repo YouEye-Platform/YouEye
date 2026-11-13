@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -96,7 +95,6 @@ type SourceOptions struct {
 	ReleaseTag             string
 	ReleaseNotes           string
 	AllowCurrent           bool
-	discoveryOnly          bool
 }
 
 type ReconcileOptions struct {
@@ -285,32 +283,6 @@ func (m *Manager) Status() (Status, error) {
 	return status, nil
 }
 
-func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, error) {
-	if options.Core != nil {
-		copySelection := *options.Core
-		options.Core = &copySelection
-	}
-	bound, err := m.withCoreTransport(options.Core)
-	if err != nil {
-		return Status{}, err
-	}
-	m = bound
-	unlock, err := m.lock()
-	if err != nil {
-		return Status{}, err
-	}
-	defer unlock()
-	// Discovery may observe the exact installed release without treating it as
-	// an upgrade. Stage retains its stricter ordering guard.
-	options.AllowCurrent = true
-	options.discoveryOnly = true
-	_, _, _, _, err = m.resolve(ctx, options)
-	if err != nil {
-		return Status{}, err
-	}
-	return m.Status()
-}
-
 func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Status, returnedErr error) {
 	if options.Core != nil {
 		copySelection := *options.Core
@@ -480,9 +452,6 @@ func (m *Manager) Activate(ctx context.Context, reboot bool) (Status, error) {
 	}
 	if err := m.requireCoreHostStep(journal, "activate-host"); err != nil {
 		return Status{}, err
-	}
-	if state.Transaction.Plan1Compatible() {
-		return Status{}, errors.New("Plan 1-compatible transactions are no longer supported")
 	}
 	layout, err := m.config.DiscoverLayout(slot)
 	if err != nil {
@@ -703,9 +672,6 @@ func validateUpdateMode(current appliance.Manifest) error {
 
 func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedManifest, Layout, appliance.StateRecord, Journal, error) {
 	if options.Core == nil {
-		if err := RequireLegacyUpdateAllowed(m.config.CoreStatePath); err != nil {
-			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, err
-		}
 		// Without a complete core release nothing else binds the host
 		// artifacts, so the manifest itself must be named by its digest.
 		if !validSHA256(strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))) {
@@ -767,16 +733,6 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 			compatibility.TargetImage = verified.Manifest.TargetImageVersion
 		}
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
-	}
-
-	if options.discoveryOnly && verified.Manifest.TargetImageVersion == current.ImageVersion {
-		// Equality is only a no-op for the installed signed source and component
-		// set. A same-version rebuild must not replace the installed identity.
-		if verified.Manifest.SourceTree != current.SourceTree || current.ReleaseSet == nil ||
-			!reflect.DeepEqual(verified.Manifest.ReleaseSet, *current.ReleaseSet) {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("same-version system release does not match the installed identity")
-		}
-		return verified, layout, state, Journal{}, nil
 	}
 
 	existing, existingErr := loadJournal(m.config.JournalPath)

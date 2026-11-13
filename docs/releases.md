@@ -12,6 +12,14 @@ Every product is built once and promoted unchanged through four channels:
 Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema), Pointer and the
 Market catalog. Nothing is signed; integrity comes from HTTPS and SHA-256.
 
+## Signing is off
+
+Releases are unsigned until signing returns, through an update, before the public Release. Every release document
+says `"authority": "digest"`, and readers refuse any other value (`releasecache/core_release.go`,
+`control-panel/src/lib/releases/product-release.ts`). Trust works like this: the channel index names a document's
+SHA-256; the document names every file's SHA-256 and size; the box records the accepted document's SHA-256. All
+downloads use HTTPS with normal certificate checks. When signing returns, it attaches at `authority`.
+
 ## Versions: one build, a name per channel
 
 | What | Name | Example |
@@ -57,7 +65,11 @@ never share commits.
 ## Channel index (no release listing)
 
 Boxes never list releases and never call a release API (`api.github.com` allows 60 anonymous requests per hour
-per public IP; a home with two boxes used that up within hours). They read one small file per channel:
+per public IP; a home with two boxes used that up within hours). No product code or default names a private host;
+the only built-in source is the official repository (`OfficialRepository` and `OfficialIndexHost` in
+`releasecache/repository.go`); `scripts/check-public-release-hygiene.sh` refuses a tree that names the development
+forge before it goes public. Boxes read one small file per channel (`releasecache/channel.go`,
+`control-panel/src/lib/releases/channel-index.ts`):
 
 ```json
 {"schema":"youeye.channel.v1","channel":"stable","published_at":"2026-11-12T10:00:00Z",
@@ -74,7 +86,8 @@ per public IP; a home with two boxes used that up within hours). They read one s
   entry's build version, used for ordering.
 - Products: `youeye`, `pointer`, `market`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`.
 - An HTTP 403 or 429 from a release host is reported as "release host refused or rate-limited the request" and
-  retried with backoff — never as a network failure.
+  retried with backoff — never as a network failure. `install.sh` also retries 5xx and network failures the same
+  way (30, 60, 120 s) and does not retry a 404.
 
 Who reads it:
 

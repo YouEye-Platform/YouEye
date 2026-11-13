@@ -358,7 +358,7 @@ export async function middleware(request: NextRequest) {
 
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), setup routing must win
-  // before legacy Control Panel shell redirects. After setup completes, the IP
+  // before the Control Panel shell redirects. After setup completes, the IP
   // address is a DNS/trust handoff page, never the Settings surface.
   if (isIPViaCaddy(host)) {
     // Allow these paths through (needed for setup flow to work)
@@ -395,9 +395,8 @@ export async function middleware(request: NextRequest) {
       : NextResponse.redirect(new URL('/setup', request.url));
   }
 
-  // --- Retire the legacy control.<domain> / (dashboard) shell (D4) ---
-  // The old admin shell is replaced by the unified Settings. Redirect its
-  // routes to Settings: subdomain (control.<base>) → base-domain Settings;
+  // --- Send the control.<domain> / (dashboard) shell paths to Settings (D4) ---
+  // Settings is the only admin surface. Redirect the shell paths to it: subdomain (control.<base>) → base-domain Settings;
   // direct/PAM access (IP or :3000) → same-origin /settings. This never matches
   // /settings, /market, /embed, /api, or identity routes (different prefixes),
   // so the Settings surface, embeds, and APIs keep working on either host.

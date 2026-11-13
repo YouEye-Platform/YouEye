@@ -20,14 +20,14 @@ const certificate = {
   issuedAt: now,
   expiresAt: '2026-07-01T12:00:00.000Z',
 };
-const terms = { version: 'terms-v2', summary: 'Certificate disclosure', certificateTransparencyRequired: true };
+const terms = { version: 'terms-2026', summary: 'Certificate disclosure', certificateTransparencyRequired: true };
 const readiness = { installation: { canProceedNow: true, state: 'ready', reasonCodes: [] } };
 
 type FixtureState = NamesLifecycleState & { futurePrivateField: string };
 
 function lifecycle(): FixtureState {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     service: { id: 'names-service', canonicalOrigin: 'https://names.example.test', apiVersion: 'v1', managedZone: 'example.test' },
     name: 'quiet-forest',
     fqdn: 'quiet-forest.example.test',

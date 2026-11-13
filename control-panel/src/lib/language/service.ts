@@ -64,7 +64,7 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
         if (localeVar) {
           result.push({
             appId: app.appId,
-            containers: app.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
+            containers: app.containers.map((c: any) => c.containerName),
             envVar: localeVar[0],
             format: 'iso639',
           });

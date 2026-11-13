@@ -114,7 +114,7 @@ func TestApplianceCommandPlanInitializesStateAndBootCounting(t *testing.T) {
 	}
 	joined := commandStrings(commands)
 	for _, want := range []string{
-		"youeye.appliance.install-journal.v3",
+		"youeye.appliance.install-journal.v1",
 		"0123456789abcdef0123456789abcdef",
 		"mount -o ro /dev/vda3 /mnt/youeye-system",
 		"$state_root/var/lib/systemd",
@@ -287,7 +287,7 @@ func TestPreserveReinstallReconcilesUpdateHistoryOnlyAfterVerifiedInstall(t *tes
 	}
 	transaction := "0123456789abcdef0123456789abcdef"
 	image := "0.6.0-dev.2"
-	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v3","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+sha+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
+	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v1","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+sha+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
 	write(filepath.Join(root, "appliance-state.json"), `{"slots":{"current":"A","current_image_version":"`+image+`"},"transaction":{}}`)
 	old := `{"schema":"youeye.system-update.journal.v1","phase":"rolled-back"}`
 	write(filepath.Join(updates, "journal.json"), old)
@@ -302,7 +302,7 @@ func TestPreserveReinstallReconcilesUpdateHistoryOnlyAfterVerifiedInstall(t *tes
 	}
 	// Use the actual digest only after proving the mismatch was rejected.
 	manifestSHA := fmt.Sprintf("%x", sha256.Sum256(manifest))
-	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v3","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+manifestSHA+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
+	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v1","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+manifestSHA+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
 	cmd := exec.Command("sh", "-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", root, transaction, manifestSHA, image)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("reconcile: %v: %s", err, out)

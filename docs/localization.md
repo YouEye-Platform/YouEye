@@ -33,6 +33,9 @@ sentences, third-party widgets and responsive layouts still need review.
 
 ## Adding a language
 
+Supported today: English, Russian, Spanish, German and French (`en`, `ru`, `es`,
+`de`, `fr`).
+
 1. Add the canonical language code, native name, English name and `ltr`/`rtl`
    direction to `shared/languages.json`. Selectors and API validation use it.
 2. Add matching `ui/messages/<code>.json` and
@@ -78,9 +81,9 @@ contract. Tests render all supported consent languages, including hostile text.
 Do not pass browser-supplied user identities into these resolution paths.
 
 Pointer's shared React mount receives the host's resolved locale and exposes an
-optional `setLocale` method. Updating locale must preserve the existing mount,
-its navigation and unsaved state; older modules without the method remain
-compatible. Pointer's factory owns per-mount state, and the host keeps credentials
+optional `setLocale` method (`components/settings-shell/pointer-console.tsx`).
+Updating locale must preserve the existing mount, its navigation and unsaved
+state; the host calls the method only when the module has it. Pointer's factory owns per-mount state, and the host keeps credentials
 behind its existing authenticated request adapter. Pointer owns its catalogues
 and generated-label checks; see its contributor localization guide.
 
@@ -132,7 +135,8 @@ misplaced client directives.
 
 ## Error and interrupted-operation surfaces
 
-The legacy Pages Router error page can render without an App Router provider.
+The dashboard's Pages Router error page (`ui/src/pages/_error.tsx`) can render
+without an App Router provider.
 It creates a translator from its explicit supported catalogue and validated
 locale, with an English fallback. Test errors independently of the normal root
 layout so a failure cannot cause another provider error.

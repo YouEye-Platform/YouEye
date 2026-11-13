@@ -3,9 +3,9 @@
  *
  * GET /api/ui-bridge/updates/status
  *
- * Returns all active update statuses from the background queue +
- * legacy unified statuses (Spine + DB). The queue is the primary source
- * for updates initiated from YE-UI; legacy statuses cover Spine-managed
+ * Returns all active update statuses from the background queue and the
+ * unified statuses (Spine + DB). The queue is the primary source for
+ * updates initiated from YE-UI; the unified statuses cover Spine-managed
  * updates that bypass the queue.
  */
 

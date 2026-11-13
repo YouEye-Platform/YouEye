@@ -6,7 +6,7 @@
  */
 
 import { db, ensureSchema } from "@/db";
-import { timelineEntries, pendingTimelineEvents } from "@/db/schema";
+import { timelineEntries } from "@/db/schema";
 import { eq, and, desc, asc } from "drizzle-orm";
 import { withTimelineUserLock } from "../timeline-lock";
 import { admitTimelineWrite } from "./timeline-collection";
@@ -331,14 +331,4 @@ export async function getTimelineCounts(
     }
   }
   return counts;
-}
-
-/** Unfenced legacy pending payloads cannot be replayed into a new consent interval.
- * New ingestion requires an encryption key and never queues plaintext.
- */
-export async function processPendingEvents(userId: string, _encryptionKey: CryptoKey): Promise<number> {
-  return withTimelineUserLock(userId, async (tx) => {
-    await tx.delete(pendingTimelineEvents).where(eq(pendingTimelineEvents.userId, userId));
-    return 0;
-  });
 }

@@ -14,12 +14,7 @@ type User = { id: string; name: string; email: string; role: string };
 type Screen = { setLocale?(locale: string): void; navigate(path: string): void; setTheme(theme: 'light' | 'dark'): void; unmount(): void };
 const assets = '/api/pointer-ui/';
 const theme = () => document.documentElement.classList.contains('dark') ? 'dark' : 'light';
-const pointerPath = (path: string) => {
-  const relative = path.replace(/^\/settings\/ai(?=\/|$)/, '') || '/models';
-  if (['/playground', '/compare', '/chat'].includes(relative)) return '/test-model';
-  if (['/usage', '/diagnostics'].includes(relative)) return '/dashboard';
-  return relative;
-};
+const pointerPath = (path: string) => path.replace(/^\/settings\/ai(?=\/|$)/, '') || '/models';
 
 function PointerLoading({ path }: { path: string }) {
   const aiNavigation = useInterfaceTranslations("aiNavigation");
@@ -56,7 +51,7 @@ async function request(path: string, init: RequestInit, translateInterface: (key
   } else {
     if (!path.startsWith('/api/') || /[\\#]/.test(path)) throw new Error(translateInterface("md3a811b38e16"));
     // The root service worker can change the fetch referrer. Use the explicit
-    // control namespace rather than the legacy Referer-selected root API.
+    // control namespace rather than the Referer-selected root API.
     destination = '/settings/api/ai' + path.slice(4);
     headers.delete('authorization');
   }

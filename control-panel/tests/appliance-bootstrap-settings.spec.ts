@@ -34,7 +34,7 @@ test('development access can only be inspected or disabled by an administrator',
 test('development access reports applied TTY2 state without treating a request as enabled', () => {
   const client = source('src/lib/spine/client.ts');
   const card = source('src/components/settings-shell/development-access-card.tsx');
-  assert.match(client, /schema: 'youeye\.development-access-status\.v2'/);
+  assert.match(client, /schema: 'youeye\.development-access-status\.v1'/);
   for (const field of [
     'local_root_console_requested',
     'local_root_console_persisted',

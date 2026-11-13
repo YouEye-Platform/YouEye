@@ -77,10 +77,9 @@ function copyRequestHeaders(request: NextRequest, token: string | null): Headers
 
   const appId = request.headers.get("x-youeye-app") || "";
   if (appId) headers.set("X-YouEye-App", appId);
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-    headers.set("X-YouEye-App-Token", token);
-  }
+  // Only Caddy's scoped grant route reads this header (and deletes it before the target app), so the caller passes
+  // its token only on that path (`connection.transport`); a direct host:port connection never gets it.
+  if (token) headers.set("X-YouEye-App-Token", token);
   return headers;
 }
 
@@ -179,7 +178,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ targetAp
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? null;
   const init: RequestInit = {
     method: request.method,
-    headers: copyRequestHeaders(request, bearer),
+    headers: copyRequestHeaders(request, connection.transport ? bearer : null),
     redirect: "manual",
     signal: request.signal,
   };

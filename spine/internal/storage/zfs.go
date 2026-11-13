@@ -96,7 +96,7 @@ func canonicalPath(path string) string {
 }
 
 // IsYouEyeMarkedPool reports whether the pool exists AND carries the YouEye
-// ownership marker. Legacy installer pools (no marker) return false.
+// ownership marker. Unmarked pools return false.
 func IsYouEyeMarkedPool(name string) bool {
 	if !ZpoolExists(name) {
 		return false

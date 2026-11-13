@@ -258,7 +258,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 	raw, digest := fixtureCoreRelease(t)
 	hosts := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw),
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.2-dev.1/core-release.json":     string(raw),
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.2-dev.1/core-release.json":    string(raw),
 	}, nil)
 	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest)
 	if err != nil || release.TagName != testFixtureTag || release.coreSHA256 != digest {
@@ -279,7 +279,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 	before := len(hosts.Requests())
 	for name, args := range map[string][2]string{
 		"tag without digest": {testFixtureTag, ""},
-		"legacy tag":         {"appliance-v0.6.1", digest},
+		"appliance tag":      {"appliance-v0.6.1", digest},
 		"uppercase digest":   {testFixtureTag, strings.ToUpper(digest)},
 	} {
 		if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", args[0], args[1]); err == nil {
@@ -329,8 +329,8 @@ func TestDownloadCoreBlobLocatesAssetsInTheReleaseRepository(t *testing.T) {
 	blob := releasecache.CoreBlob{Name: "spine-linux-amd64", SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(payload))}
 	hosts := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/spine-linux-amd64": payload,
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/spine-linux-amd64":     payload,
-		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/build-inputs.json":     "changed",
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/spine-linux-amd64":    payload,
+		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.0-dev.4/build-inputs.json":    "changed",
 	}, nil)
 	release := applianceRelease{Repository: testForgeRepository, TagName: testFixtureTag}
 	dir := t.TempDir()

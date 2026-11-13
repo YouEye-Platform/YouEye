@@ -13,8 +13,6 @@ export const AI_SECTIONS = [
 export function isAISectionActive(pathname: string, href: string) {
   const relative = pathname.replace(/^\/settings\/ai(?=\/|$)/, "") || "/models";
   const canonical = relative === "/keys" || relative.startsWith("/keys/") ? "/instances"
-    : ["/playground", "/compare", "/chat"].includes(relative) ? "/test-model"
-    : ["/usage", "/diagnostics"].includes(relative) ? "/dashboard"
     : relative.startsWith("/connections") ? relative.replace("/connections", "/providers") : relative;
   return canonical === href || canonical.startsWith(href + "/");
 }

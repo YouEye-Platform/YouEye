@@ -122,7 +122,7 @@ func ReconcileAppliance(opts InstallOptions) error {
 		if err := VerifyStorageMatchesDecision(opts.Decision); err != nil {
 			return err
 		}
-	} else if err := initializeWithPreseed(true, opts); err != nil {
+	} else if err := initializeWithPreseed(opts); err != nil {
 		return err
 	}
 	StorageDriver = "zfs"

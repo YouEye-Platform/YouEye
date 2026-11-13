@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	PolicySchema       = "youeye.development-access.v1"
-	StatusSchema       = "youeye.development-access-status.v2"
-	legacyStatusSchema = "youeye.development-access-status.v1"
-	DefaultRoot        = "/var/lib/youeye-state/bootstrap"
+	PolicySchema = "youeye.development-access.v1"
+	StatusSchema = "youeye.development-access-status.v1"
+	DefaultRoot  = "/var/lib/youeye-state/bootstrap"
 
 	notAppliedDetail = "Development access policy has not been applied on this boot"
 )
@@ -67,15 +66,6 @@ type Status struct {
 	Detail                    string  `json:"detail"`
 	CanEnableRemotely         bool    `json:"can_enable_remotely"`
 	CanDisableRemotely        bool    `json:"can_disable_remotely"`
-}
-
-type legacyAppliedStatus struct {
-	Schema                   string  `json:"schema,omitempty"`
-	LocalRootConsole         bool    `json:"local_root_console"`
-	RootPasswordSSHRequested bool    `json:"root_password_ssh_requested"`
-	RootPasswordSSHEffective bool    `json:"root_password_ssh_effective"`
-	NetworkScope             *string `json:"network_scope"`
-	Detail                   string  `json:"detail"`
 }
 
 type CommandRunner interface {
@@ -155,16 +145,6 @@ func (manager *Manager) Status() (Status, error) {
 				applied.RootPasswordSSHRequested != policy.RootPasswordSSH {
 				return Status{}, fmt.Errorf("read applied development access status: invalid status record")
 			}
-		case legacyStatusSchema:
-			if err := strictJSON(raw, &legacyAppliedStatus{}); err != nil || !hasJSONFields(raw,
-				"schema", "local_root_console", "root_password_ssh_requested",
-				"root_password_ssh_effective", "network_scope", "detail",
-			) {
-				return Status{}, fmt.Errorf("read applied development access status: invalid status record")
-			}
-			// During the reader-first rollout, a legacy record only conveys that
-			// policy was requested; none of its realized state is safe to report
-			// before v2 has been applied.
 		default:
 			return Status{}, fmt.Errorf("read applied development access status: invalid status record")
 		}
@@ -271,19 +251,6 @@ func strictJSON(raw []byte, target any) error {
 		return errors.New("trailing JSON value")
 	}
 	return nil
-}
-
-func hasJSONFields(raw []byte, names ...string) bool {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return false
-	}
-	for _, name := range names {
-		if _, ok := fields[name]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func writeAtomic(path string, raw []byte, mode os.FileMode) error {

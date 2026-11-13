@@ -29,36 +29,18 @@ function spineServer(): http.Server {
   });
 }
 
-test('socket compatibility fallback re-evaluates canonical path after startup race', async (t) => {
+test('each request re-evaluates the Spine socket after a startup race', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'youeye-spine-client-'));
-  const canonical = join(root, 'youeye.sock');
-  const legacy = join(root, 'spine.sock');
-  const legacyServer = spineServer();
-  await listen(legacyServer, legacy);
+  const socket = join(root, 'youeye.sock');
   t.after(async () => rm(root, { recursive: true, force: true }));
 
-  const client = new SpineClient('', { canonical, legacy });
+  const client = new SpineClient(socket);
+  await assert.rejects(client.health(), /could not reach the Spine API through its socket/);
+
+  const server = spineServer();
+  await listen(server, socket);
+  t.after(async () => close(server));
+
   assert.deepEqual(await client.health(), { status: 'ok' });
-
-  await close(legacyServer);
-  const canonicalServer = spineServer();
-  await listen(canonicalServer, canonical);
-  t.after(async () => close(canonicalServer));
-
   assert.deepEqual(await client.version(), { version: '0.5.17.0.3', service: 'spine' });
-});
-
-test('explicit Spine socket remains authoritative without legacy fallback', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'youeye-spine-explicit-'));
-  const explicit = join(root, 'missing.sock');
-  const legacy = join(root, 'legacy.sock');
-  const legacyServer = spineServer();
-  await listen(legacyServer, legacy);
-  t.after(async () => {
-    await close(legacyServer);
-    await rm(root, { recursive: true, force: true });
-  });
-
-  const client = new SpineClient(explicit, { canonical: explicit, legacy });
-  await assert.rejects(client.health(), /configured socket paths/);
 });

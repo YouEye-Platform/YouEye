@@ -1,5 +1,5 @@
 {
-  "schema": "youeye.noto-avatar-inventory.v2",
+  "schema": "youeye.noto-avatar-inventory.v1",
   "upstream_repository": "https://github.com/googlefonts/noto-emoji",
   "upstream_version": "2.051",
   "upstream_commit": "8998f5dd683424a73e2314a8c1f1e359c19e8742",

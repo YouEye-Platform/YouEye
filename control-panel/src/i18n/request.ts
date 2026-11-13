@@ -108,7 +108,7 @@ async function getSessionUserId(): Promise<string | null> {
 }
 
 export default getRequestConfig(async () => {
-  // Signed-in users always use their authenticated preference. Legacy embed/setup
+  // Signed-in users always use their authenticated preference. Setup language
   // cookies must never override it or leak a previous user's locale after sign-out.
   const userId = await getSessionUserId();
   const userLang = userId ? await getUserLanguage(userId) : null;

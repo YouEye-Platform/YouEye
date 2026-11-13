@@ -14,7 +14,7 @@ test('notification embed is on the ONE <UnifiedEmbed kind="notification"> (hand-
   assert.match(e, /from "@\/components\/embeds\/unified-embed"/);
   assert.match(e, /kind="notification"/);
   assert.match(e, /timeout=\{3000\}/);            // 3s → fallback
-  assert.doesNotMatch(e, /youeye-embed-ready/);   // legacy protocol removed
+  assert.doesNotMatch(e, /youeye-embed-ready/);   // no youeye-embed-* protocol
   assert.doesNotMatch(e, /addEventListener\("message"/);
   assert.match(e, /fallback=\{fallback\}/);        // never silent
 });

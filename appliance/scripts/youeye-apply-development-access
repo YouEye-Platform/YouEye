@@ -39,7 +39,7 @@ write_status() {
 		--argjson effective_ssh "$effective_ssh" \
 		--arg network_scope "$network_scope" \
 		--arg detail "$detail" \
-		'{schema:"youeye.development-access-status.v2",
+		'{schema:"youeye.development-access-status.v1",
 		  local_root_console_requested:$console_requested,
 		  local_root_console_persisted:$console_persisted,
 		  local_root_console_active:$console_active,

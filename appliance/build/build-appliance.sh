@@ -244,7 +244,6 @@ install -D -m 0755 "$source_dir/appliance/scripts/youeye-apply-development-acces
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-apply-development-overlay" "$rootfs/usr/local/libexec/youeye-apply-development-overlay"
 install -D -m 0755 "$source_dir/appliance/initramfs/youeye-state-hook" "$rootfs/etc/initramfs-tools/hooks/youeye-state"
 install -D -m 0755 "$source_dir/appliance/initramfs/youeye-state" "$rootfs/etc/initramfs-tools/scripts/local-bottom/youeye-state"
-install -D -m 0644 "$source_dir/appliance/initramfs/youeye-network-state" "$rootfs/usr/lib/youeye/initramfs/youeye-network-state"
 install -D -m 0644 "$source_dir/appliance/initramfs/youeye-state-migration" "$rootfs/usr/lib/youeye/initramfs/youeye-state-migration"
 
 for unit in \

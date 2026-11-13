@@ -8,7 +8,7 @@ Spine uses a YAML configuration file to customize behavior. Configuration follow
 
 1. **CLI flags** - `--config /path/to/config.yaml`
 2. **Environment variables** - `SPINE_*` prefix
-3. **Config file** - `/etc/youeye/config.yaml` (legacy: `/etc/spine/config.yaml`)
+3. **Config file** - `/var/lib/youeye/config/config.yaml`, then `/etc/youeye/config.yaml`
 4. **Defaults** - Built-in sensible defaults
 
 Spine works without a config file - all values have sensible defaults.

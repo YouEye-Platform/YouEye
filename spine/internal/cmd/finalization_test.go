@@ -134,7 +134,7 @@ func TestYouEyeAPIServerCommandLineIdentity(t *testing.T) {
 		want        bool
 	}{
 		{"youeye", "/usr/local/bin/youeye\x00api\x00serve\x00", true},
-		{"legacy spine", "/usr/local/bin/spine\x00api\x00serve\x00", true},
+		{"other binary", "/usr/local/bin/spine\x00api\x00serve\x00", false},
 		{"wrong subcommand", "/usr/local/bin/youeye\x00deploy\x00", false},
 		{"unrelated process", "/usr/bin/sleep\x0030\x00", false},
 	} {

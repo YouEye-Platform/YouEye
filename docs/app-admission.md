@@ -47,10 +47,20 @@ and identity headers, and applies the same decision to direct application URLs
 and registered alternate routes. App manifests cannot disable this boundary.
 The administrator's explicit public exposure setting bypasses browser admission
 for the application's URLs; protected UI services remain user authenticated.
-New Caddy bridge interfaces use a deterministic hash of the complete app ID,
-within Linux's 15-byte name limit. Apps sharing an ID prefix therefore keep
-distinct interfaces. Existing valid legacy attachments retain their names;
-foreign bridges, unknown names and interface collisions fail before attachment.
+An official-catalog manifest with `public_access: true` (an app that protects
+itself) pre-selects that setting at install: the install dialog shows it, the
+CLI says so (`--public-access=false` declines), and the install applies it as the
+installing administrator once the app is healthy, audited as
+`public_access_at_install`. The manifest default never overrides an
+administrator's earlier policy change for the same installation, and apps from
+added sources or URLs default to household-only. Bundle members install
+household-only.
+Caddy's interface on each app bridge is named `eth-` plus the first 11 hex
+characters of the SHA-256 of the complete app ID, within Linux's 15-byte name
+limit, so apps sharing an ID prefix keep distinct interfaces
+(`lib/incus/app-network-caddy-nic.ts`). Only that exact name on the app's own
+bridge is accepted; a foreign bridge, any other name or a name collision fails
+before attachment.
 WebSocket handshakes receive the same admission check as ordinary HTTP. The
 authorization subrequest removes connection-upgrade headers so the identity
 server handles it as an HTTP request. After admission, the application backend
@@ -236,7 +246,14 @@ Authenticated multi-user browser workflows, lifecycle/update rollback and
 encrypted fresh-target restore remain required development acceptance; source
 checks and service health alone do not prove them.
 
-Native channel updates record the exact applied tag manifest digest and reference. Owner adoption can recover a legacy stale catalog binding only from the latest protected, completed committed update: its manifest and every verified native artifact must match the original installed version, container inventory and installation timeline. Missing, unfinished, rolled-back or mismatched evidence leaves retained data closed. Ownership, retained roots, storage and database validation remain mandatory.
+Updates record the exact manifest digest and reference that were applied
+(`manifestDigest` in install metadata). Adopting retained data requires the
+original manifest: same app ID, installed version, manifest digest, integration,
+container set and database mode (`validateRetainedManifest` in
+`lib/admission/retained-data.ts`). Anything else is refused with "Retained data
+requires the original app manifest/version; adopt it before updating". There is
+no recovery from an older or mismatched catalog binding. Ownership, retained
+roots, storage and database validation remain mandatory.
 
 Imported and retained native runtimes must have exactly one pool-backed root disk before reconciliation. Adoption keeps that root explicitly, including when the retained runtime has no inherited profile, and replaces other devices with the target manifest data mounts and app network. Missing or ambiguous roots fail before provider mutation.
 

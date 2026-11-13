@@ -123,12 +123,12 @@ func printPoolLayout(snap hoststorage.Snapshot) {
 		printLivePoolSize()
 		fmt.Println("  Data location: /var/lib/youeye on the root filesystem")
 	case pool.Driver == "zfs":
-		// Real ZFS pool: dedicated-disk (source default/incus) or legacy (default).
+		// Real ZFS pool: dedicated-disk (source default/incus) or unmarked.
 		marker := hoststorage.PoolComment(hoststorage.PoolName)
 		if marker == hoststorage.PoolMarker {
 			fmt.Printf("  Storage mode: dedicated-disk ZFS pool (YouEye-owned, marker=%q)\n", marker)
 		} else {
-			fmt.Printf("  Storage mode: ZFS pool (legacy layout, no YouEye marker)\n")
+			fmt.Printf("  Storage mode: ZFS pool without the YouEye marker\n")
 		}
 		fmt.Printf("  Incus source: %s\n", emptyDash(pool.Source))
 		printDatasetLayout()

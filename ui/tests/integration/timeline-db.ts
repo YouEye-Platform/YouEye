@@ -12,7 +12,7 @@ let ready: Promise<void> | undefined;
 export function ensureSchema() {
   return ready ||= (async () => {
     await admin.unsafe(`CREATE SCHEMA ${namespace}`);
-    for (const table of ['users', 'system_settings', 'user_encryption_keys', 'pin_sessions', 'timeline_entries', 'pending_timeline_events']) {
+    for (const table of ['users', 'system_settings', 'user_encryption_keys', 'pin_sessions', 'timeline_entries']) {
       await admin.unsafe(`CREATE TABLE ${namespace}.${table} (LIKE public.${table} INCLUDING ALL)`);
     }
   })();

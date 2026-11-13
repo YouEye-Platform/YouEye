@@ -11,9 +11,9 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-// New media carries this immutable capability marker. Legacy media and retained
-// answers keep their original contract; new media cannot silently use legacy
-// appliance discovery when complete System metadata is missing.
+// Every built image and installer ISO carries this marker, so a real install
+// always freezes a complete System selection before disk writes. Only the
+// provider test fixtures run without it.
 const coreSelectionRequiredPath = "/usr/share/youeye/core-selection-required"
 
 func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, bundle verifiedApplianceBundle, client *http.Client, required bool) (applianceInstallInput, error) {

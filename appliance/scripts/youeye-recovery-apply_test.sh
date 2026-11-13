@@ -6,7 +6,6 @@ script="$root/appliance/scripts/youeye-recovery-apply"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 mkdir -p "$tmp/request" "$tmp/first" "$tmp/bin"
-printf '%s\n' '{"release_set":{"source":"https://example.test/YouEye","branch":"main","control_panel":{"tag":"cp-v0.5.29","artifact_sha256":"be902615e28df357e13c2f244397cade46709da4f3b3452f7a9d8f8d86057d92"},"ui":{"tag":"ui-v0.5.9","artifact_sha256":"4b0e866f3eac90a5ebfba14aac382e3a92415e02a2efaa2856a7426ec8816251"}}}' > "$tmp/sealed-release.json"
 
 cat > "$tmp/bin/youeye" <<'EOF'
 #!/bin/sh
@@ -33,14 +32,10 @@ TEST_CALLS="$tmp/calls" YOUEYE_RECOVERY_REQUEST_DIR="$tmp/request" \
 YOUEYE_RECOVERY_FIRST_DEPLOY="$tmp/first" YOUEYE_RECOVERY_YOUEYE="$tmp/bin/youeye" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY="$tmp/bin/apply-development-access" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY="$tmp/development-access.json" \
-YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS="$tmp/development-access-status.json" \
-YOUEYE_RECOVERY_SEALED_RELEASE="$tmp/sealed-release.json" "$script"
+YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS="$tmp/development-access-status.json" "$script"
 grep -Fxq 'cleanup --yes --keep-data' "$tmp/calls"
-grep -Fxq 'repo set https://example.test/YouEye' "$tmp/calls"
-grep -Fxq 'channel set default --source https://example.test/YouEye --branch main --tag  --fallback none' "$tmp/calls"
-grep -Fxq 'channel set spine --source https://example.test/YouEye --branch main --tag  --fallback none' "$tmp/calls"
-grep -Fxq 'channel set control --source https://example.test/YouEye --branch main --tag cp-v0.5.29 --artifact-sha256 be902615e28df357e13c2f244397cade46709da4f3b3452f7a9d8f8d86057d92 --fallback none' "$tmp/calls"
-grep -Fxq 'channel set ui --source https://example.test/YouEye --branch main --tag ui-v0.5.9 --artifact-sha256 4b0e866f3eac90a5ebfba14aac382e3a92415e02a2efaa2856a7426ec8816251 --fallback none' "$tmp/calls"
+# A platform reset only cleans up: the next first deploy installs the accepted System selection.
+test "$(cat "$tmp/calls")" = 'cleanup --yes --keep-data'
 test ! -e "$tmp/request/request.json"
 test ! -e "$tmp/first"
 jq -e '.schema == "youeye.appliance.recovery.v1" and .operation == "reset-platform" and .stage == "complete"' "$tmp/request/last-result.json" >/dev/null
@@ -64,7 +59,7 @@ jq -e '.operation == "factory-reset" and .stage == "complete"' "$tmp/request/las
 cat > "$tmp/bin/apply-development-access" <<'EOF'
 #!/bin/sh
 printf '%s\n' apply-development-access >> "${TEST_CALLS:?}"
-printf '%s\n' '{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}' > "${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:?}"
+printf '%s\n' '{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}' > "${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:?}"
 EOF
 chmod 0755 "$tmp/bin/apply-development-access"
 mkdir -p "$tmp/first"
@@ -74,7 +69,7 @@ YOUEYE_RECOVERY_FIRST_DEPLOY="$tmp/first" YOUEYE_RECOVERY_YOUEYE="$tmp/bin/youey
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY="$tmp/bin/apply-development-access" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY="$tmp/development-access.json" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS="$tmp/development-access-status.json" "$script"
-jq -e '.schema == "youeye.development-access-status.v2" and
+jq -e '.schema == "youeye.development-access-status.v1" and
        (.local_root_console_requested | not) and (.local_root_console_effective | not) and
        (.root_password_ssh_requested | not) and (.root_password_ssh_effective | not)' \
     "$tmp/development-access-status.json" >/dev/null

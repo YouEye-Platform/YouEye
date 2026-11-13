@@ -74,7 +74,7 @@ test('Backups keeps core mandatory and makes app selection explicit', () => {
   assert.doesNotMatch(setup, /fetch\('\/settings\/api\/auth\/csrf'/);
 });
 
-test('the sole backup format is canonical v1 without legacy request paths', () => {
+test('the sole backup format is canonical v1 with one set of request paths', () => {
   const platform = read('src/lib/backup/platform-backup.ts');
   const restoreRoute = read('src/app/api/backup/restore/route.ts');
   const spineClient = read('src/lib/spine/client.ts');

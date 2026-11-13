@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test';
-const base = `https://recipes.${(process.env.BOX_DOMAIN || (() => { throw new Error('Set BOX_DOMAIN to the test box domain'); })())}`;
+const base = `https://mealie.${(process.env.BOX_DOMAIN || (() => { throw new Error('Set BOX_DOMAIN to the test box domain'); })())}`;
 const browser = await chromium.launch();
 for (const who of (process.argv[2] ? [process.argv[2]] : ['admin', 'user'])) {
   const ctx = await browser.newContext({ storageState: `.auth/${who}.json` });

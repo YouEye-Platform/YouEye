@@ -27,7 +27,7 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
     assertPrivateCredentialConfig(manifest.configFiles);
     if (manifest.metadata.id !== appId) throw new Error('Installed app identity mismatch');
     const names = manifest.containers.map(spec => getContainerName(appId, spec.name, manifest.containers.length));
-    const installedNames = metadata.containers.map(spec => typeof spec === 'string' ? spec : spec.containerName);
+    const installedNames = metadata.containers.map(spec => spec.containerName);
     if (names.length !== installedNames.length || names.some(name => !installedNames.includes(name))) {
       throw new Error('Installed app runtime identity mismatch');
     }

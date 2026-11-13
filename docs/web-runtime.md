@@ -25,10 +25,10 @@ a successful framework compilation does not substitute for either check.
 
 ## Installed application runtime
 
-The source-owned Web build kit and independent Node24 validation profile must
-be selected together. CP, UI and native standalone packages include the exact
-Node executable and complete upstream licence in `.youeye-runtime`, with a
-manifest of the reviewed hashes. `server.js` remains the service entrypoint;
+CP, UI and native standalone packages include the exact Node executable and
+its upstream licence in `.youeye-runtime`, with a manifest of the reviewed
+hashes (`control-panel/scripts/bundle-node-runtime.mjs` refuses any other Node
+binary or licence). `server.js` remains the service entrypoint;
 it starts the bundled runtime before application code and forwards termination
 signals. Updating or recovering an application switches its runtime with its
 digest-bound payload. No guest-wide Node replacement is required. Docker builds use
@@ -42,7 +42,7 @@ API responses, application HTML, RSC responses and all other requests use the
 network with `no-store`. Activation removes the previous worker's private-data
 cache names. Offline navigation displays that identity-free document without the application layout, scripts or API calls. It must not
 recover a previous account's content after logout, account switch or revocation.
-Real browser cache and account-transition checks are required for acceptance.
+Check browser caching and account switching in a real browser when changing this.
 
 The embedded Pointer interface uses the host's React runtime and the explicit
 `/settings/api/ai` management namespace (including the corresponding System
@@ -83,9 +83,9 @@ application admission, service consent and scoped route checks still run before
 network access. Test real connections, wrong CA/hostname rejection, compressed
 responses, redirects and cancellation when changing this transport.
 
-## Reviewed dependency holds (2026-10-19)
+## Dependency holds
 
-Alex owns review of these holds on the next Web patch, or by 2026-11-19:
+Review these whenever the Web dependencies are updated:
 
 - TypeScript remains on 5.9.3 and Lucide on 0.563.0. Their new major versions
   need separate API/tooling migration evidence; this patch updates compatible
@@ -103,17 +103,16 @@ Alex owns review of these holds on the next Web patch, or by 2026-11-19:
 - `node-forge` 1.4.0 has no upstream fix for
   [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv).
   It remains a transitive ACME dependency. Product calls use `acme.crypto`,
-  backed by Node WebCrypto/@peculiar/x509; they do not call the legacy
+  backed by Node WebCrypto/@peculiar/x509; they do not call the
   `acme.forge` RSA verifier. Do not introduce that verifier into trust decisions.
 - Drizzle's development loader retains esbuild 0.18.20, affected by
   [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99).
   Its vulnerable development-server API is not used by migration/config loading
   or shipped production services. Do not expose an esbuild development server.
 
-These are conditional applicability findings, not a zero-advisory claim.
-Recheck resolved graphs and production tracing after dependency changes. The
-remaining reported counts must accompany release evidence, including the
-separate browser, authentication, update and recovery results.
+These are findings about how each package is used, not a claim of zero
+advisories. Recheck the resolved dependency graph and production tracing after
+dependency changes.
 
 Private network requests set `cache: no-store` on a cloned Request while explicitly
 preserving its referrer and referrer policy. Do not put this option in Serwist's

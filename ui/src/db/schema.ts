@@ -313,25 +313,6 @@ export const timelineEntries = pgTable("timeline_entries", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
-/**
- * Legacy pending timeline events. New writers never store plaintext here.
- * Unfenced legacy payloads are discarded at consent transitions or unlock,
- * because their collection interval cannot be established.
- */
-export const pendingTimelineEvents = pgTable("pending_timeline_events", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  /** Which collection: history, future */
-  collection: text("collection").notNull().default("history"),
-  /** Source app ID */
-  appId: text("app_id").notNull(),
-  /** Unencrypted event payload (JSON) */
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
-});
-
 // ============================================
 // PIN & Encryption Keys
 // ============================================

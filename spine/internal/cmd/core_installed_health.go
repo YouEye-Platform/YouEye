@@ -12,7 +12,7 @@ import (
 var coreInstalledHealthStateRoot = systemupdate.CoreStatePath
 
 // A fresh initialized core can converge before the first-setup gate opens.
-// Its signed selection and static indexes supersede legacy per-component pins;
+// Its selection and static indexes supersede per-component pins;
 // the immutable host marker still has to match its own retained build identity.
 func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, string, string)) bool {
 	m := systemupdate.CoreManager{Root: coreInstalledHealthStateRoot}

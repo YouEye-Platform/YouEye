@@ -31,7 +31,7 @@ type BackupSourceIdentity struct {
 	Schema              string `json:"schema"`
 	RuntimeKind         string `json:"runtime_kind"`
 	ImageVersion        string `json:"image_version,omitempty"`
-	SourceTree        string `json:"source_tree,omitempty"`
+	SourceTree          string `json:"source_tree,omitempty"`
 	ReleaseBranch       string `json:"release_branch,omitempty"`
 	StateSchemaVersion  int    `json:"state_schema_version,omitempty"`
 	DataSchemaVersion   int    `json:"data_schema_version,omitempty"`

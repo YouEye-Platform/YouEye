@@ -264,6 +264,7 @@ export function compileApp(parsed: ParsedApp): AppManifest {
       })),
     },
     forwardAuth: app.forward_auth === undefined ? 'default' : app.forward_auth ? 'enabled' : 'disabled',
+    publicAccess: app.public_access === true ? true : undefined,
     sso: app.sso ? {
       callback_path: app.sso.callback,
       entry_url: app.sso.entry,

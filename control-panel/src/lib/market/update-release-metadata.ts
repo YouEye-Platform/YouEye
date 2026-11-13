@@ -122,7 +122,7 @@ export class ReleaseMetadataUpdateProvider implements AppUpdateProvider {
   async cleanup(record: AppUpdateRecord) { this.workspace(record).remove(); }
 }
 
-/** Returns null for legacy/new payloads. A matching build with a broken installed
+/** Returns null when the installed artifacts carry no product receipt or the payload differs. A matching build with a broken installed
  * receipt fails; it must not silently fall back to a replacement update. */
 export async function updateIdenticalProductRelease(
   store: AppUpdateJournalStore, before: InstallMetadata, installed: InstalledApp,

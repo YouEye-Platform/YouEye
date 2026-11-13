@@ -18,9 +18,8 @@ test('settings system page surfaces Market system update plans safely', () => {
 
   assert.match(client, /Market System Manifests/);
   assert.ok(client.includes('/settings/api/deploy/infrastructure/system-updates'));
-  assert.match(client, /legacy-compatible/);
-  assert.match(client, /legacy-untracked/);
-  assert.match(client, /forceLegacy: plan\.trackingStatus !== "tracked"/);
+  assert.match(client, /"untracked"/);
+  assert.match(client, /adoptUntracked: plan\.trackingStatus !== "tracked"/);
   assert.match(client, /allowDatabaseUpdate: plan\.id === "postgresql"/);
   assert.match(client, /confirmMaintenanceWindow: true/);
   assert.match(client, /confirmContainerName: plan\.containerName/);

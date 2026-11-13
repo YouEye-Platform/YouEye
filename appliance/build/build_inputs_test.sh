@@ -55,7 +55,7 @@ expect_build_gate() {
 }
 expect_build_gate 'dedicated paths' BUILD_INPUTS_PATH="$valid"
 expect_build_gate 'BUILD_INPUTS_PATH must name valid youeye.build-inputs.v1' BUILD_INPUTS_PATH="$work/missing.json"
-jq '.schema="youeye.appliance.release-lock.v2"' "$valid" > "$work/inputs.json"
+jq '.schema="youeye.appliance.release-lock.v0"' "$valid" > "$work/inputs.json"
 expect_build_gate 'youeye.build-inputs.v1' BUILD_INPUTS_PATH="$work/inputs.json"
 
 printf 'PASS: youeye.build-inputs.v1 validation and build entry gate\n'

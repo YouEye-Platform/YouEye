@@ -221,6 +221,9 @@ export const AppSchema = xobject({
   ai: xobject({ env: EnvMap }).optional(),
   smtp: xobject({ env: EnvMap }).optional(),
   forward_auth: z.boolean().optional(),
+  // The app protects itself (its own password, PINs or accounts): install with public access on, shown to the
+  // owner as a pre-selected choice. Market catalog installs only; apps added by URL default to off.
+  public_access: z.boolean().optional(),
 
   sidecars: z.array(Sidecar).optional(),
 

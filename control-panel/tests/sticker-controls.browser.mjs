@@ -67,7 +67,7 @@ test("Match title preserves independent colours and unreadable uploads preserve 
     });
     t.diagnostic("Matching colour rendered");
     await page.getByRole("button", { name: "Title Studio", exact: true }).click();
-    // The legacy default shares an ink with the first palette; cycle until the
+    // The default design shares an ink with the first palette; cycle until the
     // ink itself changes, rather than assuming every palette has a unique ink.
     for (let i = 0; i < 4 && (await draft()).light.ink === original.light.ink; i++)
       await page.getByRole("button", { name: "Next colour", exact: true }).click();

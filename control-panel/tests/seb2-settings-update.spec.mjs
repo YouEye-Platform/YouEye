@@ -30,8 +30,8 @@ test('profile presets, self-password change, and explicit People form are wired 
   assert.equal(presets.length, 96);
   assert.equal(new Set(presets.map((preset) => preset.id)).size, 96);
   assert.deepEqual([...new Set(presets.map((preset) => preset.category))], ['Animals', 'Nature', 'Space', 'Hobbies', 'Objects', 'Characters']);
-  for (const legacyEmoji of ['🐱', '🐶', '🦊', '🐼', '🦁', '🐸', '🐧', '🦅', '🚀', '⭐', '🎵', '🎮', '📚', '🎨', '📷', '☕', '🌊', '🌙', '☀️', '🌿', '🌸', '🌋', '💎', '🔮', '⚡', '🔥', '🌈', '🎯', '👾', '🤖', '🦄', '👽']) {
-    assert.ok(presets.some((preset) => preset.emoji === legacyEmoji), `missing legacy avatar ${legacyEmoji}`);
+  for (const emoji of ['🐱', '🐶', '🦊', '🐼', '🦁', '🐸', '🐧', '🦅', '🚀', '⭐', '🎵', '🎮', '📚', '🎨', '📷', '☕', '🌊', '🌙', '☀️', '🌿', '🌸', '🌋', '💎', '🔮', '⚡', '🔥', '🌈', '🎯', '👾', '🤖', '🦄', '👽']) {
+    assert.ok(presets.some((preset) => preset.emoji === emoji), `missing emoji avatar ${emoji}`);
   }
   assert.match(picker, /linear-gradient\(135deg/);
   assert.match(picker, /preset\.artwork/);

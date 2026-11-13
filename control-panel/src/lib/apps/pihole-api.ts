@@ -127,12 +127,6 @@ async function resyncPiholePassword(ip: string, password: string): Promise<void>
     await incReq('PATCH', `/1.0/instances/${CONTAINER_NAME}`, {
       config: { 'environment.FTLCONF_webserver_api_password': '' },
     });
-    // Also remove legacy v5 var if present
-    if (cfg['environment.WEBPASSWORD']) {
-      await incReq('PATCH', `/1.0/instances/${CONTAINER_NAME}`, {
-        config: { 'environment.WEBPASSWORD': '' },
-      });
-    }
     // Restart so FTL stops reading the env var
     await incReq('PUT', `/1.0/instances/${CONTAINER_NAME}/state`, {
       action: 'restart', timeout: 30, force: false,

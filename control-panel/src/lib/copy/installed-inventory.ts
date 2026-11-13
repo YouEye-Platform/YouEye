@@ -29,7 +29,7 @@ export async function inspectInstalledCopyInventory(){
  const settings=await settingsService.getRaw();
  if(!settings.setup_completed||typeof settings.domain!=='string'||!settings.domain)throw new CopyInventoryError('Configured source platform required for independent copy');
  if(settings.smtp_host||settings.smtp_username||settings.dns_provider_config)throw new CopyInventoryError('Configured SMTP or external DNS provider requires an independent copy disposition');
- for(const [key,allowed] of Object.entries({tls_cert_file:['/var/lib/youeye/config/tls/external-cert.pem'],tls_key_file:['/var/lib/youeye/config/tls/external-key.enc','/var/lib/youeye/config/tls/external-key.pem'],tls_acme_account_key_file:['/var/lib/youeye/config/tls/acme-account-key.enc','/var/lib/youeye/config/tls/acme-account-key.pem']})){
+ for(const [key,allowed] of Object.entries({tls_cert_file:['/var/lib/youeye/config/tls/external-cert.pem'],tls_key_file:['/var/lib/youeye/config/tls/external-key.enc'],tls_acme_account_key_file:['/var/lib/youeye/config/tls/acme-account-key.enc']})){
   const value=(settings as Record<string,unknown>)[key];if(value&&!allowed.includes(String(value)))throw new CopyInventoryError('Custom TLS authority storage requires a copy adapter');
  }
  const namesState=await readNamesLifecycleState();

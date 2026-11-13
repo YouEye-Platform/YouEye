@@ -13,7 +13,7 @@ export interface SetupRestoreStatus {
 export interface SetupRestoreSelection { mediaId: string; backupId: string; appIds: string[] }
 
 /** Only an inactive, explicitly recoverable receipt can populate a resume.
- * Missing legacy evidence and foreign/malformed receipts never enable replay.
+ * Foreign or malformed receipts never enable replay.
  */
 export function recoverableRestoreSelection(status: SetupRestoreStatus, operationId: string): SetupRestoreSelection | null {
   if (status.operationId !== operationId || status.status !== 'failed' || status.active !== false

@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
 )
 
 // CorePayloadIndex is derived from an authenticated CP/UI archive, then kept in
@@ -244,7 +243,7 @@ func (m CoreManager) SavePayloadIndex(index CorePayloadIndex) error {
 }
 
 // LoadPayloadIndex reads host-owned file truth and binds it to the exact signed
-// artifact. Missing or damaged evidence never becomes an empty/legacy payload.
+// artifact. Missing or damaged evidence never becomes an empty payload.
 func (m CoreManager) LoadPayloadIndex(digest string) (CorePayloadIndex, error) {
 	var index CorePayloadIndex
 	if !validSHA256(digest) {

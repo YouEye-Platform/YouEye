@@ -512,7 +512,7 @@ export async function POST(request: NextRequest) {
                   await applyBundleIdentity(staged);
                   const activatedAt = new Date().toISOString();
                   await writeNamesLifecycleState({
-                    schemaVersion: 2,
+                    schemaVersion: 1,
                     service: staged.service,
                     name: staged.name,
                     fqdn: domain,
@@ -601,7 +601,7 @@ export async function POST(request: NextRequest) {
                   const priorPrivateKey = canResume ? priorProvisioning.provisioning!.privateKeyPem : null;
                   const priorCsr = canResume ? priorProvisioning.provisioning!.csrPem : null;
                   await writeNamesLifecycleState({
-                    schemaVersion: 2,
+                    schemaVersion: 1,
                     service: namesServiceBinding(service),
                     name: body.yen_name,
                     fqdn: domain,
@@ -705,7 +705,7 @@ export async function POST(request: NextRequest) {
                   }
                   const activatedAt = new Date().toISOString();
                   await writeNamesLifecycleState({
-                    schemaVersion: 2,
+                    schemaVersion: 1,
                     service: namesServiceBinding(service),
                     name: body.yen_name,
                     fqdn: domain,

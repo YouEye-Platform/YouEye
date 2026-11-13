@@ -4,9 +4,10 @@ Every app in the Market, every native app and Canvas is described by one `youeye
 setup files next to it (`setup/*.yaml`). This is the only app format the Control Panel reads. The variables you can
 use inside it are listed in [app-environment.md](app-environment.md).
 
-- **One parser and validator:** `control-panel/src/lib/market/app-format/` (`parseApp`, `parseSetup`).
-  Unknown fields and unknown `${…}` variables are errors before anything is created. Keys starting with `x-` are
-  kept and never read.
+- **One parser and validator:** `control-panel/src/lib/market/app-format/` (`parse.ts`, `schema.ts`; then
+  `compile.ts` turns the manifest into the engine's internal model). Unknown fields and unknown `${…}` variables
+  are errors before anything is created. Keys starting with `x-` are kept and never read. Every YAML file is at
+  most 1 MiB; aliases, duplicate keys and the keys `__proto__`, `constructor` and `prototype` are refused.
 - **Installed apps keep a frozen copy** of `youeye-app.yaml` and their setup files, plus `install.json`
   (`/var/lib/youeye/app-<id>/install.json`, `schema: youeye.install.v1`, written atomically: `installationId`,
   `manifestDigest`, `sharedFolders` (the approved `shared:` groups), `installedAt`/`updatedAt`, and
@@ -24,8 +25,10 @@ schema: youeye.app.v1
 id: mealie                       # 1–32 chars, [a-z0-9-], starts with a letter; unique on the box
 version: 3.22.0                  # the app's own version (required)
 name: Mealie
-requires: { youeye: ">=0.6.2" }  # an older platform says "needs a newer YouEye" (never offered as an update)
-subdomain: recipes               # default: the id
+requires: { youeye: ">=0.6.2" }  # an older platform says "needs a newer YouEye" (never offered as an update);
+                                 # compares X.Y.Z only, so 0.6.2-dev.1 already satisfies >=0.6.2
+# subdomain: …                    # default and normal case: the id. Set it only when upstream itself names a
+                                 # different hostname for the app
 
 listing:                         # store text only; not part of the digest
   tagline: Recipes, meal plans, and shopping lists in one place
@@ -37,7 +40,7 @@ listing:                         # store text only; not part of the digest
   tags: [recipes, cooking]
   icon: utensils                 # Lucide icon name (fallback)
   icon_file: icon.svg            # file next to the manifest (relative; never a URL)
-  screenshots: [{ path: screenshots/recipes.png, caption: Recipe library }]   # relative files
+  screenshots: [{ path: screenshots/recipes.png, caption: Recipe library }]   # relative files; official upstream images
   website: https://mealie.io
   developer: Mealie contributors
   license: AGPL-3.0
@@ -45,9 +48,11 @@ listing:                         # store text only; not part of the digest
   support: https://github.com/mealie-recipes/mealie/discussions
   docs: https://docs.mealie.io/
 
-image: ghcr.io/mealie-recipes/mealie@sha256:36c2…   # OCI image, digest-pinned (required for Market apps)
+image: ghcr.io/mealie-recipes/mealie@sha256:36c2…   # OCI image, pinned by digest (required; sidecars too)
 port: 9000
 health: /api/app/about           # or { path: /api/app/about, timeout: 120 }  (seconds; default 120)
+                                 # healthy = 2xx, 3xx, 401 or 403 (market/health.ts): pick a route that needs
+                                 # the app and its database, not one that only redirects to a login page
 command: [/bin/bash, /kavita/config/youeye-entrypoint.sh]   # optional argv override
 internet: true                   # outbound internet for the app's containers (default false)
 
@@ -57,11 +62,13 @@ database: postgres               # none (default) | postgres | { postgres: { nam
                                  # secret db_password (${database.password}; a sidecar database uses it as well).
 data:                            # private volumes of the main container (named after the last path segment)
   - /app/data                    # short form: kind data
-  - { path: /config, kind: config }       # kinds: data | config | media | cache (cache is not backed up)
+  - { path: /config, kind: config }       # kinds: data | config | media | cache (cache gets no Incus volume
+                                          # and is not backed up)
 shared:                          # shared folders, approved by the user at install (replaces storageGroup)
   media: /data                   # group name → mount path
 
-env:                             # the main container's environment (sidecars have their own `env`)
+env:                             # the main container's environment (sidecars have their own `env`);
+                                 # sso.env, ai.env and smtp.env are merged into it
   BASE_URL: ${app.url}
   DEFAULT_PASSWORD: ${secret.admin_password}
 secrets:                         # optional; any ${secret.<name>} used is generated (password, 32 chars)
@@ -77,6 +84,7 @@ files:                           # files written into a container before it star
                                  # of that container's `data:` paths (not a cache)
   - { path: /kavita/config/youeye-entrypoint.sh, mode: "0755", dir_mode: "0700", template: | … }
                                  # container: main (default); mode default "0644", dir_mode default "0700"
+                                 # a template using ${youeye.app_token} must be under /etc, mode 0600 or 0400
 
 sso:                             # omit = no YouEye ID sign-in
   callback: /login               # a path on the app; may contain ${sso.slug}
@@ -108,6 +116,9 @@ smtp:                            # the app sends mail with the box's mail settin
     SMTP_PORT: ${smtp.port}
 forward_auth: false              # the account-login gate in front of the app: false = off and not offered at install
                                  # (default: on unless the app has `sso:`); YouEye ID's access check always applies
+public_access: true              # the app protects itself (its own password, PINs, accounts): install with public
+                                 # access on (shown pre-selected; the owner can decline). Read only from the official
+                                 # Market catalog; added sources and URL apps install household-only
 
 sidecars:                        # extra containers of the same app
   - name: redis                  # [a-z0-9-]; `main` is reserved for the app itself
@@ -141,28 +152,27 @@ x-notes: {}                      # reserved; kept, never read
 ```
 
 ### Native apps
-A native app replaces `image` with `source` and adds the dashboard surfaces:
+A native app has `source:` instead of `image:` (exactly one of the two) and no sidecars. It can add dashboard
+surfaces and reach the platform through the UI gateway:
 
 ```yaml
-source: { node: "24" }           # node: one of 22 | 24; app_dir is always /opt/app
+source: { node: "24" }           # node: 22 | 24; a Debian 12 system container, the app in /opt/app
 data_ownership: { per_user: identity_uuid }
 capabilities: { widgets: true, settings_panel: true, notifications: true }
-surfaces:                        # widgets, timeline cards, notifications, settings panels
+surfaces:                        # kind: widget | info-card | timeline-card | notification | settings-panel
   - { id: recent-notes, kind: widget, placement: dashboard, name: Recent Notes, embed: /embed/widget/recent-notes,
       size: { default: [25, 28], min: [18, 20], max: [45, 50] }, refresh: 300 }
-proxy:                           # hosts the app may reach through the YouEye UI proxy
-  - { host: api.open-meteo.com, paths: [/v1/forecast], methods: [GET], scope: service }
+                                 # placement: dashboard | timeline | notification-center | app-settings | app-detail
+proxy:                           # outside HTTPS hosts the app may reach through the UI gateway
+  - { host: geocoding-api.open-meteo.com, paths: [/v1/search*], methods: [GET] }   # methods default [GET]
   - { host: "*.wikipedia.org", paths: [/w/api.php*] }   # one leading wildcard label is allowed
-link_handlers: [{ type: note, description: Open a note, endpoint: /n, triggers: [note] }]
+link_handlers: [{ type: note, description: Open a note, endpoint: /n, triggers: [note] }]   # endpoint default /
 ```
 
 Surfaces also take `description`, `permissions`, `settings` (fields `{ key, type, label, … }`) and `triggers`;
-`capabilities` takes `widgets`, `settings_panel`, `notifications` (`true` | `push`), `info_cards` and `events`.
-The release's version replaces the manifest's `version` (the build stamps it; `0.0.0` in the repository is fine).
-A native release carries only `youeye-app.yaml`: no setup files and no listing images.
-
-The archive itself is the app's product release on the box's channel (see [releases.md](releases.md)); the
-manifest never names a repository or branch.
+`capabilities` takes `widgets`, `settings_panel`, `notifications` (`true` | `push`), `info_cards` and `events`
+(platform event names delivered to the app). How native apps are built, released and talk to the platform is in
+[native-apps.md](native-apps.md).
 
 ## Setup files (`setup/*.yaml`)
 
@@ -208,14 +218,16 @@ remove:                          # optional: undo steps, run when the feature is
 **Rules (enforced by the runner):**
 - Steps are idempotent: they run again when sign-in is turned on again and when the box's address changes
   (`url-change`). App updates do not run setup files.
-- `http` paths are relative and go to the app's own containers; the runner builds the URL
-  (`http://<container IP>:<port><path>`) and re-checks the path after `${…}` substitution. The container IP is
-  used only when it lies inside the app's own network (the peer's for `target: peer`), is not the network's
-  gateway and is not held by any other container. Redirects are never
-  followed: a 3xx fails the step unless it is listed in `ok`. A response may be at most 4 MiB, a request takes at
-  most 30 s.
-- A whole file run (`steps:` or `remove:`) has 20 minutes, every step, wait and `for_each` item included; past it the
-  run fails even where a step has `allow_failure`. A `for_each` acts on at most 500 items.
+- `http` paths are relative and go to the app's own containers (`method` defaults to `GET`); the runner builds the
+  URL (`http://<container IP>:<port><path>`) and re-checks the path after `${…}` substitution. The container IP
+  comes from the host side, never from the container: the NIC's DHCP lease matched by its MAC address
+  (`appContainerAddress` in `control-panel/src/lib/incus/app-network.ts`). It must lie inside the app's own
+  network (the peer's for `target: peer`) and must not be the network's gateway. Redirects are never followed: a
+  3xx fails the step unless it is listed in `ok`. A response may be at most 4 MiB, a request takes at most 30 s.
+- Limits (`SETUP_LIMITS` in `setup-runner.ts`): a whole file run (`steps:` or `remove:`) has 20 minutes, every
+  step, wait and `for_each` item included; past it the run fails even where a step has `allow_failure`. A
+  `for_each` acts on at most 500 items. `exec` defaults to 60 s and `wait` to 120 s (both take `timeout:` in
+  seconds); `wait` probes every 2 s; `sleep` is 1–600 s.
   In a `connect:<app>` file a step may set `target: peer` to call the connected app's API (its `${peer.*}` values
   are available); `exec`, `file` and `restart` always act on the app's own containers. Running anything inside
   another app is not possible.
@@ -281,7 +293,3 @@ remove:                          # optional: undo steps, run when the feature is
   installation created them), the OAuth client, the
   routes, the generated CA directory and the app's secrets. If a deletion fails the record keeps
   `cleanupPending: true` and the next uninstall or cleanup retries.
-
-## Translations (planned)
-Store text may later be translated with `locales/<lang>.yaml` next to the manifest, overriding `listing:` keys only.
-The folder name is reserved; nothing reads it yet.

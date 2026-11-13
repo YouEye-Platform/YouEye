@@ -42,8 +42,8 @@ import (
 //      Spine↔CP boundary; CP owns the rest of the platform.
 //
 //   5. If the stored .host_ip differs from the current IP, runs the rest
-//      of the migration: CP HOST_IP env, dnsmasq_lines, Caddy IP-literal
-//      route. Persists the new IP to .host_ip last.
+//      of the migration: CP HOST_IP env and dnsmasq_lines (the Control
+//      Panel's DNS step). Persists the new IP to .host_ip last.
 //
 // EVERY exec.Command in this file uses CommandContext with an explicit
 // timeout via runWithTimeout. The lesson from the 0.2.18.5 hang was that
@@ -410,7 +410,7 @@ func runHostIPMigrationWithLifecycle(opts hostIPMigrationOptions, lifecycle syst
 
 	// ─── Step 2c — Repair Spine-owned security posture ────────────────
 	// These are independent of host-IP changes: existing installs may have
-	// missing/stale UI ACLs or the legacy LAN-wide CP :3000 proxy.
+	// missing/stale UI ACLs or a LAN-wide CP :3000 proxy.
 	if err := container.RepairControlPanelPortProxy("youeye-control", 3000); err != nil {
 		hostIPLog("WARNING: Control Panel localhost proxy repair failed: %v", err)
 		bootIssues = append(bootIssues, fmt.Sprintf("Control Panel localhost proxy repair failed: %v", err))
@@ -505,7 +505,7 @@ func runHostIPMigrationWithLifecycle(opts hostIPMigrationOptions, lifecycle syst
 		return result, fmt.Errorf("pihole not reachable: %v; NOT persisting", err)
 	}
 
-	// ─── Step 7 — CP-side dnsmasq + Caddy migration ────────────────────
+	// ─── Step 7 — CP-side DNS migration ────────────────────────────────
 	// Now strict: parses the response and refuses to persist if any required
 	// DNS step failed.
 	var migrateErr error
@@ -621,39 +621,7 @@ func readStoredPiholePassword() (string, error) {
 		}
 		return password, nil
 	}
-
-	password, migrateErr := migrateStoredPiholePasswordFromContainer()
-	if migrateErr != nil {
-		return "", fmt.Errorf("%s unavailable: %v; legacy env migration failed: %v", piholePasswordFile, err, migrateErr)
-	}
-	return password, nil
-}
-
-func migrateStoredPiholePasswordFromContainer() (string, error) {
-	keys := []string{
-		"environment.FTLCONF_webserver_api_password",
-		"environment.WEBPASSWORD",
-	}
-	for _, key := range keys {
-		out, err := runWithTimeout(10*time.Second, "incus", "config", "get", "youeye-pihole", key)
-		if err != nil {
-			continue
-		}
-		password := strings.TrimSpace(string(out))
-		if password == "" {
-			continue
-		}
-
-		if err := os.MkdirAll("/var/lib/youeye/pihole", 0700); err != nil {
-			return "", fmt.Errorf("create pihole password directory: %v", err)
-		}
-		if err := os.WriteFile(piholePasswordFile, []byte(password), 0600); err != nil {
-			return "", fmt.Errorf("save migrated password from %s: %v", key, err)
-		}
-		hostIPLog("migrated Pi-Hole password from %s to %s", key, piholePasswordFile)
-		return password, nil
-	}
-	return "", fmt.Errorf("no legacy Pi-Hole password env var found")
+	return "", fmt.Errorf("%s unavailable: %v", piholePasswordFile, err)
 }
 
 func probePiholeAuth(containerName, url, password string) error {
@@ -1255,9 +1223,8 @@ func waitForCPHealthy(timeout time.Duration) error {
 // the curl exit code, so a partial-failure response (e.g. dns:false because
 // Pi-Hole was down) was treated as success and the goroutine persisted the
 // new IP — leaving dnsmasq_lines stale forever. Now we parse the JSON and
-// require both dns:true AND caddy:true (or caddy:false acceptable iff there
-// was no legacy IP-literal route to remove — but the endpoint reports
-// caddy:true on no-op as well, so this is conservatively strict).
+// require dns:true; caddy:false only means there was no IP-literal route
+// to remove.
 func callCPHostIPMigrate(oldIP, newIP string, force bool) error {
 	secretBytes, err := os.ReadFile("/var/lib/youeye/control/.deploy_secret")
 	if err != nil {
@@ -1290,7 +1257,6 @@ func callCPHostIPMigrate(oldIP, newIP string, force bool) error {
 		YouEyeNamesDNS         bool   `json:"youeyeNamesDns"`
 		YouEyeNamesDNSRequired bool   `json:"youeyeNamesDnsRequired"`
 		YouEyeNamesError       string `json:"youeyeNamesError"`
-		Caddy                  bool   `json:"caddy"`
 		Error                  string `json:"error"`
 	}
 	if jerr := json.Unmarshal(bytes.TrimSpace(out), &resp); jerr != nil {
@@ -1321,10 +1287,7 @@ func callCPHostIPMigrate(oldIP, newIP string, force bool) error {
 		}
 		return fmt.Errorf("endpoint reported youeyeNamesDns:false")
 	}
-	// caddy:false on its own is OK if there was no legacy IP-literal
-	// route to remove (the endpoint logs "no legacy route" in that case
-	// and still returns caddy:false because removeIPLiteralRoute returned
-	// false). On a fresh install with CP >= 0.2.18.3 there will never be
-	// such a route, so caddy:false is the expected steady state.
+	// caddy:false on its own is OK: the endpoint returns it when there was
+	// no IP-literal route to remove, which is the steady state.
 	return nil
 }

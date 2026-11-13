@@ -12,7 +12,7 @@ import { isNextProductionBuild } from "@/lib/runtime-phase";
 import { designSchema } from "@youeye/branding";
 
 export interface SiteNameStyle {
-  /** Canonical editable title and sticker; legacy readers use the CSS projection. */
+  /** Editable MyTitle title and sticker; absent on CSS-only styles, which readers use as is. */
   mytitle?: import("@youeye/branding").Design;
   mytitleRevision?: string;
   showHeaderLogo?: boolean;

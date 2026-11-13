@@ -18,7 +18,7 @@ test('homepage animated backgrounds only auto-disable for reduced motion', () =>
   assert.doesNotMatch(component, /hardwareConcurrency/);
 });
 
-test('legacy UI System and Users settings embed routes are retired', () => {
+test('UI System and Users settings embed routes stay deleted', () => {
   assert.equal(existsSync(join(root, 'src/app/settings/system/page.tsx')), false);
   assert.equal(existsSync(join(root, 'src/app/settings/users/page.tsx')), false);
 });

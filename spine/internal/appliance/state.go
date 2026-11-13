@@ -48,13 +48,6 @@ type TransactionState struct {
 	TargetImageVersion string `json:"target_image_version,omitempty"`
 }
 
-// Plan1Compatible reports whether the transaction uses only the fields that
-// the accepted Plan 1 image can decode. The full signed version remains in
-// the system-update journal until the first native image is blessed.
-func (t TransactionState) Plan1Compatible() bool {
-	return t.ID != "" && t.ManifestSHA256 == "" && t.ActiveSlot == ""
-}
-
 // StateRecord lives on YE-STATE. Identity references are opaque, non-secret
 // handles; status surfaces must never expose their raw values.
 type StateRecord struct {
@@ -217,9 +210,6 @@ func (s StateRecord) Validate() error {
 		if s.Slots.Candidate == "" || s.Slots.CandidateImageVersion != s.Transaction.TargetImageVersion {
 			return fmt.Errorf("transaction target must match the candidate slot identity")
 		}
-		if s.Transaction.Plan1Compatible() {
-			return nil
-		}
 		if strings.TrimSpace(s.Transaction.ManifestSHA256) == "" || strings.TrimSpace(s.Transaction.ActiveSlot) == "" {
 			return fmt.Errorf("transaction manifest_sha256 and active_slot must be recorded together")
 		}
@@ -348,10 +338,6 @@ func LoadOrInitializeState(m Manifest, contract PartitionContract) (StateRecord,
 	} else if err != nil {
 		return StateRecord{}, fmt.Errorf("read YE-STATE contract: %w", err)
 	}
-	state, err = migrateLegacyDiskReference(StatePath, m, state, contract)
-	if err != nil {
-		return StateRecord{}, err
-	}
 	if err := ValidateStateContract(m, state, contract); err != nil {
 		return StateRecord{}, err
 	}
@@ -417,23 +403,6 @@ func contractParentIdentity(identity, partUUID string) string {
 		return identity
 	}
 	return "partuuid-fallback:" + strings.ToLower(strings.TrimSpace(partUUID))
-}
-
-func migrateLegacyDiskReference(path string, m Manifest, state StateRecord, contract PartitionContract) (StateRecord, error) {
-	if !strings.HasPrefix(state.ParentDiskID, "disk:") {
-		return state, nil
-	}
-	compat := CheckCompatibility(m, state.SchemaVersion, state.DataSchemaVersion)
-	if !compat.Compatible || state.DiskLayoutVersion != m.DiskLayoutVersion ||
-		!strings.EqualFold(state.StatePartUUID, contract.StatePartUUID) ||
-		!strings.EqualFold(state.DataPartUUID, contract.DataPartUUID) {
-		return state, errors.New("legacy parent disk identity cannot migrate because the persistent partition contract changed; boot recovery")
-	}
-	state.ParentDiskID = DiskReference(contract)
-	if err := WriteStateAtomic(path, state); err != nil {
-		return state, fmt.Errorf("migrate legacy parent disk identity: %w", err)
-	}
-	return state, nil
 }
 
 func EnsureDataSchema(state StateRecord, m Manifest) (DataSchemaRecord, error) {

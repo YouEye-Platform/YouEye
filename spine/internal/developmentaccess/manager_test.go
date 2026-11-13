@@ -27,11 +27,11 @@ func TestStatusNeverReturnsPasswordHashAndDisableRemovesIt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "development-access.json"), []byte(`{"schema":"youeye.development-access.v1","local_root_console":true,"root_password_ssh":true,"password_hash":"`+hash+`","ssh_network_scope":"local-subnet"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"network_scope":"192.0.2.0/24","detail":"active"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"network_scope":"192.0.2.0/24","detail":"active"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{run: func() error {
-		return os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(`{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}`), 0o600)
+		return os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(`{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}`), 0o600)
 	}}
 	manager := &Manager{Root: root, Runner: runner}
 	status, err := manager.Status()
@@ -50,22 +50,16 @@ func TestStatusNeverReturnsPasswordHashAndDisableRemovesIt(t *testing.T) {
 	}
 }
 
-func TestStatusLegacyAndMissingAppliedRecordsFailClosed(t *testing.T) {
+func TestStatusOldShapeAndMissingAppliedRecordsFailClosed(t *testing.T) {
 	root := t.TempDir()
 	writePolicy(t, root, true, true)
-	for _, status := range []string{
-		`{"schema":"youeye.development-access-status.v1","local_root_console":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"network_scope":"192.0.2.0/24","detail":"active"}`,
-	} {
-		if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(status), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		status, err := (&Manager{Root: root}).Status()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !status.LocalRootConsoleRequested || !status.RootPasswordSSHRequested || status.LocalRootConsolePersisted || status.LocalRootConsoleActive || status.LocalRootConsoleEffective || status.RootPasswordSSHEffective || status.NetworkScope != nil || status.Detail != notAppliedDetail {
-			t.Fatalf("legacy applied status was not fail-closed: %+v", status)
-		}
+	// A record in an earlier shape is refused rather than partly trusted.
+	old := `{"schema":"youeye.development-access-status.v1","local_root_console":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"network_scope":"192.0.2.0/24","detail":"active"}`
+	if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Manager{Root: root}).Status(); err == nil {
+		t.Fatal("a status record in an earlier shape was accepted")
 	}
 	if err := os.Remove(filepath.Join(root, "development-access-status.json")); err != nil {
 		t.Fatal(err)
@@ -83,13 +77,13 @@ func TestStatusRejectsMalformedOrInconsistentV2AppliedRecords(t *testing.T) {
 	root := t.TempDir()
 	writePolicy(t, root, true, true)
 	for _, record := range []string{
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"detail":"missing scope"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"invalid local state"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":null,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":true,"root_password_ssh_effective":false,"network_scope":null,"detail":"null requested"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":true,"root_password_ssh_effective":false,"network_scope":null,"detail":null}`,
-		`{"schema":"youeye.development-access-status.v3","detail":"unknown schema"}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"detail":"missing scope"}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"invalid local state"}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":null,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":true,"root_password_ssh_effective":false,"network_scope":null,"detail":"null requested"}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":true,"root_password_ssh_effective":false,"network_scope":null,"detail":null}`,
+		`{"schema":"youeye.development-access-status.unknown","detail":"unknown schema"}`,
 		`{"local_root_console":true,"root_password_ssh_requested":true,"root_password_ssh_effective":true,"network_scope":"192.0.2.0/24","detail":"missing schema"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"extra","unexpected":true}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"extra","unexpected":true}`,
 	} {
 		if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(record), 0o600); err != nil {
 			t.Fatal(err)
@@ -104,7 +98,7 @@ func TestStatusBoundsAndSanitizesV2Detail(t *testing.T) {
 	root := t.TempDir()
 	writePolicy(t, root, false, false)
 	detail := " active\n" + strings.Repeat("x", 200)
-	record := `{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":` + quoteJSON(t, detail) + `}`
+	record := `{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":` + quoteJSON(t, detail) + `}`
 	if err := os.WriteFile(filepath.Join(root, "development-access-status.json"), []byte(record), 0o600); err != nil {
 		t.Fatal(err)
 	}

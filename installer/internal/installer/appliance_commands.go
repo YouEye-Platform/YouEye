@@ -312,7 +312,7 @@ path="$1"
 mkdir -p "$(dirname "$path")"
 tmp="${path}.tmp"
 jq -n \
-	  --arg schema "youeye.appliance.install-journal.v3" \
+	  --arg schema "youeye.appliance.install-journal.v1" \
 	  --arg operation "$2" \
 	  --arg transaction_id "$3" \
 	  --arg manifest_sha256 "$4" \
@@ -461,7 +461,7 @@ install_journal="$state_root/installer/install-journal.json"
 manifest="$state_root/installer/appliance-manifest.json"
 state="$state_root/appliance-state.json"
 jq -e --arg transaction "$transaction" --arg manifest_sha "$manifest_sha" --arg image "$image" '
-  .schema == "youeye.appliance.install-journal.v3" and
+  .schema == "youeye.appliance.install-journal.v1" and
   .operation == "preserve-reinstall" and .transaction_id == $transaction and
   .manifest_sha256 == $manifest_sha and .image_version == $image and
   (.stage == "activate-system-boot" or .stage == "verify-install")

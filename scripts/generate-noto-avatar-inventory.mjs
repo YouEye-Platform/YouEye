@@ -43,7 +43,7 @@ for (const preset of presets) {
 }
 
 await writeFile(outputPath, `${JSON.stringify({
-  schema: 'youeye.noto-avatar-inventory.v2',
+  schema: 'youeye.noto-avatar-inventory.v1',
   upstream_repository: 'https://github.com/googlefonts/noto-emoji',
   upstream_version: '2.051',
   upstream_commit: upstreamCommit,

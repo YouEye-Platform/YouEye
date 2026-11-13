@@ -36,7 +36,7 @@ export async function coreSchemaComponent(role: 'cp' | 'ui', path = '/etc/youeye
   try { value = await protectedJSON<CoreComponent>(path); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      // A dangling selected marker is damaged state, not a legacy runtime.
+      // A dangling selected marker is damaged state, not an unmanaged runtime.
       try { await lstat(path); } catch (probe) {
         if ((probe as NodeJS.ErrnoException).code === 'ENOENT') {
           const indicators = [join(dirname(path), 'core-artifact-sha256')];
@@ -62,7 +62,7 @@ export async function coreSchemaComponent(role: 'cp' | 'ui', path = '/etc/youeye
  * contract in its own data mount. Native code installs the exact digest-bound payload
  * identity before starting services. Only a completed matching receipt permits
  * another process/restart to skip initialization. Unknown effects never retry.
- * Legacy installations keep their existing schema initialization behavior.
+ * A runtime without a core component marker (a development run) initializes directly.
  */
 export async function runCoreSchemaOnce(role: 'cp' | 'ui', initialize: () => Promise<void>, paths?: CoreSchemaPaths, restoreRequest?: string, expected?: CoreComponent): Promise<void> {
   const componentPath = paths?.component ?? '/etc/youeye/core-component.json';
@@ -128,7 +128,7 @@ function schemaReceiptPath(receipts: string, identity: CoreComponent) {
 }
 export async function coreSchemaStatus(role: 'cp' | 'ui', paths?: CoreSchemaPaths) {
   const component = await coreSchemaComponent(role, paths?.component);
-  if (!component) return { managed: false as const, state: 'legacy' as const };
+  if (!component) return { managed: false as const, state: 'unmanaged' as const };
   let receipt: SchemaReceipt;
   try { receipt = await protectedJSON<SchemaReceipt>(schemaReceiptPath(schemaReceipts(role, paths), component)); }
   catch (error) {

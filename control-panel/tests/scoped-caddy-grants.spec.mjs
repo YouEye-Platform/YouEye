@@ -19,6 +19,8 @@ test('scoped app-token proxy routes deny unapproved app-token fallthrough', () =
   assert.match(caddy, /SCOPED_APP_GRANT_DENY_ROUTE_ID = 'app-grant-token-deny'/);
   assert.match(caddy, /header:\s*\{\s*'X-Youeye-App-Token': \['\*'\]/);
   assert.match(caddy, /handler: 'static_response'/);
+  // The caller's app token is the grant's match key only; Caddy deletes it before the target app.
+  assert.match(caddy, /headers: \{ request: \{ delete: \['X-Youeye-App-Token'\] \} \}/);
   assert.match(caddy, /status_code: 403/);
   assert.match(caddy, /terminal: true/);
   assert.match(caddy, /server\.routes = upsertScopedAppGrantDenyRoute\(server\.routes\)/);

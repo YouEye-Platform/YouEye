@@ -17,7 +17,8 @@ test('service worker uses Serwist instead of hand-rolled install precaching', ()
 });
 
 test('service worker deletes old app-owned runtime caches during activation', () => {
-  assert.match(sw, /legacyPrefixes/);
+  assert.match(sw, /ownedPrefixes/);
+  assert.match(sw, /"youeye-ui-public"/);
   assert.match(sw, /STATIC_CACHE/);
   assert.match(sw, /caches\.delete\(name\)/);
   assert.match(sw, /"ui-"/);

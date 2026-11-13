@@ -22,7 +22,7 @@ test("E0: UnifiedEmbed is origin-validated, lazy, with a visible timeout fallbac
   assert.match(src, /sandbox="allow-scripts allow-same-origin allow-forms"/);
 });
 
-test("E0: UnifiedEmbed delivers theme tokens and rejects legacy message names", () => {
+test("E0: UnifiedEmbed delivers theme tokens and rejects the retired message names", () => {
   const src = read("src/components/embeds/unified-embed.tsx");
   assert.match(src, /searchParams\.set\("theme"/);
   assert.match(src, /searchParams\.set\("mode"/);

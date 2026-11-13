@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   let body: {
     systemId?: 'postgresql' | 'caddy' | 'pihole';
     hostIP?: string;
-    forceLegacy?: boolean;
+    adoptUntracked?: boolean;
     allowDatabaseUpdate?: boolean;
     confirmMaintenanceWindow?: boolean;
     confirmContainerName?: string;
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
           {
             systemId: body.systemId!,
             hostIP,
-            forceLegacy: body.forceLegacy,
+            adoptUntracked: body.adoptUntracked,
             allowDatabaseUpdate: body.allowDatabaseUpdate,
             confirmMaintenanceWindow: body.confirmMaintenanceWindow,
             confirmContainerName: body.confirmContainerName,

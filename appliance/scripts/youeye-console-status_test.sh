@@ -25,7 +25,7 @@ setup_completed: true
 EOF
 printf 'ssh-ed25519 AAAATEST operator\n' > "$tmp/root/.ssh/authorized_keys"
 printf '%s\n' '{"phase":"trial"}' > "$tmp/update/journal.json"
-printf '%s\n' '{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"active"}' > "$tmp/development-access-status.json"
+printf '%s\n' '{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"active"}' > "$tmp/development-access-status.json"
 : > "$tmp/tty"
 
 YOUEYE_CONSOLE_RELEASE="$tmp/release" \

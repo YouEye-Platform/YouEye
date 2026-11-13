@@ -119,20 +119,10 @@ function inferRole(container: ContainerMeta, primary: boolean): NonNullable<Cont
 
 function normalizeContainers(meta: InstallMetadata): ContainerTarget[] {
   const raw = meta.containers ?? [];
-  const primaryIndex = raw.findIndex((c) => typeof c !== 'string' && c.primary);
+  const primaryIndex = raw.findIndex((c) => c.primary);
 
   return raw
     .map((entry, index) => {
-      if (typeof entry === 'string') {
-        const primary = primaryIndex === -1 && index === 0;
-        return {
-          name: entry,
-          role: primary ? 'app' as const : 'sidecar' as const,
-          primary,
-          order: index,
-        };
-      }
-
       const primary = entry.primary === true || (primaryIndex === -1 && index === 0);
       return {
         name: entry.containerName,

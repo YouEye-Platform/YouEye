@@ -6,12 +6,8 @@
  */
 
 import type { AppStatus } from '@/types/apps';
-import { getAppManifests, getAppManifest } from './manifest';
 import { spineClient } from '@/lib/spine/client';
 import { APP_DEFINITIONS, type AppDefinition } from './definitions';
-
-// ─── Legacy re-exports ────────────────────────────────────────────────────────
-export { getAppManifest, getAppManifests };
 
 /**
  * Parse container status string to AppStatus enum.

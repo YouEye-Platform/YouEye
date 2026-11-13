@@ -18,7 +18,7 @@ func TestValidateBackupSource(t *testing.T) {
 		t.Fatal("incomplete appliance identity accepted")
 	}
 	invalid = valid
-	invalid.Schema = "youeye.backup.source.v2"
+	invalid.Schema = "youeye.backup.source.v0"
 	if err := validateBackupSource(invalid); err == nil {
 		t.Fatal("unsupported source schema accepted")
 	}

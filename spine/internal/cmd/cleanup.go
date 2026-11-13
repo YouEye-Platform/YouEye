@@ -256,9 +256,7 @@ func runCleanup() error {
 	os.RemoveAll("/var/cache/incus")
 
 	// Remove the spine-created swapfile at its OS-filesystem path (deploy.go
-	// creates /var/swapfile). Cleanup only undoes what install did. The legacy
-	// /var/lib/youeye/swapfile is handled by the /var/lib/youeye removal below
-	// (and swapoff already ran in destroyZFSPools).
+	// creates /var/swapfile). Cleanup only undoes what install did.
 	removeSpineSwapfile()
 
 	// Step 11: Remove YouEye app data (unless --keep-data)
@@ -305,7 +303,7 @@ func runCleanup() error {
 	removeIncusAptRepo()
 	// BUG-008 (v0.2.18.10): spine deploy adds an incus-startup
 	// systemd drop-in (configureIncusStartupDependency in deploy.go) that
-	// makes incus-startup wait for spine.service. Cleanup never removed it,
+	// makes incus-startup wait for youeye.service. Cleanup never removed it,
 	// leaving the file as a stray "YouEye was here" marker. Remove it now.
 	removeSpineIncusStartupDropIn()
 	// BUG-015 (alisa-v0.2.21.1): clean residual files that survived cleanup.
@@ -328,8 +326,6 @@ func runCleanup() error {
 	} else if !os.IsNotExist(err) {
 		fmt.Printf("  Warning: could not remove /etc/youeye: %v\n", err)
 	}
-	// Also remove legacy /etc/spine if it exists
-	os.RemoveAll("/etc/spine")
 
 	// Step 18: Remove ZFS packages installed by spine deploy, but only if
 	// no non-Incus zpools exist (otherwise we'd break someone else's setup).
@@ -456,19 +452,14 @@ func uninstallIncusPackages() error {
 }
 
 // removeSpineIncusStartupDropIn removes /etc/systemd/system/incus-startup.service.d/
-// spine-dependency.conf and the parent directory if empty. Counterpart to
+// youeye-dependency.conf and the parent directory if empty. Counterpart to
 // configureIncusStartupDependency() in deploy.go. Best-effort.
-// removeSpineService removes the youeye.service (and legacy spine.service)
-// systemd unit files and reloads the daemon.
+// removeSpineService removes the youeye.service systemd unit file and
+// reloads the daemon.
 func removeSpineService() {
-	removed := false
-	for _, unitFile := range []string{"/etc/systemd/system/youeye.service", "/etc/systemd/system/spine.service"} {
-		if err := os.Remove(unitFile); err == nil {
-			fmt.Printf("  Removed %s\n", unitFile)
-			removed = true
-		}
-	}
-	if removed {
+	const unitFile = "/etc/systemd/system/youeye.service"
+	if err := os.Remove(unitFile); err == nil {
+		fmt.Printf("  Removed %s\n", unitFile)
 		exec.Command("systemctl", "daemon-reload").Run()
 	} else {
 		fmt.Println("  No service file found, skipping")
@@ -478,12 +469,9 @@ func removeSpineService() {
 func removeSpineIncusStartupDropIn() {
 	const dropInDir = "/etc/systemd/system/incus-startup.service.d"
 
-	// Remove both old (spine-dependency.conf) and new (youeye-dependency.conf)
-	for _, name := range []string{"youeye-dependency.conf", "spine-dependency.conf"} {
-		path := dropInDir + "/" + name
-		if err := os.Remove(path); err == nil {
-			fmt.Printf("  Removed %s\n", path)
-		}
+	path := dropInDir + "/youeye-dependency.conf"
+	if err := os.Remove(path); err == nil {
+		fmt.Printf("  Removed %s\n", path)
 	}
 	// rmdir only succeeds if the directory is empty — exactly what we want.
 	// If something else is using the .d directory we leave it alone.
@@ -695,17 +683,13 @@ func destroyZFSPools() {
 	// re-adopts it on reinstall. `zpool status -P` prints full device paths.
 	members := hoststorage.PoolMemberDevices("default")
 	// Whole-disk wipes are only safe on pools YouEye created (whole-disk
-	// layout, ownership marker). A legacy/manual pool may live on a partition
-	// of a disk that also holds unrelated data.
+	// layout, ownership marker). An unmarked pool may live on a partition of a
+	// disk that also holds unrelated data.
 	ownedPool := hoststorage.IsYouEyeMarkedPool("default")
 
-	// Swap off + remove any spine-created swapfile that may sit on the ZFS
-	// data dataset (legacy path) so the dataset can unmount cleanly. New
-	// installs put swap at /var/swapfile (off-ZFS), but a legacy install may
-	// have it under /var/lib/youeye.
-	for _, sw := range []string{"/var/lib/youeye/swapfile", "/var/swapfile"} {
-		exec.Command("swapoff", sw).Run()
-	}
+	// Swap off the spine-created swapfile (off-ZFS at /var/swapfile) before
+	// tearing the pool down.
+	exec.Command("swapoff", "/var/swapfile").Run()
 
 	// Unmount the data dataset (mounted at /var/lib/youeye on dedicated-disk
 	// installs) before tearing datasets down.
@@ -721,8 +705,8 @@ func destroyZFSPools() {
 			if ds == "" || ds == "default" {
 				continue
 			}
-			// Unmount first — datasets may have legacy mounts that
-			// survive container deletion and block zpool destroy.
+			// Unmount first — datasets may have ZFS mountpoint=legacy
+			// mounts that survive container deletion and block zpool destroy.
 			exec.Command("zfs", "unmount", ds).Run()
 			if err := exec.Command("zfs", "destroy", "-f", ds).Run(); err != nil {
 				fmt.Printf("  Warning: could not destroy dataset %s\n", ds)

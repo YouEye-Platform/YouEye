@@ -82,27 +82,21 @@ func runUninstallSelf() error {
 	// Step 2: Stop the YouEye service.
 	fmt.Println("[2/6] Stopping YouEye service...")
 	exec.Command("systemctl", "stop", "youeye").Run()
-	exec.Command("systemctl", "stop", "spine").Run() // legacy
 
 	// Step 3: Disable + remove the systemd unit.
 	fmt.Println("[3/6] Removing YouEye systemd service...")
 	exec.Command("systemctl", "disable", "youeye").Run()
-	exec.Command("systemctl", "disable", "spine").Run() // legacy
 	os.Remove("/etc/systemd/system/youeye.service")
-	os.Remove("/etc/systemd/system/spine.service") // legacy
 	exec.Command("systemctl", "daemon-reload").Run()
 
 	// Step 4: Remove runtime files.
 	fmt.Println("[4/6] Removing runtime files...")
 	os.RemoveAll("/var/run/youeye")
-	os.RemoveAll("/var/run/spine") // legacy
 	os.RemoveAll("/run/youeye")
-	os.RemoveAll("/run/spine") // legacy
 
 	// Step 5: Remove backup binary.
 	fmt.Println("[5/6] Removing backup binary...")
 	os.Remove("/usr/local/bin/youeye.backup")
-	os.Remove("/usr/local/bin/spine.backup") // legacy
 
 	// Step 6: Remove the binary itself.
 	// The running Go process keeps its file descriptor open, so it can
@@ -113,7 +107,6 @@ func runUninstallSelf() error {
 	} else {
 		os.Remove("/usr/local/bin/youeye")
 	}
-	os.Remove("/usr/local/bin/spine") // legacy
 
 	fmt.Println()
 	fmt.Println("✓ YouEye has been completely removed.")

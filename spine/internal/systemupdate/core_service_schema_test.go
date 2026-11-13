@@ -15,7 +15,7 @@ import (
 
 func TestCoreSchemaHTTPBindsIdentityAndAuthority(t *testing.T) {
 	expected := coreComponentMarker{Schema: "youeye.core-component.v1", Role: "cp", RequestID: "update-1", ManifestSHA256: checksum([]byte("manifest")), ArtifactSHA256: checksum([]byte("artifact"))}
-	for _, mode := range []string{"completed", "pending", "started", "unknown", "foreign", "legacy", "oversize", "rejected", "bad-state"} {
+	for _, mode := range []string{"completed", "pending", "started", "unknown", "foreign", "unmanaged", "oversize", "rejected", "bad-state"} {
 		t.Run(mode, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("X-CLI-Token") != "fixture-credential" {
@@ -41,7 +41,7 @@ func TestCoreSchemaHTTPBindsIdentityAndAuthority(t *testing.T) {
 					result.RequestID = "another"
 					result.State = "completed"
 				}
-				if mode == "legacy" {
+				if mode == "unmanaged" {
 					result.Managed = false
 					result.State = "completed"
 				}

@@ -56,8 +56,8 @@ func validNamesBundleForTest(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	certificateDigest := sha256.Sum256(certificateDER)
-	bundle := namesBundleV3{
-		SchemaVersion: 3,
+	bundle := namesBundle{
+		SchemaVersion: 1,
 		ExportedAt:    now.Format(time.RFC3339),
 		Service: namesService{
 			ID: "youeye-names-official", CanonicalOrigin: "https://names.youeye.me",
@@ -90,7 +90,7 @@ func validNamesBundleForTest(t *testing.T) []byte {
 	return data
 }
 
-func TestValidateNamesBundleV3(t *testing.T) {
+func TestValidateNamesBundle(t *testing.T) {
 	bundle, err := validateNamesBundle(validNamesBundleForTest(t))
 	if err != nil {
 		t.Fatalf("valid bundle rejected: %v", err)

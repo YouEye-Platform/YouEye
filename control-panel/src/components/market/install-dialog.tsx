@@ -113,6 +113,9 @@ function formatBytes(value: number | null): string {
   // optional extra gate, off by default and fully operable. Plain apps drive the gate from
   // `protectWithAccountLogin` instead, so this stays false/ignored for them.
   const [forwardAuthGate, setForwardAuthGate] = useState(false);
+  // Apps that protect themselves (manifest `public_access`) install public unless the owner turns it off here.
+  const offersPublicAccess = app.publicAccess === true;
+  const [publicAccess, setPublicAccess] = useState(offersPublicAccess);
   const supportsAI = app.capabilities?.ai_api === true;
   const [useAISettings, setUseAISettings] = useState(supportsAI);
   const [aiGroups, setAIGroups] = useState<AIGroup[]>([]);
@@ -250,6 +253,7 @@ function formatBytes(value: number | null): string {
       selectedIntegrations: (app.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,
       protectWithAccountLogin,
       forwardAuthGate,
+      publicAccess: offersPublicAccess ? publicAccess : undefined,
       allowInternet,
       aiSettings: supportsAI
         ? { enabled: useAISettings, ...(useAISettings ? { modelGroupId: aiGroupId } : {}) }
@@ -529,6 +533,43 @@ function formatBytes(value: number | null): string {
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
                       forwardAuthGate ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </section>
+          )}
+
+          {offersPublicAccess && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">{translateInterface("m03e7db61b2e1")}</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {translateInterface("m7abb883ab0c4", {name: app.name, site: siteName})}
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
+                <div className="flex items-start gap-3">
+                  <div className={`mt-0.5 rounded-md p-2 ${publicAccess ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
+                    {publicAccess ? <ShieldOff className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{translateInterface("ma05ac86e60af")}</p>
+                    <p className="mt-1 text-xs text-gray-500">{translateInterface("m9fe9ebe58220")}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={publicAccess}
+                  onClick={() => setPublicAccess((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    publicAccess ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      publicAccess ? 'translate-x-6' : 'translate-x-1'
                     }`}
                   />
                 </button>

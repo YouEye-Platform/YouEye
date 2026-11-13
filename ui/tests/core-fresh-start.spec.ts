@@ -43,7 +43,7 @@ test('fresh startup rejects running and uncertain migration without replay', asy
   } finally { await rm(root, { recursive: true }); }
 });
 
-test('build-independent fresh guard leaves legacy and update/recovery schema ownership intact', async () => {
+test('build-independent fresh guard leaves unmanaged and update/recovery schema ownership intact', async () => {
   const { root, paths } = await fixture();
   try {
     const denied = async () => { assert.fail('non-fresh marker started database work'); };

@@ -22,9 +22,11 @@ comes from HTTPS and SHA-256.
  "build_manifest_base64":"<base64 of youeye.product-build.v1>"}
 ```
 
-The embedded `youeye.product-build.v1` lists every asset as `{name, sha256, size_bytes, release?}`, names the
-primary asset and records `contract_sha256`: the digest of the installer contract (`youeye-app.yaml` for native
-apps, `pointer-build-contract.json` for Pointer, `catalog-snapshot.json` for the Market catalog). No source,
+The embedded `youeye.product-build.v1` has `product`, `kind` (`native`, `source` or `catalog`), `build_version`,
+`source_tree`, `input_sha256`, the `primary` asset name (`standalone.tar` for native apps) and `assets`, each
+`{name, sha256, size_bytes, release?}`. `contract_sha256` is the digest of the installer contract
+(`youeye-app.yaml` for native apps, `pointer-build-contract.json` for Pointer, `catalog-snapshot.json` for the
+Market catalog). No source,
 branch, channel, commit or URL is inside; a promotion changes only `version` and `tag` and keeps
 `build_manifest_base64` byte for byte. The accepted document's SHA-256
 (which must equal the channel index entry) is the installed identity.
@@ -33,8 +35,14 @@ branch, channel, commit or URL is inside; a promotion changes only `version` and
 
 The catalog release carries `catalog-snapshot.json` (the contract), `catalog.tar` (the primary asset: a plain,
 deterministic tar of exactly the files the snapshot lists) and `product-release.json`. The official Market is read
-from `catalog.tar`; every file is checked against the snapshot. Native-app entries in `catalog.yaml` name only the
-app id (`- id: notes` with `integration: native`); the box resolves them through its channel index.
+from `catalog.tar`; every file is checked against the snapshot. `catalog.yaml` names the native apps by id only
+(`native: [notes, wiki, search, translate, weather, cinema]`); the box resolves each one through its channel index.
 
 The reader is `control-panel/src/lib/releases/product-release.ts`. Unknown fields and duplicate JSON keys are
 rejected.
+
+## Never older, never different
+
+The Control Panel keeps a floor per product: the installed build version and its build digest. It refuses a
+channel entry whose build is older ("waiting for the channel to catch up"), and one that claims the installed build
+version with other contents.

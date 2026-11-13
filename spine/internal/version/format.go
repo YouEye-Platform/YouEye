@@ -14,7 +14,7 @@ import (
 const MaxSegments = 10
 
 // FormatVersion preserves every position and suffix of a canonical release.
-// Legacy numeric-depth identities retain their historical display formatting.
+// Other dotted numeric versions drop trailing zero segments.
 //
 //	"0.5.0.0"   → "0.5"
 //	"2.0.0"     → "2"

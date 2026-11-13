@@ -39,9 +39,9 @@ test('platform copy retains its domain disposition across interruption and waits
  await expect(prepareIndependentPlatform(request,inventory,bundle,'apps')).rejects.toThrow('first');
  expect((await prepareIndependentPlatform(request,inventory,bundle,'identity')).phase).toBe('identity-prepared');
  await expect(prepareIndependentPlatform(request,inventory,bundle,'domain')).rejects.toThrow('lost native acknowledgement');
- expect(clearCalls).toBe(1);expect(removed).toBe(7);
+ expect(clearCalls).toBe(1);expect(removed).toBe(5);
  expect((await prepareIndependentPlatform(request,inventory,bundle,'domain')).phase).toBe('domain-restart-pending');
- expect(clearCalls).toBe(1);expect(removed).toBe(7);
+ expect(clearCalls).toBe(1);expect(removed).toBe(5);
  await expect(prepareIndependentPlatform(request,inventory,{...bundle,fqdn:'different.example.test'},'domain')).rejects.toThrow('differs');
  await expect(prepareIndependentPlatform(request,inventory,bundle,'apps')).rejects.toThrow('restart');
  pending=null;

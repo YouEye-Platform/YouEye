@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
               const brokerCertificate = await getCurrentCertificate(appliedBundle.name, importedIdentity);
               const activatedAt = new Date().toISOString();
               await writeNamesLifecycleState({
-                schemaVersion: 2,
+                schemaVersion: 1,
                 service: appliedBundle.service,
                 name: appliedBundle.name,
                 fqdn: newDomain,

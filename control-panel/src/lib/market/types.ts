@@ -269,6 +269,8 @@ export interface AppManifest {
   apiKey?: { secret: string };
   internet?: InternetSpec;
   forwardAuth?: 'default' | 'enabled' | 'disabled';
+  /** Manifest `public_access: true`: the app protects itself, so installs default to public access. */
+  publicAccess?: true;
   sso?: SSOConfig;
   backup?: BackupSpec;
   detail?: AppDetail;
@@ -378,6 +380,11 @@ export interface InstallConfig {
    * `protectWithAccountLogin`; this field is left undefined.
    */
   forwardAuthGate?: boolean;
+  /**
+   * The installing administrator's public-access choice. Undefined = the manifest's `public_access` default
+   * (Market installs); URL installs set it to false unless the administrator chose public access.
+   */
+  publicAccess?: boolean;
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
   /**
@@ -792,6 +799,8 @@ export interface MarketApp {
     permissions?: string[];
   }[];
   forwardAuth?: 'default' | 'enabled' | 'disabled';
+  /** Manifest `public_access: true`: the app protects itself, so installs default to public access. */
+  publicAccess?: true;
   capabilities?: {
     widgets?: boolean;
     notifications?: boolean | 'push';

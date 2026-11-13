@@ -82,12 +82,12 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 	if _, err := f.manager.loadTransactionManifest(j); err != nil {
 		t.Fatal(err)
 	}
-	// A legacy caller cannot adopt this core transaction even with identical
+	// A host-only caller cannot adopt this core transaction even with identical
 	// host bytes; neither can a new assembly silently reuse its active journal.
-	legacy := options
-	legacy.Core = nil
-	if _, err := f.manager.Stage(context.Background(), legacy); err == nil {
-		t.Fatal("legacy caller adopted core transaction")
+	hostOnly := options
+	hostOnly.Core = nil
+	if _, err := f.manager.Stage(context.Background(), hostOnly); err == nil {
+		t.Fatal("host-only caller adopted core transaction")
 	}
 	changed := r
 	changed.Sequence++

@@ -168,7 +168,7 @@ test('certificate validation proves key, exact SANs, fingerprint and dates', () 
   );
 });
 
-test('bundle v3 is service-bound and rejects obsolete bundle shapes', () => {
+test('the recovery bundle is service-bound and rejects obsolete bundle shapes', () => {
   const name = 'quiet-forest';
   const fqdn = `${name}.ui.bingo`;
   const material = makeCertificate(fqdn);
@@ -179,7 +179,7 @@ test('bundle v3 is service-bound and rejects obsolete bundle shapes', () => {
   });
   const identity = storedIdentity();
   const value = {
-    schemaVersion: 3,
+    schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     service: {
       id: 'youeye-names-official',
@@ -200,7 +200,7 @@ test('bundle v3 is service-bound and rejects obsolete bundle shapes', () => {
     consent: { termsVersion: null, certificateTransparencyAcceptedAt: null },
   };
   const parsed = bundleModule.parseNamesBundle(value);
-  assert.equal(parsed.schemaVersion, 3);
+  assert.equal(parsed.schemaVersion, 1);
   assert.equal(parsed.fqdn, fqdn);
   assert.equal(parsed.identity.schema, 1);
   assert.throws(
@@ -214,7 +214,7 @@ test('bundle v3 is service-bound and rejects obsolete bundle shapes', () => {
     }),
     /metadata_mismatch/,
   );
-  assert.throws(() => bundleModule.parseNamesBundle({ ...value, schemaVersion: 2 }), /format_invalid/);
+  assert.throws(() => bundleModule.parseNamesBundle({ ...value, schemaVersion: 0 }), /format_invalid/);
   assert.throws(() => bundleModule.parseNamesBundle({
     ...value,
     service: { ...value.service, id: 'untrusted-service' },
@@ -224,7 +224,7 @@ test('bundle v3 is service-bound and rejects obsolete bundle shapes', () => {
 test('lifecycle state is strict, atomic and protected', async () => {
   const now = new Date().toISOString();
   await stateModule.writeNamesLifecycleState({
-    schemaVersion: 2,
+    schemaVersion: 1,
     service: {
       id: 'youeye-names-official', canonicalOrigin: 'https://names.test',
       apiVersion: 'v1', managedZone: 'ui.bingo',
@@ -433,7 +433,7 @@ test('fresh setup previews need no registration and each verified session advanc
     const previews=await clientModule.previewFreshSetupNames({count:3,currentIp:'192.168.1.50',parentOrigin:'https://192.168.1.50'});
     assert.equal(previews.length,3);assert.equal(challenges.length,3);assert.equal(registrations.length,0);assert.equal(claims.length,0);
     // Ordinary registration can already be cached from an earlier operation.
-    await clientModule.registerInstall('legacy-registration-proof-value');
+    await clientModule.registerInstall('cached-registration-proof-value');
     const first='synthetic-setup-session-credential'.repeat(3);
     const second='different-setup-session-credential'.repeat(3);
     await clientModule.registerVerifiedSetup(first);await clientModule.registerVerifiedSetup(first);await clientModule.registerVerifiedSetup(second);

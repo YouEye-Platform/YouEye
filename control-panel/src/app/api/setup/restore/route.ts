@@ -48,15 +48,6 @@ export async function GET(request: NextRequest) {
         && record.identity.target === setupRestoreTargetIdentity(await readFile('/var/lib/youeye/config/cli-token', 'utf8'))) {
         return NextResponse.json(retained.status, { headers: { 'Cache-Control': 'no-store' } });
       }
-      // Legacy receipts have no bound source/step evidence. They remain
-      // inspectable by their session, but cannot authorize replay or settlement.
-      const status = !record ? await readRestoreStatus(operationId, { strict: true }) : null;
-      if (status?.setupSessionId === session.setupSessionId) {
-        return NextResponse.json({ operationId, status: 'failed', phase: 'legacy', active: false,
-          recovery: 'operator-required', messageCode: 'restore-needs-reconciliation',
-          message: 'Restore needs operator reconciliation before continuing.' },
-        { headers: { 'Cache-Control': 'no-store' } });
-      }
       return NextResponse.json({ error: 'Restore operation not found' }, { status: 404 });
     } catch {
       return NextResponse.json({ error: 'Restore status is temporarily unavailable', code: 'state-unavailable' }, { status: 503 });

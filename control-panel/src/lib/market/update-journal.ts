@@ -46,7 +46,7 @@ export interface AppUpdateRecord {
   schema: typeof APP_UPDATE_SCHEMA;
   id: string;
   appId: string;
-  /** Absent in legacy receipts, whose recovery provider replaces payloads. */
+  /** Absent for payload updates, whose recovery provider replaces payloads. */
   operationKind?: 'payload' | 'release-metadata' | 'pointer-release-metadata';
   revision: number;
   phase: AppUpdatePhase;

@@ -26,7 +26,7 @@ func (p NativeCoreCheckpoint) inspectCopyPihole(ctx context.Context) error {
 	if err != nil || json.Unmarshal(raw, &instance) != nil || instance.ExpandedConfig == nil {
 		return fmt.Errorf("Pi-hole copy environment unavailable")
 	}
-	for _, key := range []string{"environment.FTLCONF_webserver_api_password", "environment.WEBPASSWORD", "environment.FTLCONF_webserver_api_pwhash", "environment.FTLCONF_webserver_api_app_pwhash", "environment.FTLCONF_webserver_api_totp_secret"} {
+	for _, key := range []string{"environment.FTLCONF_webserver_api_password", "environment.FTLCONF_webserver_api_pwhash", "environment.FTLCONF_webserver_api_app_pwhash", "environment.FTLCONF_webserver_api_totp_secret"} {
 		if instance.ExpandedConfig[key] != "" {
 			return fmt.Errorf("Pi-hole password environment override requires a copy adapter")
 		}

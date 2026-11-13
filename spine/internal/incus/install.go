@@ -21,14 +21,15 @@ type InstallOptions struct {
 	AutoGrowZFS    bool
 
 	// Decision is the resolved deploy storage decision (adopt/create/loop/dir).
-	// When Kind is DecisionUnset, initialization falls back to the legacy
-	// behavior driven by DesiredZFSSize (used by `install incus` without a full
-	// deploy context and by older callers).
+	// It is required; cmd/install.go always resolves one first.
 	Decision storage.StorageDecision
 }
 
 // InstallWithOptions installs and initializes Incus with proper storage configuration.
 func InstallWithOptions(opts InstallOptions) error {
+	if opts.Decision.Kind == storage.DecisionUnset || opts.Decision.Kind == storage.DecisionFail {
+		return fmt.Errorf("incus install requires a resolved storage decision, got %s", opts.Decision.Kind)
+	}
 	fmt.Println("=== Installing Incus ===")
 
 	// Install pamtester on HOST for PAM authentication (required by Spine API)
@@ -150,7 +151,7 @@ func InstallWithOptions(opts InstallOptions) error {
 	}
 
 	// Initialize Incus with best available storage
-	if err := initializeWithPreseed(zfsAvailable, opts); err != nil {
+	if err := initializeWithPreseed(opts); err != nil {
 		return err
 	}
 
@@ -163,10 +164,8 @@ func InstallWithOptions(opts InstallOptions) error {
 
 	// Post-init verification: assert reality matches the plan before we build
 	// any containers on top of a wrong (e.g. implicit 3 GiB) pool. Fail loudly.
-	if opts.Decision.Kind != storage.DecisionUnset {
-		if err := VerifyStorageMatchesDecision(opts.Decision); err != nil {
-			return err
-		}
+	if err := VerifyStorageMatchesDecision(opts.Decision); err != nil {
+		return err
 	}
 
 	if err := ensureIncusBridgeReady(); err != nil {
@@ -250,56 +249,25 @@ func checkZFSAvailable() bool {
 	return false
 }
 
-// zpoolExists checks if a ZFS pool with the given name already exists.
-func zpoolExists(name string) bool {
-	err := exec.Command("zpool", "list", name).Run()
-	return err == nil
-}
-
 // planPreseedStorage returns the (driver, driverConfig-yaml-fragment) pair for
 // the preseed storage pool, driven by the resolved StorageDecision when one is
 // present. driverConfig is the YAML lines appended after `- config:` (or "").
 //
 // The decision cases map to Incus storage sources as:
 //   - AdoptMarkedPool / CreateOnDisk / AdoptAppliancePartition → source: default/incus (dataset within
-//     the YouEye pool; Incus creates default/incus with mountpoint=legacy).
-//   - ReuseLegacyPool               → source: default (whole legacy pool).
+//     the YouEye pool; Incus creates default/incus with ZFS mountpoint=legacy).
 //   - LoopPool                      → size: <explicit> (managed loop file).
 //   - Dir                           → dir driver, no config.
-//
-// When Decision is unset (older callers / `install incus`), fall back to the
-// legacy behavior: reuse an existing `default` pool as source=default, else use
-// DesiredZFSSize.
-func planPreseedStorage(zfsAvailable bool, opts InstallOptions) (driver, driverConfig string) {
+func planPreseedStorage(opts InstallOptions) (driver, driverConfig string) {
 	switch opts.Decision.Kind {
 	case storage.DecisionAdoptMarkedPool, storage.DecisionCreateOnDisk, storage.DecisionAdoptAppliancePartition:
 		fmt.Printf("Initializing Incus with ZFS dataset source %s...\n", storage.IncusDataset)
 		return "zfs", "\n    source: " + storage.IncusDataset
-	case storage.DecisionReuseLegacyPool:
-		fmt.Println("Initializing Incus reusing legacy ZFS pool (source: default)...")
-		return "zfs", "\n    source: " + storage.PoolName
 	case storage.DecisionLoopPool:
 		size := opts.Decision.LoopSizeBytes
 		sizeStr := fmt.Sprintf("%dGiB", size/storage.GiB)
 		fmt.Printf("Initializing Incus with managed ZFS loop pool sized %s...\n", storage.FormatBytes(size))
 		return "zfs", "\n    size: " + sizeStr
-	case storage.DecisionDir:
-		fmt.Println("Initializing Incus with dir storage...")
-		return "dir", ""
-	}
-
-	// ── Legacy / decision-unset fallback ──
-	if zfsAvailable {
-		if zpoolExists("default") {
-			fmt.Println("Found existing ZFS pool 'default', reusing it...")
-			return "zfs", "\n    source: default"
-		}
-		if strings.TrimSpace(opts.DesiredZFSSize) != "" {
-			fmt.Println("Initializing Incus with ZFS storage...")
-			return "zfs", "\n    size: " + strings.TrimSpace(opts.DesiredZFSSize)
-		}
-		fmt.Println("Initializing Incus with ZFS storage...")
-		return "zfs", ""
 	}
 	fmt.Println("Initializing Incus with dir storage...")
 	return "dir", ""
@@ -307,8 +275,8 @@ func planPreseedStorage(zfsAvailable bool, opts InstallOptions) (driver, driverC
 
 // VerifyStorageMatchesDecision asserts, after Incus init, that the live pool
 // matches the plan. It fails loudly on any mismatch (plan step 2):
-//   - dedicated-disk expectation → source must be default/incus (or default for
-//     legacy reuse), NOT a /var/lib/incus/disks/*.img loop path.
+//   - dedicated-disk expectation → source must be default/incus, NOT a
+//     /var/lib/incus/disks/*.img loop path.
 //   - loop expectation → the pool size must equal the planned explicit size.
 //   - any ZFS pool below MinPoolBytes is a hard failure regardless of kind.
 func VerifyStorageMatchesDecision(decision storage.StorageDecision) error {
@@ -341,11 +309,6 @@ func VerifyStorageMatchesDecision(decision storage.StorageDecision) error {
 			}
 		}
 		fmt.Printf("✓ Storage verified: dedicated-disk pool, source %s\n", info.source)
-	case storage.DecisionReuseLegacyPool:
-		if strings.HasPrefix(info.source, "/var/lib/incus/disks/") {
-			return fmt.Errorf("post-init verification FAILED: expected legacy pool reuse (source %s) but got loop-backed pool (source %s)", storage.PoolName, info.source)
-		}
-		fmt.Printf("✓ Storage verified: legacy pool reuse, source %s\n", info.source)
 	case storage.DecisionLoopPool:
 		wantBytes := decision.LoopSizeBytes
 		gotBytes := storage.ParseSizeBytes(info.size)
@@ -382,25 +345,15 @@ func manualZFSCreateArgs(opts InstallOptions) []string {
 	switch opts.Decision.Kind {
 	case storage.DecisionAdoptMarkedPool, storage.DecisionCreateOnDisk, storage.DecisionAdoptAppliancePartition:
 		return append(base, "source="+storage.IncusDataset)
-	case storage.DecisionReuseLegacyPool:
-		return append(base, "source="+storage.PoolName)
 	case storage.DecisionLoopPool:
 		return append(base, fmt.Sprintf("size=%dGiB", opts.Decision.LoopSizeBytes/storage.GiB))
-	}
-	// Legacy fallback.
-	if zpoolExists("default") {
-		util.LogDebug("Found existing ZFS pool 'default', reusing via source=default")
-		return append(base, "source=default")
-	}
-	if strings.TrimSpace(opts.DesiredZFSSize) != "" {
-		return append(base, "size="+strings.TrimSpace(opts.DesiredZFSSize))
 	}
 	return base
 }
 
 // initializeWithPreseed initializes Incus using preseed configuration.
-func initializeWithPreseed(zfsAvailable bool, opts InstallOptions) error {
-	driver, driverConfig := planPreseedStorage(zfsAvailable, opts)
+func initializeWithPreseed(opts InstallOptions) error {
+	driver, driverConfig := planPreseedStorage(opts)
 
 	preseed := fmt.Sprintf(`config:
   core.https_address: '[::]:8443'
@@ -442,7 +395,7 @@ cluster: null
 
 	if err := cmd.Run(); err != nil {
 		// Fallback to manual setup if preseed fails
-		return initializeManually(err, zfsAvailable, opts)
+		return initializeManually(err, opts)
 	}
 
 	StorageDriver = driver
@@ -450,18 +403,13 @@ cluster: null
 }
 
 // initializeManually performs manual Incus initialization when preseed fails.
-func initializeManually(preseedErr error, zfsAvailable bool, opts InstallOptions) error {
+func initializeManually(preseedErr error, opts InstallOptions) error {
 	fmt.Println("\n⚠️  Preseed init failed, trying manual setup...")
 	util.LogDebug(fmt.Sprintf("Preseed error: %v", preseedErr))
 
-	driver := "dir"
-	if zfsAvailable {
-		driver = "zfs"
-	}
+	driver := "zfs"
 	if opts.Decision.Kind == storage.DecisionDir {
 		driver = "dir"
-	} else if opts.Decision.Kind != storage.DecisionUnset {
-		driver = "zfs"
 	}
 
 	// Clean up any partial state from failed preseed

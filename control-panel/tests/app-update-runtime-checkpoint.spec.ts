@@ -75,7 +75,7 @@ test('stopped runtime checkpoints disable local and profile NIC/proxy identities
   assert.deepEqual(f.instances.get('app-fixture'), f.original);
 });
 
-test('recovery isolates an owned legacy copy and restores canonical devices and profiles', async () => {
+test('recovery isolates an owned retained copy and restores canonical devices and profiles', async () => {
   const f = fixture();
   f.instances.set('retained', { ...structuredClone(f.original), name: 'retained',
     config: { ...f.original.config, 'user.youeye.update_operation': f.id, 'user.youeye.update_source': 'app-fixture' } });

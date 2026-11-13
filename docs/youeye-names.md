@@ -1,129 +1,121 @@
-# YouEye Names product integration
+# YouEye Names
 
-The Development product uses the official accountless YouEye Names service at
-`https://names.youeye.me`. The service advertises the managed zone; the current
-production contract is `ui.bingo`. The API origin and DNS zone are independent
-and must never be derived from each other.
+YouEye Names gives a box on a home network a real HTTPS name, such as `sandy-spring.ui.bingo`, without an account.
+The box holds the name with a key; the Names service (the "broker") points the DNS record at the box's private IP
+and gets it a public certificate.
 
-## Fresh setup
+- The broker is the separate `YouEye-Names` repo, running on Cloudflare at `https://names.youeye.me`. It is the
+  only Names service the product talks to.
+- The box side is in the Control Panel: `control-panel/src/lib/youeye-names/`, the setup wizard
+  (`components/setup/SetupServerName.tsx`, `app/api/setup/run/route.ts`) and `app/api/tls/youeye-names/*`.
+- The service origin and the DNS zone are separate. The zone comes from the service (today `ui.bingo`); never derive
+  one from the other.
 
-1. Control Panel fetches `/v1/service-info`, requires API `v1`, the exact
-   canonical origin, service ID `youeye-names-official`, a valid managed zone,
-   and the required install/lease/certificate capabilities.
-2. `/v1/readiness` appears before mutation. `degraded` with
-   `canProceedNow=true` is an amber warning; paused, blocked, malformed, or
-   unreachable service state blocks only a new Names setup and leaves the BYO,
-   self-signed, and uploaded-certificate choices available.
-3. With the `verified-setup-v1` capability, “Get a secure address” loads
-   non-committing generated choices using anonymous, signed setup contexts.
-   No install registration, human decision, lease, DNS or certificate is created
-   by preview. The final human challenge is requested only for the selected name.
-4. Immediately before provisioning, a dedicated Names iframe verifies one
-   bounded setup session. Its signed context binds the broker identity/origin,
-   install fingerprint, exact chosen name, Spine-reported private/VPN IP, exact
-   browser parent origin and random attempt channel. Registration and claim
-   share this one decision; the Turnstile response is never reused for a second
-   domain action. The session expires after at most five minutes and is kept
-   only in browser/request memory.
-5. Control Panel registers using `verifiedSetupSession`, even when the key is
-   already registered or cached, then signs the exact name/IP claim using that
-   same session. It stores a protected schema-v2 provisioning record before the
-   certificate request. The TLS key and CSR remain local in mode-`0600` state;
-   retry or restart reuses the same key/CSR and idempotent certificate job.
-6. Certificate retrieval waits up to ten minutes to cover the service's DNS
-   propagation envelope. Root/wildcard SANs, local key, broker fingerprint,
-   provider metadata and dates are validated before Caddy activation.
-7. A first heartbeat is attempted immediately. Six-hour maintenance continues
-   heartbeat, IP-only DNS updates, renewal and provisioning recovery.
+## Service discovery
 
-## Verification transport and compatibility
+`lib/youeye-names/service.ts` reads `GET /v1/service-info` (8 s timeout, at most 64 KiB) and requires:
 
-Names must be deployed before clients enable its discovered capability. Services
-without it retain the existing registration popup followed by a separate exact
-claim proof. Legacy v1 clients remain supported by the upgraded service. Saved
-identity/name/certificate bundles retain their existing authenticated reuse path;
-requesting a new setup grant is not a substitute for recovering an owned name.
+- `apiVersion: v1`;
+- a canonical origin equal to the origin it contacted;
+- service ID `youeye-names-official`;
+- the capabilities `install-signatures`, `lease-lifecycle` and `certificate-lifecycle`;
+- a valid managed zone.
 
-The new iframe uses `/enroll/embedded` and only its signed admitted parent in
-CSP `frame-ancestors`. The ordinary `/enroll` remains unframeable. The parent
-captures the exact local browser origin, and its API checks that origin against
-actual request Host rather than a caller-provided origin or forwarded-host guess.
-The iframe is sandboxed and uses no-referrer. The selected broker's HTTPS origin,
-exact Window, version, random channel, init/result shape, fingerprint, name, IP
-and finite bounded expiry must match. A result is acknowledged only after
-retaining it in the current in-memory attempt. Cancel, Back, unmount, superseding
-choices and expiry remove listeners and prevent stale results from starting
-provisioning. Names API redirects fail closed, and a mismatched registration
-fingerprint never becomes cached authority.
+`YOUEYE_NAMES_URL` and `YOUEYE_NAMES_EXPECTED_SERVICE_ID` override the origin and ID for development; the defaults
+are the official ones. `GET /v1/readiness` tells setup whether a new name can be made now.
 
-HTTP LAN setup uses `crypto.getRandomValues` for standard UUID v4 attempt and
-restore/onboarding operation IDs; there is no insecure randomness fallback.
-The service's signed frame admission pins the exact context and canonical
-public key after server-side authentication/fingerprint checks. The frame
-compares exact init values instead of depending on `crypto.subtle`, which is
-unavailable below an HTTP ancestor even when the frame itself uses HTTPS.
-Admission URLs contain bounded public key/name/LAN-IP metadata, never a provider
-response or setup credential; do not log URL queries. If the browser/provider
-still prevents embedding, the standalone and manual paths remain available.
+## The box's identity
 
-If embedded verification cannot load, the visible standalone action opens
-`/enroll/setup` using the same signed context/channel. If browser isolation or
-popup blocking prevents automatic return, its short-lived code can be pasted
-into the current attempt. It must contain that attempt's exact context; the
-broker still validates its issued digest, expiry and install signature. No
-private install key, TLS key, provider secret or Turnstile response reaches
-Control Panel browser code. The new result includes the exact private/VPN IP
-binding; it is not written to browser persistent storage or diagnostics.
+- The box's Names identity is an Ed25519 key pair (`identity.ts`). The private key is the authority for the name.
+- Every authenticated request is signed over seven lines: method, path, timestamp, nonce, SHA-256 of the body,
+  service ID, service origin (`client.ts`). The request also carries `x-youeye-install-fingerprint`,
+  `x-youeye-timestamp`, `x-youeye-nonce`, `x-youeye-signature`, `x-youeye-service-id` and
+  `x-youeye-service-origin`. Binding the service ID and origin stops a signature being replayed to another
+  service.
 
-Neither a successful verification nor an accepted session means the lease,
-certificate or browser connection is ready. Real browser/provider acceptance
-must cover the iframe, standalone return, manual fallback, legacy flow and saved
-bundle reuse separately. Source tests and service health do not prove those
-installed journeys. The broker's ephemeral session schema must exist in both
-PostgreSQL and D1 and must stay outside portable rollback data snapshots.
+## Setup flow
 
-## Signed request contract
+1. Setup loads readiness. `degraded` with `canProceedNow=true` shows an amber warning. Paused, blocked, malformed or
+   unreachable blocks only a new Names setup; the own-domain (ACME), self-signed and upload choices stay available.
+2. **Preview.** "Get a secure address" shows generated name choices (`/v1/leases/preview`). A preview creates
+   nothing: no registration, lease, DNS record or certificate.
+3. **Human check.** With the `verified-setup-v1` capability, the box asks the broker for one verification for the
+   chosen name (`/v1/human-verification/challenges`). The broker's page opens in an iframe
+   (`/enroll/embedded`). Its signed context binds the broker, the box's fingerprint, the chosen name, the box's
+   private IP (from Spine), the browser's parent origin and a random session ID, and expires within 5 minutes. The
+   parent origin is checked against the request's actual `Host` (`setup-request.ts`). The result is kept only in
+   memory. If the iframe cannot load, a standalone page (`/enroll/setup`) is offered, and its short code can be
+   pasted back.
+   - If the service does not advertise `verified-setup-v1`, setup uses a popup instead (`popup.ts`): one check to
+     register the box, then a separate proof for the claim.
+4. **Register and claim.** The CP registers the box with the verified session (`/v1/installs/register`) and claims
+   the exact name and IP with the same session (`/v1/leases/claim`). The human check is never reused for a second
+   name.
+5. **Certificate.** The CP writes the lifecycle record, makes a TLS key and CSR locally (mode `0600`), requests the
+   certificate and waits up to 10 minutes for it. A retry or restart reuses the same key, CSR and request.
+6. **Activate.** The certificate's names, key, broker fingerprint, provider and dates are checked before Caddy loads
+   it. A first heartbeat is sent at once.
+7. **Check from the browser.** The setup-complete page opens the new name from the owner's browser to prove that
+   their DNS resolver and HTTPS reach it. The service being healthy cannot prove that.
 
-All install-authenticated requests sign seven newline-separated fields:
+No private install key, TLS key or human-check token ever reaches browser code.
 
-```text
-method
-path
-timestamp
-nonce
-body SHA-256
-service ID
-canonical service origin
-```
+## Maintenance
 
-They also send `x-youeye-service-id` and `x-youeye-service-origin`. This binds
-an otherwise valid installation signature to the discovered broker and blocks
-cross-service replay.
+`maintenance.ts` runs in the Control Panel 90–150 seconds after start, then every 6 hours:
 
-## Durable state and recovery
+- resume an interrupted setup from its recorded stage;
+- check that the certificate Caddy serves matches `lifecycle.json`;
+- heartbeat (`/v1/leases/<name>/heartbeat`) with the box's primary IP, certificate fingerprint and expiry, version
+  and Caddy health;
+- renew the certificate when it expires within 30 days or the broker asks for a new CSR, then swap it in Caddy.
+  Renewal needs the current certificate terms version to have been accepted.
 
-- Lifecycle schema v2 stores the immutable service ID/origin/API/zone binding,
-  actual FQDN, provisioning stage, consent, certificate state, contact times,
-  and redacted error/request ID.
-- Recovery bundle schema v3 stores the same service binding plus the protected
-  installation identity, TLS key/certificate, certificate metadata, and
-  consent. It is a credential and retains the existing regular-file,
-  no-symlink, size, ownership, mode-`0600`, no-overwrite, and explicit-stdout
-  safeguards.
-- This pre-release cutover intentionally has no `.youeye.me`, lifecycle-v1, or
-  bundle-v2 compatibility path. Obsolete state fails closed rather than being
-  silently reinterpreted as `ui.bingo` authority.
+When the host's IP changes, Spine calls the Control Panel's `POST /api/host-ip/migrate`, which updates the name's
+DNS record (`/v1/leases/<name>/ip`).
 
-## Health presentation
+Settings → Network shows dot-plus-word status for reachability, whether new names can be made, and coarse DNS and
+the state of the primary and fallback CA (Google Public CA and Let's Encrypt). It never shows quotas, raw provider errors or
+credentials. Heartbeat, renewal, export, revoke and release report their own results.
 
-Setup and Settings show dot-plus-word status for reachability and whether new
-installation may proceed. Settings also shows coarse DNS, Google Public CA
-primary, and Let's Encrypt fallback availability. It never displays private
-quota, provider errors, credentials, or an issuance promise. Existing
-heartbeat, renewal, export, revocation, and release continue to use their own
-route results rather than treating new-install admission as a global outage.
+## Saved state
 
-The post-setup page separately tests the chosen named origin from the owner's
-browser with an exact iframe window/origin handshake. This is the device-side
-proof that local DNS and trusted HTTPS can reach the new `ui.bingo` address;
-service readiness alone cannot prove the owner's resolver path.
+The files live inside the `youeye-control` container under `/opt/youeye-control-data/youeye-names/`
+(`YOUEYE_NAMES_DATA_DIR` overrides it).
+
+| File | Contents |
+|---|---|
+| `install-identity.json` | the Ed25519 identity |
+| `lifecycle.json` | `schemaVersion: 1`: service ID, origin, API and zone; name and FQDN; status (`provisioning`, `healthy`, `renewing`, `attention`, `released`); setup stage (`lease_claimed` … `activating`) with the pending key and CSR; consent; certificate metadata; last contact, heartbeat and next check |
+
+All Names files must be regular files with mode `0600`; anything else is refused. Records in any other format are
+refused, never reinterpreted.
+
+## Saved Names (recovery bundle)
+
+The recovery bundle lets a reinstalled box keep its name and certificate without a new issuance.
+
+- Contents (`bundle.ts`, `schemaVersion: 1`): service binding, name and FQDN, the install identity, the TLS key and
+  certificate, certificate metadata (fingerprint, provider, dates) and consent (terms version, certificate
+  transparency acceptance).
+- It contains private keys: treat it as a credential.
+- Export: `youeye names export --output <new-file>` (writes mode `0600`, never overwrites; `--stdout` must be asked
+  for explicitly), or `GET /api/tls/youeye-names/export` (admin).
+- Import: `youeye names import <bundle.json>`.
+  - Before setup, Spine stages it at `/opt/youeye-control-data/youeye-names/import-bundle.json`. Setup sees it
+    (`GET /api/tls/youeye-names/reuse`), locks the address to that name and validates the bundle again before use.
+  - After setup, it calls `POST /api/tls/youeye-names/apply`, which installs the identity and runs the full server
+    URL change to the saved name. Settings → Network → Domain offers the same.
+- Requesting a new setup verification is not a way to recover a name you own; use the bundle.
+
+## Failure modes
+
+| Symptom | Cause and fix |
+|---|---|
+| Names option blocked in setup | Service unreachable, paused or blocked (readiness). Pick another TLS option or retry later. |
+| `youeye_names_service_*` errors | Discovery failed: wrong origin, service ID, missing capability or bad zone. Check `YOUEYE_NAMES_URL` is unset on a normal box. |
+| "certificate is taking longer than usual" | Issuance took over 10 minutes. Retry the step; it reuses the same key and request. |
+| Name works on the box but not in the browser | The owner's DNS resolver or network cannot reach the private IP. The setup-complete check shows this. |
+| Lost name after reinstall | Restore the exported bundle with `youeye names import`. Without it, the name cannot be recovered. |
+| `lifecycle.json` invalid | The file was edited, has the wrong mode or an old format. It is refused on purpose; restore it from a backup or the bundle. |
+| IP changed but DNS did not follow | The host IP migration (`/api/host-ip/migrate`) updates DNS; check its result in the Control Panel log. |

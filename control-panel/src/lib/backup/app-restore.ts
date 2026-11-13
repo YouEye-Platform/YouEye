@@ -389,11 +389,7 @@ async function restoreAppOnce(
     }
     installedDuringRestore = true;
 
-    const containers: string[] = (Array.isArray(backupMeta.containers) ? backupMeta.containers : []).map((candidate: unknown) =>
-      typeof candidate === 'string'
-        ? candidate
-        : candidate && typeof candidate === 'object' ? (candidate as Record<string, unknown>).containerName : undefined
-    ).filter((name: unknown): name is string => typeof name === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(name));
+    const containers = restoredBackupContainers(backupMeta.containers);
 
     let postInstallOwnDatabaseRestore = false;
     if (existsSync(ownDumpPath)) {
@@ -589,4 +585,10 @@ async function restoreSharedDatabase(
     dump: await readFile(dumpPath),
   });
   onEvent({ step, totalSteps, status: 'progress', stage: 'restore-database', message: `Database restored for ${appId}` });
+}
+
+/** The container names `backupMetaContainers` wrote into `youeye.backup.app-meta.v1` (plain strings). */
+export function restoredBackupContainers(value: unknown): string[] {
+  return (Array.isArray(value) ? value : [])
+    .filter((name: unknown): name is string => typeof name === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(name));
 }

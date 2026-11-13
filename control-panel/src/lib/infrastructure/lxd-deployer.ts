@@ -3,12 +3,9 @@ import { cachedReleaseBytes } from '../releases/cache';
 import { canonicalReleaseRepository, releaseAssetURL, selectedCoreRole } from '../releases/core-release';
 import { spineClient } from '../spine/client';
 /**
- * LXD container deployment via Incus REST API (v2).
- * Used for full-OS containers (Debian) that run Node.js apps.
- *
- * v2 changes:
- *   - Socket proxies (Incus + Spine) REMOVED — apps no longer get infrastructure access
- *   - security.nesting removed (not needed without sockets)
+ * LXD container deployment via Incus REST API.
+ * Used for full-OS containers (Debian) that run Node.js apps. Apps get no
+ * Incus or Spine socket proxies and no security.nesting.
  */
 
 import { incusRequest, execShell, incusUploadFile, incusUploadLocalFile } from '../incus/server';
@@ -223,8 +220,6 @@ async function deployLXDContainerInternal(
   } catch {
     // Non-fatal: sysctl may be restricted in some container setups.
   }
-
-  // v2: Socket proxies removed — apps no longer get Incus/Spine access
 
   // Add port proxy for the app (skip if port conflicts)
   if (spec.port && cfg.exposeHostPort !== false) {

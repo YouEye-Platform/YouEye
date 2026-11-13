@@ -282,6 +282,41 @@ async function updateAdmissionPolicyUnderLifecycle(input: {
   clearForwardAuthCaches();
   return (await getAdmissionPolicy(p.appId))!;
 }
+/**
+ * Install-time public access, called by the install that holds the app's lifecycle. The manifest default
+ * (`explicit: false`) applies only while no administrator has changed this installation's policy, so a reinstall
+ * never overrides an earlier decision; an explicit choice by the installing administrator always applies. Returns
+ * whether public access is now on.
+ */
+export async function applyInstallPublicAccess(input: {
+  appId: string; actorId: string; explicit: boolean;
+}): Promise<boolean> {
+  if (!isAppId(input.appId) || !isUuid(input.actorId)) throw new Error('Invalid installation principal');
+  await ensureIdentitySchema();
+  const changed = await statementRows<{ installation_id: string }>(`
+    actor AS (
+      SELECT id FROM identity_users WHERE id = ${sql(input.actorId)}::uuid AND is_admin AND is_active FOR UPDATE
+    ), eligible AS (
+      SELECT p.installation_id FROM admission_policies p WHERE p.app_id = ${sql(input.appId)}
+        AND p.state = 'ready' AND NOT p.public_access AND EXISTS (SELECT 1 FROM actor)
+        ${input.explicit ? '' : `AND NOT EXISTS (SELECT 1 FROM admission_audit a
+          WHERE a.installation_id = p.installation_id AND a.action = 'policy_changed')`}
+      FOR UPDATE
+    ), changed AS (
+      UPDATE admission_policies SET public_access = true, revision = revision + 1, updated_at = now()
+      WHERE installation_id IN (SELECT installation_id FROM eligible)
+      RETURNING installation_id, revision
+    ), audited AS (
+      INSERT INTO admission_audit (installation_id, actor_id, action, revision, details)
+      SELECT installation_id, ${sql(input.actorId)}::uuid, 'public_access_at_install', revision,
+        ${json({ publicAccess: true, source: input.explicit ? 'administrator' : 'manifest' })}
+      FROM changed
+    )`, 'SELECT installation_id::text FROM changed');
+  clearForwardAuthCaches();
+  const policy = await getAdmissionPolicy(input.appId);
+  return changed.length > 0 || policy?.publicAccess === true;
+}
+
 export async function saveResourceOwnership(resource: ResourceOwnership): Promise<void> {
   if (!isResourceOwnership(resource)) throw new Error('Invalid persistent resource declaration');
   await ensureIdentitySchema();

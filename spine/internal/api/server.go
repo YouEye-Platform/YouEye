@@ -1010,12 +1010,6 @@ func (s *Server) handlePiholeCredentials(w http.ResponseWriter, r *http.Request)
 	case "GET":
 		passwordBytes, err := os.ReadFile(passwordFile)
 		if err != nil {
-			// Migration: try to read from container config for pre-0.1.21 deployments
-			password := s.migratePiholePassword(passwordFile)
-			if password != "" {
-				jsonResponse(w, map[string]string{"password": password})
-				return
-			}
 			errorResponse(w, "Pi-Hole not deployed or password not found", http.StatusNotFound)
 			return
 		}
@@ -1061,27 +1055,6 @@ func (s *Server) handlePiholeCredentials(w http.ResponseWriter, r *http.Request)
 	default:
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-// migratePiholePassword reads the WEBPASSWORD from the Pi-Hole container environment
-// and saves it to the password file. This handles pre-0.1.21 deployments where the
-// password file doesn't exist because Pi-Hole was deployed with a hardcoded password.
-func (s *Server) migratePiholePassword(passwordFile string) string {
-	out, err := exec.Command("incus", "config", "get", "youeye-pihole", "environment.WEBPASSWORD").Output()
-	if err != nil {
-		return ""
-	}
-	password := strings.TrimSpace(string(out))
-	if password == "" {
-		return ""
-	}
-
-	// Save to file for future API calls
-	os.MkdirAll("/var/lib/youeye/pihole", 0700)
-	if err := os.WriteFile(passwordFile, []byte(password), 0600); err != nil {
-		fmt.Printf("Warning: could not save migrated pihole password: %v\n", err)
-	}
-	return password
 }
 
 func getInstanceIPv4(instanceName string) (string, error) {
@@ -1656,7 +1629,7 @@ type YouEyeConfig struct {
 	SetupCompleted bool              `yaml:"setup_completed" json:"setup_completed"`
 	Language       string            `yaml:"language,omitempty" json:"language"`
 	// Extra holds arbitrary key-value pairs that the Control Panel needs
-	// to persist (e.g. tls_acme_account_key, tls_cert_pem). Spine doesn't
+	// to persist (settings it owns). Spine doesn't
 	// interpret these — it just stores and returns them.
 	Extra map[string]string `yaml:"extra,omitempty" json:"extra,omitempty"`
 	// Foreign holds top-level yaml blocks Spine doesn't model (e.g. the CP's
@@ -1913,7 +1886,7 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Store unrecognized keys so the Control Panel can persist arbitrary
 		// settings without Spine knowing each field: strings go to Extra
-		// (legacy behavior — TLS certs, ACME keys), any other JSON value
+		// (TLS certs, ACME keys), any other JSON value
 		// (nested identity config, lists, …) round-trips as a foreign yaml
 		// block, and an explicit null deletes the foreign key.
 		knownKeys := map[string]bool{

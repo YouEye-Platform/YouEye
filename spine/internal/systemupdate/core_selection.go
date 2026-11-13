@@ -18,7 +18,7 @@ const CoreBootstrapPath = "/var/lib/youeye-state/bootstrap"
 const CoreStatePath = "/var/lib/youeye-state/core-update"
 
 // ReadCoreState accepts only bounded, protected, regular state files. It never
-// treats a malformed or unreadable selected manifest as a legacy installation.
+// treats a malformed or unreadable selected manifest as a missing one.
 func ReadCoreState(path string, limit int64) ([]byte, error) {
 	if limit <= 0 || limit > 1<<30 {
 		return nil, fmt.Errorf("invalid core state limit")

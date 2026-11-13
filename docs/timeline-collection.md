@@ -1,73 +1,63 @@
-# Timeline collection and exact encryption secrets
+# Timeline collection and encryption
 
-Timeline collection is a per-account choice, separate from viewing encrypted
-history and from deleting it. Personal onboarding presents an explicit On/Off
-choice. Off does not create a key. Turning collection off retains encrypted
-history and records owned by apps.
+The Timeline is the dashboard's encrypted activity history (`ui/`). Apps report events ("note created", "film
+watched"); the dashboard stores them encrypted per person. This page covers the per-person on/off choice and the
+secret that protects the history.
 
-The UI owns the authoritative, versioned preference in `system_settings`, keyed
-by the internal account UUID. A missing preference permits no collection and
-requires an explicit choice; it does not infer consent from an existing key.
-Unreadable or malformed state is unknown and rejects writes. Existing accounts
-keep their keys/history and can explicitly enable collection in Privacy.
+## Collection is a choice
 
-Consent transitions, encrypted event commits and key changes share a PostgreSQL
-transaction advisory lock per account. Preference mutations require an expected
-revision and request UUID. Repeating the same request and effect is idempotent;
-a stale or changed effect conflicts. Personal completion commits in the same
-transaction as consent. Completion failure rolls back the preference too.
+- Each person chooses whether activity is collected. It is separate from viewing and from deleting history.
+- Personal onboarding opens at the Timeline PIN form. **Next** checks the PIN or phrase and goes on to review.
+  **Disable Timeline**, next to it, goes on without a PIN and creates no key. Nothing is collected before
+  onboarding is confirmed.
+- Turning collection off keeps the existing encrypted history and the records apps own.
+- The preference (`youeye.timeline-collection/1`) is stored by the dashboard in `system_settings`, keyed by the
+  account's internal UUID (`ui/src/lib/db/queries/timeline-collection.ts`). It has a revision.
+- No preference means no collection. An existing key is not taken as consent. Unreadable or malformed state is
+  "unknown" and refuses writes. People who had keys before keep them and can turn collection on in Settings →
+  Privacy.
 
-Producers must capture the event time before reading fresh, authenticated
-`GET /api/v1/timeline/collection` state. If enabled, submit the returned revision
-as `collection_revision` with the event. Never cache consent, queue a payload,
-retry a rejected event after re-enable, or generate a new timestamp to replay
-old activity. The receiver rechecks the revision and interval under the database
-lock immediately before encryption and insertion. Missing, off, unreadable,
-stale and pre-interval writes fail closed. App permissions and acting-user
-admission remain required independently of consent.
+## Writing a preference
 
-New ingestion encrypts immediately with the active symmetric key or the saved
-RSA public key. It never falls back to plaintext pending storage. Consent
-transitions and unlock discard legacy pending rows: their original collection
-interval is not established, so they cannot be safely replayed. No pending
-payload is copied into logs. App-owned records are unaffected.
+- Changes need the expected revision and a request UUID. The same request repeated is a no-op; a stale or
+  different change is a conflict.
+- Consent changes, encrypted event writes and key changes for one account take the same PostgreSQL advisory lock
+  (`ui/src/lib/db/timeline-lock.ts`).
+- Finishing personal onboarding commits in the same transaction as the consent; if it fails, the consent is rolled
+  back too.
 
-Encryption secrets use the existing PBKDF2-SHA256, 600,000 iterations, UTF-8 input
-and per-account salt. Inputs are exact: no trimming, digit restriction, case
-folding, normalization or truncation. The compatible minimum is four UTF-16 code
-units and the request bound is 1,024 units. An emoji can count as two units;
-combining sequences and composed characters remain distinct. Reject lone UTF-16
-surrogates to avoid silently replacing them during UTF-8 encoding. Existing
-numeric PINs retain their derived key identity.
+## Producing events (apps)
 
-Secret creation serializes same-input retries and preserves the original RSA
-identity. Legacy symmetric-only keys acquire an RSA pair after successful
-verification; partial/corrupt RSA material fails without replacing it. Secret
-changes reencrypt symmetric entries, wrap the private key and invalidate old
-viewing sessions in one transaction. Any failed decryption aborts the transition,
-leaving the previous key and data active. Encryption is not a claim that the
-server cannot access an unlocked account, or a promise of secret recovery.
+1. Take the event time first.
+2. Read `GET /api/v1/timeline/collection` with the app's credentials and the acting user.
+3. If collection is on, send the event with `collection_revision` set to the returned revision.
 
-## Verification
+The dashboard re-checks the revision and the collection interval under the lock, right before encrypting and
+inserting. Missing, off, unreadable, stale and out-of-interval writes are refused. Never cache consent, queue
+events for later, retry a refused event after collection is turned back on, or give an old event a new timestamp.
+App permissions and admission of the acting user are checked as well. Writers that do not send the interval are
+refused.
 
-`ui/tests/timeline-secret.spec.ts` covers exact encoding, compatibility and
-boundaries. Each native app and Canvas tests its producer's no-payload behavior.
-The opt-in PostgreSQL integration program in `ui/tests/integration` bundles the
-production queries against a unique temporary schema and in-memory cookie
-fixture. It copies table structures only, creates fixture users, tests consent
-and completion rollback, real lock contention, stale intervals, exact-secret
-retries and key rotation rollback, then drops its own schema. Supply an explicitly
-selected PostgreSQL connection with the UI schema; never print connection data.
-These checks do not establish installed update/rollback/recovery acceptance.
+## Encryption
 
-Older writers lacking the interval contract are rejected. A rollback must not
-restore writers that ignore the authoritative preference; component quick
-restore alone does not establish that compatibility. Full signed System and
-paired-recovery validation remain separate acceptance requirements.
+- A new event is encrypted at once, with the active symmetric key or the saved RSA public key. With neither key the
+  event is refused (`409 key_required`). Nothing is stored in plain text, not even briefly.
+- The key comes from the person's secret: PBKDF2-SHA256, 600,000 iterations, per-account salt
+  (`ui/src/lib/crypto/encryption.ts`).
+- The secret is used exactly as typed (`shared/timeline-secret.ts`): UTF-8, no trimming, case folding or
+  normalisation. Length is 4 to 1,024 UTF-16 code units (an emoji can count as two). Lone surrogates are refused,
+  so two different inputs never become the same bytes. Old numeric PINs keep working.
+- Every key row has an RSA key pair, checked after each unlock. Damaged RSA material fails and is not replaced.
+- Changing the secret re-encrypts the symmetric entries, re-wraps the private key and ends old viewing sessions in
+  one transaction. Any decryption failure aborts the change and leaves the old key and data in place. Creating a
+  secret twice with the same input keeps the first RSA identity.
+- The server can read an unlocked account's history, and a forgotten secret cannot be recovered.
 
-Personal onboarding opens directly at the Timeline PIN form. **Next** validates
-the exact PIN/phrase and proceeds to review. **Disable Timeline**, beside Next,
-proceeds without requiring a PIN and without creating a fresh encryption key.
-Neither choice collects activity before completion is confirmed. Help and errors
-use plain language; the original exact-secret validation and cryptography remain
-unchanged. Back preserves the draft, and completion still reconciles lost replies.
+## Tests
+
+- `ui/tests/timeline-secret.spec.ts`: exact encoding, limits and compatibility.
+- `ui/tests/integration/` (opt-in): runs the real queries against a temporary schema in a PostgreSQL database you
+  choose. It creates fixture users, tests consent and onboarding rollback, lock contention, stale intervals, retries
+  and key rotation rollback, then drops its schema. Never point it at an installed box's database or print the
+  connection string.
+- Each native app and Canvas test that their event producer sends no payload when collection is off.

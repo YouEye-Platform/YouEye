@@ -1,5 +1,5 @@
 import { db, ensureSchema } from "@/db";
-import { pendingTimelineEvents, systemSettings, userEncryptionKeys, users } from "@/db/schema";
+import { systemSettings, userEncryptionKeys, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { withTimelineUserLock, type TimelineTransaction } from "../timeline-lock";
@@ -59,8 +59,6 @@ export async function setTimelineCollection(userId: string, input: {
       completed: value.complete === true,
       enabledAt: value.enabled ? (current?.enabled ? current.enabledAt : now) : null,
     };
-    // A new collection interval never replays unsettled payloads from an old one.
-    await tx.delete(pendingTimelineEvents).where(eq(pendingTimelineEvents.userId, userId));
     await tx.insert(systemSettings).values({ key: keyFor(userId), value: next }).onConflictDoUpdate({
       target: systemSettings.key, set: { value: next, updatedAt: new Date() },
     });

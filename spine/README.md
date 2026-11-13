@@ -14,9 +14,9 @@ Spine is a single Go binary that installs on the host, sets up Incus, deploys th
 
 ## Installation boundary
 
-Spine is installed as an exact signed component of a YouEye appliance release.
-Use the [YouEye Installer](../docs/getting-started.md) from signed ISO media or
-its Proxmox mode. Installing a Spine binary onto an arbitrary mutable
+Spine is installed as an exact component of a YouEye appliance release (checked by
+SHA-256; signing is off before the public release). Use the
+[YouEye Installer](../docs/install.md) from the ISO or its Proxmox mode. Installing a Spine binary onto an arbitrary mutable
 Debian/Ubuntu host is no longer a supported platform installation path.
 
 For source development, `go build ./cmd/youeye` builds a local binary. Running
@@ -94,22 +94,7 @@ GOOS=linux GOARCH=arm64 go build -ldflags "..." -o youeye-linux-arm64 ./cmd/youe
 
 ## Systemd Service
 
-Spine runs as `spine.service`:
-
-```ini
-[Unit]
-Description=YouEye Spine - System Management Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/spine api serve
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Spine runs as `youeye.service` (`/usr/local/bin/youeye api serve`, `Restart=always`).
 
 ## License
 

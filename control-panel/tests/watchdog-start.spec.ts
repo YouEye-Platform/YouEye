@@ -17,7 +17,7 @@ function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boo
       try { return await work(); } finally { held = false; events.push('unlock'); }
     }};
     if (id.endsWith('container-maintenance')) return {isContainerMaintenanceActive() {assert.ok(held); return !!options.maintenance;}};
-    if (id.endsWith('metadata')) return {async listInstalledApps() {assert.ok(held); return [{appId:'searxng', containers:['app-searxng-redis'], desiredState: options.stopped ? 'stopped' : 'running'}];}};
+    if (id.endsWith('metadata')) return {async listInstalledApps() {assert.ok(held); return [{appId:'searxng', containers:[{name:'redis',containerName:'app-searxng-redis',type:'oci'}], desiredState: options.stopped ? 'stopped' : 'running'}];}};
     if (id.endsWith('storage')) return {async inspectAppStorage() {assert.ok(held); return {available: options.storage !== false};}};
     if (id.endsWith('server')) return {async incusRequest(method: string) {
       assert.ok(held); events.push(method);
@@ -48,7 +48,7 @@ test('failed Incus operation propagates and releases admission without claiming 
 test('actual URL update re-reads app intent under admission and never restarts a now-stopped app', async () => {
   let held=false;
   const events:string[]=[];
-  const current={appId:'searxng',containers:['app-searxng-redis','app-searxng-main'],desiredState:'stopped',domain:'first.test',marker:'concurrent-change'};
+  const current={appId:'searxng',containers:[{name:'redis',containerName:'app-searxng-redis',type:'oci'},{name:'main',containerName:'app-searxng-main',type:'oci'}],desiredState:'stopped',domain:'first.test',marker:'concurrent-change'};
   const root=process.env.CONTROL_PANEL_ROOT||process.cwd();
   const source=readFileSync(path.join(root,'src/lib/reconfigure/index.ts'),'utf8')+'\nexport { updateInstalledApp };';
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;

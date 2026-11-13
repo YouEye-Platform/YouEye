@@ -4,16 +4,10 @@
  * Called by Spine's host-IP-change check (runHostIPCheck in
  * YE-Spine/internal/cmd/hostipcheck.go) AFTER it has already migrated the
  * two host-side pins (Pi-Hole proxy device, CP systemd HOST_IP env). This
- * endpoint handles the two CP-side pins:
- *
- *  1. Pi-Hole dnsmasq_lines wildcard rewrite (`address=/${domain}/${oldIP}`)
- *     — replaced with `address=/${domain}/${newIP}` via setDomainDNS, which
- *     already strips any prior entries for the same domain.
- *
- *  2. Caddy IP-literal route (legacy installs only) — a route created by
- *     deployer.ts <= 0.2.18.2 with `match[0].host === [oldIP]`. Removed via
- *     removeIPLiteralRoute. The `:443` catch-all already serves CP from any
- *     IP, so deletion (vs rewriting) is the right answer.
+ * endpoint handles the CP-side DNS pins: the Pi-Hole dnsmasq_lines wildcard
+ * rewrite (`address=/${domain}/${oldIP}`) is replaced with
+ * `address=/${domain}/${newIP}` via setDomainDNS, which already strips any
+ * prior entries for the same domain. The `:443` catch-all serves CP from any IP.
  *
  * Auth: server-to-server only. Spine reads /var/lib/youeye/control/.deploy_secret
  * (written when the youeye-control container is created in
@@ -32,7 +26,6 @@ import { NextRequest } from 'next/server';
 import { settingsService } from '@/lib/settings';
 import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityIssuerOrigin } from '@/lib/identity/config';
-import { removeIPLiteralRoute } from '@/lib/caddy/client';
 import { tlsStorage } from '@/lib/acme/storage';
 import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
 import { syncByoDomainDns } from '@/lib/dns-providers/sync';
@@ -115,7 +108,6 @@ export async function POST(request: NextRequest) {
         providerDnsRequired: false,
         youeyeNamesDns: false,
         youeyeNamesDnsRequired: false,
-        caddy: false,
         force,
         noop: true,
       }),
@@ -212,19 +204,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ─── 2. Caddy IP-literal route (best-effort) ────────────
-  let caddyOk = false;
-  try {
-    caddyOk = await removeIPLiteralRoute(oldIP);
-    if (caddyOk) {
-      console.log(`[host-ip/migrate] removed legacy Caddy IP-literal route for ${oldIP}`);
-    } else {
-      console.log(`[host-ip/migrate] no legacy Caddy IP-literal route for ${oldIP} (already clean)`);
-    }
-  } catch (err) {
-    console.error('[host-ip/migrate] removeIPLiteralRoute failed:', err);
-  }
-
   return new Response(
     JSON.stringify({
       ok: true,
@@ -240,7 +219,6 @@ export async function POST(request: NextRequest) {
       youeyeNamesDns: youeyeNamesDnsOk,
       youeyeNamesDnsRequired,
       youeyeNamesError: youeyeNamesError || null,
-      caddy: caddyOk,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );

@@ -36,7 +36,7 @@ export function inspectCopyApp(metadata:InstallMetadata,manifest:AppManifest):Co
   if(Object.entries(required).some(([key,value])=>manifest.env_mapping?.[key]!==value))fail('unhandled authority environment');
   if(manifest.containers.length!==1||manifest.containers[0].type!=='lxd'||manifest.containers[0].environment&&Object.keys(manifest.containers[0].environment).some(key=>key in required))fail('unhandled container authority override');
   const containers=manifest.containers.map(c=>getContainerName(metadata.appId,c.name,manifest.containers.length));
-  const installed=metadata.containers.map(c=>typeof c==='string'?c:c.containerName);
+  const installed=metadata.containers.map(c=>c.containerName);
   if(containers.length!==installed.length||containers.some(n=>!installed.includes(n)))fail('runtime inventory differs');
   if(manifest.configFiles.some(c=>/\$\{(?:sso\.|secret\.jwt_secret|youeye\.app_token)/.test(c.template)))fail('additional authority-bearing configuration needs a copy adapter');
   return {appId:metadata.appId,installationId:metadata.installationId!,clientId:metadata.ssoClientId!,...(database?{database}:{}),manifestSHA256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),containers,desiredState:metadata.desiredState??'running'};

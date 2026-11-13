@@ -12,5 +12,4 @@ esac
 
 . /usr/share/initramfs-tools/hook-functions
 copy_exec /usr/sbin/findfs
-copy_file config /usr/lib/youeye/initramfs/youeye-network-state
 copy_file config /usr/lib/youeye/initramfs/youeye-state-migration

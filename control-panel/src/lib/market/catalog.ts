@@ -27,7 +27,7 @@ import { fetchApp, loadApp } from './app-format/compile';
 import { parseBundle, parseCatalog, parseCatalogIndex, parseSystemApp, readYAML } from './app-format/parse';
 import { manifestDigest } from './app-format/digest';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp, MarketBundle, MarketCategory, MarketCuration, SystemAppManifest } from './types';
-import { buildMarketRawURL, getMarketSource, getMarketSources, isChannelMarketSource, recordMarketSourceResolution, type MarketSource } from './source';
+import { buildMarketRawURL, getMarketSource, getMarketSources, isChannelMarketSource, OFFICIAL_MARKET_SOURCE_ID, recordMarketSourceResolution, type MarketSource } from './source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -515,6 +515,8 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
     setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
     integrations: getDisplayIntegrations(manifest),
     forwardAuth: manifest.forwardAuth,
+    // Only the official catalog may default an app to public access (added sources are not reviewed).
+    publicAccess: source?.id === OFFICIAL_MARKET_SOURCE_ID ? manifest.publicAccess : undefined,
     capabilities,
     surfaces: manifest.surfaces,
   };

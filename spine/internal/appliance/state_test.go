@@ -1,34 +1,12 @@
 package appliance
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-type plan1TransactionState struct {
-	ID                 string `json:"id,omitempty"`
-	Stage              string `json:"stage,omitempty"`
-	TargetImageVersion string `json:"target_image_version,omitempty"`
-}
-
-type plan1StateRecord struct {
-	SchemaVersion     int                   `json:"schema_version"`
-	Lifecycle         Lifecycle             `json:"lifecycle"`
-	InstallIDRef      string                `json:"install_id_ref"`
-	DeviceIDRef       string                `json:"device_id_ref"`
-	DiskLayoutVersion int                   `json:"disk_layout_version"`
-	StatePartUUID     string                `json:"state_partuuid"`
-	DataPartUUID      string                `json:"data_partuuid"`
-	ParentDiskID      string                `json:"parent_disk_id"`
-	DataSchemaVersion int                   `json:"data_schema_version"`
-	Slots             SlotState             `json:"slots"`
-	Transaction       plan1TransactionState `json:"transaction,omitempty"`
-	RecoveryVersion   string                `json:"recovery_version"`
-}
 
 func validStateRecord() StateRecord {
 	return StateRecord{
@@ -92,34 +70,23 @@ func TestParseStateRejectsUnknownFieldsAndIncompleteSlot(t *testing.T) {
 	}
 }
 
-func TestPlan1CompatibleTransactionUsesOnlyLegacyStateFields(t *testing.T) {
+func TestTransactionRequiresManifestAndActiveSlot(t *testing.T) {
 	state := validStateRecord()
 	state.Slots.Candidate = "B"
 	state.Slots.CandidateImageVersion = "0.2.0"
 	state.Transaction = TransactionState{
 		ID: "update-test", Stage: "staged", TargetImageVersion: "0.2.0",
 	}
-	path := filepath.Join(t.TempDir(), "appliance-state.json")
-	if err := WriteStateAtomic(path, state); err != nil {
-		t.Fatal(err)
+	if err := state.Validate(); err == nil {
+		t.Fatal("transaction without manifest and active slot was accepted")
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var old plan1StateRecord
-	if err := decoder.Decode(&old); err != nil {
-		t.Fatalf("Plan 1 parser rejected bootstrap State: %v\n%s", err, raw)
-	}
-	if old.Transaction.ID != state.Transaction.ID || !state.Transaction.Plan1Compatible() {
-		t.Fatalf("legacy transaction mismatch: %+v", old.Transaction)
-	}
-
 	state.Transaction.ManifestSHA256 = strings.Repeat("a", 64)
 	if err := state.Validate(); err == nil {
 		t.Fatal("partially expanded transaction was accepted")
+	}
+	state.Transaction.ActiveSlot = "A"
+	if err := state.Validate(); err != nil {
+		t.Fatalf("complete transaction rejected: %v", err)
 	}
 }
 
@@ -230,7 +197,6 @@ func TestLayoutTwoStateIsNotReinterpretedAsLayoutThree(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "appliance-state.json")
 	state := validStateRecord()
 	state.DiskLayoutVersion = 2
-	state.ParentDiskID = "disk:legacy-path-dependent"
 	if err := WriteStateAtomic(path, state); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +209,8 @@ func TestLayoutTwoStateIsNotReinterpretedAsLayoutThree(t *testing.T) {
 		StatePartUUID: state.StatePartUUID, StateParentID: "serial:appliance",
 		DataPartUUID: state.DataPartUUID, DataParentID: "serial:appliance",
 	}
-	if _, err := migrateLegacyDiskReference(path, manifest, state, contract); err == nil {
-		t.Fatal("expected layout 2 state to require recovery rather than migration")
+	state.ParentDiskID = DiskReference(contract)
+	if err := ValidateStateContract(manifest, state, contract); err == nil {
+		t.Fatal("expected layout 2 state to require recovery")
 	}
 }

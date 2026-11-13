@@ -4,22 +4,20 @@
  * GET /api/market/credentials?app={appId}
  *
  * Returns admin-visible default credentials for an installed app.
- * Only available to authenticated admin users.
+ * Administrators only: these are the apps' generated admin passwords.
  * Reads credential definitions from install.json and secret values from disk.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { requireAdmin } from '@/lib/auth/rbac';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { isAppSecretName, readAppSecret } from '@/lib/infrastructure/secrets';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
 
   const appId = request.nextUrl.searchParams.get('app');
   if (!appId) {

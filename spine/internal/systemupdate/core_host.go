@@ -35,7 +35,7 @@ func (m *Manager) CoreHostOptions(selection CoreHostSelection) (SourceOptions, e
 }
 
 // Keep delivery scoped to this invocation's accepted selection. Never mutate a
-// shared client's transport or teach a legacy request these aliases.
+// shared client's transport or teach a host-only request these aliases.
 func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, error) {
 	if selection == nil {
 		return m, nil
@@ -53,7 +53,7 @@ func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, err
 }
 
 // verifyHostManifest binds a core-owned request to the system-update member's
-// exact digest. A legacy request is bound only by an explicit expected digest.
+// exact digest. A host-only request (tests) is bound only by an explicit expected digest.
 func (m *Manager) verifyHostManifest(manifestPath string, selection *CoreHostSelection) (VerifiedManifest, string, error) {
 	verified, err := VerifyManifest(manifestPath, "")
 	if err != nil || selection == nil {

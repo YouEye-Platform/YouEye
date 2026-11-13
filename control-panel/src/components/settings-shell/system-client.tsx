@@ -62,7 +62,7 @@ interface ServiceHealth {
   uptime: string;
 }
 
-type TrackingStatus = "tracked" | "legacy-compatible" | "legacy-untracked" | "missing";
+type TrackingStatus = "tracked" | "untracked" | "missing";
 
 interface SystemUpdatePlan {
   id: "postgresql" | "caddy" | "pihole";
@@ -290,7 +290,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
         body: JSON.stringify({
           systemId: plan.id,
           dryRun: true,
-          forceLegacy: plan.trackingStatus !== "tracked",
+          adoptUntracked: plan.trackingStatus !== "tracked",
           allowDatabaseUpdate: plan.id === "postgresql",
         }),
       });
@@ -319,7 +319,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
         body: JSON.stringify({
           systemId: plan.id,
           dryRun: false,
-          forceLegacy: plan.trackingStatus !== "tracked",
+          adoptUntracked: plan.trackingStatus !== "tracked",
           allowDatabaseUpdate: plan.id === "postgresql",
           confirmMaintenanceWindow: true,
           confirmContainerName: plan.containerName,

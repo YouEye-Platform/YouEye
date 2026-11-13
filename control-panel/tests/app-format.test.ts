@@ -497,3 +497,10 @@ test('for_each.items and save take "$" or a dotted response path', () => {
   rejects(() => parseSetup(setup({ steps: [{ http: { method: 'GET', path: '/x', save: { a: 'x.__proto__' } } }] })), /__proto__/);
   rejects(() => parseSetup(setup({ steps: [{ http: { method: 'GET', path: '/x', for_each: { path: '/x', items: '../x' } } }] })), /"\$" or a dotted path/);
 });
+
+test('public_access: true compiles to publicAccess; false or absent leaves it unset', () => {
+  assert.equal(appFixture({ public_access: true }).publicAccess, true);
+  assert.equal(appFixture({ public_access: false }).publicAccess, undefined);
+  assert.equal(appFixture({}).publicAccess, undefined);
+  assert.throws(() => appFixture({ public_access: 'yes' }));
+});
