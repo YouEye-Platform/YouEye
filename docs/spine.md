@@ -15,16 +15,18 @@ Spine is the host agent and the `youeye` CLI. An appliance has two kinds of Spin
 
 ## Launching
 
-The seed runs these commands itself: `appliance prepare`, `recovery`, `spine …`, `version` and help. For every other
-command (the API service, `boot …`, `update …`) it execs the booted slot's Spine: an unconfirmed **trial** while it
+`cmd/youeye/main.go` calls `spineselect.MaybeDelegate` before anything else. The seed runs these commands itself:
+`appliance prepare`, `spine …`, `version`, `help` and `completion` (`SeedOnly` in
+`spine/internal/spineselect/launch.go`). For every other command (the API service, `boot …`, `update …`) it execs
+the booted slot's Spine: an unconfirmed **trial** while it
 has start attempts left (three API starts), else **current**, else **previous**, else itself. A slot without a
 record runs the seed — a fresh install, a factory reset, or the other slot after an A/B rollback finds its own
 choice untouched.
 
 A selected Spine is used only if its payload matches its digest, is not group- or world-writable, and declares the
 same `disk_layout` and `helper_contract` as the running source supports; otherwise the launcher logs why and falls
-back. No other identity binds Spine to the image: everything that used to require "the running Spine equals the
-image's release set" now requires "the running Spine is the seed or this slot's selected Spine".
+back. Nothing else ties Spine to the image: a check that needs a trusted Spine accepts the seed or this slot's
+selected Spine.
 
 ## Commands
 
@@ -38,6 +40,32 @@ image's release set" now requires "the running Spine is the seed or this slot's 
 | `youeye boot first-deploy\|bless\|setup-gate\|network` | the boot steps (systemd units call these) |
 
 `youeye version` shows the running Spine and the seed; the Spine API has `GET /api/spine/status`.
+
+Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
+`youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
+`youeye appliance health|ssh-key`, `youeye app …` and `youeye backup …`. `youeye --help` lists all of them;
+[troubleshooting.md](troubleshooting.md) shows them in use.
+
+## The API
+
+`youeye.service` runs `youeye api serve`. It listens on the Unix socket `/var/run/youeye/youeye.sock`
+(`spine/internal/config/defaults.go`), mode 0666 on the host; access is controlled by who gets the socket. Spine
+passes it into `youeye-control` with an Incus proxy device, so the Control Panel is its main client
+(`control-panel/src/lib/spine/client.ts`). The routes are registered in `spine/internal/api/server.go`; the main
+groups are:
+
+| Routes | For |
+|---|---|
+| `/api/health`, `/api/version`, `/api/status`, `/api/metrics`, `/api/spine/status` | status |
+| `/api/config` | the platform config (`/var/lib/youeye/config/youeye.yaml`) |
+| `/api/postgres/credentials`, `/api/pihole/credentials`, `/api/control/sso`, `/api/ui/sso` | credentials the Control Panel needs |
+| `/api/releases/index`, `/api/releases/channel` | the box's channel index (for apps, Pointer and the Market) and its channel |
+| `/api/appliance/core-update/{status,check,stage,activate,resume,recover,cancel}` | System updates |
+| `/api/appliance/remote-access/keys`, `/api/appliance/development-access`, `/api/appliance/network` | host access and network |
+| `/api/backup/*` | backups and restore |
+
+Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi-hole
+(`spine/internal/cmd/hostipcheck.go`).
 
 ## Spine-only update (no reboot)
 

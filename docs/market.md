@@ -51,25 +51,29 @@ its app, bundle and system ids. A single app can also be added by URL (see below
 
 ## Installing an app
 
-Three entry points, all admin-only and CSRF-checked, all streaming progress as server-sent events:
+Every install is admin-only and CSRF-checked and streams progress as server-sent events:
 
-- **`POST /api/market/install`** with `{ appId }`. Optional: `sourceId`, `subdomain`, `approvedConnections`,
-  `selectedIntegrations`, `aiSettings`, `allowInternet`, `adoptRetainedData`. The CP fills in the default source and
-  the subdomain (the manifest's `subdomain:`, else the id). The domain is always the box's own; a client value is
-  ignored. Installs are refused while Health has a critical issue.
+- **`POST /api/market/install`** with `{ appId }`. Optional: `sourceId`, `subdomain`, `selectedIntegrations`
+  (`["youeye-id"]` turns YouEye ID sign-in on for an app with `setup/sso.yaml`; on by default), `aiSettings`,
+  `allowInternet`, `publicAccess`, `adoptRetainedData`. The CP fills in the default source
+  and the subdomain (the manifest's `subdomain:`, else the id). The domain is always the box's own; a client value
+  is ignored. Installs are refused (HTTP 423) while Health has a critical issue.
 - **`youeye app install <id> [--public-access[=false]]`** sends `{ appId }` (plus `publicAccess` when the flag is
-  given) to the same endpoint.
-- **`youeye app credentials <id>`** reads `GET /api/market/credentials?app=<id>` (administrators only) and prints
-  each default account the manifest declares.
-- **What `youeye app remove <id>` leaves behind on purpose:** the app's revoked gateway credential in
-  `state/app-service-credentials/<id>/` (no secret; it keeps the revision the UI expects, so a reinstall continues
-  from it) and the operation record in `networks/operations/<id>.json` (pruned by the reconciler 24 hours after
-  the operation ends).
+  given) to the same endpoint. The CLI has no YouEye ID user, so AI Settings are off for CLI installs.
 - **`youeye app install --url <https-url> --i-trust-this-publisher [--allow-setup]`** calls
   `POST /api/market/install-url`. The manifest and its setup files are fetched from a public HTTPS server only (rules
   in [app-manifest.md](app-manifest.md)). Without `--i-trust-this-publisher` the CLI refuses; an app with setup files
   also needs `--allow-setup` (`allowSetup` in the API), otherwise the CP answers 400 and lists them. A URL install
   that fails after the base install is uninstalled again with delete-data.
+
+`youeye app credentials <id>` reads `GET /api/market/credentials?app=<id>` (administrators only) and prints each
+default account the manifest declares (`credentials:`).
+
+**AI Settings.** For an app with `ai:` the install screen offers "Use AI Settings" (on by default when a YouEye ID
+user installs). The installer picks one of their Pointer model groups; the CP creates a managed Pointer
+installation and key for the app (`${ai.*}`). Stopping the app disables that key, starting it enables it again,
+and uninstall archives the Pointer installation and revokes the key (`src/lib/apps/lifecycle.ts`,
+`uninstaller.ts`). With AI Settings off, every `${ai.*}` is empty and the app is configured by hand.
 
 The install then works in this order (step 1 in the route, the rest in `installApp` in `engine.ts`). From step 5
 on, a failure rolls the install back (`rollbackInstall`).
@@ -106,7 +110,9 @@ on, a failure rolls the install back (`rollbackInstall`).
 14. **Suggestions** for new connections are made (see Connections).
 15. NAT is turned off unless the app has `internet: true` (or the install set `allowInternet`), the network
     lease becomes active and the install is committed.
-16. **Connections** approved earlier while this app was not installed are activated and wired. This needs the new
+16. **Credential and access.** The app's gateway credential is activated (for a native app, after a probe from
+    inside the container), and public access is turned on when the install asked for it (see below).
+17. **Connections** approved earlier while this app was not installed are activated and wired. This needs the new
     app's network lease to be active; a failure is logged and does not fail or roll back the install.
 
 Only one operation per app runs at a time. Progress is also kept on disk, so a browser can reconnect with
@@ -135,6 +141,13 @@ Every new app starts **owner-only**: only the admission owner is admitted, and b
 admit anyone. An admin can change the policy to all users, selected users or selected groups (in the app's Market
 settings, or `GET`/`PUT /api/market/apps/<id>/access`). YouEye ID enforces it at sign-in, token use and Caddy
 forward-auth; see [app-admission.md](app-admission.md).
+
+**Public access.** An app whose manifest sets `public_access: true` protects itself (its own password, PINs or
+accounts). Installed from the official catalog, it gets public access on by default (shown pre-selected; the
+installer can turn it off; `--public-access=false` on the CLI). Then Caddy's forward-auth check lets every request
+through to the app (`src/lib/identity/forward-auth.ts`). Added sources and URL installs never take this default
+from the manifest. It is applied after the app is installed and healthy; if that fails, the app stays
+household-only. An admin can change it later in the app's access settings.
 
 The first time a user signs in to an app, YouEye ID shows a consent screen with the requested scopes and any
 runtime permissions. Approval is stored per user and client and asked again only when the app requests new scopes or
@@ -176,8 +189,9 @@ store. Both manifests come from the frozen installed copies.
 
 ## Updates
 
-`GET /api/market/updates` lists apps with a newer version; `youeye app check-updates` refreshes the check.
-`youeye app update <id>` (or `--all`) calls `POST /api/apps/<id>/update`.
+`GET /api/market/updates` lists apps with a newer version.
+`youeye app update <id>` (or `--all`) calls `POST /api/apps/<id>/update`. `youeye app check-updates` calls
+`POST /api/apps/check-updates`.
 
 - The new manifest comes from the app's recorded source: the same Market source, the URL of an Added app, or the
   native app's product release on the box's channel.
@@ -192,8 +206,11 @@ store. Both manifests come from the frozen installed copies.
   removed) and a changed database mode or name (`update-inventory.ts`). An update also fails when a new env value
   needs something the install never created: a new `${secret.<name>}`, or a new `${database|sso|identity|youeye|ai}.*`
   mapping that resolves empty (`update-configuration.ts`).
-- Setup files do not run. Secrets, volumes, the YouEye ID client and the Pointer key are kept. The new manifest
-  becomes the frozen copy.
+- Setup files do not run. Secrets, volumes, the YouEye ID client and the Pointer key are kept. A database
+  sidecar keeps its running PostgreSQL (it is not rebuilt). The new manifest becomes the frozen copy.
+- A native app is updated by **build**: the channel's release must be a newer build (`X.Y.Z-dev.N`); the same
+  build under a promoted name (`-alpha.N`, `-beta.N`, `X.Y.Z`) only updates the release record. Its new
+  `standalone.tar` replaces `/opt/app` (see [native-apps.md](native-apps.md)).
 
 ## Start, stop and restart
 
@@ -214,6 +231,10 @@ the CA directory, the dashboard registration and, last, the app network. Nothing
   database and role, but only if this installation created them.
 - **Keep data:** volumes, database and secrets stay; the admission record becomes `retained`. A later install
   can adopt the data only through the app's active owner (`adoptRetainedData`).
+
+Left behind on purpose: the app's revoked gateway credential in `/var/lib/youeye/state/app-service-credentials/<id>/`
+(no secret; it keeps the revision the UI expects, so a reinstall continues from it) and the operation record in
+`/var/lib/youeye/networks/operations/<id>.json` (pruned 24 hours after the operation ends).
 
 If any step fails, `install.json` stays with `cleanupPending: true`, the network lease is kept, and the next uninstall
 or cleanup retries.

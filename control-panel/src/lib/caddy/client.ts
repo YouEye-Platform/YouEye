@@ -2155,6 +2155,8 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
     handle: [{
       handler: 'reverse_proxy',
       upstreams: [{ dial: route.upstreamDial }],
+      // The calling app's token is only the match key: the target app must never receive the caller's credential.
+      headers: { request: { delete: ['X-Youeye-App-Token'] } },
     }],
     terminal: true,
   };

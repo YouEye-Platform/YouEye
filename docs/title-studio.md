@@ -1,101 +1,100 @@
 # Title Studio and Sticker Machine
 
-The shared `@youeye/branding` workspace package contains the pinned MyTitle
-renderer, v1 editable design schema, font coverage, 49 local fonts and 1,512
-Phosphor symbols. The source pin, original licences, notices and distributed
-asset hashes are retained in `legal/mytitle`. The package's editor CSS is scoped
-to `.mytitle-scope`; expressive artwork does not change surrounding app styles.
+Title Studio is the editor for the server's title (styled lettering of the server name) and its sticker (the
+small mark that is also the favicon and app icon). The same editor is used in setup, personal Appearance, admin
+Branding, per-app branding and the greeting widget.
 
-Setup, personal Appearance, administrator Appearance, app branding and greeting settings use the same Title Studio editor.
-The legacy WordArt reader remains available for saved appearances and account
-overrides; legacy editing surfaces are replaced by Title Studio. Opening an old appearance does not migrate it. Saving a title and
-sticker explicitly stores the v1 document in `site_name_style.mytitle`.
-Legacy properties remain available to older readers.
+## The package
 
-The UI validates the document and local glyph coverage before saving. It
-generates immutable title SVGs and icon PNGs before committing the editable
-document and active asset references in one database transaction. Readers obtain
-the fields in one statement. The revision is a SHA-256 of the renderer version
-and validated document. A changed renderer/catalogue requires a new renderer
-revision. Client save requests include `expected_revision` (null for legacy
-data); a competing save returns 409. Retrying an identical document is safe.
+`packages/branding` (`@youeye/branding`) holds:
 
-Generated assets live in persistent branding storage, outside the application
-overlay. A failed write or database transaction leaves the prior appearance
-active. Unreferenced immutable files may remain after failure; removing them
-requires checking active references. Do not delete the previous active files
-when publishing a new design.
+- the MyTitle renderer (`lib/render.ts`) and the editable design schema, `version: 1` (`lib/design.ts`);
+- 49 local fonts with glyph coverage data (`lib/font-coverage.json`) and 1,512 Phosphor symbols (`lib/icons.json`);
+- the editors: `Studio.tsx` (`TitleStudio`), `creative/TitleBuilder.tsx`, `creative/StickerMachine.tsx`;
+- `resolveTitle` (`appearance.ts`), the shared rule for which title a person sees;
+- its own translations (`messages/`, five languages; see [localization.md](localization.md)).
 
-The dashboard and Control Panel previews render the saved vector design.
-Identity sign-in uses the same renderer and local fonts, with escaped plain text
-fallback if the artwork is unavailable. Icons and browser/PWA artwork use
-immutable raster derivatives. Personal WordArt overrides remain separate from
-the shared server title.
+Source pin, licences, notices and asset hashes are in `legal/mytitle/`. The editor CSS is scoped to
+`.mytitle-scope`, so it does not change the host app's styles.
 
-Locks and Undo are transient editor state. Undo retains the last 20 design
-changes. Changing the name follows the initial automatically chosen monogram
-until the user chooses custom letters or another mark. Independent light/dark
-sticker colours remain in the document when Match title is selected.
-The Sticker Machine's **Match title** checkbox uses the title's light/dark ink
-for the mark without replacing its saved independent colours. Unchecking it
-restores those colours. Choosing a new sticker colour combination switches back
-to independent colours; Undo restores the previous design.
+## How a design is stored
 
-Image drafts accept PNG, JPEG and WebP up to 2 MB and 4096 pixels per side.
-Unreadable files show a retryable message and leave the current mark intact.
+- The dashboard owns branding (`ui/src/lib/db/queries/branding.ts`, table `system_settings`). The shared title is
+  `site_name` plus `site_name_style`.
+- A Studio design is saved as `site_name_style.mytitle` (the version 1 document) with `mytitleRevision`.
+- `site_name_style` can also hold only CSS fields (font family, size, weight, colour, gradient, shadow, transform,
+  per-character shape). Readers render such a style as it is (`ui/src/components/layout/site-name.tsx`). Every
+  editor now opens Title Studio (`WordArtPickerInline.tsx` just wraps it); opening an old CSS-only style does not
+  convert it, and saving stores a `mytitle` document.
+- `site_name_style.showHeaderLogo` (admin setting **Show sticker beside the title** in Branding, off by default)
+  shows the sticker in the header. It is separate from the design and applies even when a person has their own
+  title. The sticker is the favicon either way.
 
-Renderer tests cover the complete catalogue's font hashes, all presets and
-compositions, multilingual glyph coverage and rejection of executable uploads,
-unknown symbols, unknown versions and out-of-range controls. They do not establish
-browser layout, first-run provisioning, Names verification, installed update or
-recovery acceptance. Emoji appearance depends on the rendering platform's emoji
-font; the bundled outline lettering fonts do not supply colour emoji.
+## Saving
 
-The header sticker is hidden by default. Administrators can enable **Show sticker
-beside the title** in Server Branding. This preference is stored separately from
-the title design in `site_name_style.showHeaderLogo`, and applies even when a
-person has a lettering override. The sticker remains the favicon either way.
+1. The dashboard validates the document and checks that the chosen fonts cover every character.
+2. It renders immutable files: light and dark title SVGs and icon PNGs, named after the revision
+   (`ui/src/lib/mytitle-assets.ts`). The revision is the SHA-256 of the renderer revision plus the prepared
+   document, so a renderer change gives a new revision.
+3. It writes the document and the active file references in one transaction, under a branding advisory lock.
 
-Compact title consumers fit the actual warped lettering and effect bounds. The
-resizable title widget fills its width; login artwork stays within its centered
-wrapper. Full studio/export canvases preserve their original geometry. Native
-app headers receive validated outline artwork through their existing branding
-CSS contract, so they do not need fonts or a new permission.
+- Save requests carry `expected_revision` (null when the current style has no revision). A competing save gets
+  `409`. Repeating an identical save is safe.
+- Generated files live in persistent branding storage, not in the app bundle. A failed write or transaction leaves
+  the previous design active. Unreferenced files may stay behind after a failure; delete them only after checking
+  that nothing refers to them. Never delete the previous active files when publishing a new design.
+- Uploaded sticker images: PNG, JPEG or WebP, at most 2 MB and 4096 pixels per side. An unreadable file shows a
+  retryable message and keeps the current mark.
 
-Studio save actions stay visible while scrolling. Randomize sticker is an
-accessible icon control; the duplicate legacy colour controls are removed.
-Appearance waits for both saved server and personal designs before showing the
-editor, so a delayed initial response cannot overwrite typing into a placeholder.
-An initial read failure offers a retry without exposing an unsaved default.
+## Personal titles
 
-Personal Studio documents own both their text and lettering for the signed-in
-account. The shared title remains the default for other accounts and public
-sign-in. Legacy personal overrides keep their style while following the server’s
-name. **Use server title** removes the override and reads the current saved server
-appearance; an unsaved administrator draft is never a default.
+- A person can have their own design (Settings → Appearance). It owns its text and lettering for that account
+  only. Everyone else, and the public sign-in page, see the shared title.
+- A personal style without its own `mytitle` keeps its styling but follows the server's name (`resolveTitle`).
+- **Use server title** removes the personal override and shows the current saved shared design. An admin's unsaved
+  draft is never shown as a default.
+- `resolveTitle` is used by the dashboard, Timeline, Notifications and the header APIs, including the Settings
+  bridge. Personal changes never change the shared branding or another account.
 
-The shared `resolveTitle` reader is used by dashboard, Timeline, Notifications
-and authenticated header APIs, including the Settings bridge. The header sticker
-preference always comes from shared branding. Personal changes do not change
-server branding or another account.
+## Where titles appear
 
-Confirmed saves and resets invalidate open title consumers in the current
-document and same-origin tabs. The notification contains no appearance or account
-data; each consumer re-reads through its authenticated API with no-store caching.
-Focus, visibility and history restoration also refresh the title, covering changes
-made in another browser. Failed saves do not announce a change. Request ordering
-prevents an older response from replacing a newer one. No hard reload is needed.
+- The dashboard and Settings previews render the saved vector design.
+- YouEye ID's sign-in page uses the same renderer and local fonts, with escaped plain text if the artwork is
+  missing.
+- Icons and browser/PWA artwork use the immutable PNGs.
+- Native app headers get validated outline artwork through their branding CSS, so they need no fonts and no extra
+  permission.
+- Compact places fit the actual lettering bounds; the title widget fills its width; the sign-in artwork stays in
+  its centred box.
 
-The opt-in `control-panel/tests/title-appearance.browser.mjs` regression runs real
-Settings/header/widget components with a local fixture API. It covers account
-overrides, shared changes, reset, same-origin tabs, failed saves, delayed initial
-appearance and delayed header responses. It supplements installed authenticated
-acceptance.
+After a confirmed save or reset, open title views in the same document and in other tabs of the same origin
+re-read their title (the notice carries no data; each view reads through its own authenticated API, no-store).
+Focus, visibility and history navigation also refresh it. Failed saves announce nothing. No reload is needed.
 
-Greeting designs are saved with the account's widget layout. The complete
-replacement is validated before changing saved rows, then deleted and inserted
-in one transaction. Concurrent replacements for the same account are serialized.
-Invalid data or an insertion failure preserves the previous layout and row IDs.
-The opt-in `ui/tests/integration/build-widgets.mjs` regression bundles the real
-query against a disposable PostgreSQL schema; it covers malformed input, rollback,
-concurrent replacement and account isolation without changing application rows.
+## Editor behaviour
+
+- Locks and Undo are editor state only; Undo keeps the last 20 changes.
+- The monogram follows the name until the person picks their own letters or another mark.
+- **Match title** in the Sticker Machine uses the title's light and dark ink for the mark but keeps the saved
+  independent colours; unchecking it brings them back. Choosing a new colour pair switches back to independent
+  colours.
+- Save buttons stay visible while scrolling. Appearance waits for both the shared and the personal design before
+  showing the editor, so a slow first response cannot overwrite typing; a failed first read offers Retry.
+- Emoji look depends on the device's emoji font; the bundled fonts do not include colour emoji.
+
+## Greeting designs
+
+Greeting widget designs are saved with the account's widget layout. A full replacement is validated first, then
+old rows are deleted and new ones inserted in one transaction, under a per-account lock. Invalid data or a failed
+insert keeps the previous layout.
+
+## Tests
+
+- `packages/branding/tests/`: renderer (font hashes, presets, glyph coverage, refusal of executable uploads,
+  unknown symbols, unknown versions and out-of-range values), title appearance, dashboard language rendering.
+- `control-panel/tests/title-appearance.browser.mjs` (opt-in): real Settings, header and widget components against
+  a local fixture API (overrides, shared changes, reset, other tabs, failed saves, slow responses).
+- `ui/tests/integration/build-widgets.mjs` (opt-in): the greeting/widget replacement query against a disposable
+  PostgreSQL schema.
+
+These do not prove browser layout, first-run provisioning or installed updates; check those on a test VM.

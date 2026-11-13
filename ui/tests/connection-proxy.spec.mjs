@@ -24,6 +24,10 @@ test('app connection proxy validates app token and enforces approved route scope
   assert.match(route, /checkPermission\(serviceUser\.id, sourceAppId, permission\)/);
   assert.match(route, /Connection to "\$\{targetAppId\}" is not approved or active/);
   assert.match(route, /X-YouEye-App-Token/);
+  // The caller's own credential is never forwarded to the target app as Authorization.
+  assert.doesNotMatch(route, /headers\.set\("Authorization"/);
+  // The token is passed only on the Caddy grant path (which deletes it); direct connections never receive it.
+  assert.match(route, /copyRequestHeaders\(request, connection\.transport \? bearer : null\)/);
   assert.match(route, /fetch\(upstreamUrl, init\)/);
   assert.match(middleware, /"\/api\/apps\/v1\/proxy"/);
   assert.match(bridge, /available: available \?\? \[\]/);

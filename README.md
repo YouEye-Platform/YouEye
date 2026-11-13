@@ -64,12 +64,12 @@ default appliance password. The interactive installer requires a root password
 for local console recovery. SSH is key-only unless **Root password SSH** is
 explicitly enabled; that option permits the same password only from the directly
 connected IPv4 subnet. Public-key import is separate. Only a password hash is
-stored in protected answer media and State. See the [SSH troubleshooting guide](docs/getting-started.md#root-ssh-access).
+stored in protected answer media and State. See the [SSH troubleshooting guide](docs/troubleshooting.md#ssh-permission-denied-publickey).
 
 > Proxmox mode requires root access, Q35/OVMF support, an ISO storage pool, and
 > an eligible VM-image storage pool. Direct installation requires x86-64 UEFI
 > hardware and a dedicated 32 GiB or larger drive. See the
-> [full install guide](docs/getting-started.md).
+> [full install guide](docs/install.md).
 
 ## Features
 
@@ -147,7 +147,7 @@ Six apps ship with the platform, each running in its own container with full SSO
 | **Weather** | Multi-location weather with Open-Meteo, forecasts, and dashboard widgets |
 | **Translate** | Privacy-friendly translation with history, bookmarks, and auto-detect |
 
-Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems. See [Apps documentation](docs/apps.md) for feature and integration details.
+Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems. See [Native apps](docs/native-apps.md) for how they integrate with the platform.
 
 ## Monorepo Structure
 
@@ -198,12 +198,13 @@ public Stable release.
 
 Full documentation lives in the [`docs/`](docs/) folder:
 
-- [Getting Started](docs/getting-started.md) — Installation, first login, CLI commands
-- [Dashboard](docs/dashboard.md) — Widgets, backgrounds, edit mode
-- [Apps](docs/apps.md) — Native apps and Market
-- [Settings](docs/settings.md) — All configuration options
-- [Control Panel](docs/control-panel.md) — Infrastructure administration
-- [Architecture](docs/architecture.md) — System design, security model, diagrams
+- [Install](docs/install.md) — Installation, first boot, claiming the box, setup wizard
+- [Troubleshooting](docs/troubleshooting.md) — Logs, diagnostics, recovery
+- [Architecture](docs/architecture.md) — System design, security model, containers and networks
+- [Control Panel](docs/control-panel.md) — Deploy, settings, updates, backups, the dashboard
+- [YouEye ID](docs/youeye-id.md) — Sign-in, admins, who may open an app
+- [Market](docs/market.md) and [Native apps](docs/native-apps.md) — Apps on the box
+- Everything else: the index in [`docs/README.md`](docs/README.md)
 
 ## Install Options
 

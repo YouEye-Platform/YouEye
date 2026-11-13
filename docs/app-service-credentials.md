@@ -1,241 +1,149 @@
-# App service credential contract
+# App service credentials
 
-The v1 source connects strict current-generation verification, protected runtime
-provisioning, readiness and administrator lifecycle actions. Every authenticated
-app service request requires a valid Bearer credential bound to the exact installed
-app ID. A registration without credential metadata grants no service access.
-The service resolver also checks the stable active acting user and local
-household admission. Credential operations share app lifecycle exclusion with
-updates and restore; current credential/admission revisions are part of update
-security observations. Source integration does not establish installed acceptance.
+An installed app talks to the dashboard's service APIs (Timeline, notifications, profile, connections, …) with a
+**service credential**: a Bearer secret bound to that one app. This page covers how the Control Panel makes,
+stores, publishes, rotates and restores it. Code: `control-panel/src/lib/apps/service-credential-*.ts`,
+`shared/app-service-credential.ts`, and on the dashboard `ui/src/lib/db/queries/app-service-credentials.ts` and
+`ui/src/app/api/ui-bridge/app-credentials/`.
 
-An app credential authenticates the source of an event. Timeline and notification
-ingestion bind that source to the canonical authenticated app; a conflicting
-`app_id` in the request body is rejected. A valid app credential does not authorize
-the administrator user directory or browser administration routes.
+## What a credential allows
 
-## Authority and secret storage
+- Every app service request needs a valid Bearer credential for the exact installed app ID (header
+  `X-YouEye-App`). An app registration without credential data gets no service access. App IDs are exact: no
+  implicit `ye-` or `app-` prefix.
+- The dashboard also checks the acting user: a stable active user, admitted to the app (its local admission
+  projection, [app-admission.md](app-admission.md)), with the needed runtime permission.
+- A credential proves which app sent an event. Timeline and notification ingestion bind the event to that app; a
+  different `app_id` in the body is refused.
+- A credential never grants browser or admin authority: service context always has `isAdmin: false`, the user
+  directory and admin routes refuse it, and explicit machine headers never fall back to a browser cookie.
+- Native backends must take the acting user from their own validated session. The six native apps and Canvas use
+  server-only helpers that read the credential from the protected runtime and replace any supplied authority
+  headers.
 
-Control Panel owns one protected credential record per canonical installed app
-under `/var/lib/youeye/state/app-service-credentials`. This directory is separate
-from app data and container checkpoints. An ordinary app rollback must not
-overwrite it.
+## Storage (Control Panel)
 
-The secret contains 256 bits of cryptographically random material. V1 defaults
-to no expiry, with explicit rotation and revocation. Secrets belong only in this
-protected record and server runtime configuration. They must not appear in app
-manifests, browser responses, frontend bundles, URLs, logs, or operator status.
+- One protected record per installed app under `/var/lib/youeye/state/app-service-credentials`
+  (`service-credential-store.ts`). It is separate from app data and container checkpoints, so an app rollback
+  cannot overwrite it.
+- The secret is 256 random bits. It has no expiry by default; rotation and revocation are explicit.
+- Secrets live only in this record and in the app's private runtime configuration. They never appear in manifests,
+  browser responses, frontend bundles, URLs, logs or status output.
+- Records carry an immutable installation ID, a generation number within the installation, and a revision that keeps
+  increasing across reinstalls.
+- Files are owned by the CP process user, mode `0600`; directories `0700`. Reads and writes share a file lock;
+  writes use atomic rename and directory sync before the secret is returned.
+- Rendering config reads the record; it never creates a missing one. Missing or corrupt records, wrong
+  owner/mode and symlinks need repair and deny authentication. An existing directory without a record is not
+  treated as a new install.
+- The runtime config that carries the secret must be a private file under `/etc` in the container
+  (`service-credential-runtime.ts`); browser-public env mappings and public config paths are refused. The written
+  env file is read back after writing.
 
-Records use immutable installation IDs, generations within an installation,
-and revisions that continue across reinstall. Secret files are owned by the
-Control Panel process user and have mode `0600`; directories have mode `0700`.
-Reads and writes share a filesystem lock. Atomic rename and directory sync finish
-before a secret can be returned to a caller.
+## Publishing the verifier (dashboard)
 
-Ordinary config rendering reads the current record; it never provisions a
-missing credential. Missing/corrupt records, unfamiliar ownership/permissions,
-and symlinks require repair and deny authentication. An existing directory with
-no record is not treated as a new installation.
+The dashboard stores only a SHA-256 verifier, never the secret.
 
-## Versioned verifier publication
-
-`POST /api/ui-bridge/app-credentials/[appId]` accepts only the authenticated
-Control Panel bridge. App credentials and browser/admin cookies do not authorize
-this operation, and a wrong bridge credential cannot fall back to a cookie.
-
-The JSON envelope contains exactly `credential` and `expectedRevision`, or
-`credentials` and `expectedRevision` for a durable outbox batch. Batches apply only
-the final projection atomically; an intermediate retired generation is never
-made visible. Acknowledgement removes only committed outbox entries. A backlog
-that cannot be published refuses further credential mutation.
-The credential projection has these fields:
+`POST /api/ui-bridge/app-credentials/<appId>` accepts only the CP's bridge token; app credentials and browser
+cookies cannot call it. The body has exactly `credential` and `expectedRevision`, or `credentials` and
+`expectedRevision` for a batch from the CP's outbox (only the final state of a batch becomes visible).
 
 | Field | Meaning |
-| --- | --- |
+|---|---|
 | `schema` | `youeye.app-service-credential/1` |
-| `appId` | Exact canonical registration ID |
-| `installationId` | Immutable installation UUID |
-| `generation` | Positive generation within this installation |
-| `revision` | Monotonic publication revision across installations |
-| `status` | `prepared`, `active`, or `revoked` |
-| `verifierHash` | SHA-256 verifier, never the raw secret |
-| `createdAt` | Installation credential creation time |
-| `rotatedAt` | Rotation time, or null for generation one |
-| `revokedAt` | Revocation time, present only for revoked records |
-| `expiresAt` | Explicit expiry, or null |
+| `appId` | exact app ID |
+| `installationId` | installation UUID |
+| `generation` | positive generation within the installation |
+| `revision` | increasing publication revision |
+| `status` | `prepared`, `active` or `revoked` |
+| `verifierHash` | SHA-256 verifier |
+| `createdAt`, `rotatedAt`, `revokedAt`, `expiresAt` | UTC ISO times (`rotatedAt` null for generation 1; `expiresAt` null for none) |
 
-Timestamps use canonical UTC ISO format. Unknown fields, including a raw secret,
-are rejected. Publication requires the expected current revision and exactly
-the next revision. Repeating an identical acknowledged publication is a no-op.
-A delayed publication, skipped revision, changed hash within a generation, or
-reactivation of a revoked/retired generation is rejected.
+- Unknown fields, including a raw secret, are refused. A publication must name the current revision and be exactly
+  the next one. Repeating an acknowledged publication is a no-op. Skipped revisions, a changed hash within a
+  generation, or reactivating a revoked or retired generation are refused.
+- Projections are stored in `app_service_credentials` with no foreign key to the app, so removing an app keeps the
+  revoked tombstone. The first publication for an app is serialized with an advisory lock.
+- Errors: `400` malformed, `401` bad bridge auth, `409` revision or lifecycle conflict, `503` verifier store
+  unavailable. Responses never contain the verifier or the secret.
+- If the outbox cannot be published, further credential changes are refused until it is.
 
-UI persists projections in `app_service_credentials`. This table deliberately
-has no foreign key to app data: deleting an app registration must not erase the
-credential revision tombstone. First publication is serialized even when no row
-exists, using a transaction advisory lock. Non-revocation publication requires an
-existing app registration.
+## Lifecycle
 
-Responses contain status, generation, revision and installation identity, with
-no verifier hash or secret. Malformed input yields 400, failed authentication
-401, a revision/lifecycle conflict 409, and verifier unavailability 503.
+Every credential operation holds the app's lifecycle lock (shared with updates, restore and backup;
+[app-update-transactions.md](app-update-transactions.md)) and runs these steps (`service-credential-lifecycle.ts`):
 
-## Lifecycle ordering and recovery
+1. mark integration pending and quiesce the app;
+2. write the protected runtime config;
+3. publish the `prepared` verifier, persist activation, publish `active`;
+4. restart the app and make a real probe: from inside the app container, call
+   `GET /api/apps/v1/credential-probe` with the credential (up to 20 s for the app to come up; an authentication
+   denial fails at once);
+5. mark it ready (`POST /api/ui-bridge/app-credentials/<appId>/ready` with the exact installation, generation and
+   revision).
 
-The lifecycle coordinator requires a transport adapter that holds the shared
-app/container maintenance lease, marks integration pending, quiesces the app,
-and writes protected runtime configuration through the installer. It publishes
-the prepared verifier, persists activation, publishes the active verifier,
-restarts, performs an actual scoped service probe, and only then marks ready.
+- The probe endpoint accepts only the current active credential, even before ready, and returns only the app ID.
+  Normal service routes refuse a generation until it is marked ready. Publishing a changed projection clears
+  readiness; `ready: false` suspends the app's integration.
+- While an operation is pending, the app's admission is suspended; readiness restores it without changing grants
+  or owners.
+- On failure the integration stays pending. Retries reuse the same operation and generation and roll forward; they
+  never bring back a retired secret.
+- Operations use the frozen manifest of the installed version. App updates must pass the same probe before they
+  commit.
+- Lock recovery checks the owner's boot ID, PID and process start time; a live lock is never taken over.
 
-Lifecycle operations use the frozen manifest for the exact installed version and
-preserve its recorded network mode. Native probes allow up to twenty seconds for
-transport readiness after restart; an HTTP authentication denial fails
-immediately. Updates must also pass that native probe before committing.
-Pending credential operations suspend and publish current admission; successful
-readiness restores and publishes admission without changing grants or owners.
+### Admin actions
 
-If configuration, bridge publication, restart or probe fails, integration remains
-pending. Retries reuse the protected operation/generation. They roll forward
-after activation; they never restore a retired secret. Revocation erases the
-local secret and publishes its tombstone while retaining the quiesced state.
-A failed bridge acknowledgement must not be reported as completed revocation.
+`GET /api/market/credentials/<appId>` (admin) shows state, generation, revision and outbox progress, never the
+secret. `POST` (admin and CSRF) with one of:
 
-Credential lock recovery checks the owner's boot identity, PID and process start
-time. It cannot steal a live lock or guess the owner of an incomplete lock.
-Reinstall requires explicit ownership adoption after revocation and creates a
-new installation identity and secret while retaining revision ordering.
-The Market installer performs this credential adoption only after its existing
-resource ownership preflight succeeds under the app lock, including a deliberate
-install following keep-data uninstall. Interrupted retries keep that new
-installation and generation. Rendering and reconcile cannot adopt a revoked
-record, and an absent or corrupt record in an existing credential directory
-still requires repair.
+| Body | Effect |
+|---|---|
+| `{"action":"provision"}` | create a missing record |
+| `{"action":"reconcile"}` | roll the stored generation forward |
+| `{"action":"rotate","expectedRevision":N}` | new secret, retire the old one |
+| `{"action":"revoke","expectedRevision":N}` | revoke and stop the app |
+| `{"action":"reinstall","expectedRevision":N}` | after revocation and explicit ownership adoption: a new installation identity and secret |
 
-## Readiness and operator actions
+Read the current revision first. A missing or corrupt secret is never guessed. Revocation erases the local secret
+and publishes the tombstone; a failed bridge acknowledgement is not reported as revoked.
 
-The UI stores readiness independently from the credential projection. Publication
-of a changed projection clears readiness. `GET /api/apps/v1/credential-probe`
-accepts only the active current credential, even while unready, and returns only
-its canonical app ID. It exposes no user or platform data. Normal authenticated
-service routes reject that generation until readiness has been recorded.
+The Market installer adopts the credential for a reinstall (including after a keep-data uninstall) only after its
+resource ownership check passes under the app lock.
 
-The bridge-only `POST /api/ui-bridge/app-credentials/[appId]/ready` takes the exact
-`installationId`, `generation` and `revision`, plus optional Boolean `ready`.
-`ready: false` suspends integration without issuing a credential. The true
-transition follows protected runtime readback, current-verifier proof and, for
-native apps, an actual request from the app container's protected environment.
-An expired generation cannot be marked ready. A stale receipt cannot open a
-newer generation.
+(Not to be confused with `GET /api/market/credentials?app=<id>`, which shows an app's bootstrap admin account.)
 
-Administrator `GET /api/market/credentials/[appId]` reports non-secret state,
-generation, revision, operation and outbox progress. Administrator and CSRF
-protected `POST` accepts one of:
+## Restore
 
-- `{"action":"provision"}` to provision a missing installation record.
-- `{"action":"reconcile"}` to roll forward the persisted generation.
-- `{"action":"rotate","expectedRevision":2}` to retire current material.
-- `{"action":"revoke","expectedRevision":2}` to revoke and stop the app.
-- `{"action":"reinstall","expectedRevision":3}` after explicit ownership adoption
-  and revocation, creating a fresh installation identity.
+- Backups record only secret-free credential facts. Restore never takes a Bearer credential from an archive.
+- The credential store is outside the restored volumes, so newer revocations on the target survive a restore.
+- Before reinstalling a restored app, the worker reads the dashboard's projection and posts to
+  `/api/ui-bridge/app-credentials/<appId>/restore-fence`. The fence may skip revisions **only to publish a revoked
+  projection**; it cannot activate a secret or go back in revisions. Repeating a fence that already holds is a
+  no-op.
+- Restore then prepares a new credential, writes it into the runtime config after the archived data is in place,
+  and probes before reopening service access. A full or core restore keeps the dashboard stopped until all
+  restored credential rows have readiness cleared.
+- A different machine gets a different installation identity and secret. Restoring there does not revoke the
+  source box.
+- A partial restore (including core-only) keeps other installed apps. Their archived routing and SSO installation
+  identities must match the target, or restore stops and asks for those app archives. Kept apps stay stopped with
+  pending intent until reconciliation re-injects and probes their credential.
 
-Revision numbers are examples; read the current status before a mutation.
-Reconciliation must never guess a missing/corrupt secret. Install/config refresh
-reads the protected record. Ordinary integration changes suspend readiness and
-probe the same generation before reopening. Failed probes stop writers and leave
-pending metadata for deliberate repair. The native env file is private and read
-back after writing. OCI environment changes also require exact readback.
-Credential-bearing templates are restricted to private `/etc` files in v1;
-browser-public env mappings and public config paths are refused.
+## Tests
 
-## Encrypted restore and revision recovery
+- Filesystem and database tests cover the store, publication rules and restore fence.
+- `ui/tests/app-credential-http.spec.ts` runs the built dashboard server against a disposable database: private
+  settings, admin routes, mixed machine authority with a valid admin cookie, expired/disabled/revoked
+  credentials, verifier store failure, runtime permissions and event source binding. Build with
+  `pnpm --dir ui build`, create a database whose name starts with `credential_acceptance_`, then in `ui/`:
 
-App/core backup metadata records secret-free credential provenance. Runtime
-exports remain encrypted and can include old configuration, but restore never
-adopts their Bearer credential as destination authority. The protected authority
-is outside the app/core volume restore set, preserving newer target tombstones.
+  ```sh
+  APP_CREDENTIAL_HTTP_TEST=1 APP_CREDENTIAL_TEST_DATABASE_URL=… pnpm exec node --import tsx --test tests/app-credential-http.spec.ts
+  ```
 
-Before reinstall, the authenticated restore worker reads the current UI projection
-through `/api/ui-bridge/app-credentials/[appId]/restore-fence`. Its POST compares
-that exact observation and can cross a revision gap **only to publish a revoked
-projection**. It cannot activate or restore a secret, rewind revisions, or affect
-another app. Lost acknowledgement reuses the durable tombstone. Normal publication
-retains its stricter sequential compare-and-set contract.
+  It seeds synthetic data and temporarily renames a table; never point it at an installed box. Drop the database
+  afterwards. Skipped by default.
 
-Restore then prepares a new installation credential, defers installer readiness,
-reinjects only credential-bearing runtime configuration after archived data has
-been applied, and probes before reopening service access. Full/core database
-restore keeps UI stopped until all restored credential rows have readiness cleared.
-A verifier suspension failure leaves UI unavailable for explicit recovery.
-
-A different destination gets a different installation identity and secret. The
-source remains independently active unless explicitly revoked there; restoring
-an archive does not remotely revoke a separate machine. Historical full-server
-restore can restore historical accounts/configuration/data, but app runtime
-credentials are still replaced and retained target tombstones are not rewound.
-An explicit partial selection, including a core-only selection with no app
-archives, retains other installed runtimes. Before changing core state, their
-archived routing and SSO installation identities must match the target; otherwise
-restore refuses and asks for the corresponding app archives. Retained apps stay
-stopped with pending intent, and their target network leases are preserved.
-An equal verifier preserves the protected secret and generation. If the restored
-UI is older, a durable deny-only restore fence precedes a new generation within
-the same retained installation. Retrying the fence resumes that operation;
-an explicitly revoked target record remains revoked. Missing target authority
-requires repair and cannot be imported from archived hashes. Reconciliation
-reinjects/probes before readiness; failure leaves stopped, pending runtimes.
-
-This credential reconciliation is implemented and covered with filesystem and
-database tests. Real encrypted core/app restore, whole-operation lifecycle
-exclusion and combined ownership/update rollback remain integration acceptance;
-do not infer those passes from this protocol.
-
-## Integration and acceptance still required
-
-The acting-user path must consume the accepted household local projection evaluator
-and active principal mapping before final integration. UI must not request policy
-from CP or duplicate its tables. Existing runtime permissions remain additional
-checks. Service context always has `isAdmin: false`; app credentials cannot grant
-browser/admin authority. Explicit machine headers cannot fall back to a browser
-cookie. Canonical app identity is exact, with no implicit `ye-`/`app-` prefix alias.
-
-Every native backend must derive acting user from its validated server session.
-The six supported apps and Canvas use server-only helpers that require protected
-runtime identity and replace all supplied authority headers; missing credentials
-fail before an unsigned request. Public health/manifests retain their separate
-public contracts.
-
-Real authenticated native/Canvas flows, competing lifecycle operations, same-target
-rollback and fresh-target encrypted restore remain required acceptance. Shared
-migration-journal integration must retain newer credential/grant authority across
-checkpoints. Quick artifacts do not prove the combined signed beta matrix.
-
-## Isolated production HTTP regression
-
-`ui/tests/app-credential-http.spec.ts` exercises the built Next.js server and
-production database queries, including private settings, browser administration,
-malformed/mixed machine authority with a valid admin cookie, expired/disabled/
-revoked credentials, verifier-store failure, runtime permissions and event source
-binding. It starts its server on loopback with synthetic session signing material.
-
-Build the same source first with `pnpm --dir ui build`. Provision a disposable
-PostgreSQL database whose name starts with `credential_acceptance_`, and supply
-its connection string through the protected `APP_CREDENTIAL_TEST_DATABASE_URL`
-environment variable. Then run from `ui`:
-
-```sh
-APP_CREDENTIAL_HTTP_TEST=1 pnpm exec node --import tsx --test tests/app-credential-http.spec.ts
-```
-
-The test seeds only synthetic identities and credentials. Its unavailable-store
-case temporarily renames a table in that isolated database. Never point it at an
-installed UI database. Remove the database and its role after the run. The default
-suite skips this separately enabled test; a skipped result is not HTTP acceptance.
-This regression does not replace deployed native-app or restore acceptance.
-
-Restore-fence acknowledgment is idempotent when the destination already holds
-the exact revoked projection, including a fresh read that observes that same
-fence. This confirms existing denial and never grants access. An inconsistent or
-ahead expected projection at the same or a later revision remains a conflict,
-and activation must still use the ordinary sequential generation transition
-after a new installation is prepared.
+Real native-app flows, competing lifecycle operations and encrypted restore still need a test VM.

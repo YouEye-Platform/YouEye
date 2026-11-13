@@ -7,8 +7,8 @@ update-compatible with older development versions until the first public release
 
 | Tool | Version | Why it is exact |
 |---|---|---|
-| Go | toolchain `1.25.14` (`spine/go.mod`) | Go downloads it automatically when the local Go is older |
-| Node | **exactly `v24.22.0`** | `scripts/bundle-node-runtime.mjs` copies the running `node` binary into the Control Panel, UI and native-app packages and checks its SHA-256 |
+| Go | toolchain `go1.24.4` (`spine/go.mod`, `installer/go.mod`; language `1.23.0`) | Go downloads it automatically when the local Go is older |
+| Node | **exactly `v24.22.0`** | `scripts/bundle-node-runtime.mjs` (in `control-panel/`, `ui/` and the YouEye-Canvas app template) copies the running `node` binary into the package and checks its SHA-256 |
 | pnpm | **exactly `10.6.2`** | Node builds run `pnpm install --frozen-lockfile --offline` against `YOUEYE_PNPM_STORE_DIR`; fill that store once online with `pnpm fetch --store-dir <dir>` |
 
 ## Building
@@ -22,11 +22,11 @@ The entrypoints in `.youeye/build/` build one component each (see
 | Spine | any Linux | seconds |
 | Control Panel, UI | any Linux | a few minutes; Node and pnpm pinned as above. The CP build also runs a set of spec files first. |
 | Native apps | any Linux | the app repo's own `.youeye/build/app` |
-| Appliance image | **as root** on Debian | needs `mmdebstrap`, `live-build`, `ukify`, `xorriso`, `zstd` 1.5.7, and an APT cache on `127.0.0.1:3142`. Takes about 15 minutes on 4 cores. |
+| Appliance image | **as root** on Debian | needs `mmdebstrap`, `live-build` (`lb`), `ukify`, `xorriso`, `debugfs`, `jq`, `go`, exactly `zstd` 1.5.7, and an APT cache on `127.0.0.1:3142` (`LIVE_BUILD_APT_PROXY`). Takes tens of minutes. |
 
 Every entrypoint needs `YOUEYE_VERSION` (the build version `X.Y.Z-dev.N`; `X.Y.Z` must equal `VERSION`) and builds
-from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`). Nothing in the source tree carries the rc
-number; see [releases.md](releases.md).
+from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`). Nothing in the source tree carries the
+build number `N`; see [releases.md](releases.md).
 
 The image build takes `YOUEYE_BUILD_INPUTS`, a `youeye.build-inputs.v1` file:
 
@@ -45,11 +45,13 @@ in protected State, so one image is promoted unchanged through every channel. Pa
    - `cp-standalone.tar`;
    - `ui-standalone.tar`.
 2. Run `scripts/assemble-core-release.py --version <X.Y.Z-dev.N> --source-tree <tree> --minimum-release <v>
-   --artifacts <dir>`. It writes `core-release.json` and `SHA256SUMS`.
+   --artifacts <dir>`. It writes `core-release.json` and `SHA256SUMS`. When the image did not change, add
+   `--reuse <previous core-release.json>=image` (or `=spine`, `=cp`, `=ui`): those members are copied unchanged and
+   their blobs name the earlier release that holds the file, so only the rebuilt files need to be in `<dir>`.
 3. Create release `youeye-v<version>` (prerelease) in the development repository, upload every file plus
    `installer/scripts/install.sh`, and point the `dev` channel index at it.
-4. Promote it to alpha, beta and stable without rebuilding: the same bytes are uploaded to the next host and the
-   channel indexes move (see [releases.md](releases.md)).
+4. Promote it to alpha, beta and stable without rebuilding: each promotion writes a new document for the same files
+   (copied to GitHub for beta and stable) and moves that channel's index (see [releases.md](releases.md)).
 
 ## Installing a development build
 
@@ -63,14 +65,15 @@ curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
 - **Unattended test installs:** add `--silent --yes --erase-confirmed --vmid <id> --target-storage <storage>
   --iso-storage <storage> --cpu 4 --memory 8192 --target-disk-gb 64`.
 - **Native apps, Pointer and the Market catalog** come from the box's channel index, like the System.
-- **Spine changes** need a new image today, because the image refuses a Spine that differs from its own. Separating
-  Spine from the image removes that.
+- **Spine changes** never need a new image: a Spine-only release updates a box in about a minute without a reboot.
+  To try a binary by hand, `youeye spine install <file> --sha256 <d> --version <v>` runs it as a trial and rolls
+  back if it is unhealthy ([spine.md](spine.md)).
 
 ## Tests
 
 | Suite | Command |
 |---|---|
-| Go | `go vet ./... && go test ./...` in `releasecache`, `spine`, `installer` and `appliance/ordering`. Several Spine packages expect to run **as root**; as another user about 35 tests fail with "unsafe … directory". |
+| Go | `umask 022` first, then `go vet ./... && go test ./...` in `releasecache`, `spine`, `installer` and `appliance/ordering`. With a group-writable umask (0002) some Spine tests fail with "unsafe … directory". |
 | Control Panel | each spec file with `node --import tsx --test <file>` from `control-panel/`, using Node 24.22.0, plus `tsc --noEmit` |
 | UI | `pnpm --dir ui run typecheck` |
 

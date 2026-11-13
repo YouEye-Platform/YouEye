@@ -1,88 +1,95 @@
-# Setup readiness and retained work
+# Setup readiness and interrupted setup
 
-Ordinary managed onboarding checks retained installation acceptance automatically.
-It does not offer a routine System/update slide or start an update. The protected
-Control Panel identity must match the machine-bound installed manifest, and the
-transaction must be absent or terminal. Missing, unreadable, mismatched and
-unfinished state interrupts setup with Retry and recovery guidance.
+The setup wizard (`control-panel/src/app/setup/`, `app/api/setup/*`) changes the whole box: domain, TLS, Caddy,
+DNS, Pointer, the Control Panel's and dashboard's YouEye ID clients, or a restore from a backup drive. This page
+explains what setup checks before it changes anything, and how it survives a lost browser or a crash.
 
-This check reads the protected receipt. Its `payload_observation: not-observed`
-does not represent a new scan of installed files or a fresh health check.
-Unsupported legacy installations need their supported recovery/update route
-outside this ordinary managed wizard.
+## Readiness check
 
-Actual setup and restore effects also acquire the existing shared platform
-lifecycle lock and check readiness. A second exclusive setup lock stays held
-through asynchronous effects. A protected, fsynced operation marker contains
-only the owner, operation kind and exact operation ID. It survives process loss;
-only matching work can enter it. Successful work explicitly settles the marker.
-Restore retains that marker on failure. Its fsynced source and step journal in
-`/var/lib/youeye/backups/.setup-restore` binds the original owner, browser
-session, machine credential digest, operation UUID, drive, recovery point,
-selected apps and encrypted input fingerprint. An acknowledged validation
-failure can resume the same operation with a corrected recovery key.
-`GET /api/setup/restore?operationId=<uuid>` returns `operationId`, `status`,
-`phase`, `active`, `recovery`, `messageCode` and safe `message` text, with the
-original `mediaId`, `backupId` and `appIds` for new records and
-`Cache-Control: no-store`. An active kernel lease means `status: running` and
-`recovery: none`; a lost reader must keep checking status. Inactive unfinished
-work reports `status: failed` and `recovery: resume`, `finalize` or
-`operator-required`. Only explicit `POST /api/setup/restore` with
-`action: resume` and the original operation UUID, drive, recovery point,
-app selection and body-only recovery key may continue. New requests use
-`action: start` (the default). A different request never replaces retained work.
-Both POST actions require the original claimed session and CSRF proof.
-Safe replacement steps reset from freshly authenticated, fingerprint-matched
-input; completed steps are skipped. The importer moves an old cache aside so
-it cannot conceal changed bytes on the drive. Finalization records completion
-before settlement and never reapplies a completed restore, even if
-`setup_completed` is already true or the final SSE response was lost.
-Unknown partial app, volume, SQL or routing changes and an unacknowledged native import
-or restart require operator reconciliation: GET remains
-readable, resume returns `409` with `code: operator-required`, and exclusion
-stays held. The operator must resolve the original native invocation and its
-bound input/applied effects through supported appliance recovery before
-settling retained work; changing IDs or deleting markers is not a recovery.
-Damaged/unreadable evidence returns `503` and never means no operation exists.
-A setup restore whose operation ID already has a backup restore status is refused
-with `409` (`operator-required`).
-The backup lease uses a kernel lock; process loss releases the lease while
-retaining the setup journal.
-Native System checkpoint admission refuses any retained or unreadable marker.
-Deploy the matching Spine implementation before the Control Panel implementation.
+Setup does not offer a System update. Before any setup or restore effect it checks that the installed System is
+settled (`lib/setup/readiness.ts`, `assertSetupReadiness`):
 
-The existing setup owner/session, CSRF checks, operation lease, step journal and
-restore identity remain authoritative. A disconnected progress reader does not
-cancel backend setup or prove success. Errors retain work for reconciliation.
-Setup requires successful steps, completion persistence and an acknowledged
-Control Panel restart request before settlement. The browser separately waits
-for readiness; its timeout remains an error.
+- Spine's core status (`youeye.core-status.v1`) is managed and has an installed, machine-bound release receipt;
+- the Control Panel's component manifest digest equals the installed receipt's `manifest_sha256`;
+- there is no update transaction, or the last one is complete (`committed`, `rolled-back` or `cancelled`).
 
-If the setup stream disconnects or ends without completion, the browser checks
-`GET /api/setup/status` with its existing administrator session instead of
-submitting setup again. This read-only response exposes retained step states
-and `pending`, `error` or `complete`. Completion requires the persisted config,
-identity completion and absence of the validated native setup-operation marker;
-config completion alone cannot hide a later native finalization failure.
-Unavailable or unsafe evidence never proves completion. After a bounded wait,
-Check setup status repeats only this read. Explicit setup errors remain errors,
-and a readiness timeout after completion retries only the readiness handoff.
+The receipt is the record from install or the last update (`payload_observation: not-observed`); this is not a
+fresh scan of the installed files or a health check. If the check fails, setup stops with Retry and recovery
+guidance: finish or recover the update first (see [releases.md](releases.md)).
 
-Names enrollment/preview and manual ACME/upload endpoints also enter shared
-native admission, with readiness required for setup sessions. Certificate
-operations use an exclusive TLS lock. The actual ACME work retains its lock
-even when the HTTP wait times out. Uploaded material is bounded and checked for
-key match, SAN coverage, issuer signatures and validity before storage or proxy
-activation. Activation failures attempt both previous proxy and storage state;
-an unconfirmed recovery remains an error. Chain consistency does not prove a
-browser trusts its issuer; named-origin connection readback remains required.
+## One setup operation at a time
 
-The setup wizard retains saved shared MyTitle data and its revision. Saves use
-that revision to reject stale appearance updates. Browser Back retains the local
-draft; a reload restores saved data, not unsaved secrets or an unsaved draft.
-Scoped IBM Plex font assets include their source revision, hashes and licence.
+Setup and restore effects run inside `withSetupMutation` (`lib/setup/lifecycle.ts`):
 
-Focused tests cover receipt mismatch/damage/unfinished state, asynchronous lock
-contention, retained-operation resume and native System refusal. These source
-tests do not prove first deployment, physical restore, browser origin trust or
-digest-bound update/recovery acceptance.
+- they hold the shared platform lifecycle lock (the same one app updates use) and a setup lock
+  (`setup-operation.flock`) for the whole asynchronous operation;
+- they write a marker `setup-operation.json` (`youeye.setup-lifecycle/1`) in the app-update journal directory
+  (`/var/lib/youeye/state/app-updates`). It holds only the owner, the kind (`setup` or `restore`) and the operation
+  ID; it is written with fsync and mode `0600`;
+- only the same owner, kind and operation ID can continue a marked operation. A different request is refused with
+  "An unfinished setup operation must be resumed before another can start";
+- successful work removes the marker. A failed restore keeps it;
+- a System update checkpoint is refused while a marker exists or cannot be read.
+
+Process loss releases the locks (they are kernel locks) but keeps the marker and journals.
+
+## Setup progress
+
+Setup streams its steps over Server-Sent Events. Steps that must be done: `config`, `caddy`, `dns`, `ai`,
+`sso_control`, `sso_ui`. Retrying one step cannot finish a setup whose other steps are unfinished.
+
+If the stream breaks or ends without completion, the browser does not submit setup again. It reads
+`GET /api/setup/status` (admin session), which returns each step's state and `pending`, `error` or `complete`.
+Complete needs all three: `setup_completed` in `youeye.yaml`, the identity setup finished, and no setup marker. A
+saved config alone is not proof. Unreadable evidence returns `503` and never means "done".
+
+Setup ends by asking Spine to restart the Control Panel (to load the new SSO environment). The browser then waits
+for readiness; a timeout there is an error, and retrying only repeats that wait.
+
+## Restore during setup
+
+A fresh box can be set up from a backup drive (`POST /api/setup/restore`; `lib/setup/restore-recovery.ts`):
+
+- The restore journal is `/var/lib/youeye/backups/.setup-restore/` (`youeye.setup-restore/1`). It binds the owner,
+  browser session, machine credential digest, operation UUID, drive, recovery point, selected apps and a
+  fingerprint of the encrypted input.
+- New requests use `action: start` (the default). Only `action: resume` with the same operation UUID, drive,
+  recovery point, app selection and recovery key (in the body) continues retained work. Both need the claimed
+  owner's session and CSRF token.
+- `GET /api/setup/restore?operationId=<uuid>` (no-store) returns `status`, `phase`, `active`, `recovery`,
+  `messageCode`, `message`, and the original `mediaId`, `backupId` and `appIds`.
+  - A running operation reports `status: running`, `recovery: none`; keep polling.
+  - An interrupted one reports `status: failed` with `recovery: resume`, `finalize` or `operator-required`.
+- A wrong recovery key fails validation and can be resumed with the right key.
+- Each retry re-imports the recovery point from the drive (an old import is moved aside first, so changed bytes
+  on the drive are never hidden) and skips completed steps.
+- Finishing records completion before removing the marker and never re-applies a completed restore.
+- A setup restore whose operation ID already has a normal backup-restore status is refused (`409`,
+  `operator-required`).
+
+**Operator-required.** If the journal shows partial app, volume, SQL or routing changes that cannot be
+reconciled, or an import or restart whose outcome is unknown, `GET` still works, `resume` returns `409` with
+`code: operator-required`, and the lock stays held. Resolve it with the appliance recovery tools before going on.
+Changing IDs or deleting the marker is not a recovery.
+
+## TLS during setup
+
+Names enrollment and preview, ACME and certificate upload also take the shared lifecycle lock, and need readiness
+when called from a setup session. Certificate changes take an exclusive TLS lock (`tls-operation.flock`,
+`lib/acme/mutation.ts`); ACME work keeps it even when the HTTP request times out. An uploaded certificate is size
+bounded and checked (key match, names, issuer signatures, validity) before it is stored or activated. If
+activation fails, the previous proxy and stored certificate are put back; a failed put-back is reported as an
+error. A valid chain does not prove that the browser trusts its issuer; setup checks the named origin from the
+browser at the end.
+
+## Title in setup
+
+The wizard's title step uses Title Studio ([title-studio.md](title-studio.md)). It keeps the saved shared title and
+its revision and sends that revision with each save, so a stale save is refused. Browser Back keeps the local
+draft; a reload shows the saved design, not an unsaved draft.
+
+## Tests
+
+`control-panel/tests` cover receipt mismatch, damaged or unfinished state, lock contention, resuming a retained
+operation and the System checkpoint refusal. They do not prove a first deploy, a physical restore or browser trust
+of the box's origin; check those on a test VM.

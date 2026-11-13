@@ -1,306 +1,190 @@
 # Architecture
 
-YouEye uses a layered architecture where each component has a single responsibility and clear boundaries.
+YouEye is an appliance: a read-only A/B Debian image with a host agent (Spine) that runs the platform in Incus
+containers. This page says what lives where and how the parts talk. Install and first boot are in
+[install.md](install.md); Spine itself is in [spine.md](spine.md); updates are in [releases.md](releases.md) and
+[core-release-contract.md](core-release-contract.md).
 
-## System Overview
+## The pieces
 
-```mermaid
-graph TD
-    User[User Browser] -->|HTTPS| Caddy[Caddy Reverse Proxy]
-    
-    subgraph Host["YouEye appliance"]
-        Spine[Spine CLI]
-    end
-    
-    Spine -->|manages| Container
-    
-    subgraph Container["Control Panel Container (Incus, unprivileged)"]
-        CP[Control Panel<br/>Next.js 16]
-        Caddy
-        ID[YouEye ID]
-        DB[(PostgreSQL 17)]
-        DNS[Pi-Hole v6]
-        UI[YouEye UI<br/>Next.js 15]
-        Apps[Native Apps]
-        Market[Market Apps]
-    end
-    
-    Caddy --> UI
-    Caddy --> Apps
-    Caddy --> Market
-    Caddy --> CP
-    Caddy --> ID
-    
-    CP --> DB
-    CP --> ID
-    CP --> DNS
-    UI --> DB
-    ID --> DB
+```
+ Browser ──HTTPS──▶ host :443/:80 ──▶ youeye-caddy ──┬─▶ youeye-ui        (dashboard, :3000)
+                                                     ├─▶ youeye-control   (Control Panel :3000, YouEye ID :3001)
+                                                     ├─▶ youeye-pihole    (web UI :80)
+                                                     ├─▶ youeye-pointer   (AI inference :4002)
+                                                     └─▶ app-<id>         (one or more containers per app)
+ LAN DNS ──▶ host :53 ──▶ youeye-pihole
+ Host: Spine (`youeye.service`, API on /var/run/youeye/youeye.sock) manages Incus and youeye-control
 ```
 
-## Component Boundaries
+| Part | Where it runs | Source |
+|---|---|---|
+| **Spine** | on the host, `youeye.service` (`youeye api serve`) | `spine/` |
+| **Control Panel** + **YouEye ID** | Incus system container `youeye-control` (Debian 12); two systemd units, `youeye-control` (port 3000) and `youeye-id` (port 3001), running the same `/opt/app` bundle | `control-panel/` |
+| **Dashboard UI** | Incus system container `youeye-ui` (Debian 12), `youeye-ui.service`, port 3000 | `ui/` |
+| **Caddy** | OCI container `youeye-caddy`; host ports 80 and 443 | image from the Market catalog |
+| **PostgreSQL** | OCI container `youeye-postgres`; no host port | image from the Market catalog |
+| **Pi-hole** | OCI container `youeye-pihole`; host port 53 (TCP and UDP) | image from the Market catalog |
+| **Pointer** (AI) | Incus system container `youeye-pointer`, Bun, ports 4001 and 4002 | Pointer repository |
+| **Apps** | `app-<id>` or `app-<id>-<container>`, one network per app | native app repos, YE-AppMarket |
 
-Control Panel network reconciliation performs one global inventory audit per
-pass, then checks unchanged apps using a pass-local read-only observation. The
-audit transport rejects every attempted mutation before it reaches Incus, so
-unchanged comparisons need no mutation locks. Only wholly unchanged passes lend
-their inventory summary to the outer scan; repair or ownership/admission races
-require a new outer observation. Any
-drift or unknown result falls back to fresh full ownership observation inside
-the existing app lifecycle and network locks; repairs never use cached objects.
-Durable lease identity is reread after admission, shared observations are discarded
-before a repair, and no observation survives a pass. UI registration reads are
-batched per pass together with persisted connection projections; unchanged
-projections and health records produce no writes. With a wholly unchanged network
-audit, existing registrations and completed install receipts use a mutation-blocked
-projection comparison before taking lifecycle locks or rereading individual bridges.
-Any divergence, missing registration, or unfinished operation still enters fresh
-under-lock visibility and repair checks. Absent registrations are
-rechecked before creation and verified afterward. UI visibility checks read the exact current active lease and owned
-bridge rather than enumerating unrelated networks.
-Owned ACL, proxy and NIC configuration is compared before writing, so unchanged
-state needs no provider mutation. Incus JSON requests share bounded keep-alive
-connections per process, preserve inactivity/explicit deadline handling, and
-never automatically replay a failed mutation with an uncertain outcome. A bodyless
-GET reset on a reused socket before any response retries at most once through
-the same bounded pool and admission slot; its original absolute deadline stays
-in force. Fresh-connection failures and partial responses remain errors.
+- Spine creates Incus storage and `youeye-control`, and deploys the Control Panel into it (`youeye deploy`). Spine
+  does not deploy anything else.
+- The Control Panel deploys and manages everything else: PostgreSQL, Caddy, Pi-hole, the UI, Pointer, native apps
+  and Market apps (`control-panel/src/lib/infrastructure/`). The Caddy, PostgreSQL and Pi-hole images come from the
+  Market catalog's `system/` entries (`system-market-manifests.ts`).
+- Both web apps are Next.js 16 and ship with their own Node runtime (Node 24.22.0, copied in by
+  `scripts/bundle-node-runtime.mjs` in each app).
+- The Control Panel is served at `https://<domain>/settings`. YouEye ID has its own subdomain
+  (`subdomains.identity` in the platform config). The dashboard is the domain itself, or a `subdomains.ui`
+  subdomain.
 
-### Spine (Host)
+## Image, State and Data
 
-Spine is a Go binary that runs on the host system. Its responsibilities are strictly limited:
+The installer writes one disk (layout 1, `installer/internal/installer/appliance_plan.go`):
 
-- Install and manage Incus
-- Create the unprivileged container
-- Deploy the Control Panel into the container
-- Run the boot steps (first deployment, boot blessing, setup gate, network check)
-- Apply System releases, including its own updates without a reboot
-- Report platform status
+| Partition | Size | Holds |
+|---|---|---|
+| ESP | 1 GiB | systemd-boot and the UKIs of both slots and Recovery |
+| Recovery | 4 GiB | an independent recovery system (menu in `appliance/scripts/youeye-recovery`) |
+| System A, System B | 6 GiB each | the read-only image; one is active, the other takes the next image update |
+| State | 4 GiB, ext4 | small persistent host state, mounted at `/var/lib/youeye-state` |
+| Data | the rest, ZFS pool `default` | everything else |
 
-On sealed appliances, the storage boot phase validates persisted Incus DNS
-process records before the Incus sockets or daemon start. Records for missing
-processes or reused PIDs are discarded without signalling processes; genuine
-live helpers are retained for same-boot daemon restarts. Network configuration
-and DHCP leases remain persistent.
+**Image** (System slot). Debian trixie built with `mmdebstrap` (`appliance/build/build-appliance.sh`), with ZFS,
+nftables, Incus (`incus-base` from trixie-backports), the systemd units in `appliance/systemd/` (they only call
+`youeye …` or the scripts in `appliance/scripts/`), the initramfs hooks, and the **seed Spine** at
+`/usr/local/bin/youeye`. It changes only with an image build.
 
-**Spine does NOT manage** the UI, native apps, Market-installed apps, or any infrastructure inside the container. That's the Control Panel's job.
+**State.** The initramfs mounts it and bind-mounts these into the read-only root
+(`appliance/initramfs/youeye-state`): `/etc/machine-id`, `/etc/hostid`, `/etc/shadow`, `/etc/ssh`,
+`/etc/systemd/network`, `/root`, `/var/lib/systemd` and `/var/log`. State also holds:
 
-### Control Panel (Container)
+| Path under `/var/lib/youeye-state/` | What |
+|---|---|
+| `bootstrap/release-policy.json`, `bootstrap/core-release.json` | the box's repository and channel, and the release it was installed from |
+| `bootstrap/network-profile.json`, `bootstrap/development-access.json` | install-time network and root-access choices |
+| `spine/` | the selected Spine per slot (`selection.json` and the binaries) |
+| `first-deploy/` | first-deployment progress, health and the `complete` marker |
+| `core-update/` | the System update journal, receipt, frozen targets and version floor |
+| `boot/` | the last boot blessing |
+| `recovery/` | a queued Recovery reset |
 
-The Control Panel is the orchestration engine. It manages everything inside the container:
+**Data.** Spine creates the ZFS pool `default` on the Data partition (`spine/internal/storage/pool.go`):
 
-- PostgreSQL database
-- YouEye ID (SSO/OIDC)
-- Caddy (reverse proxy, TLS)
-- Pi-Hole (DNS)
-- YouEye UI deployment
-- Reapply the protected persistent UI database and SSO configuration after UI
-  container recreation, preserving the existing OAuth client and session secret.
-  A configured UI is ready only after its database schema is available; an
-  unconfigured UI can boot for the initial setup wizard.
-- Native app deployment
-- Market app lifecycle
+| Dataset | Mounted at | What |
+|---|---|---|
+| `default/data` | `/var/lib/youeye` | all YouEye data: `config/youeye.yaml` (platform config), `postgres/`, `caddy/`, `pihole/`, `ui-data/`, `pointer/`, app data, and the update download cache `cache/core-update/` |
+| `default/incus-state` | `/var/lib/incus` | the Incus database and host-side Incus state |
+| `default/incus` | (Incus manages it) | the Incus storage pool for containers and volumes |
 
-### UI (Container)
+Spine's own config file is optional: `/var/lib/youeye/config/config.yaml`, then `/etc/youeye/config.yaml`
+(`spine/internal/config/load.go`).
 
-The UI is the user-facing dashboard. It provides:
+A Spine, Control Panel or UI change never needs a new image: the selected Spine lives on State and the services live
+in containers on Data. See [spine.md](spine.md).
 
-- Widget management (drag, drop, resize)
-- Theme and appearance engine
-- User settings
-- App drawer and notifications
-- Bridge API endpoints for CP communication
+## Boot
 
-### Native Apps (Container)
+1. The initramfs mounts State (`youeye-state` hook).
+2. `youeye appliance prepare` (state, then storage) imports the ZFS pool and mounts the datasets.
+3. `youeye.service` runs `youeye api serve`. The seed hands this to the slot's selected Spine.
+4. On the first boot, `youeye-first-deploy.service` runs `youeye boot first-deploy` (see [install.md](install.md)).
+   After an update, `youeye-core-update.service` continues a retained update (`youeye update core resume --boot`).
+5. `youeye-appliance-bless.service` (`youeye boot bless`) marks the boot healthy, so an image trial is kept.
 
-Each native app runs as its own process with:
+At every `api serve` start Spine also refreshes Pi-hole's port-53 listen address to the host's current IP, then
+starts Pi-hole (`spine/internal/cmd/hostipcheck.go`). Pi-hole has autostart off for this reason.
 
-- Its own subdomain route via Caddy
-- SSO integration via YouEye ID
-- Access to the shared PostgreSQL database
-- Theme and language synchronization with the UI
+## Networks
 
-## Security Model
+**`incusbr0`** is the platform bridge, a /24 that Incus picks. The core containers have fixed addresses on it
+(`control-panel/src/lib/incus/static-ips.ts`, which must match `spine/internal/incus/static_ips.go`):
 
-```mermaid
-graph LR
-    subgraph Public["Public Network"]
-        Browser[Browser]
-    end
-    
-    subgraph Container["Unprivileged Container"]
-        Caddy[Caddy<br/>TLS termination]
-        ID[YouEye ID<br/>OIDC Provider]
-        UI[UI]
-        CP[Control Panel]
-        Apps[Apps]
-    end
-    
-    Browser -->|HTTPS only| Caddy
-    Caddy -->|authenticated| UI
-    Caddy -->|authenticated| Apps
-    Caddy -->|admin only| CP
-    
-    UI -.-|"NO direct access"| CP
-    CP -->|push via bridge| UI
-```
+| Container | Address |
+|---|---|
+| `youeye-postgres` | `.10` |
+| `youeye-caddy` | `.13` (Caddy's admin API listens only here, on `:2019`) |
+| `youeye-pihole` | `.14` |
+| `youeye-ui` | `.15` |
+| `youeye-control` | `.16` |
+| `youeye-pointer` | `.17` |
 
-Key security principles:
+Container names resolve under the `youeye` DNS domain (for example `youeye-ui.youeye`).
 
-| Principle | Implementation |
-|-----------|---------------|
-| **Unprivileged container** | The entire stack runs in an unprivileged Incus container — no root on the host |
-| **Single entry point** | All traffic enters through Caddy (port 443 only) |
-| **Automatic TLS** | Caddy provisions and renews certificates automatically |
-| **SSO everywhere** | YouEye ID gates apps and services - no separate logins |
-| **One-way bridge** | CP pushes data to UI via bridge API; UI cannot call CP |
-| **CP embed routes** | The CP's own `/api/ui-bridge/*` routes serve its `/embed/*` pages only: an admin CP session is required, and a CSRF token (`X-CSRF-Token`) for every change |
-| **Network isolation** | UI container is firewalled from reaching CP directly |
-| **Caddy administration** | Caddy's admin API listens only on its static incusbr0 address (`.13:2019`), which app egress rejects; Caddy's NIC on each app bridge has an ACL that admits only TCP 80/443 |
+**One bridge per app.** Each app gets its own Incus bridge `yeapp<N>` with a /27 lease from a private pool (default
+`10.76.0.0/16`; the Control Panel picks the first of `10.76`–`10.83.0.0/16` that overlaps no host or Incus
+network). The lease store
+and checks are in `control-panel/src/lib/incus/app-network-ipam.ts` and `app-network.ts`.
 
-## Data Flow
+- An app's containers sit only on their own bridge. They have no NIC on `incusbr0`.
+- **Caddy** gets a NIC on every app bridge, so it can reach the app by name. That NIC has an ACL that lets apps
+  reach Caddy only on TCP 80 and 443.
+- **Egress ACL** `ye-app-<id>-egress`: an app may reach its own subnet, the UI bridge port, and only the core
+  services it is entitled to. It is refused the Control Panel dashboard (`:3000`), Caddy's and Pi-hole's addresses,
+  direct Pointer access, PostgreSQL unless it uses the shared database, and every other app's /27.
+- **Connections** between two apps add a second, filtered NIC on the peer's bridge (see [market.md](market.md)).
+- DNS for apps goes to the bridge's dnsmasq, which forwards to Pi-hole.
 
-### User Authentication
+## App doorways
 
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant C as Caddy
-    participant A as YouEye ID
-    participant UI as YouEye UI
-    
-    B->>C: GET https://yourdomain.com
-    C->>A: Check session
-    A-->>C: No session
-    C->>B: Redirect to /auth/login
-    B->>A: POST credentials
-    A-->>B: Set session cookie + redirect
-    B->>C: GET / (with cookie)
-    C->>A: Validate session
-    A-->>C: Valid
-    C->>UI: Forward request
-    UI-->>B: Dashboard HTML
-```
+Apps reach the core services through Incus proxy devices in NAT mode on the app bridge's gateway address. The
+Control Panel adds them per app (`addSystemProxyDevices` in `app-network.ts`):
 
-### App Installation
+| Gateway port | Goes to | When |
+|---|---|---|
+| `:3001` | the UI's app API (`youeye-ui:3000`) | always |
+| `:5432` | PostgreSQL (`youeye-postgres:5432`) | the app uses the shared database |
+| `:3002` | YouEye ID (`youeye-control:3001`) | the app uses sign-in |
+| `:3003` | Pointer inference (`youeye-pointer:4002`) | the app uses AI |
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as YouEye UI
-    participant CP as Control Panel
-    participant R as App Registry
-    
-    U->>UI: Click "Install" on app
-    UI->>CP: Bridge: install request
-    CP->>R: Fetch app manifest
-    R-->>CP: Manifest (container config, version)
-    CP->>CP: Create container, deploy app
-    CP->>CP: Configure Caddy route + SSO
-    CP->>UI: Bridge: installation complete
-    UI-->>U: App appears in drawer
-```
+The variables apps get for these are in [app-environment.md](app-environment.md).
 
-## Tech Stack
+## Who talks to whom
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Spine** | Go 1.21+, Cobra, Bubble Tea | Host lifecycle and digest-bound release manager |
-| **Installer** | Go, Bubble Tea | ISO and Proxmox installation flows |
-| **Control Panel** | Next.js 16, TypeScript | Infrastructure orchestration |
-| **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion | User dashboard |
-| **Native Apps** | Next.js 15 | Wiki, Search, Notes, Cinema, Weather, Translate |
-| **Database** | PostgreSQL 17 | Shared data store |
-| **SSO** | YouEye ID | OIDC identity provider |
-| **Proxy** | Caddy | Reverse proxy with automatic HTTPS |
-| **DNS** | Pi-Hole v6 | DNS filtering and local resolution |
-| **Containers** | Incus (LXD fork) | Lightweight system containers |
+- **Control Panel → Spine:** over the Spine socket `/var/run/youeye/youeye.sock`, passed into `youeye-control` by an
+  Incus proxy device (`spine/internal/container/control.go`). Spine reads its config, credentials and update state
+  for the Control Panel. The Control Panel can read the box's channel and ask to switch channel, but never changes
+  the repository.
+- **Control Panel → Incus:** the Incus HTTPS API on the host (`:8443`, `INCUS_HTTPS_URL`), with a client
+  certificate.
+- **Control Panel → UI:** the Control Panel pushes app, connection and settings state to the UI's `/api/ui-bridge`
+  routes with a shared bridge token. The UI does not call the Control Panel.
+- **Control Panel → Caddy:** Caddy's admin API on `.13:2019`. App egress refuses that address.
+- **Apps → core:** only through the doorways above.
 
-## Monorepo Structure
+## Security model
+
+| Rule | How |
+|---|---|
+| Unprivileged containers | platform and app containers are created with `security.privileged=false` (Spine falls back to a privileged `youeye-control` only on the `dir` storage driver, which the appliance does not use) |
+| One way in | Caddy on 80/443 for HTTP(S); Pi-hole on 53 for DNS. PostgreSQL, the Control Panel and the UI have no host port |
+| Closed until set up | until first deployment completes, nftables table `youeye_setup_gate` drops ports 80 and 443 on the host (`youeye boot setup-gate`) |
+| Owner claims the box | the first account is created by claiming the box from its IP address (see [install.md](install.md)) |
+| Sign-in | YouEye ID (OIDC) signs users in to the dashboard, the Control Panel and apps |
+| CP embed routes | the CP's `/api/ui-bridge/*` routes serve its `/embed/*` pages only; they need an admin CP session and an `X-CSRF-Token` for every change |
+| App isolation | one bridge, one /27 and one egress ACL per app |
+| No signing yet | releases are unsigned; integrity comes from HTTPS and SHA-256 ([releases.md](releases.md)) |
+
+## Updates in one paragraph
+
+One System release (`core-release.json`) names every part: installer and media, the image parts, Spine, CP and UI.
+The box compares each part with what it has. Image parts are written to the inactive slot and need a reboot. A
+Spine change is a trial on State without a reboot. CP and UI changes replace the container payloads without a
+reboot. A box never moves to an older build. Details: [core-release-contract.md](core-release-contract.md).
+
+## Repository layout
 
 ```
 YouEye/
-├── installer/          # YouEye Installer binary and Proxmox bootstrap
-├── appliance/          # A/B/Recovery image lifecycle
-├── spine/              # Go CLI (Spine)
-│   ├── cmd/            # CLI entry point
-│   └── internal/       # Commands, config, release and lifecycle services
-├── control-panel/      # Next.js 16 (Control Panel)
-│   ├── src/            # Application source
-│   ├── prisma/         # Database schema (unused, legacy)
-│   └── package.json
-├── ui/                 # Next.js 15 (Dashboard UI)
-│   ├── src/            # Application source
-│   ├── drizzle/        # Database migrations
-│   └── package.json
-└── docs/               # This documentation
+├── spine/            Go host agent and the `youeye` CLI
+├── installer/        Go `youeye-installer` (ISO install and Proxmox mode) and scripts/install.sh
+├── appliance/        image build, systemd units, initramfs hooks, recovery and console scripts
+├── releasecache/     Go release documents, channel index and download cache (shared by Spine and installer)
+├── control-panel/    Next.js Control Panel, YouEye ID, Market engine
+├── ui/               Next.js dashboard (Drizzle ORM, schema in src/db/schema.ts)
+├── packages/, shared/  shared code
+├── scripts/          assemble-core-release.py, public hygiene check
+├── .youeye/build/    one build entrypoint per component
+└── docs/             these pages
 ```
-
-Each component is **versioned independently** and released with its own tag prefix (`spine-v*`, `cp-v*`, `ui-v*`).
-
-## What lives where: image, State, Data
-
-| Place | Holds | Changes when |
-|---|---|---|
-| **Image** (System A/B, 6 GiB each, read-only, A/B updated) | Debian base, kernel, ZFS, Incus, systemd units that only call `youeye …`, initramfs hooks, and the **seed Spine** at `/usr/local/bin/youeye` | the OS itself changes (an image build) |
-| **State** (ext4, 4 GiB) | machine identity, network and SSH config, the release policy (`{repository, channel}`), update journals, and the **selected Spine** per System slot under `spine/` | every Spine, CP or UI release; owner settings |
-| **Data** (ZFS pool `default`) | Incus storage and state, app data, the update cache | always |
-
-The seed Spine is the image's own copy: it prepares State and storage, runs recovery, manages the selection
-(`youeye spine …`) and launches the selected Spine for every other command. A Spine, CP or UI change therefore
-never needs a new image, and boot orchestration (first deployment, boot blessing, the setup gate, the network
-check) ships inside Spine as `youeye boot <step>`. See [spine.md](spine.md).
-
-## Update System
-
-One System release (`core-release.json`) names every part. The updater compares each part with what is installed
-and applies only what changed:
-
-- **host parts** (system root, UKIs, recovery, installer media): A/B write and reboot; the new slot boots with the
-  release's Spine selected;
-- **only Spine:** a trial on State without a reboot (`apply-spine`), committed when healthy;
-- **only CP/UI:** container update without a reboot.
-
-A release whose image inputs did not change reuses the image files of the release that built them (the blob's
-`release` field), so publishing it builds only Spine, CP and UI. Releases come from the box's channel index
-([releases.md](releases.md)); the Control Panel can read the box's channel and request a change of channel, but
-never changes the repository. Releases are unsigned until signing returns before the first public release.
-
-UI infrastructure reconciliation also restores the existing protected bridge authority after container recreation, and verifies its bytes and file mode before readiness. This applies when an interrupted update did not reach Spine finalization. Reconciliation never issues a replacement bridge identity; missing authority on a configured appliance remains a failed repair.
-
-### Bounded background observations
-
-Control Panel and YouEye ID each reuse one PostgreSQL connection per server
-process for platform identity/admission and durable health-registry SQL. Health
-observations keep their existing persistence and polling semantics while reusing
-this transport instead of starting a container command for each read/write.
-The pool is shared across route
-bundles, admits at most 64 waiting commands with a 15-second deadline, and retains
-the existing SQL quoting, text results and transaction boundaries. Credentials
-come from the protected Spine socket and remain in server memory. SQL failures
-roll back; disconnected connections are discarded and credentials refreshed on
-the next request. A failed write is never automatically replayed because its
-commit outcome may be unknown. These two connections must be included alongside
-UI and native-app allocations in the PostgreSQL connection budget.
-
-Dashboard health requests and the background monitor share a 15-second snapshot
-and one in-flight collection per process. Incus file reads obtain uptime and
-version metadata without creating guest exec operations. Spine's existing
-30-second status cache also coalesces concurrent misses. These display caches do
-not change admission, revocation, update ownership or watchdog deadlines.
-
-Host metrics also share a 15-second observation in Spine. CPU uses aggregate
-kernel-counter deltas between observations, excluding duplicate guest counters
-and counting I/O wait as idle. A cold reader uses a bounded 200ms initial sample;
-subsequent dashboard observations cover the sampling interval. The System cards
-refresh 15 seconds after each completed request without a full-page loading
-transition, so the initial page-load CPU spike does not remain frozen on screen.
-No host-metrics timer runs when there are no readers.
-
-System service restarts obtain the current session CSRF token and require an
-explicit success receipt. Rejected restart requests remain visible in the service
-panel; a still-running service does not establish that a restart occurred.
-
-The appliance's physical and serial consoles retain their two-second snapshot
-cadence but cap Bubble Tea rendering at five frames per second. Returning from a
-console command reuses the existing tick instead of starting an additional loop.
