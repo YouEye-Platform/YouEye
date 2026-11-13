@@ -299,14 +299,14 @@ export async function GET() {
 
     const filteredMarket = installed.filter((meta) => {
       const names = meta.containers.map((c: any) =>
-        typeof c === 'string' ? c : c.containerName
+        c.containerName
       );
       return !names.some((n: string) => definedContainers.has(n));
     });
 
     // Fetch container state for Market-installed containers (not yet in containerStateMap)
     const marketContainerNames = filteredMarket.flatMap((meta) =>
-      meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+      meta.containers.map((c: any) => c.containerName)
     );
     const marketStateResults = await Promise.allSettled(
       marketContainerNames.map(async (name) => {
@@ -353,7 +353,7 @@ export async function GET() {
         : null;
 
       const containers: ContainerInfo[] = meta.containers.map((c: any) => {
-        const name = typeof c === 'string' ? c : c.containerName;
+        const name = c.containerName;
         const state = containerStateMap.get(name);
         return {
           name,

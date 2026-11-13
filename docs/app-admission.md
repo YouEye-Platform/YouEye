@@ -47,6 +47,14 @@ and identity headers, and applies the same decision to direct application URLs
 and registered alternate routes. App manifests cannot disable this boundary.
 The administrator's explicit public exposure setting bypasses browser admission
 for the application's URLs; protected UI services remain user authenticated.
+An official-catalog manifest with `public_access: true` (an app that protects
+itself) pre-selects that setting at install: the install dialog shows it, the
+CLI says so (`--public-access=false` declines), and the install applies it as the
+installing administrator once the app is healthy, audited as
+`public_access_at_install`. The manifest default never overrides an
+administrator's earlier policy change for the same installation, and apps from
+added sources or URLs default to household-only. Bundle members install
+household-only.
 New Caddy bridge interfaces use a deterministic hash of the complete app ID,
 within Linux's 15-byte name limit. Apps sharing an ID prefix therefore keep
 distinct interfaces. Existing valid legacy attachments retain their names;

@@ -289,8 +289,8 @@ export async function updateLauncherLayout(
         userId,
         appId: item.id,
         visible: !item.id.startsWith("platform-"),
-        // Kept true for older clients; the current full-screen launcher is an
-        // all-app surface and no longer reads this legacy placement flag.
+        // The full-screen launcher is an all-app surface and does not read this
+        // placement flag; it stays true for API clients that still show it.
         launcherVisible: true,
         displayOrder: item.order,
         folderId: item.folderId,

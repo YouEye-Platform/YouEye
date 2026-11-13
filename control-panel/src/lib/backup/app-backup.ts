@@ -120,10 +120,7 @@ async function backupAppUnderLifecycle(
         ? `${installMeta.subdomain}.${installMeta.domain}`
         : undefined;
 
-      // Get container names from metadata (v2 format: objects, v1: strings)
-      const containerNames = installMeta.containers.map((c: any) =>
-        typeof c === 'string' ? c : c.containerName
-      );
+      const containerNames = installMeta.containers.map((c) => c.containerName);
 
       const appRoutes = allRoutes.filter(route => {
         if (hostname && route.hostname === hostname) return true;
@@ -172,7 +169,7 @@ async function backupAppUnderLifecycle(
       const { container, database, user } = resolveOwnPostgres(backupSection.ownPostgres, appId);
       try {
         const dump = await dumpAppOwnedPostgresDatabase({ container, database, user,
-          ownedContainers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
+          ownedContainers: installMeta.containers.map((c: any) => c.containerName),
         });
         await writeFile(path.join(stagingDir, 'databases', `${appId}-own.sql`), dump);
       } catch (err) {
@@ -192,7 +189,7 @@ async function backupAppUnderLifecycle(
         serviceCredential: await appServiceCredentials.projection(appId),
         source: sourceIdentity,
         timestamp: new Date().toISOString(),
-        containers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
+        containers: backupMetaContainers(installMeta.containers),
         subdomain: installMeta.subdomain,
         domain: installMeta.domain,
       }, null, 2)
@@ -214,7 +211,7 @@ async function backupAppUnderLifecycle(
     // Get container names for runtime quiescing (object and historical string
     // metadata both normalize to the exact Incus instance name here).
     const volumeContainerNames = installMeta.containers.map((c: any) =>
-      typeof c === 'string' ? c : c.containerName
+      c.containerName
     );
 
     // An app-owned PostgreSQL container is recovered from the required logical
@@ -231,9 +228,9 @@ async function backupAppUnderLifecycle(
       use_stored_passphrase: config.useStoredPassphrase,
       containers: await runningContainers(volumeContainerNames),
       volume_mappings: volumeMappings(volumePaths),
-      incus_runtimes: installMeta.containers.map((container: any) => ({
-        name: typeof container === 'string' ? container : container.containerName,
-        type: typeof container === 'string' ? 'lxd' : container.type,
+      incus_runtimes: installMeta.containers.map((container) => ({
+        name: container.containerName,
+        type: container.type,
       })),
       incus_volumes: [...new Map(
         (installMeta.storageVolumes ?? [])
@@ -328,4 +325,9 @@ async function backupAppUnderLifecycle(
       // Best effort
     }
   }
+}
+
+/** `containers` in `youeye.backup.app-meta.v1`: the installed containers' names, as plain strings. */
+export function backupMetaContainers(containers: ReadonlyArray<{ containerName: string }>): string[] {
+  return containers.map((container) => container.containerName);
 }

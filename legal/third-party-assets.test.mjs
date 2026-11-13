@@ -164,7 +164,7 @@ for (const family of fonts.families) {
 assert.equal(fontPaths.size, 322);
 
 const noto = JSON.parse(await readFile(resolve(root, 'legal/noto-avatar-inventory.json'), 'utf8'));
-assert.equal(noto.schema, 'youeye.noto-avatar-inventory.v2');
+assert.equal(noto.schema, 'youeye.noto-avatar-inventory.v1');
 assert.equal(noto.upstream_repository, 'https://github.com/googlefonts/noto-emoji');
 assert.equal(noto.upstream_version, '2.051');
 assert.equal(noto.upstream_commit, '8998f5dd683424a73e2314a8c1f1e359c19e8742');

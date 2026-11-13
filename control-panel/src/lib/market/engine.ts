@@ -18,6 +18,7 @@
  */
 
 import { withAppInventory, withAppLifecycle } from './update-admission';
+import { OFFICIAL_MARKET_SOURCE_ID } from './source';
 import type { OCIManifest } from '../infrastructure/types';
 import type {
   AppManifest,
@@ -659,6 +660,18 @@ function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean, expli
   if (fa === 'enabled') return true;
   // Default: use forward-auth when there's no native SSO section
   return !manifest.sso;
+}
+
+/**
+ * Whether an install turns public access on: the administrator's explicit choice, else the manifest's
+ * `public_access` default, which only the official Market catalog may set (added sources and URL apps are not
+ * reviewed). URL installs arrive with an explicit choice (false unless chosen).
+ */
+export function installWantsPublicAccess(
+  manifest: Pick<AppManifest, 'publicAccess'>,
+  config: Pick<InstallConfig, 'publicAccess' | 'sourceId'>,
+): boolean {
+  return config.publicAccess ?? (manifest.publicAccess === true && config.sourceId === OFFICIAL_MARKET_SOURCE_ID);
 }
 
 function describeContainers(manifest: AppManifest): ContainerMeta[] {
@@ -2109,6 +2122,23 @@ async function installAppLocked(
     finalMetadata.enabled = true;
     await saveInstallMetadata(finalMetadata);
     await bindInstalledAdmission(finalMetadata, config.admissionActorId);
+    // A backup restore (restoredIdentity) brings back the app's own access policy; retained-data adoption is a normal
+    // install, so the administrator's choice or the manifest default applies.
+    if (!restoreOptions?.restoredIdentity && config.admissionActorId && installWantsPublicAccess(manifest, config)) {
+      // After the route exists and the app is healthy. A failure leaves the app household-only (the safe side).
+      try {
+        const { applyInstallPublicAccess } = await import('@/lib/admission/store');
+        const publicNow = await applyInstallPublicAccess({
+          appId, actorId: config.admissionActorId, explicit: config.publicAccess === true,
+        });
+        emit(onEvent, step, totalSteps, publicNow ? 'success' : 'warning', publicNow
+          ? 'Public access on: anyone who can reach the address can open the app; it protects itself'
+          : 'Public access not changed: an administrator already set who may open this app');
+      } catch (error) {
+        console.warn(`[Market] Public access for ${appId} was not applied: ${error instanceof Error ? error.message : String(error)}`);
+        emit(onEvent, step, totalSteps, 'warning', 'Public access was not applied; the app is household-only. Change it in the app\'s access settings.');
+      }
+    }
     await pushConnectionsToUI(appId);
     const { reconcileAdmissionProjections, admissionReconciliationState } = await import('@/lib/admission/projection');
     await reconcileAdmissionProjections();

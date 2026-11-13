@@ -78,11 +78,11 @@ export async function GET(request: NextRequest) {
           if (state?.network) {
             const eth0 = state.network['eth0'];
             if (eth0?.addresses) {
-              const v4 = eth0.addresses.find(
+              const inet = eth0.addresses.find(
                 (a) => a.family === 'inet' && a.scope === 'global'
               );
-              if (v4) {
-                ipv4 = v4.address;
+              if (inet) {
+                ipv4 = inet.address;
               }
             }
           }

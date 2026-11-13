@@ -1,14 +1,7 @@
-import { SpineAPIError, spineClient, type CoreUpdateStatus } from '../spine/client';
-import { coreSchemaComponent } from './core-schema';
+import { spineClient, type CoreUpdateStatus } from '../spine/client';
 
-/** A reader mismatch permits legacy behavior only with positively absent core identity. */
 export async function readCoreUpdateStatus(): Promise<CoreUpdateStatus> {
-  try { return await spineClient.getCoreUpdateStatus(); }
-  catch (error) {
-    if (error instanceof SpineAPIError && error.statusCode === 404
-      && await coreSchemaComponent('cp') === null) return { schema: 'youeye.core-status.v1', managed: false };
-    throw error;
-  }
+  return spineClient.getCoreUpdateStatus();
 }
 
 /** The installed host owns core mutation authority, including direct UI calls. */

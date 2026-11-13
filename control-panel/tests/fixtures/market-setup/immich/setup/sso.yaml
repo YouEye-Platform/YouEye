@@ -6,7 +6,7 @@ steps:
       method: POST
       path: /api/auth/admin-sign-up
       body:
-        email: admin@youeye.local
+        email: admin@example.com
         password: ${secret.admin_password}
         name: YouEye Admin
       allow_failure: true
@@ -14,7 +14,7 @@ steps:
       method: POST
       path: /api/auth/login
       body:
-        email: admin@youeye.local
+        email: admin@example.com
         password: ${secret.admin_password}
       save: {bearerToken: accessToken}
   - http:
@@ -51,7 +51,7 @@ remove:
       method: POST
       path: /api/auth/login
       body:
-        email: admin@youeye.local
+        email: admin@example.com
         password: ${secret.admin_password}
       save: {bearerToken: accessToken}
   - http:

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { db, sql, ensureSchema, cleanup, namespace } from './timeline-db';
-import { users, userEncryptionKeys, pendingTimelineEvents, timelineEntries, systemSettings } from '../../src/db/schema';
+import { users, userEncryptionKeys, timelineEntries, systemSettings } from '../../src/db/schema';
 import { eq } from 'drizzle-orm';
 import { getTimelineCollection, setTimelineCollection } from '../../src/lib/db/queries/timeline-collection';
-import { createTimelineEntry, createHybridTimelineEntry, processPendingEvents } from '../../src/lib/db/queries/timeline';
+import { createTimelineEntry, createHybridTimelineEntry } from '../../src/lib/db/queries/timeline';
 import { createPIN, verifyPIN, changePIN, getActiveDerivedKey, getPublicKey, getPrivateKey } from '../../src/lib/crypto/pin-session';
 import { decrypt, hybridDecrypt } from '../../src/lib/crypto/encryption';
 import { withTimelineUserLock } from '../../src/lib/db/timeline-lock';
@@ -34,7 +34,6 @@ async function main() {
     await createHybridTimelineEntry(a.id, 'history', event(), publicKey, on.revision!);
     await assert.rejects(createTimelineEntry(a.id, 'history', event(), key), /collection_changed/);
     const beforeDisable = event();
-    await db.insert(pendingTimelineEvents).values({ userId: a.id, appId: 'test', payload: { legacy: true } });
     // Hold the real database lock, queue disable first, then a late writer.
     let release!: () => void; let entered!: () => void;
     const held = new Promise<void>(r => { entered = r; });
@@ -52,7 +51,6 @@ async function main() {
     const lateRejected = assert.rejects(late, /collection_off/);
     release(); await hold;
     const off = await disabled; await lateRejected;
-    assert.equal((await db.select().from(pendingTimelineEvents)).length, 0);
     assert.equal((await db.select().from(timelineEntries)).length, 2);
     const bOff = await setTimelineCollection(b.id, { enabled: false, expected_revision: null, request_id: request(), complete: true });
     assert.equal(bOff.enabled, false);
@@ -82,7 +80,6 @@ async function main() {
     assert.ok(await verifyPIN(a.id, newSecret));
     const preserved = (await db.select().from(timelineEntries)).find(row => row.encryptionType === 'pin' && row.encryptedBlob !== 'corrupt')!;
     assert.equal(JSON.parse(await decrypt(preserved.encryptedBlob, preserved.nonce, rotated)).title, 'private fixture');
-    assert.equal(await processPendingEvents(a.id, rotated), 0);
     const [c] = await db.insert(users).values({ username: 'timeline-c' }).returning();
     await sql.unsafe(`ALTER TABLE ${namespace}.users ADD CONSTRAINT reject_fixture_completion CHECK (username <> 'timeline-c' OR onboarding_completed = false)`);
     await assert.rejects(setTimelineCollection(c.id, { enabled: false, expected_revision: null, request_id: request(), complete: true }));

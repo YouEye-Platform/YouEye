@@ -35,10 +35,8 @@ func Load() (*Config, error) {
 	// Mutable hosts also accept this path for forward compatibility.
 	v.AddConfigPath("/var/lib/youeye/config/")
 	v.AddConfigPath("/etc/youeye/")
-	v.AddConfigPath("/etc/spine/") // legacy fallback
 	if home, err := os.UserHomeDir(); err == nil {
 		v.AddConfigPath(filepath.Join(home, ".youeye"))
-		v.AddConfigPath(filepath.Join(home, ".spine")) // legacy fallback
 	}
 	v.AddConfigPath(".")
 

@@ -44,7 +44,6 @@
     "people": "Utilisateurs",
     "backup": "Sauvegarde",
     "settings": "Paramètres",
-    "appsLegacy": "Apps (anciennes)",
     "controlPanel": "Panneau de contrôle",
     "youeye": "YouEye",
     "market": "Market"
@@ -722,12 +721,6 @@
     "notInstalled": "Non installé",
     "notFound": "Non trouvé",
     "unknown": "Inconnu"
-  },
-  "appsLegacy": {
-    "title": "Apps (anciennes)",
-    "description": "Vue ancienne des apps. Utilisez la nouvelle page Apps.",
-    "manage": "Gérer",
-    "notDeployedHint": "Non déployé. Exécutez spine deploy."
   },
   "proxyStatus": {
     "start": "Démarrer",
@@ -2513,7 +2506,11 @@
     "m709433447a43": "Désactivation de la connexion avec YouEye ID pour {app}…",
     "m3bf590b2bb82": "Les utilisateurs se connectent à {app} avec leur YouEye ID.",
     "m2f5875924e6c": "{app} utilise ses propres comptes. Activez cette option pour que les utilisateurs se connectent avec leur YouEye ID.",
-    "m70843fac04a3": "Connexion avec YouEye ID pour {app}"
+    "m70843fac04a3": "Connexion avec YouEye ID pour {app}",
+    "m03e7db61b2e1": "Accès public",
+    "m7abb883ab0c4": "{name} a sa propre protection, comme un mot de passe ou un code PIN de partie. Avec l’accès public, toute personne qui atteint son adresse peut l’ouvrir sans compte {site}.",
+    "ma05ac86e60af": "Ouverte à toute personne qui atteint l’adresse",
+    "m9fe9ebe58220": "Désactivez-le pour réserver l’app aux personnes à qui vous donnez accès. Vous pourrez le modifier ensuite dans les réglages d’accès de l’app."
   },
   "settingsNavigation": {
     "profile": "Profil",

@@ -17,13 +17,12 @@ const (
 	PoolName = "default"
 
 	// PoolMarker is the value written to the pool-level `comment` property to
-	// identify a pool as YouEye-owned. Legacy installer-v0.5.2/0.5.3 pools do
-	// NOT carry this marker and keep the old whole-pool behavior.
+	// identify a pool as YouEye-owned. Spine never adopts an unmarked pool.
 	PoolMarker = "youeye-incus"
 
 	// Explicit dataset properties distinguish an image-owned partition pool
-	// from the legacy mutable-host whole-disk pool. Cleanup and recovery must
-	// never infer topology from a device name.
+	// from a mutable-host whole-disk pool. Cleanup and recovery must never
+	// infer topology from a device name.
 	OwnershipProperty          = "org.youeye:ownership"
 	OwnershipValue             = "youeye"
 	TopologyProperty           = "org.youeye:topology"
@@ -88,10 +87,6 @@ const (
 	// default/incus + default/data dataset layout (source: default/incus).
 	DecisionAdoptMarkedPool
 
-	// DecisionReuseLegacyPool reuses an imported pool named "default" WITHOUT
-	// the YouEye marker (installer-v0.5.2/0.5.3 layout). Preseed source: default.
-	DecisionReuseLegacyPool
-
 	// DecisionCreateOnDisk creates a fresh YouEye pool on a blank secondary
 	// disk, then behaves like DecisionAdoptMarkedPool.
 	DecisionCreateOnDisk
@@ -116,8 +111,6 @@ func (k StorageDecisionKind) String() string {
 	switch k {
 	case DecisionAdoptMarkedPool:
 		return "adopt-marked-pool"
-	case DecisionReuseLegacyPool:
-		return "reuse-legacy-pool"
 	case DecisionCreateOnDisk:
 		return "create-on-disk"
 	case DecisionAdoptAppliancePartition:

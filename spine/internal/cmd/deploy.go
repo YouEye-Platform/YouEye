@@ -117,7 +117,6 @@ func runDeploy() error {
 	// Restart=always respawns the old API after pkill, causing two
 	// concurrent `spine api serve` processes whose runHostIPCheck goroutines
 	// race with the CP's infrastructure deployment (BUG: Pi-Hole "already running").
-	// Stop old spine.service OR new youeye.service (handles migration)
 	exec.Command("systemctl", "stop", "youeye").Run()
 	if isAppliance {
 		// Persistent /var/lib/incus must be mounted before the baked daemon is
@@ -126,8 +125,6 @@ func runDeploy() error {
 	}
 	if !isAppliance {
 		exec.Command("systemctl", "disable", "youeye").Run()
-		exec.Command("systemctl", "stop", "spine").Run()
-		exec.Command("systemctl", "disable", "spine").Run()
 	}
 
 	// Kill any remaining API processes (fallback if service wasn't active)
@@ -567,11 +564,6 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 `
-	// Remove old spine.service if it exists (migration)
-	if err := os.Remove("/etc/systemd/system/spine.service"); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove legacy spine service: %w", err)
-	}
-
 	if err := os.WriteFile("/etc/systemd/system/youeye.service", []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("write youeye service: %w", err)
 	}
@@ -604,11 +596,6 @@ WantedBy=multi-user.target
 func configureIncusStartupDependency() error {
 	overrideDir := "/etc/systemd/system/incus-startup.service.d"
 	overrideFile := overrideDir + "/youeye-dependency.conf"
-
-	// Remove old spine-dependency.conf if present (migration)
-	if err := os.Remove(overrideDir + "/spine-dependency.conf"); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove legacy Incus dependency: %w", err)
-	}
 
 	// Create override directory
 	if err := os.MkdirAll(overrideDir, 0755); err != nil {
@@ -664,18 +651,10 @@ func createDataDirectories() {
 // the ZFS data dataset.
 func ensureSwapFile() {
 	const swapPath = "/var/swapfile"
-	const legacySwapPath = "/var/lib/youeye/swapfile"
 
 	// Check if swap already exists
 	out, _ := exec.Command("swapon", "--show", "--noheadings").Output()
 	if len(strings.TrimSpace(string(out))) > 0 {
-		// Swap is already active. If it's the legacy path on a NON-ZFS
-		// filesystem, leave it working (migration: don't disturb a healthy
-		// ext4-backed swapfile). We only ever refuse to CREATE new swap on ZFS.
-		if strings.Contains(string(out), legacySwapPath) && fsTypeOf(legacySwapPath) == "zfs" {
-			fmt.Printf("Warning: active swapfile %s is on ZFS (deadlock hazard). "+
-				"Leaving it in place — recreate it on the OS filesystem manually if desired.\n", legacySwapPath)
-		}
 		return // swap already active
 	}
 

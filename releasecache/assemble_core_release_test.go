@@ -77,7 +77,7 @@ func TestAssembleCoreReleaseReusesImage(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"spine-linux-amd64", "cp-standalone.tar", "ui-standalone.tar"} {
-		if err := os.WriteFile(filepath.Join(services, name), []byte("v2 "+name), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(services, name), []byte("new "+name), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

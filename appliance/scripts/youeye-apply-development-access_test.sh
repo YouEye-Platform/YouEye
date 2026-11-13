@@ -139,7 +139,7 @@ assert_stock_console_calls
 grep -Fxq 'try-reload-or-restart ssh.service' "$work/systemctl-calls"
 grep -Fq "root:$hash:" "$system/etc/shadow"
 grep -Fq 'Match User root Address 192.0.2.0/24' "$system/etc/ssh/sshd_config.d/90-youeye-development-access.conf"
-jq -e '.schema == "youeye.development-access-status.v2" and
+jq -e '.schema == "youeye.development-access-status.v1" and
        .local_root_console_requested and .local_root_console_persisted and
        .local_root_console_active and .local_root_console_effective and
        .root_password_ssh_requested and .root_password_ssh_effective and
@@ -262,7 +262,7 @@ test ! -e "$system/etc/ssh/sshd_config.d/90-youeye-development-access.conf"
 test ! -e "$work/systemctl-state/ssh-password-active"
 grep -Fxq 'try-reload-or-restart ssh.service' "$work/systemctl-calls"
 grep -Fq "root:$hash:" "$system/etc/shadow"
-jq -e '.schema == "youeye.development-access-status.v2" and
+jq -e '.schema == "youeye.development-access-status.v1" and
        (.local_root_console_requested | not) and (.root_password_ssh_requested | not) and
        (.root_password_ssh_effective | not) and
        .detail == "Development access policy is invalid; secure defaults were requested"' \
@@ -276,7 +276,7 @@ if run_apply; then
     printf '%s\n' 'invalid policy returned success' >&2
     exit 1
 fi
-jq -e '.schema == "youeye.development-access-status.v2" and
+jq -e '.schema == "youeye.development-access-status.v1" and
        (.local_root_console_requested | not) and (.root_password_ssh_requested | not) and
        (.root_password_ssh_effective | not) and (.detail | length > 0)' \
     "$state/bootstrap/development-access-status.json" >/dev/null

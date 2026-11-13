@@ -12,7 +12,6 @@ import {
   cidrComplement,
   cidrContains,
   cidrOverlaps,
-  createLegacyImportedLease,
   createEmptyIpamState,
   formatIPv4,
   mutateIpamState,
@@ -128,7 +127,7 @@ test('strict schema rejects corruption, overlaps, duplicates, and invalid capaci
   const overlapping = structuredClone(state);
   overlapping.leases.push({ ...overlapping.leases[0], appId: 'two', bridgeId: 2, bridgeName: 'yeapp2' });
   assert.throws(() => validateIpamState(overlapping), /overlapping live leases/i);
-  const badSchema = { ...state, schema: 'legacy' };
+  const badSchema = { ...state, schema: 'youeye.app-network-ipam/0' };
   assert.throws(() => validateIpamState(badSchema), /unsupported/i);
   assert.throws(() => reserveLease(createEmptyIpamState(config), {
     appId: 'too-big', operationId: 'op-big', requiredAddresses: 31,
@@ -141,34 +140,6 @@ test('strict schema rejects corruption, overlaps, duplicates, and invalid capaci
   assert.equal(reserveLease(existing, {
     appId: 'same-app', operationId: 'first-operation', requiredAddresses: 4,
   }).bridgeName, 'yeapp1');
-});
-
-test('explicit legacy provenance preserves exact /24 leases while new allocations remain /27', () => {
-  const state = createEmptyIpamState({ pools: ['10.76.0.0/16'], allocationPrefix: 27 });
-  state.leases.push(createLegacyImportedLease({
-    appId: 'wiki', bridgeId: 1, requiredAddresses: 2, now: '2026-08-03T00:00:00Z',
-  }));
-  const valid = validateIpamState(state);
-  assert.equal(valid.leases[0].cidr, '10.76.1.0/24');
-  assert.equal(valid.leases[0].importedFrom, 'subnets.json/v1');
-
-  const fresh = reserveLease(valid, {
-    appId: 'new-app', operationId: 'new-operation', requiredAddresses: 4,
-  });
-  assert.equal(fresh.bridgeName, 'yeapp2');
-  assert.equal(fresh.cidr, '10.76.0.0/27');
-
-  for (const mutation of [
-    { cidr: '10.76.1.0/27' },
-    { gateway: '10.76.1.2' },
-    { state: 'cleanup_pending' },
-    { operationId: 'different' },
-    { importedFrom: 'untrusted' },
-  ]) {
-    const corrupt = structuredClone(state);
-    Object.assign(corrupt.leases[0], mutation);
-    assert.throws(() => validateIpamState(corrupt), AppNetworkStateError);
-  }
 });
 
 test('pure allocator survives 5,000 allocate/free cycles across pool boundary', () => {

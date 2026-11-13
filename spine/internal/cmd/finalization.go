@@ -187,7 +187,7 @@ func isYouEyeAPIServerCommandLine(commandLine []byte) bool {
 		return false
 	}
 	binary := filepath.Base(string(parts[0]))
-	return (binary == "youeye" || binary == "spine") && string(parts[1]) == "api" && string(parts[2]) == "serve"
+	return binary == "youeye" && string(parts[1]) == "api" && string(parts[2]) == "serve"
 }
 
 func verifyDetachedAPIIdentity(pid int) error {

@@ -35,6 +35,6 @@ test("Control header hosts the UI-served drawer and launcher", () => {
   assert.doesNotMatch(header, /editDrawer|GripVertical|Hidden apps|persistDrawerPrefs|displayIcon/);
 });
 
-test("Control Panel no longer exposes the legacy widget-sync bridge", () => {
+test("Control Panel exposes no widget-sync bridge", () => {
   assert.equal(exists("src/app/api/apps/v1/widgets/sync/route.ts"), false);
 });

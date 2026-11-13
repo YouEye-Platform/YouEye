@@ -48,7 +48,7 @@ func TestApplianceConsoleAdvertisesLocalLoginOnlyWhenTTY2V2IsEffective(t *testin
 	if err := os.MkdirAll(filepath.Dir(statusPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	valid := `{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"active"}`
+	valid := `{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"active"}`
 	if err := os.WriteFile(statusPath, []byte(valid), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +60,10 @@ func TestApplianceConsoleAdvertisesLocalLoginOnlyWhenTTY2V2IsEffective(t *testin
 
 	for _, invalid := range []string{
 		`{"schema":"youeye.development-access-status.v1","local_root_console":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"legacy"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":false,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"inconsistent"}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"unknown","extra":true}`,
-		`{"schema":"youeye.development-access-status.v2","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":false,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"inconsistent"}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"unknown","extra":true}`,
+		`{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null}`,
 	} {
 		if err := os.WriteFile(statusPath, []byte(invalid), 0o600); err != nil {
 			t.Fatal(err)
@@ -83,7 +83,7 @@ func TestApplianceConsoleRechecksEffectiveStateBeforeLogin(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(statusPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	disabled := `{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"disabled"}`
+	disabled := `{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"disabled"}`
 	if err := os.WriteFile(statusPath, []byte(disabled), 0o600); err != nil {
 		t.Fatal(err)
 	}

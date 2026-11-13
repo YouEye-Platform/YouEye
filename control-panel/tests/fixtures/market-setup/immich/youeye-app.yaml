@@ -46,7 +46,7 @@ env:
 secrets:
   admin_password: {length: 24}
 credentials:
-  - {label: Admin Account, username: admin@youeye.local, password: admin_password}
+  - {label: Admin Account, username: admin@example.com, password: admin_password}
 sso:
   callback: /auth/login
   entry: /auth/login?autoLaunch=1

@@ -553,7 +553,7 @@ export function routeToProxyRoute(route: CaddyRoute): ProxyRoute | null {
   if (path.endsWith('/*')) {
     path = path.slice(0, -2);
   }
-  // Remove single * suffix (legacy format)
+  // Remove a bare * suffix
   else if (path.endsWith('*')) {
     path = path.slice(0, -1);
   }
@@ -892,48 +892,6 @@ export async function removeRoute(id: string): Promise<void> {
   }
 
   await setConfig(config);
-}
-
-/**
- * Remove any route whose host matcher exactly equals the given IP literal.
- *
- * Used by the host-IP-change migration: legacy installs (created by Spine
- * <= 0.2.18.2) had a `${hostIP}:443 { tls internal ... }` block in their
- * Caddyfile, which compiled into a route with `match[0].host === [oldIP]`.
- * After a host IP change, that route becomes a dead match. We delete it
- * rather than rewriting it because the `:443` catch-all (on-demand TLS)
- * already serves CP from any IP.
- *
- * Idempotent — returns true if at least one route was removed, false if
- * no matching route was found.
- */
-export async function removeIPLiteralRoute(ip: string): Promise<boolean> {
-  if (!ip) return false;
-  const config = await getConfig();
-
-  let removed = false;
-  const servers = config.apps?.http?.servers || {};
-  for (const server of Object.values(servers)) {
-    const before = (server.routes || []).length;
-    server.routes = (server.routes || []).filter(r => {
-      const matches = r.match || [];
-      for (const m of matches) {
-        const hosts = (m as { host?: string[] }).host || [];
-        if (hosts.length === 1 && hosts[0] === ip) {
-          return false;
-        }
-      }
-      return true;
-    });
-    if ((server.routes || []).length !== before) {
-      removed = true;
-    }
-  }
-
-  if (removed) {
-    await setConfig(config);
-  }
-  return removed;
 }
 
 /**

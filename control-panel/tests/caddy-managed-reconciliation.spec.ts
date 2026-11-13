@@ -178,7 +178,7 @@ function fixtureConfig(): CaddyConfig {
         { '@id': 'api-ping-route', match: [{ path: ['/api/ping'] }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'youeye-control.youeye:3000' }] }] },
         { '@id': 'existing-app', match: [{ host: ['app.example.test'] }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.88.0.3:3000' }] }] },
         { '@id': 'owner-ordered-app', match: [{ host: ['app.example.test'], path: ['/long/specific/*'] }], handle: [{ handler: 'static_response', body: 'owner precedence' }] },
-        { '@id': 'legacy-pointer', match: [{ host: ['ai.example.test'] }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'youeye-pointer.incus:4002' }] }] },
+        { '@id': 'named-pointer', match: [{ host: ['ai.example.test'] }], handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: 'youeye-pointer.incus:4002' }] }] },
       ],
     } } } },
   };
@@ -200,7 +200,7 @@ function routeFixture() {
   return { dependencies, writes, read: () => config, verified: () => verified };
 }
 
-test('legacy repair is atomic, preserves unrelated routes and security ordering, and verifies no-op repairs', async () => {
+test('DNS-name dial repair is atomic, preserves unrelated routes and security ordering, and verifies no-op repairs', async () => {
   const fixture = routeFixture();
   const existing = structuredClone(fixture.read().apps!.http!.servers!.srv0.routes![2]);
   await reconcileManagedRoutes('example.test', fixture.dependencies);
@@ -222,7 +222,7 @@ test('legacy repair is atomic, preserves unrelated routes and security ordering,
   assert.deepEqual(assets.handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.45.18.16:3000' }] }]);
   const pointer = routes.find((route) => route['@id'] === 'pointer-inference-route')!;
   assert.deepEqual(pointer.match![0].path, ['/v1', '/v1/*', '/v1beta', '/v1beta/*']);
-  assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'legacy-pointer')), /10\.45\.18\.17:4002/);
+  assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'named-pointer')), /10\.45\.18\.17:4002/);
   assert.doesNotMatch(JSON.stringify(routes), /youeye-(control|pointer)\.(youeye|incus):/);
   await reconcileManagedRoutes('example.test', fixture.dependencies);
   assert.equal(fixture.writes.length, 1, 'repeat repair must suppress no-op write');
@@ -264,7 +264,7 @@ test('Control Panel routes reconcile without Pointer: no Pointer discovery, rout
     assert.ok(routes.some((route) => route['@id'] === 'control-settings-route'));
     assert.ok(!routes.some((route) => route['@id'] === 'pointer-inference-route'));
     // An existing Pointer route is left as it is, not rewritten or removed.
-    assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'legacy-pointer')), /youeye-pointer\.incus:4002/);
+    assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'named-pointer')), /youeye-pointer\.incus:4002/);
   }
 });
 

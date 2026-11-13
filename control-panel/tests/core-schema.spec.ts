@@ -51,18 +51,18 @@ test('uncertain schema effects never retry and a separately owned historical res
   } finally { await rm(root, { recursive: true }); }
 });
 
-test('selected damaged or foreign component markers cannot fall back to legacy schema initialization', async () => {
+test('selected damaged or foreign component markers cannot fall back to unmanaged schema initialization', async () => {
   const { root, paths } = await fixture();
   try {
     await assert.rejects(coreSchemaComponent('ui', paths.component), /Invalid/);
     await chmod(paths.component, 0o666);
     await assert.rejects(runCoreSchemaOnce('cp', async () => { assert.fail('ran with unsafe authority'); }, paths));
     await rm(paths.component); await symlink('missing', paths.component);
-    await assert.rejects(runCoreSchemaOnce('cp', async () => { assert.fail('dangling marker became legacy'); }, paths));
+    await assert.rejects(runCoreSchemaOnce('cp', async () => { assert.fail('dangling marker became unmanaged'); }, paths));
     await rm(paths.component);
-    let legacy = 0; await runCoreSchemaOnce('cp', async () => { legacy++; }, paths); assert.equal(legacy, 1);
+    let unmanaged = 0; await runCoreSchemaOnce('cp', async () => { unmanaged++; }, paths); assert.equal(unmanaged, 1);
     await writeFile(join(root, 'core-artifact-sha256'), 'b'.repeat(64), { mode: 0o600 });
-    await assert.rejects(runCoreSchemaOnce('cp', async () => { assert.fail('missing selected marker became legacy'); }, paths));
+    await assert.rejects(runCoreSchemaOnce('cp', async () => { assert.fail('missing selected marker became unmanaged'); }, paths));
   } finally { await rm(root, { recursive: true }); }
 });
 

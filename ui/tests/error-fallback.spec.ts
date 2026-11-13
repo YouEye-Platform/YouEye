@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ErrorPage from "../src/pages/_error";
 
-test("legacy errors render without an App Router translation provider", () => {
+test("Pages Router errors render without an App Router translation provider", () => {
   const rendered = new Set<string>();
   for (const locale of ["en", "ru", "es", "de", "fr"]) {
     for (const statusCode of [404, 500, undefined]) {

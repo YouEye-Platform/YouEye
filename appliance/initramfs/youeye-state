@@ -11,7 +11,6 @@ case "${1:-}" in
 esac
 
 . /scripts/functions
-. /usr/lib/youeye/initramfs/youeye-network-state
 . /usr/lib/youeye/initramfs/youeye-state-migration
 
 state_device=""
@@ -29,7 +28,6 @@ state_root=/root/var/lib/youeye-state
 mkdir -p "$state_root"
 mount -t ext4 -o rw,nodev,nosuid "$state_device" "$state_root"
 
-migrate_youeye_network_state "$state_root/etc/systemd/network/20-youeye.network"
 if ! migrate_youeye_state_file "$state_root/etc/shadow" /root/etc/shadow 0640; then
     panic "YouEye persistent shadow state could not be migrated"
 fi

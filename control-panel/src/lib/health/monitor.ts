@@ -242,7 +242,7 @@ async function checkContainerWatchdog(): Promise<void> {
           console.error(`[watchdog] Could not prove storage reachability for ${app.appId}; automatic recovery is paused:`, error);
         }
         for (const container of app.containers ?? []) {
-          const name = typeof container === 'string' ? container : container.containerName;
+          const name = container.containerName;
           if (!name) continue;
           if (stopIntent) intentionallyStopped.add(name);
           if (storageUnavailable) recoverySuppressed.add(name);

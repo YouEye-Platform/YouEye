@@ -126,7 +126,7 @@ func resolveStorageDecision() (hoststorage.StorageDecision, hoststorage.Plan, ho
 //     create+mount default/data at /var/lib/youeye.
 //   - AdoptMarkedPool: ensure default/data exists+mounted.
 //   - LoopPool: install ZFS (so the explicitly sized loop pool is possible).
-//   - ReuseLegacyPool / Dir: nothing (data stays on root; Incus creates the pool).
+//   - Dir: nothing (data stays on root; Incus creates the pool).
 func prepareApplianceStorage(decision hoststorage.StorageDecision) error {
 	switch decision.Kind {
 	case hoststorage.DecisionCreateOnDisk:

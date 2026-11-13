@@ -277,10 +277,10 @@ async function fetchAppManifest(appId: string): Promise<AppManifest | null> {
   }
 }
 
-/** Resolve container entries from install metadata (tolerates legacy string entries). */
+/** Resolve container entries from install metadata. */
 function containerEntries(meta: InstallMetadata): Array<{ containerName: string; type?: string }> {
-  return (meta.containers as Array<string | { containerName?: string; type?: string }>)
-    .map((c) => (typeof c === 'string' ? { containerName: c } : { containerName: c?.containerName || '', type: c?.type }))
+  return meta.containers
+    .map((c) => ({ containerName: c?.containerName || '', type: c?.type }))
     .filter((c) => !!c.containerName);
 }
 
@@ -438,10 +438,8 @@ async function refreshConfigFiles(
   const refreshed: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
   const ctx = await buildRenderContext(manifest, meta, newDomain);
   for (const cf of configFiles) {
-    const target = meta.containers.find((container) =>
-      typeof container !== 'string' && container.name === cf.container
-    );
-    if (!target || typeof target === 'string') {
+    const target = meta.containers.find((container) => container.name === cf.container);
+    if (!target) {
       warn(`${meta.appId}: config file targets unknown container ${cf.container}`);
       continue;
     }

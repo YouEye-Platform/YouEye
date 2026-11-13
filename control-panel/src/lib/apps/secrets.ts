@@ -199,7 +199,7 @@ export async function setPiholePassword(newPassword: string): Promise<void> {
     
     // FTL v6 locks out `pihole setpassword` when the env var
     // FTLCONF_webserver_api_password is set on the container. Remove
-    // both the v6 and legacy v5 env vars first so the CLI works, then
+    // that env var first so the CLI works, then
     // set the password via CLI so it's stored in pihole.toml (survives
     // restarts without needing any env var).
     const containerConfig = await incusRequest<{ config?: Record<string, string> }>(
@@ -210,9 +210,6 @@ export async function setPiholePassword(newPassword: string): Promise<void> {
     const envVarsToRemove: Record<string, string> = {};
     if (cfg['environment.FTLCONF_webserver_api_password']) {
       envVarsToRemove['environment.FTLCONF_webserver_api_password'] = '';
-    }
-    if (cfg['environment.WEBPASSWORD']) {
-      envVarsToRemove['environment.WEBPASSWORD'] = '';
     }
     if (Object.keys(envVarsToRemove).length > 0) {
       // Restart required for FTL to stop reading the env var override

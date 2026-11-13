@@ -7,7 +7,7 @@ const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..
 const read = (p) => readFileSync(join(repoRoot, p), 'utf8');
 const has = (p) => existsSync(join(repoRoot, p));
 
-test('TLS storage encrypts private material with the deploy secret and scrubs legacy YAML PEM fields', () => {
+test('TLS storage encrypts private material with the deploy secret', () => {
   const s = read('src/lib/acme/storage.ts');
   const crypto = read('src/lib/acme/secret-crypto.ts');
   assert.match(s, /YOUEYE_TLS_SECRET_DIR \|\| '\/var\/lib\/youeye\/config\/tls'/);
@@ -18,21 +18,15 @@ test('TLS storage encrypts private material with the deploy secret and scrubs le
   assert.match(s, /encryptTLSSecret\(value\.trim\(\), readDeploySecret\(\)\)/);
   assert.match(crypto, /createCipheriv\(ALGORITHM, deriveKey\(deploySecret\), iv\)/);
   assert.match(crypto, /aes-256-gcm/);
-  assert.match(s, /tls_cert_pem: ''/);
-  assert.match(s, /tls_key_pem: ''/);
-  assert.match(s, /tls_acme_account_key: ''/);
   assert.match(s, /encrypted TLS key readback failed/);
-  assert.match(s, /removeMigratedPlaintext\(configuredFile, encryptedFile\)/);
-  assert.match(s, /unlinkSync\(path\)/);
+  assert.doesNotMatch(s, /tls_cert_pem|tls_key_pem|tls_acme_account_key:/);
 });
 
-test('TLS storage reads file-backed certs first and keeps legacy fallback migration', () => {
+test('TLS storage reads certificates and keys only from their files', () => {
   const s = read('src/lib/acme/storage.ts');
-  assert.match(s, /const fileCert = readPemFile\(certFile, 'CERTIFICATE'\)/);
-  assert.match(s, /const fileKey = readPrivateKeyFile\(keyFile\)/);
-  assert.match(s, /const legacyCert = asString\(raw\.tls_cert_pem\)\.trim\(\)/);
-  assert.match(s, /writeEncryptedPrivateKeyFile\(encryptedKeyFile, keyPem\)/);
-  assert.match(s, /await settingsService\.setRaw\(patch\)/);
+  assert.match(s, /readPemFile\(asString\(raw\.tls_cert_file\) \|\| DEFAULT_CERT_FILE, 'CERTIFICATE'\)/);
+  assert.match(s, /readPrivateKeyFile\(asString\(raw\.tls_key_file\) \|\| DEFAULT_KEY_FILE\)/);
+  assert.match(s, /if \(!isEncryptedTLSSecret\(stored\)\)/);
 });
 
 test('reconcile repairs security posture even when no containers are missing', () => {

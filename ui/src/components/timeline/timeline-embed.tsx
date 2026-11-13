@@ -3,9 +3,8 @@
  *
  * Renders a timeline entry as the source app's own embed via the ONE
  * <UnifiedEmbed> wrapper (kind="timeline-card"): lazy IntersectionObserver
- * mount, origin-validated `youeye:ready/resize/action` protocol (legacy
- * `youeye-embed-*` accepted for one cycle), timeout → visible fallback. The old
- * 200px height cap is gone — app-declared height up to a generous 480px guard.
+ * mount, origin-validated `youeye:ready/resize/action` protocol, timeout →
+ * visible fallback. Apps declare their height, up to a generous 480px guard.
  * Attribution (app chip + time) is rendered by the feed OUTSIDE the embed
  * (anti-impersonation). When the app has no embed, is uninstalled, or times out,
  * the StandardCard fallback is shown (never silent).

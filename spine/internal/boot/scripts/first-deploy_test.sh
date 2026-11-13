@@ -4,12 +4,14 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 script="$(cd -- "$(dirname -- "$0")" && pwd)/first-deploy.sh"
 tmp=$(mktemp -d)
+fixture_core=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 make_fixture() {
     fixture=$1
     mkdir -p "$fixture/bin" "$fixture/state" "$fixture/control"
     : > "$fixture/commands"
+    printf '{"core_manifest_sha256":"%s"}\n' "$fixture_core" > "$fixture/release-policy.json"
     printf '%s\n' '{"release_set":{"control_panel":{"version":"0.5.29"}}}' > "$fixture/sealed-release.json"
     cat > "$fixture/bin/incus" <<'EOF'
 #!/bin/sh
@@ -88,7 +90,6 @@ run_fixture() {
         YOUEYE_SEED_MARKET="$fixture/bin/seed" \
         YOUEYE_BOOTSTRAP_NETWORK="$fixture/bin/network" \
         CURL_BIN="$fixture/bin/curl" \
-        YOUEYE_CORE_SELECTION_REQUIRED="$fixture/core-required" \
         YOUEYE_RELEASE_POLICY="$fixture/release-policy.json" \
         YOUEYE_FIRST_DEPLOY_SEALED_RELEASE="$fixture/sealed-release.json" \
         "$@" \
@@ -151,14 +152,12 @@ jq -e '.state == "retrying" and .percent == 98' "$https_failure/state/progress.j
 
 core="$tmp/core"
 make_fixture "$core"
-printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core/release-policy.json"
 run_fixture "$core"
 grep -Fq 'update core initialize --policy' "$core/commands"
 test -e "$core/state/complete"
 
 core_failure="$tmp/core-failure"
 make_fixture "$core_failure"
-printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_failure/release-policy.json"
 if run_fixture "$core_failure" FAKE_CORE_INIT_FAIL=1; then
     echo 'missing installed core receipt unexpectedly completed first deployment' >&2
     exit 1
@@ -167,14 +166,12 @@ test ! -e "$core_failure/state/complete"
 
 core_reboot="$tmp/core-reboot"
 make_fixture "$core_reboot"
-printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_reboot/release-policy.json"
 run_fixture "$core_reboot" FAKE_CORE_REBOOT=true FAKE_CORE_CONVERGED=false
 [ ! -e "$core_reboot/state/complete" ]
 jq -e '.stage == "system_restart" and .percent == 96' "$core_reboot/state/progress.json" >/dev/null
 
 core_resumed="$tmp/core-resumed"
 make_fixture "$core_resumed"
-printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_resumed/release-policy.json"
 run_fixture "$core_resumed" FAKE_CORE_INITIALIZED=true FAKE_CONTROL_VERSION=0.5.23
 [ -e "$core_resumed/state/complete" ]
 ! grep -Fq 'update system converge' "$core_resumed/commands"
@@ -184,7 +181,6 @@ run_fixture "$core_resumed" FAKE_CORE_INITIALIZED=true FAKE_CONTROL_VERSION=0.5.
 
 core_unaccepted="$tmp/core-unaccepted"
 make_fixture "$core_unaccepted"
-printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_unaccepted/release-policy.json"
 if run_fixture "$core_unaccepted" FAKE_CORE_CONVERGED=false; then
     echo 'unaccepted tracked core opened setup' >&2
     exit 1
@@ -195,12 +191,12 @@ echo "youeye-first-deploy tests passed"
 
 required="$tmp/core-required"
 make_fixture "$required"
-touch "$required/core-required"
+printf '{}\n' > "$required/release-policy.json"
 if run_fixture "$required" 2>"$required/error"; then
-    echo 'new media accepted missing signed System selection' >&2
+    echo 'first deployment accepted a missing System selection' >&2
     exit 1
 fi
-grep -Fq 'original v5 installer answer' "$required/error"
+grep -Fq 'original installer answer' "$required/error"
 test ! -s "$required/commands"
 test ! -e "$required/state/complete"
 

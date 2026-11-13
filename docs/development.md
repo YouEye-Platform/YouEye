@@ -78,3 +78,16 @@ curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
 
 While YouEye is pre-release, nothing first-party is versioned as a second or later variant. A replacement takes the
 original name, schema IDs stay `.v1`, and the old reader is deleted rather than kept alongside.
+
+- **Numbers start at 1.** Numeric schema and format versions are `1`; a database migration chain that only fresh
+  installs use is squashed into one baseline (Pointer: `0001_baseline.sql`, version 1). The next change after the
+  Release adds `0002`.
+- **No "legacy" paths.** Code that reads or converts data a fresh install of the current version never produces is
+  deleted, not renamed. If current code still produces the data, name the path after what it does.
+- **Left alone:** external versions (third-party APIs such as `/api/v3`, Docker manifest media types, Go module
+  `/vN` paths, IPv4/v6, OAuth2, HTTP/2), semver release versions, model and product names, and the live YouEye
+  Names service's snapshot format.
+- **A new manifest field** ships in a YouEye release before the catalog that uses it: an older Control Panel refuses
+  a field it doesn't know, and that app drops out of its catalog.
+
+Check with `git grep -nE '\b[vV][2-9]\b|[._-][vV][2-9]\b|V[2-9][A-Z]|schemaVersion:\s*[2-9]|format:\s*[2-9]|[Ll]egacy'`.

@@ -80,7 +80,7 @@ test('HTTP fresh setup creates a secure channel and accepts one admitted verifie
       context:'signed-context'.repeat(4),cdata:'bound-cdata',publicKey:'A'.repeat(43),installFingerprint:'B'.repeat(43),expiresAt:new Date(Date.now()+60000).toISOString(),name:'calm-river',currentIp:'192.168.1.50',parentOrigin:b.window.location.origin,sessionId:input.sessionId};
     return Response.json({challenge});
   };
-  const client=b.component('src/components/setup/SetupNamesVerification.tsx',{'@/lib/youeye-names/verified-setup-channel':verifiedChannel,'@/lib/youeye-names/popup':{runNamesEnrollment(){throw Error('Unexpected legacy decision');}}});
+  const client=b.component('src/components/setup/SetupNamesVerification.tsx',{'@/lib/youeye-names/verified-setup-channel':verifiedChannel,'@/lib/youeye-names/popup':{runNamesEnrollment(){throw Error('Unexpected enrollment popup');}}});
   const props={name:'calm-river',fqdn:'calm-river.ui.bingo',useVerifiedSetup:true,onVerified:(...value:any[])=>verified.push(value),onBack(){}};
   try {
     find(client.render(props),node=>node.type==='button'&&Boolean(node.props.onClick)&&node.props.variant!=='ghost').props.onClick();await flush();

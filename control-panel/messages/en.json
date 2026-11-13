@@ -44,7 +44,6 @@
     "people": "People",
     "backup": "Backup",
     "settings": "Settings",
-    "appsLegacy": "Apps (Legacy)",
     "controlPanel": "Control Panel",
     "youeye": "YouEye",
     "market": "Market"
@@ -722,12 +721,6 @@
     "notInstalled": "Not Installed",
     "notFound": "Not Found",
     "unknown": "Unknown"
-  },
-  "appsLegacy": {
-    "title": "Apps (Legacy)",
-    "description": "Legacy apps view. Use the new Apps page for the unified experience.",
-    "manage": "Manage",
-    "notDeployedHint": "Not deployed. Run spine deploy to install."
   },
   "proxyStatus": {
     "start": "Start",
@@ -2513,7 +2506,11 @@
     "m709433447a43": "Turning off YouEye ID sign-in for {app}…",
     "m3bf590b2bb82": "People sign in to {app} with their YouEye ID.",
     "m2f5875924e6c": "{app} uses its own accounts. Turn this on to let people sign in with their YouEye ID.",
-    "m70843fac04a3": "YouEye ID sign-in for {app}"
+    "m70843fac04a3": "YouEye ID sign-in for {app}",
+    "m03e7db61b2e1": "Public access",
+    "m7abb883ab0c4": "{name} has its own protection, such as a password or a game PIN. With public access on, anyone who can reach its address can open it without a {site} account.",
+    "ma05ac86e60af": "Open to anyone who can reach the address",
+    "m9fe9ebe58220": "Turn it off to keep the app to the people you give access. You can change this later in the app’s access settings."
   },
   "settingsNavigation": {
     "profile": "Profile",

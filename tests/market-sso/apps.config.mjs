@@ -7,7 +7,7 @@ import { pageFetch, psql, box } from './lib.mjs';
 
 export const apps = {
   'actual-budget': {
-    sub: 'budget',
+    sub: 'actual-budget',
     // Known limit: the FIRST person to sign in becomes the owner (ADMIN), whatever their YouEye role (Actual reads
     // no role claims; the listing tells the owner to sign in first). Passes because admin runs before user.
     start: { path: '/', click: /(Start using|Sign in with) OpenID/i },
@@ -20,7 +20,7 @@ export const apps = {
     },
   },
   audiobookshelf: {
-    sub: 'audiobooks',
+    sub: 'audiobookshelf',
     // Type follows YouEye ID through the per-app claim abs_roles ([admin] | [user]), read from userinfo.
     start: { path: '/', click: /^Login with /i },
     // The callback lands on /audiobookshelf/login?setToken=<access token>; /api/me returns the user and its type
@@ -63,7 +63,7 @@ export const apps = {
     },
   },
   linkwarden: {
-    sub: 'links',
+    sub: 'linkwarden',
     // Known limit: user id 1 (the first to sign in) is the admin (listing tells the owner). Passes with admin first.
     start: { path: '/login', click: / ID$/ },
     // Linkwarden's admin is simply user id 1 (NEXT_PUBLIC_ADMIN, default 1): the first account created. The
@@ -89,7 +89,7 @@ export const apps = {
     },
   },
   miniflux: {
-    sub: 'feeds',
+    sub: 'miniflux',
     // Known gap (2026-11-13): Miniflux has no admin mapping for OIDC users.
     expect: { admin: { admin: false } },
     start: { path: '/', click: /Sign in with OpenID Connect/i },
@@ -103,7 +103,7 @@ export const apps = {
     },
   },
   nextcloud: {
-    sub: 'cloud',
+    sub: 'nextcloud',
     // allow_multiple_user_backends=0: the login page goes straight to YouEye ID (/login?direct=1 shows the form).
     start: { path: '/login' },
     settle: 5000,
@@ -118,7 +118,7 @@ export const apps = {
     },
   },
   'open-webui': {
-    sub: 'chat',
+    sub: 'open-webui',
     // Role follows the per-app claim openwebui_role on every sign-in (OAuth role management). Open WebUI still
     // makes the very first account admin; the next sign-in corrects it once a second user exists.
     start: { path: '/auth', click: [{ name: /^Get started/i, optional: true }, /^Continue with /i] },
@@ -134,7 +134,7 @@ export const apps = {
     },
   },
   immich: {
-    sub: 'photos',
+    sub: 'immich',
     // The manifest's sso.entry: the login page starts the OAuth flow itself. The page script finishes the
     // callback (/auth/login?code=…) and sets the immich_access_token cookie.
     start: { path: '/auth/login?autoLaunch=1' },
@@ -160,7 +160,7 @@ export const apps = {
     },
   },
   'paperless-ngx': {
-    sub: 'docs',
+    sub: 'paperless-ngx',
     // Regular login is off: the login page shows only the YouEye ID button (named after the box).
     start: { path: '/accounts/login/', click: /.+/ },
     settle: 5000,
@@ -185,7 +185,7 @@ export const apps = {
     },
   },
   mealie: {
-    sub: 'recipes',
+    sub: 'mealie',
     // Password login is off, so the login page shows only the YouEye ID button. Its page script finishes the
     // callback (/login?code=…) and keeps the token in the mealie.access_token cookie.
     start: { path: '/login', click: /^Login with /i },
@@ -198,7 +198,7 @@ export const apps = {
     },
   },
   vikunja: {
-    sub: 'tasks',
+    sub: 'vikunja',
     // Local login is off, so Vikunja goes straight to YouEye ID.
     start: { path: '/' },
     // Vikunja keeps its JWT in localStorage.token; /api/v1/user is the signed-in user with `is_admin`.

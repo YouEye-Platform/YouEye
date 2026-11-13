@@ -63,7 +63,7 @@ function fixture(count = 1) {
     } },
     '@/lib/health/issues': { resolveIssue: async () => {}, observeIssue: async () => {} },
     '../market/install-tracker': { getAllActiveInstalls: () => [] },
-    '../market/metadata': { readInstallMetadata: async (appId: string) => ({ appId, lifecycleState: 'installed', containers: [`app-${appId}`], databaseMode: 'none', hasSSO: false }) },
+    '../market/metadata': { readInstallMetadata: async (appId: string) => ({ appId, lifecycleState: 'installed', containers: [{ name: 'main', containerName: `app-${appId}`, type: 'oci' }], databaseMode: 'none', hasSSO: false }) },
   };
   const exports: Record<string, any> = {};
   vm.runInNewContext(ts.transpileModule(readFileSync('src/lib/incus/app-network.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {

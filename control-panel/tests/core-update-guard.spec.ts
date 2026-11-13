@@ -20,7 +20,7 @@ test('all component mutations fail closed on core ownership or unavailable evide
   finally { status.mock.restore(); }
 });
 
-test('observed legacy installation permits component updates', async () => {
+test('an unmanaged core permits component updates', async () => {
   const status = mock.method(spineClient, 'getCoreUpdateStatus', async () => ({ schema: 'youeye.core-status.v1', managed: false }));
   try { await assertIndependentCoreUpdate('ui'); }
   finally { status.mock.restore(); }

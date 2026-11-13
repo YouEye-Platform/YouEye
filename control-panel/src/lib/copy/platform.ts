@@ -71,8 +71,8 @@ export async function prepareIndependentPlatform(native:NativeRequest,inventoryI
     // keys. Discard only the known copied authority, without contacting or
     // revoking the source registration. No ordinary source data is removed.
     await removeExternalCert();await tlsStorage.revertToInternal();
-    await settingsService.setRaw({tls_acme_account_key:'',tls_acme_account_key_file:''});
-    for(const path of ['/var/lib/youeye/config/tls/acme-account-key.enc','/var/lib/youeye/config/tls/acme-account-key.pem','/var/lib/youeye/config/tls/external-cert.pem','/var/lib/youeye/config/tls/external-key.enc','/var/lib/youeye/config/tls/external-key.pem',NAMES_LIFECYCLE_FILE_PATH,NAMES_IMPORT_FILE_PATH])await removeCopiedAuthorityFile(path);
+    await settingsService.setRaw({tls_acme_account_key_file:''});
+    for(const path of ['/var/lib/youeye/config/tls/acme-account-key.enc','/var/lib/youeye/config/tls/external-cert.pem','/var/lib/youeye/config/tls/external-key.enc',NAMES_LIFECYCLE_FILE_PATH,NAMES_IMPORT_FILE_PATH])await removeCopiedAuthorityFile(path);
     await applyBundleIdentity(bundle);
     record.sourceAuthorityRemoved=true;await journal.write(record);
    }
@@ -80,7 +80,7 @@ export async function prepareIndependentPlatform(native:NativeRequest,inventoryI
     const active=await tlsStorage.getCert();if(!active)throw Error('Copied Names certificate unavailable');
     const validated=validateCertificateMaterial({certificateChain:active.certPem,privateKeyPem:active.keyPem,fqdn:bundle.fqdn});
     const now=new Date().toISOString();
-    await writeNamesLifecycleState({schemaVersion:2,service:bundle.service,name:bundle.name,fqdn:bundle.fqdn,status:'healthy',provisioning:null,termsVersion:bundle.consent.termsVersion,certificateTransparencyAcceptedAt:bundle.consent.certificateTransparencyAcceptedAt,certificate:{fingerprint:validated.fingerprint,provider:bundle.certificate.provider,issuedAt:validated.issuedAt,expiresAt:validated.expiresAt},lastBrokerContactAt:now,lastHeartbeatAt:null,nextCheckAt:new Date(Date.now()+6*60*60*1000).toISOString(),lastError:null});
+    await writeNamesLifecycleState({schemaVersion:1,service:bundle.service,name:bundle.name,fqdn:bundle.fqdn,status:'healthy',provisioning:null,termsVersion:bundle.consent.termsVersion,certificateTransparencyAcceptedAt:bundle.consent.certificateTransparencyAcceptedAt,certificate:{fingerprint:validated.fingerprint,provider:bundle.certificate.provider,issuedAt:validated.issuedAt,expiresAt:validated.expiresAt},lastBrokerContactAt:now,lastHeartbeatAt:null,nextCheckAt:new Date(Date.now()+6*60*60*1000).toISOString(),lastError:null});
     record!.domainApplied=true;await journal.write(record);
    }},()=>{});
    return {requestId:request.requestId,phase:'domain-restart-pending',domain:bundle.fqdn,quarantineRequired:true};

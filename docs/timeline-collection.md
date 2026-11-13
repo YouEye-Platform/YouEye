@@ -27,10 +27,8 @@ stale and pre-interval writes fail closed. App permissions and acting-user
 admission remain required independently of consent.
 
 New ingestion encrypts immediately with the active symmetric key or the saved
-RSA public key. It never falls back to plaintext pending storage. Consent
-transitions and unlock discard legacy pending rows: their original collection
-interval is not established, so they cannot be safely replayed. No pending
-payload is copied into logs. App-owned records are unaffected.
+RSA public key. Without either key the event is refused (`409 key_required`);
+there is no plaintext pending storage. App-owned records are unaffected.
 
 Encryption secrets use the existing PBKDF2-SHA256, 600,000 iterations, UTF-8 input
 and per-account salt. Inputs are exact: no trimming, digit restriction, case
@@ -41,8 +39,8 @@ surrogates to avoid silently replacing them during UTF-8 encoding. Existing
 numeric PINs retain their derived key identity.
 
 Secret creation serializes same-input retries and preserves the original RSA
-identity. Legacy symmetric-only keys acquire an RSA pair after successful
-verification; partial/corrupt RSA material fails without replacing it. Secret
+identity. Every key row has its RSA pair, verified after each successful
+unlock; partial/corrupt RSA material fails without replacing it. Secret
 changes reencrypt symmetric entries, wrap the private key and invalidate old
 viewing sessions in one transaction. Any failed decryption aborts the transition,
 leaving the previous key and data active. Encryption is not a claim that the

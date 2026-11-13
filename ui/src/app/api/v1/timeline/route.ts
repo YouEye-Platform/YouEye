@@ -17,7 +17,6 @@ import {
   getTimelineCounts,
   createTimelineEntry,
   createHybridTimelineEntry,
-  processPendingEvents,
 } from "@/lib/db/queries/timeline";
 import { getTimelineCollection, TimelineCollectionError } from "@/lib/db/queries/timeline-collection";
 import type { TimelineEntryData } from "@/lib/db/queries/timeline";
@@ -67,13 +66,6 @@ export async function GET(request: Request) {
       pin_required: true,
       pin_exists: true,
     });
-  }
-
-  // Process any pending events before returning entries
-  try {
-    await processPendingEvents(session.userId, encryptionKey);
-  } catch {
-    // Non-critical — don't fail the main query
   }
 
   // Get RSA private key for decrypting hybrid entries

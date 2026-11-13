@@ -7,7 +7,7 @@ import { IDENTITY_DATA_DIR } from './identity';
 const STATE_FILE = path.join(IDENTITY_DATA_DIR, 'lifecycle.json');
 const stateSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(1),
     service: z.object({
       id: z.string().min(3).max(64),
       canonicalOrigin: z.string().url(),

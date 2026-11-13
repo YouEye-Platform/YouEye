@@ -24,8 +24,10 @@ schema: youeye.app.v1
 id: mealie                       # 1–32 chars, [a-z0-9-], starts with a letter; unique on the box
 version: 3.22.0                  # the app's own version (required)
 name: Mealie
-requires: { youeye: ">=0.6.2" }  # an older platform says "needs a newer YouEye" (never offered as an update)
-subdomain: recipes               # default: the id
+requires: { youeye: ">=0.6.2" }  # an older platform says "needs a newer YouEye" (never offered as an update);
+                                 # compares X.Y.Z only, so 0.6.2-dev.1 already satisfies >=0.6.2
+# subdomain: …                    # default and normal case: the id. Set it only when upstream itself names a
+                                 # different hostname for the app
 
 listing:                         # store text only; not part of the digest
   tagline: Recipes, meal plans, and shopping lists in one place
@@ -37,7 +39,7 @@ listing:                         # store text only; not part of the digest
   tags: [recipes, cooking]
   icon: utensils                 # Lucide icon name (fallback)
   icon_file: icon.svg            # file next to the manifest (relative; never a URL)
-  screenshots: [{ path: screenshots/recipes.png, caption: Recipe library }]   # relative files
+  screenshots: [{ path: screenshots/recipes.png, caption: Recipe library }]   # relative files; official upstream images
   website: https://mealie.io
   developer: Mealie contributors
   license: AGPL-3.0
@@ -48,6 +50,8 @@ listing:                         # store text only; not part of the digest
 image: ghcr.io/mealie-recipes/mealie@sha256:36c2…   # OCI image, digest-pinned (required for Market apps)
 port: 9000
 health: /api/app/about           # or { path: /api/app/about, timeout: 120 }  (seconds; default 120)
+                                 # healthy = 2xx, 3xx, 401 or 403 (market/health.ts): pick a route that needs
+                                 # the app and its database, not one that only redirects to a login page
 command: [/bin/bash, /kavita/config/youeye-entrypoint.sh]   # optional argv override
 internet: true                   # outbound internet for the app's containers (default false)
 
@@ -108,6 +112,9 @@ smtp:                            # the app sends mail with the box's mail settin
     SMTP_PORT: ${smtp.port}
 forward_auth: false              # the account-login gate in front of the app: false = off and not offered at install
                                  # (default: on unless the app has `sso:`); YouEye ID's access check always applies
+public_access: true              # the app protects itself (its own password, PINs, accounts): install with public
+                                 # access on (shown pre-selected; the owner can decline). Official catalog only;
+                                 # an older Control Panel refuses this field, so the app is missing from its catalog
 
 sidecars:                        # extra containers of the same app
   - name: redis                  # [a-z0-9-]; `main` is reserved for the app itself

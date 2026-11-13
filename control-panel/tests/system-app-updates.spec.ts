@@ -39,10 +39,10 @@ test('settings update route reroutes marketSystemId apps to updateSystemFromMark
   assert.match(r, /confirmContainerName:/);
   assert.match(r, /allowDatabaseUpdate: body\.allowDatabaseUpdate === true/);
   assert.match(r, /process\.env\.HOST_IP/);
-  // reroute branch happens BEFORE the legacy control-panel/updateOCIApp branch
+  // reroute branch happens BEFORE the control-panel/updateOCIApp branch
   assert.ok(
     r.indexOf('if (appDef?.marketSystemId)') < r.indexOf("if (appDef?.updatedBy === 'control-panel')"),
-    'system reroute branch must precede the legacy OCI branch',
+    'system reroute branch must precede the OCI branch',
   );
 });
 

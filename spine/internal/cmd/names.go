@@ -57,7 +57,7 @@ type namesService struct {
 	ManagedZone     string `json:"managedZone"`
 }
 
-type namesBundleV3 struct {
+type namesBundle struct {
 	SchemaVersion int              `json:"schemaVersion"`
 	ExportedAt    string           `json:"exportedAt"`
 	Service       namesService     `json:"service"`
@@ -267,10 +267,10 @@ func validateNamesBundle(data []byte) (validatedNamesBundle, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return validatedNamesBundle{}, err
 	}
-	if header.SchemaVersion != 3 {
+	if header.SchemaVersion != 1 {
 		return validatedNamesBundle{}, fmt.Errorf("unsupported schema version %d", header.SchemaVersion)
 	}
-	var bundle namesBundleV3
+	var bundle namesBundle
 	if err := strictDecode(data, &bundle); err != nil {
 		return validatedNamesBundle{}, err
 	}

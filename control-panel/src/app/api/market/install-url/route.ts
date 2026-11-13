@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean };
+  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean; publicAccess?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -159,6 +159,8 @@ export async function POST(request: NextRequest) {
     manifestDigest: directEntry.manifestDigest,
     subdomain,
     domain,
+    // An app added by URL is not reviewed: its manifest cannot open itself to the public.
+    publicAccess: body.publicAccess === true,
   };
 
   // Start tracking this install for reconnection support

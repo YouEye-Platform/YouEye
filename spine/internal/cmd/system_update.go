@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
@@ -14,57 +13,16 @@ import (
 )
 
 var (
-	systemUpdateManifest      string
-	systemUpdateManifestSHA   string
-	systemUpdateAllowTest     bool
-	systemUpdateReplaceFailed bool
-	systemUpdateJSON          bool
-	systemUpdateReboot        bool
-	systemUpdateHealthFailed  bool
-	systemUpdatePolicyPath    string
-	systemUpdateBundlePath    string
+	systemUpdateJSON         bool
+	systemUpdateReboot       bool
+	systemUpdateHealthFailed bool
+	systemUpdatePolicyPath   string
+	systemUpdateBundlePath   string
 )
 
 var systemUpdateStatusCmd = &cobra.Command{
 	Use: "status", Short: "Show the durable appliance system update state",
 	RunE: func(cmd *cobra.Command, args []string) error { return runSystemUpdateStatus(systemUpdateJSON) },
-}
-
-var systemUpdateCheckCmd = &cobra.Command{
-	Use: "check", Short: "Verify and record an exact host update manifest",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireImageUpdate(); err != nil {
-			return err
-		}
-		options, err := systemUpdateSourceOptions()
-		if err != nil {
-			return err
-		}
-		status, err := systemupdate.NewDefault().Discover(cmd.Context(), options)
-		if err != nil {
-			return err
-		}
-		return printSystemUpdateStatus(status, systemUpdateJSON)
-	},
-}
-
-var systemUpdateStageCmd = &cobra.Command{
-	Use: "stage", Short: "Download, verify, and write the inactive System slot",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireImageUpdate(); err != nil {
-			return err
-		}
-		manager := systemupdate.NewDefault()
-		options, err := systemUpdateSourceOptions()
-		if err != nil {
-			return err
-		}
-		status, err := manager.Stage(cmd.Context(), options)
-		if err != nil {
-			return err
-		}
-		return printSystemUpdateStatus(status, systemUpdateJSON)
-	},
 }
 
 var systemUpdateActivateCmd = &cobra.Command{
@@ -132,33 +90,15 @@ var systemUpdateConvergeCmd = &cobra.Command{
 }
 
 func init() {
-	for _, command := range []*cobra.Command{systemUpdateCommitGateCmd, systemUpdateStatusCmd, systemUpdateCheckCmd, systemUpdateStageCmd, systemUpdateActivateCmd, systemUpdateReconcileCmd, systemUpdateMarkHealthyCmd, systemUpdateConvergeCmd} {
+	for _, command := range []*cobra.Command{systemUpdateCommitGateCmd, systemUpdateStatusCmd, systemUpdateActivateCmd, systemUpdateReconcileCmd, systemUpdateMarkHealthyCmd, systemUpdateConvergeCmd} {
 		command.Flags().BoolVar(&systemUpdateJSON, "json", false, "emit machine-readable JSON")
 		updateSystemCmd.AddCommand(command)
 	}
 	systemUpdateConvergeCmd.Flags().StringVar(&systemUpdatePolicyPath, "policy", "/var/lib/youeye-state/bootstrap/release-policy.json", "protected first-boot release policy")
 	systemUpdateConvergeCmd.Flags().StringVar(&systemUpdateBundlePath, "installed-manifest", "/var/lib/youeye-state/installer/appliance-manifest.json", "installed appliance manifest")
 	systemUpdateConvergeCmd.Flags().BoolVar(&systemUpdateReboot, "reboot", false, "accepted for compatibility; the media baseline never restarts")
-	for _, command := range []*cobra.Command{systemUpdateCheckCmd, systemUpdateStageCmd} {
-		command.Flags().StringVar(&systemUpdateManifest, "manifest", "", "exact system update manifest URL or path (requires --manifest-sha256)")
-		command.Flags().StringVar(&systemUpdateManifestSHA, "manifest-sha256", "", "exact expected system update manifest SHA-256")
-		command.Flags().BoolVar(&systemUpdateAllowTest, "allow-test-artifact", false, "allow a test-only image")
-		command.Flags().BoolVar(&systemUpdateReplaceFailed, "replace-failed", false, "replace a different failed transaction after renewed confirmation")
-	}
 	systemUpdateActivateCmd.Flags().BoolVar(&systemUpdateReboot, "reboot", false, "reboot immediately after activation")
 	systemUpdateReconcileCmd.Flags().BoolVar(&systemUpdateHealthFailed, "health-failed", false, "record an operational health failure")
-}
-
-// systemUpdateSourceOptions builds a host-only exact request. Installations
-// with a complete core release refuse it and update through "update core".
-func systemUpdateSourceOptions() (systemupdate.SourceOptions, error) {
-	if strings.TrimSpace(systemUpdateManifest) == "" || strings.TrimSpace(systemUpdateManifestSHA) == "" {
-		return systemupdate.SourceOptions{}, errors.New("--manifest and --manifest-sha256 are required")
-	}
-	return systemupdate.SourceOptions{
-		ManifestSource: systemUpdateManifest, ExpectedManifestSHA256: systemUpdateManifestSHA, Channel: "exact-artifact",
-		AllowTest: systemUpdateAllowTest, ReplaceFailed: systemUpdateReplaceFailed,
-	}, nil
 }
 
 func requireImageUpdate() error {

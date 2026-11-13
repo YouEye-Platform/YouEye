@@ -47,7 +47,7 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(systemManifestApi, /requireAdmin/);
   assert.match(systemUpdatesApi, /planSystemUpdates/);
   assert.match(systemUpdatesApi, /updateSystemFromMarket/);
-  assert.match(systemUpdatesApi, /forceLegacy/);
+  assert.match(systemUpdatesApi, /adoptUntracked/);
   assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
   // The official Market is the channel index's catalog release; no repository is built in.
   assert.match(source, /kind: 'channel'/);
@@ -57,10 +57,9 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(resolver, /Required Market system manifest/);
   assert.match(resolver, /recordSystemContainerManifest/);
   assert.match(resolver, /user\.youeye\.market\.image/);
-  assert.match(updater, /legacy-compatible/);
-  assert.match(updater, /legacy-untracked/);
+  assert.match(updater, /'untracked'/);
   assert.match(updater, /PostgreSQL system updates require allowDatabaseUpdate/);
-  assert.match(updater, /forceLegacy/);
+  assert.match(updater, /adoptUntracked/);
   assert.match(updater, /rebuildContainer/);
   assert.match(updater, /recordSystemContainerManifest/);
   assert.match(deployer, /resolveSystemImageOverrides/);

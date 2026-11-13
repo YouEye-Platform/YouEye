@@ -463,7 +463,7 @@ test('the Market update UI handles a truncated SSE stream as interrupted and ref
 });
 
 for (const [route, parameter] of [['canonical', 'name'], ['settings', 'appId'], ['bridge', 'component']] as const) {
-  test(`${route} Market updates require admin and CSRF even through legacy/bridge paths`, async () => {
+  test(`${route} Market updates require admin and CSRF on every route`, async () => {
     const f = fixture();
     const params = { params: Promise.resolve({ [parameter]: 'wiki' }) };
     f.state.session = { isAdmin: false };

@@ -62,24 +62,24 @@ interface TimelineEntryCardProps {
 }
 
 /**
- * Legacy icon map — kept as fallback for entries from before the
- * dynamic manifest system. New apps don't need to be added here;
- * they declare icons in their manifest and get resolved via appMeta.
+ * Fallback icons for well-known entry types whose app manifest declares no
+ * icon (for example an app that is no longer installed). Apps declare their
+ * icons in their manifest and get resolved via appMeta.
  */
-const LEGACY_TYPE_ICONS: Record<string, typeof Film> = {
+const ENTRY_TYPE_ICONS: Record<string, typeof Film> = {
   "movie-watched": Film,
   "photo-taken": Camera,
   "note-created": FileText,
   "music-listened": Music,
   "article-read": Globe,
-  "search-query-legacy": Search,
+  "search-query": Search,
   "event-scheduled": Calendar,
   "item-rated": Star,
 };
 
 /**
  * Resolve the icon for a timeline entry.
- * Priority: entry-type icon from manifest > app-level icon from manifest > legacy map > Package
+ * Priority: entry-type icon from manifest > app-level icon from manifest > well-known type map > Package
  */
 function resolveEntryIcon(
   entryType: string,
@@ -91,8 +91,8 @@ function resolveEntryIcon(
   if (appMeta?.icon) {
     return resolveLucideIcon(appMeta.icon);
   }
-  if (LEGACY_TYPE_ICONS[entryType]) {
-    return LEGACY_TYPE_ICONS[entryType];
+  if (ENTRY_TYPE_ICONS[entryType]) {
+    return ENTRY_TYPE_ICONS[entryType];
   }
   return Package;
 }

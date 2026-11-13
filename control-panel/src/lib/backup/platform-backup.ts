@@ -50,8 +50,6 @@ export interface RestoreStatusRecord {
   updatedAt: string;
   completedAt?: string;
   error?: string;
-  /** Setup status is readable only by the exact session that submitted it. */
-  setupSessionId?: string;
 }
 
 export function validateBackupPassphrase(passphrase: unknown): string {
@@ -140,21 +138,9 @@ async function writeRecord(root: string, record: BackupSetRecord) {
 
 async function acquireOperationLock(directory = BACKUP_ROOT) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  // Preserve old lock evidence for an operator; never steal it after a timeout.
-  // New executions retain a kernel lease, released automatically on process loss.
+  // A kernel lease, released automatically on process loss.
   const lock = AppUpdateExecutorLock.acquire(path.join(directory, '.operation.flock'));
-  try {
-    try {
-      await lstat(path.join(directory, '.operation.lock'));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return async () => { lock.release(); };
-      throw error;
-    }
-    throw new Error('An earlier backup or restore requires operator reconciliation.');
-  } catch (error) {
-    lock.release();
-    throw error;
-  }
+  return async () => { lock.release(); };
 }
 
 export async function createPlatformBackup(input: unknown | CreatePlatformBackupOptions, onEvent: BackupEventCallback): Promise<BackupSetRecord> {

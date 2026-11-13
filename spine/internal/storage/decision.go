@@ -33,10 +33,10 @@ type DecisionInputs struct {
 	// only use the dir driver.
 	ZFSInstallable bool
 
-	// MarkedPoolImported / LegacyPoolImported describe an already-imported
-	// pool named PoolName. Marked wins.
-	MarkedPoolImported bool
-	LegacyPoolImported bool
+	// MarkedPoolImported / UnmarkedPoolImported describe an already-imported
+	// pool named PoolName with or without the YouEye marker.
+	MarkedPoolImported   bool
+	UnmarkedPoolImported bool
 
 	// Devices is the block-device tree (for blank-disk detection).
 	Devices []BlockDevice
@@ -59,13 +59,11 @@ func ResolveDecision(in DecisionInputs) StorageDecision {
 			Reason:    fmt.Sprintf("imported pool %q carries the %q marker; reusing default/incus + default/data", PoolName, PoolMarker),
 		}
 	}
-	// (a, legacy) Pool named default WITHOUT the marker → backward-compatible
-	// whole-pool reuse (installer-v0.5.2/0.5.3 layout, data stays on root).
-	if in.LegacyPoolImported {
+	// A pool named default WITHOUT the marker is not YouEye's; never adopt it.
+	if in.UnmarkedPoolImported {
 		return StorageDecision{
-			Kind:      DecisionReuseLegacyPool,
-			DataOnZFS: false,
-			Reason:    fmt.Sprintf("imported pool %q has no YouEye marker (legacy install); reusing whole pool as source=default", PoolName),
+			Kind:   DecisionFail,
+			Reason: fmt.Sprintf("imported pool %q has no YouEye marker; export or rename it before deploying", PoolName),
 		}
 	}
 
@@ -171,7 +169,7 @@ func collectDecisionInputs(policy Policy, rootTotal, rootAvail, largeTarget int6
 		if PoolComment(PoolName) == PoolMarker {
 			in.MarkedPoolImported = true
 		} else {
-			in.LegacyPoolImported = true
+			in.UnmarkedPoolImported = true
 		}
 	}
 

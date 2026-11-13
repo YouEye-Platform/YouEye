@@ -310,7 +310,7 @@ test('the app secret directory is 0700 and secret files are 0600', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'youeye-secrets-'));
   try {
     const store = appSecretStoreAt(base);
-    // A legacy world-writable directory is tightened on the next write.
+    // A world-writable directory is tightened on the next write.
     await mkdir(path.join(base, 'app-mealie', 'secrets'), { recursive: true });
     await chmod(path.join(base, 'app-mealie', 'secrets'), 0o777);
     await store.write('mealie', 'db_password', 'first');

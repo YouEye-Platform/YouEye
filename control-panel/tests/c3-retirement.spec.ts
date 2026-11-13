@@ -31,16 +31,16 @@ test('still-consumed embeds are kept and the retired avatar embed stays removed'
   assert.ok(!has('src/app/embed/avatar'), 'first-user onboarding is CP-native; embed/avatar must remain retired');
 });
 
-test('legacy (dashboard) shell is deleted', () => {
+test('(dashboard) shell is deleted', () => {
   assert.ok(!has('src/app/(dashboard)/page.tsx'), '(dashboard) root must be deleted');
   assert.ok(!has('src/app/(dashboard)/apps/page.tsx'), '(dashboard)/apps must be deleted');
   assert.ok(!has('src/app/(dashboard)/health/page.tsx'), '(dashboard)/health must be deleted');
   assert.ok(!has('src/app/(dashboard)/layout.tsx'), '(dashboard) layout must be deleted');
 });
 
-test('middleware redirects legacy shell routes to Settings (host-aware, precise)', () => {
+test('middleware redirects shell routes to Settings (host-aware, precise)', () => {
   const m = read('src/middleware.ts');
-  assert.match(m, /Retire the legacy control\.<domain>/);
+  assert.match(m, /Send the control\.<domain> \/ \(dashboard\) shell paths to Settings/);
   assert.match(m, /SHELL_PREFIXES = \['\/apps', '\/dns', '\/health', '\/people', '\/proxy', '\/updates'\]/);
   // subdomain → base-domain Settings; direct/PAM → same-origin /settings
   assert.match(m, /shellHost\.startsWith\('control\.'\)/);
@@ -50,13 +50,13 @@ test('middleware redirects legacy shell routes to Settings (host-aware, precise)
   assert.doesNotMatch(m, /SHELL_PREFIXES = \[[^\]]*'\/(settings|market|embed|api)'/);
 });
 
-test('IP setup handoff wins before legacy Settings shell redirects', () => {
+test('IP setup handoff wins before Settings shell redirects', () => {
   const m = read('src/middleware.ts');
   const ipBlock = m.indexOf('IP-via-Caddy setup flow');
-  const legacyBlock = m.indexOf('Retire the legacy control.<domain>');
+  const shellBlock = m.indexOf('Send the control.<domain> / (dashboard) shell paths to Settings');
 
   assert.ok(ipBlock >= 0, 'middleware should keep the IP setup flow block');
-  assert.ok(legacyBlock >= 0, 'middleware should keep the legacy shell retirement block');
-  assert.ok(ipBlock < legacyBlock, 'IP setup flow must run before / -> /settings redirects');
+  assert.ok(shellBlock >= 0, 'middleware should keep the shell redirect block');
+  assert.ok(ipBlock < shellBlock, 'IP setup flow must run before / -> /settings redirects');
   assert.match(m, /completed \? '\/setup-complete' : '\/login'/);
 });

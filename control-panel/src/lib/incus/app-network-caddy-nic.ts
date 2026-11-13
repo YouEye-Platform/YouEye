@@ -27,12 +27,9 @@ const CADDY_APP_NIC_POLICY = {
 export function planCaddyAppNIC(appId: string, bridgeName: string, devices: IncusDeviceMap) {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId)) throw new Error('Invalid Caddy app identity');
   const deviceName = `net-${appId}`;
-  const hashedName = `eth-${createHash('sha256').update(appId).digest('hex').slice(0, 11)}`;
-  const legacyName = `eth-${appId.slice(0, 11)}`;
+  const name = `eth-${createHash('sha256').update(appId).digest('hex').slice(0, 11)}`;
   const current = devices[deviceName];
-  // Existing interfaces need no disruptive rename. Accept only the known legacy
-  // or current name on this app's verified bridge, never an arbitrary attachment.
-  const name = current?.name === legacyName ? legacyName : hashedName;
+  // Accept only this app's planned name on its verified bridge, never an arbitrary attachment.
   if (current && (current.type !== 'nic' || current.network !== bridgeName || current.name !== name)) {
     throw new Error('Caddy app NIC does not match its installed network');
   }

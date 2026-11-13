@@ -27,7 +27,7 @@ and must never be derived from each other.
    only in browser/request memory.
 5. Control Panel registers using `verifiedSetupSession`, even when the key is
    already registered or cached, then signs the exact name/IP claim using that
-   same session. It stores a protected schema-v2 provisioning record before the
+   same session. It stores a protected provisioning record (`lifecycle.json`) before the
    certificate request. The TLS key and CSR remain local in mode-`0600` state;
    retry or restart reuses the same key/CSR and idempotent certificate job.
 6. Certificate retrieval waits up to ten minutes to cover the service's DNS
@@ -102,16 +102,16 @@ cross-service replay.
 
 ## Durable state and recovery
 
-- Lifecycle schema v2 stores the immutable service ID/origin/API/zone binding,
+- The lifecycle record (`schemaVersion: 1`) stores the immutable service ID/origin/API/zone binding,
   actual FQDN, provisioning stage, consent, certificate state, contact times,
   and redacted error/request ID.
-- Recovery bundle schema v3 stores the same service binding plus the protected
+- The recovery bundle (`schemaVersion: 1`) stores the same service binding plus the protected
   installation identity, TLS key/certificate, certificate metadata, and
   consent. It is a credential and retains the existing regular-file,
   no-symlink, size, ownership, mode-`0600`, no-overwrite, and explicit-stdout
   safeguards.
-- This pre-release cutover intentionally has no `.youeye.me`, lifecycle-v1, or
-  bundle-v2 compatibility path. Obsolete state fails closed rather than being
+- There is no `.youeye.me` compatibility path, and lifecycle records or bundles
+  in earlier formats are refused. Obsolete state fails closed rather than being
   silently reinterpreted as `ui.bingo` authority.
 
 ## Health presentation

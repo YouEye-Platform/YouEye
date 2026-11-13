@@ -19,8 +19,7 @@ var configCmd = &cobra.Command{
 Configuration is loaded from multiple sources with the following precedence:
   1. CLI flags (highest priority)
   2. Environment variables (SPINE_*)
-  3. Config file (/var/lib/youeye/config/config.yaml, /etc/youeye/config.yaml,
-     or the legacy /etc/spine/config.yaml)
+  3. Config file (/var/lib/youeye/config/config.yaml or /etc/youeye/config.yaml)
   4. Default values (lowest priority)
 
 Examples:
@@ -186,9 +185,8 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 		fmt.Println("  1. Path specified with --config flag")
 		fmt.Println("  2. /var/lib/youeye/config/config.yaml")
 		fmt.Println("  3. /etc/youeye/config.yaml")
-		fmt.Println("  4. /etc/spine/config.yaml (legacy)")
-		fmt.Println("  5. ~/.youeye/config.yaml or ~/.spine/config.yaml")
-		fmt.Println("  6. ./config.yaml")
+		fmt.Println("  4. ~/.youeye/config.yaml")
+		fmt.Println("  5. ./config.yaml")
 		fmt.Println("\nTo create a configuration file, run: spine config init")
 		return nil
 	}

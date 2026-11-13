@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AI_SECTIONS, isAISectionActive } from "../src/components/settings-shell/ai-navigation";
 
-test("AI navigation selects defaults, details and retained route aliases", () => {
+test("AI navigation selects defaults, details and Pointer's own sub-pages", () => {
   for (const [path, expected] of [
     ["/settings/ai", "/models"],
     ["/settings/ai/models/example", "/models"],
@@ -11,11 +11,8 @@ test("AI navigation selects defaults, details and retained route aliases", () =>
     ["/settings/ai/keys/example", "/instances"],
     ["/settings/ai/instances/example", "/instances"],
     ["/settings/ai/connections/example", "/providers"],
-    ["/settings/ai/playground", "/test-model"],
-    ["/settings/ai/compare", "/test-model"],
-    ["/settings/ai/chat", "/test-model"],
-    ["/settings/ai/usage", "/dashboard"],
-    ["/settings/ai/diagnostics", "/dashboard"],
+    ["/settings/ai/test-model", "/test-model"],
+    ["/settings/ai/dashboard", "/dashboard"],
   ]) assert.equal(isAISectionActive(path, expected), true, path);
 });
 

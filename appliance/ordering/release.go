@@ -9,8 +9,8 @@ import (
 
 // ReleaseVersion is the public release identity, separate from source/channel
 // authority. CompareVersion must only be used after the caller selects a source.
-// Legacy image identities remain readable by ParseVersion; new producers use
-// ParseReleaseVersion and never encode channel identity as numeric depth.
+// ParseVersion orders any dotted version (3-10 components); release producers
+// use ParseReleaseVersion and never encode channel identity as numeric depth.
 type ReleaseVersion struct {
 	Core    [3]uint64
 	Token   string

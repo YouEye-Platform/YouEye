@@ -53,7 +53,7 @@ export async function createPIN(
     // Same-input retries reuse the original keypair after a lost response.
     const key = await deriveKey(pin, base64ToUint8(existing.salt), existing.iterations);
     if (await hashKey(key) !== existing.keyHash) throw new Error("An encryption secret already exists. Unlock or change it instead.");
-    await ensureUsableKeyPair(userId, existing, key, tx);
+    await verifyKeyPair(existing, key);
     return startPINSession(userId, key, tx);
   }
 
@@ -109,21 +109,15 @@ export async function verifyPIN(
   // Compare hashes
   if (computedHash !== keyRow.keyHash) return null;
 
-  await ensureUsableKeyPair(userId, keyRow, key, tx);
+  await verifyKeyPair(keyRow, key);
 
   // PIN correct — create session
   return startPINSession(userId, key, tx);
   });
 }
 
-/** Upgrade a legacy symmetric-only key, but never replace partial/corrupt RSA identity. */
-async function ensureUsableKeyPair(userId: string, row: typeof userEncryptionKeys.$inferSelect, key: CryptoKey, tx: TimelineTransaction) {
-  if (!row.publicKey && !row.encryptedPrivateKey && !row.privateKeyNonce) {
-    const { publicKey, privateKey } = await generateKeyPair();
-    const wrapped = await encryptPrivateKey(privateKey, key);
-    await tx.update(userEncryptionKeys).set({ publicKey: await exportPublicKey(publicKey), ...wrapped, updatedAt: new Date() }).where(eq(userEncryptionKeys.userId, userId));
-    return;
-  }
+/** Verify the RSA identity; never replace partial/corrupt key material. */
+async function verifyKeyPair(row: typeof userEncryptionKeys.$inferSelect, key: CryptoKey) {
   if (!row.publicKey || !row.encryptedPrivateKey || !row.privateKeyNonce) throw new Error("Encryption key material is incomplete; existing identity was preserved");
   const { importPublicKey, hybridEncrypt, hybridDecrypt } = await import("./encryption");
   const publicKey = await importPublicKey(row.publicKey);
@@ -301,9 +295,7 @@ export async function changePIN(userId: string, currentPin: string, newPin: stri
     if (!keyRow) return false;
     const currentKey = await deriveKey(currentPin, base64ToUint8(keyRow.salt), keyRow.iterations);
     if (await hashKey(currentKey) !== keyRow.keyHash) return false;
-    await ensureUsableKeyPair(userId, keyRow, currentKey, tx);
-    // Re-read after a possible legacy keypair upgrade so the new secret wraps it too.
-    const [usableKey] = await tx.select().from(userEncryptionKeys).where(eq(userEncryptionKeys.userId, userId));
+    await verifyKeyPair(keyRow, currentKey);
     const { timelineEntries } = await import("@/db/schema");
     const { decrypt, encrypt } = await import("./encryption");
     const newSalt = generateSalt();
@@ -320,8 +312,8 @@ export async function changePIN(userId: string, currentPin: string, newPin: stri
     const updateSet: Partial<typeof userEncryptionKeys.$inferInsert> = {
       salt: uint8ToBase64(newSalt), keyHash: newHash, iterations: 600000, updatedAt: new Date(),
     };
-    if (usableKey.encryptedPrivateKey && usableKey.privateKeyNonce) {
-      const privateKey = await decryptPrivateKey(usableKey.encryptedPrivateKey, usableKey.privateKeyNonce, currentKey);
+    if (keyRow.encryptedPrivateKey && keyRow.privateKeyNonce) {
+      const privateKey = await decryptPrivateKey(keyRow.encryptedPrivateKey, keyRow.privateKeyNonce, currentKey);
       const wrapped = await encryptPrivateKey(privateKey, newKey);
       updateSet.encryptedPrivateKey = wrapped.encryptedPrivateKey;
       updateSet.privateKeyNonce = wrapped.privateKeyNonce;

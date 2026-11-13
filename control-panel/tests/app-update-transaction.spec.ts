@@ -55,7 +55,7 @@ const newSet: SetState = {
   },
   metadata: { install: { version: 'v2', secret: 'fixture-private-value' }, manifest: 'v2', gateVersion: 'v2' },
 };
-const foreignState = { volume: { 'other/file': 'untouched' }, database: { schema: ['legacy'], rows: [99] }, install: 'other-v7' };
+const foreignState = { volume: { 'other/file': 'untouched' }, database: { schema: ['foreign'], rows: [99] }, install: 'other-v7' };
 
 function syncDirectory(directory: string) {
   const fd = openSync(directory, 'r');

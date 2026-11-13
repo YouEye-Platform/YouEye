@@ -24,14 +24,14 @@ const officialCatalog = {
   manifestIntegration: 'basic' as const,
 };
 
-test('recorded source identities prefer install metadata and fall back across legacy state', () => {
+test('recorded source identities prefer install metadata and fall back across installed-apps state', () => {
   assert.deepEqual(recordedCatalogSourceIds(
-    { sourceId: 'legacy', catalogKey: 'third:app:searxng' },
+    { sourceId: 'recorded', catalogKey: 'third:app:searxng' },
     { sourceId: 'official', catalogKey: 'official:app:searxng' },
-  ), ['official', 'legacy', 'third']);
+  ), ['official', 'recorded', 'third']);
 });
 
-test('legacy SearXNG state stays on its recorded external Market source', () => {
+test('SearXNG with an installed branch stays on its recorded external Market source', () => {
   const decision = classifyAppUpdateRouting({
     appId: 'searxng',
     installed: {
@@ -100,7 +100,7 @@ test('a recorded release repository never turns a catalog app into a channel app
 
 test('installedBranch alone never selects native release resolution', () => {
   const decision = classifyAppUpdateRouting({
-    appId: 'legacy-external',
+    appId: 'external-app',
     installed: { installedBranch: 'main' },
     installMetadata: {},
     catalog: null,

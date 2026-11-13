@@ -210,7 +210,7 @@ func TestDatasetMountpointNeedsSet(t *testing.T) {
 	if datasetMountpointNeedsSet("/var/lib/incus", "/var/lib/incus") {
 		t.Fatal("matching mountpoint should not be reset")
 	}
-	if !datasetMountpointNeedsSet("/legacy/incus", "/var/lib/incus") {
+	if !datasetMountpointNeedsSet("/elsewhere/incus", "/var/lib/incus") {
 		t.Fatal("different mountpoint should be reset")
 	}
 	if datasetMountpointNeedsSet(" /var/lib/youeye ", "/var/lib/youeye") {
@@ -218,12 +218,12 @@ func TestDatasetMountpointNeedsSet(t *testing.T) {
 	}
 }
 
-func TestResolveDecisionLegacyPool(t *testing.T) {
+func TestResolveDecisionRefusesUnmarkedPool(t *testing.T) {
 	dec := ResolveDecision(DecisionInputs{
-		Policy:             appliancePolicy(),
-		LegacyPoolImported: true,
+		Policy:               appliancePolicy(),
+		UnmarkedPoolImported: true,
 	})
-	if dec.Kind != DecisionReuseLegacyPool || dec.DataOnZFS {
+	if dec.Kind != DecisionFail || dec.DataOnZFS {
 		t.Fatalf("got %+v", dec)
 	}
 }

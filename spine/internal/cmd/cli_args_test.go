@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 )
 
@@ -52,5 +53,48 @@ func TestRequireCPFailsWithExitCode(t *testing.T) {
 	var exit *ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 || exit.Error() != "" {
 		t.Fatalf("requireCP without a token: %#v", err)
+	}
+}
+
+func TestInstallAccessFieldsOnlyWhenFlagGiven(t *testing.T) {
+	cmd := &cobra.Command{}
+	var public bool
+	cmd.Flags().BoolVar(&public, "public-access", false, "")
+	appInstallPublic = false
+	if body := installAccessFields(cmd, map[string]interface{}{"appId": "razzia"}); body["publicAccess"] != nil {
+		t.Fatalf("no flag must leave the manifest default: %v", body)
+	}
+	if err := cmd.Flags().Set("public-access", "false"); err != nil {
+		t.Fatal(err)
+	}
+	appInstallPublic = public
+	if body := installAccessFields(cmd, map[string]interface{}{"appId": "razzia"}); body["publicAccess"] != false {
+		t.Fatalf("--public-access=false must be sent: %v", body)
+	}
+	if err := cmd.Flags().Set("public-access", "true"); err != nil {
+		t.Fatal(err)
+	}
+	appInstallPublic = public
+	if body := installAccessFields(cmd, map[string]interface{}{"appId": "razzia"}); body["publicAccess"] != true {
+		t.Fatalf("--public-access must be sent: %v", body)
+	}
+}
+
+func TestAppCredentialsPathAndEntries(t *testing.T) {
+	if got := appCredentialsPath("razzia"); got != "/api/market/credentials?app=razzia" {
+		t.Fatalf("path = %q", got)
+	}
+	if got := appCredentialsPath("a b&c"); got != "/api/market/credentials?app=a+b%26c" {
+		t.Fatalf("escaped path = %q", got)
+	}
+	entries := appCredentialEntries(map[string]interface{}{"credentials": []interface{}{
+		map[string]interface{}{"label": "Admin", "username": "admin", "password": "fixture"},
+		"not an object",
+	}})
+	if len(entries) != 1 || entries[0] != (appCredentialEntry{"Admin", "admin", "fixture"}) {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if len(appCredentialEntries(map[string]interface{}{"credentials": []interface{}{}})) != 0 {
+		t.Fatal("an empty list must give no entries")
 	}
 }

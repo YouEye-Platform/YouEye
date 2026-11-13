@@ -21,8 +21,7 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.match(normalizer, /SURFACE_KINDS/);
   assert.match(normalizer, /settings-panel/);
   assert.match(normalizer, /"notification"/);
-  assert.doesNotMatch(normalizer, /legacyWidgetToSurface|legacyInfoCardToSurface|legacyTimelineEmbedToSurface/);
-  assert.doesNotMatch(normalizer, /capabilities\.notifications|legacySource|launcher/);
+  assert.doesNotMatch(normalizer, /[Ll]egacy|capabilities\.notifications|launcher/);
 
   assert.match(appManagement, /getAppSurfaceDeclarations/);
   assert.match(appManagement, /normalizeAppSurfaces/);
@@ -40,7 +39,7 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.match(surfacesRoute, /resolveServiceAuth/);
   assert.match(surfacesRoute, /app_url: publicAppUrl/);
   assert.match(surfacesRoute, /icon: d\.icon/);
-  assert.doesNotMatch(surfacesRoute, /legacy_source|legacySource/);
+  assert.doesNotMatch(surfacesRoute, /[Ll]egacy/);
   assert.equal(exists("src/app/api/v1/apps/widgets/route.ts"), false);
   assert.equal(exists("src/app/api/v1/apps/info-cards/route.ts"), false);
   assert.equal(exists("src/app/api/v1/widgets/app-data/route.ts"), false);
@@ -63,7 +62,7 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.match(notificationsList, /NotificationItem/);
 });
 
-test("normalizer source rejects launcher and legacy-only projections", () => {
+test("normalizer source rejects launcher and pre-surface projections", () => {
   const normalizer = read("src/lib/surfaces/normalize.ts");
   assert.match(normalizer, /SURFACE_KINDS\.has\(kind\)/);
   assert.match(normalizer, /SURFACE_PLACEMENTS\.has\(placement\)/);

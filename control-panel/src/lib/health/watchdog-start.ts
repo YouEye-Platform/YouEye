@@ -11,7 +11,7 @@ export async function startWatchdogContainer(name: string): Promise<boolean> {
   return withContainerLifecycle(name, async () => {
     if (isContainerMaintenanceActive(name)) return false;
     const owners = (await listInstalledApps()).filter(app => app.containers.some(c =>
-      (typeof c === 'string' ? c : c.containerName) === name));
+      (c.containerName) === name));
     if (owners.length > 1 || (name.startsWith('app-') && owners.length !== 1)) return false;
     for (const app of owners) {
       if (app.enabled === false || app.desiredState === 'stopped'

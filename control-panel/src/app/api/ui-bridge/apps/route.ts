@@ -216,13 +216,13 @@ export async function GET(request: NextRequest) {
     const filteredMarket = installed
       .filter((meta) => {
         const names = meta.containers.map((c: any) =>
-          typeof c === 'string' ? c : c.containerName
+          c.containerName
         );
         return !names.some((n: string) => definedContainers.has(n));
       });
 
     const marketContainerNames = filteredMarket.flatMap((meta) =>
-      meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+      meta.containers.map((c: any) => c.containerName)
     );
     const marketStateResults = await Promise.allSettled(
       marketContainerNames.map(async (name) => {
@@ -263,7 +263,7 @@ export async function GET(request: NextRequest) {
         ? manifestResults[i].value
         : null;
       const containers = meta.containers.map((c: any) => {
-        const name = typeof c === 'string' ? c : c.containerName;
+        const name = c.containerName;
         const state = containerStateMap.get(name);
         return { name, status: state?.status ?? 'not-found', ip: state?.ip };
       });

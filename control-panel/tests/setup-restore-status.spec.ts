@@ -23,7 +23,7 @@ test('resume requires the exact inactive operation and complete bound selection'
     { operationId: 'foreign' }, { active: true }, { recovery: 'operator-required' as const },
     { recovery: undefined }, { appIds: ['notes', 'notes'] }, { appIds: ['../other'] }, { backupId: 'other' },
   ]) assert.equal(recoverableRestoreSelection({ ...receipt, ...change }, 'original'), null);
-  assert.equal(recoverableRestoreSelection({ status: 'failed', message: 'legacy' }, 'original'), null);
+  assert.equal(recoverableRestoreSelection({ status: 'failed', message: 'no receipt fields' }, 'original'), null);
   assert.equal(recoverableRestoreSelection({ ...receipt, recovery: 'finalize' }, 'original')?.mediaId, 'original-drive');
 });
 

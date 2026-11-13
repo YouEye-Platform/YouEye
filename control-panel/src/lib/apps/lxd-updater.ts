@@ -7,7 +7,7 @@
  *
  * NOTE: Market-installed native apps go through market/updater.ts which
  * provides migration support, variable context, and DB version tracking.
- * This file handles infrastructure LXD apps (UI) and legacy definitions.
+ * This file handles infrastructure LXD apps (UI) and the other AppDefinition entries.
  *
  * Includes apt upgrade to keep base OS current inside LXD containers.
  */

@@ -322,8 +322,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
       next.set(status.component, status);
     }
     setStatuses((prev) => {
-      // Market SSE owns its progress while the request is active. The legacy
-      // status endpoint must not erase it or replay an older completed update.
+      // Market SSE owns its progress while the request is active. The status
+      // endpoint must not erase it or replay an older completed update.
       for (const [component, status] of prev) {
         if (activeRequests.current.has(component)) next.set(component, status);
       }

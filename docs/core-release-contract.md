@@ -82,7 +82,7 @@ from CP/UI member selection; the installed appliance manifest must equal the
 `appliance` member artifact digest. The CP container receives only
 `/var/lib/youeye-state/core-selection/core-release.json`.
 
-New media carries a `core-selection-required` capability marker. Interactive,
+Every image and installer ISO carries a `core-selection-required` marker. Interactive,
 seeded and answer-file installs freeze the complete selection before disk
 writes, by digest. The selected release must contain the exact image manifest
 and baked Spine; image version alone is not sufficient.

@@ -284,7 +284,7 @@ func readApplianceConsoleSnapshot() applianceConsoleSnapshot {
 			"local_root_console_active", "local_root_console_effective",
 			"root_password_ssh_requested", "root_password_ssh_effective",
 			"network_scope", "detail",
-		) || status.Schema != "youeye.development-access-status.v2" ||
+		) || status.Schema != "youeye.development-access-status.v1" ||
 			status.LocalRootConsoleRequested == nil || status.LocalRootConsolePersisted == nil ||
 			status.LocalRootConsoleActive == nil || status.LocalRootConsoleEffective == nil ||
 			status.RootPasswordSSHRequested == nil || status.RootPasswordSSHEffective == nil ||

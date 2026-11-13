@@ -44,7 +44,6 @@
     "people": "Usuarios",
     "backup": "Copia de seguridad",
     "settings": "Configuración",
-    "appsLegacy": "Apps (antiguas)",
     "controlPanel": "Panel de control",
     "youeye": "YouEye",
     "market": "Market"
@@ -722,12 +721,6 @@
     "notInstalled": "No instalado",
     "notFound": "No encontrado",
     "unknown": "Desconocido"
-  },
-  "appsLegacy": {
-    "title": "Apps (antiguas)",
-    "description": "Vista de apps antigua. Usa la nueva página de Apps.",
-    "manage": "Gestionar",
-    "notDeployedHint": "No desplegado. Ejecuta spine deploy."
   },
   "proxyStatus": {
     "start": "Iniciar",
@@ -2513,7 +2506,11 @@
     "m709433447a43": "Desactivando el inicio de sesión con YouEye ID para {app}…",
     "m3bf590b2bb82": "Las personas inician sesión en {app} con su YouEye ID.",
     "m2f5875924e6c": "{app} usa sus propias cuentas. Actívalo para que las personas inicien sesión con su YouEye ID.",
-    "m70843fac04a3": "Inicio de sesión con YouEye ID para {app}"
+    "m70843fac04a3": "Inicio de sesión con YouEye ID para {app}",
+    "m03e7db61b2e1": "Acceso público",
+    "m7abb883ab0c4": "{name} tiene su propia protección, como una contraseña o un PIN de juego. Con el acceso público activado, cualquiera que llegue a su dirección puede abrirla sin una cuenta de {site}.",
+    "ma05ac86e60af": "Abierta a cualquiera que llegue a la dirección",
+    "m9fe9ebe58220": "Desactívalo para limitar la app a las personas a las que des acceso. Puedes cambiarlo después en los ajustes de acceso de la app."
   },
   "settingsNavigation": {
     "profile": "Perfil",

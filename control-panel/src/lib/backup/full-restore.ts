@@ -592,7 +592,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     await runStep('remove-current-apps', 'never', async () => {
       emit('remove-current-apps', 'Preparing applications for the selected server restore...');
       for (const app of retainedApps) {
-        const names = app.containers.map(container => typeof container === 'string' ? container : container.containerName);
+        const names = app.containers.map(container => container.containerName);
         retainedLeases.push(beginContainerMaintenance(names, { operation: `core-restore:${app.appId}` }));
         preparedRetainedApps.push(app);
         app.serviceCredentialDesiredState ??= app.desiredState ?? 'running';
@@ -826,7 +826,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       try {
         try { await saveInstallMetadata(app); } finally {
           await quiesceAppCredentialRuntime(app.containers.map(container =>
-            typeof container === 'string' ? container : container.containerName));
+            container.containerName));
         }
         if ((await appServiceCredentials.projection(app.appId))?.status === 'active') {
           await markCredentialReady(app.appId, false);

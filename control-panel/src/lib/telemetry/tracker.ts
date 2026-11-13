@@ -58,8 +58,7 @@ class CpUsageTracker {
         const raw = readFileSync(DATA_FILE, "utf-8");
         const parsed = JSON.parse(raw) as CpTelemetryReport;
         if (parsed.routes) {
-          // Legacy trackers wrote enabled:true by default, so only a dedicated
-          // opt-in marker preserves collection after the security patch.
+          // Collection stays enabled only with a dedicated opt-in marker.
           parsed.enabled =
             parsed.enabled === true &&
             typeof parsed.explicit_opt_in_at === "string" &&

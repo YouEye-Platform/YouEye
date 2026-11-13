@@ -58,7 +58,7 @@ export async function ensureSchema(freshOnly = false) {
     });
   }
   await schemaInitInFlight;
-  // A normal caller may have joined a fresh-only probe that skipped a legacy
+  // A normal caller may have joined a fresh-only probe that skipped an unmanaged
   // or update marker. It still owes its ordinary explicit initialization.
   if (!schemaReady && !freshOnly) await ensureSchema();
 }
@@ -270,16 +270,6 @@ async function initSchema() {
     await queryClient`
       CREATE INDEX IF NOT EXISTS idx_timeline_user_collection
         ON timeline_entries(user_id, collection)`;
-
-    await queryClient`
-      CREATE TABLE IF NOT EXISTS pending_timeline_events (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        collection TEXT NOT NULL DEFAULT 'history',
-        app_id TEXT NOT NULL,
-        payload JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-      )`;
 
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_encryption_keys (

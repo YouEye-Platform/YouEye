@@ -24,7 +24,6 @@ export const APP_NETWORK_POOL_CANDIDATES = [
 ] as const;
 export const DEFAULT_APP_NETWORK_PREFIX = 27;
 export const DEFAULT_APP_NETWORK_STATE_PATH = '/var/lib/youeye/networks/ipam.json';
-export const LEGACY_APP_NETWORK_MIGRATION_SOURCE = 'subnets.json/v1';
 
 export type AppNetworkLeaseState = 'reserved' | 'active' | 'cleanup_pending';
 
@@ -45,8 +44,6 @@ export interface AppNetworkLease {
   requiredAddresses: number;
   createdAt: string;
   updatedAt: string;
-  /** Exact provenance for in-place imports of the retired 10.76.<N>.0/24 allocator. */
-  importedFrom?: typeof LEGACY_APP_NETWORK_MIGRATION_SOURCE;
   failure?: {
     stage: string;
     message: string;
@@ -340,19 +337,8 @@ function validateLease(value: unknown, index: number, allocationPrefix: number, 
   }
   assertString(value.cidr, `${label}.cidr`);
   const cidr = parseCIDR(value.cidr);
-  const importedFrom = value.importedFrom;
-  if (importedFrom === undefined) {
-    if (cidr.prefix !== allocationPrefix) {
-      throw new AppNetworkStateError(`${label}.cidr must use /${allocationPrefix}`);
-    }
-  } else {
-    if (importedFrom !== LEGACY_APP_NETWORK_MIGRATION_SOURCE) {
-      throw new AppNetworkStateError(`${label}.importedFrom is invalid`);
-    }
-    const expectedCIDR = `10.76.${value.bridgeId}.0/24`;
-    if (value.bridgeId > 254 || cidr.cidr !== expectedCIDR) {
-      throw new AppNetworkStateError(`${label} is not an exact legacy /24 lease`);
-    }
+  if (cidr.prefix !== allocationPrefix) {
+    throw new AppNetworkStateError(`${label}.cidr must use /${allocationPrefix}`);
   }
   if (!pools.some((pool) => cidrContains(pool, cidr.cidr))) {
     throw new AppNetworkStateError(`${label}.cidr is not contained in a configured pool`);
@@ -372,14 +358,6 @@ function validateLease(value: unknown, index: number, allocationPrefix: number, 
   }
   assertString(value.createdAt, `${label}.createdAt`);
   assertString(value.updatedAt, `${label}.updatedAt`);
-  if (importedFrom === LEGACY_APP_NETWORK_MIGRATION_SOURCE) {
-    if (value.gateway !== `10.76.${value.bridgeId}.1`
-      || value.state !== 'active'
-      || value.operationId !== `legacy-subnets-v1:${value.appId}:${value.bridgeId}`
-      || value.failure !== undefined) {
-      throw new AppNetworkStateError(`${label} legacy provenance does not match its immutable lease`);
-    }
-  }
   return {
     appId: value.appId,
     bridgeId: value.bridgeId,
@@ -391,31 +369,8 @@ function validateLease(value: unknown, index: number, allocationPrefix: number, 
     requiredAddresses: value.requiredAddresses,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
-    importedFrom,
     failure: validateFailure(value.failure, `${label}.failure`),
   };
-}
-
-export function createLegacyImportedLease(input: {
-  appId: string;
-  bridgeId: number;
-  requiredAddresses: number;
-  now?: string;
-}): AppNetworkLease {
-  const now = input.now ?? new Date().toISOString();
-  return validateLease({
-    appId: input.appId,
-    bridgeId: input.bridgeId,
-    bridgeName: `yeapp${input.bridgeId}`,
-    cidr: `10.76.${input.bridgeId}.0/24`,
-    gateway: `10.76.${input.bridgeId}.1`,
-    state: 'active',
-    operationId: `legacy-subnets-v1:${input.appId}:${input.bridgeId}`,
-    requiredAddresses: input.requiredAddresses,
-    createdAt: now,
-    updatedAt: now,
-    importedFrom: LEGACY_APP_NETWORK_MIGRATION_SOURCE,
-  }, 0, DEFAULT_APP_NETWORK_PREFIX, [...DEFAULT_APP_NETWORK_POOLS]);
 }
 
 export function validateIpamState(value: unknown): AppNetworkIpamState {

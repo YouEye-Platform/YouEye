@@ -306,18 +306,16 @@ func TestManifestStrictDigestCompatibilityAndOrdering(t *testing.T) {
 	}
 }
 
-func TestDiscoverEnforcesExactManifestDigest(t *testing.T) {
+func TestStageEnforcesExactManifestDigest(t *testing.T) {
 	fixture := newManagerFixture(t)
 	options := fixture.sourceOptions()
 	options.ExpectedManifestSHA256 = strings.Repeat("0", 64)
-	if _, err := fixture.manager.Discover(context.Background(), options); err == nil || !strings.Contains(err.Error(), "manifest digest mismatch") {
+	if _, err := fixture.manager.Stage(context.Background(), options); err == nil || !strings.Contains(err.Error(), "manifest digest mismatch") {
 		t.Fatalf("digest mismatch result = %v", err)
 	}
 	options.ExpectedManifestSHA256 = ""
-	for name, run := range map[string]func(context.Context, SourceOptions) (Status, error){"discover": fixture.manager.Discover, "stage": fixture.manager.Stage} {
-		if _, err := run(context.Background(), options); err == nil || !strings.Contains(err.Error(), "exact manifest SHA-256") {
-			t.Fatalf("%s accepted a host update without core release or digest: %v", name, err)
-		}
+	if _, err := fixture.manager.Stage(context.Background(), options); err == nil || !strings.Contains(err.Error(), "exact manifest SHA-256") {
+		t.Fatalf("stage accepted a host update without core release or digest: %v", err)
 	}
 	if len(fixture.writes) != 0 {
 		t.Fatal("unbound request wrote a slot")
@@ -468,11 +466,7 @@ func TestVerifyESPMountUsesDeepestSystemdAutomountSource(t *testing.T) {
 
 func TestStageWritesOnlyInactiveThenActivationArmsCountedTrial(t *testing.T) {
 	f := newManagerFixture(t)
-	status, err := f.manager.Discover(context.Background(), f.sourceOptions())
-	if err != nil || status.State != PhaseAvailable {
-		t.Fatalf("discover status=%+v err=%v", status, err)
-	}
-	status, err = f.manager.Stage(context.Background(), f.sourceOptions())
+	status, err := f.manager.Stage(context.Background(), f.sourceOptions())
 	if err != nil || status.State != PhaseStaged || status.CandidateSlot != "B" {
 		t.Fatalf("stage status=%+v err=%v", status, err)
 	}
@@ -669,32 +663,16 @@ func TestCandidateBlessingAndAutomaticFallbackState(t *testing.T) {
 	})
 }
 
-func TestDiscoverInstalledReleaseIsNoOpAndStageStillRejectsReplay(t *testing.T) {
+func TestStageRejectsReplayOfInstalledRelease(t *testing.T) {
 	fixture := newManagerFixture(t)
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
 	fixture.update.SourceTree = baselineCommit
 	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
 	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
-	status, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.State != PhaseHealthy || status.TransactionID != "" || len(fixture.writes) != 0 || fixture.bootInstalls != 0 {
-		t.Fatalf("discovery mutated installed release: %+v", status)
-	}
-	if _, err := os.Stat(fixture.manager.config.JournalPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("discovery created a journal: %v", err)
-	}
 	if _, err := fixture.manager.Stage(context.Background(), fixture.sourceOptions()); err == nil {
 		t.Fatal("stage accepted a replay")
 	}
-}
-
-func TestDiscoverRejectsSameVersionDifferentSignedIdentity(t *testing.T) {
-	fixture := newManagerFixture(t)
-	fixture.update.TargetImageVersion = "0.6.0-dev.26"
-	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
-	if _, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions()); err == nil || !strings.Contains(err.Error(), "installed identity") {
-		t.Fatalf("same-version replacement result: %v", err)
+	if len(fixture.writes) != 0 || fixture.bootInstalls != 0 {
+		t.Fatalf("replay mutated the inactive System: writes=%v installs=%d", fixture.writes, fixture.bootInstalls)
 	}
 }

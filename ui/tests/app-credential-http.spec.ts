@@ -18,7 +18,7 @@ test('production HTTP routes deny invalid machine authority even with an adminis
     process.env.DATABASE_URL = databaseUrl;
     const { db, ensureSchema } = await import('../src/db');
     t.after(() => db.$client.end());
-    const { apps, users, userSettings, pendingTimelineEvents, appServiceCredentials } = await import('../src/db/schema');
+    const { apps, users, userSettings, appServiceCredentials } = await import('../src/db/schema');
     const { eq, sql } = await import('drizzle-orm');
     const { registerApp } = await import('../src/lib/db/queries/app-management');
     const { publishAppServiceCredential, markAppCredentialReady } =
@@ -179,14 +179,11 @@ test('production HTTP routes deny invalid machine authority even with an adminis
       ...browser, ...service, 'x-youeye-app': 'http-expired', authorization: `Bearer ${expiredSecret}`,
     }, 401);
     await call('/api/v1/timeline', service, 403, { entry_type: 'fixture', title: 'Permission denied' });
-    assert.equal((await db.select().from(pendingTimelineEvents)).length, 0);
     await grantPermission(userId, appId, 'timeline:write');
     await call('/api/v1/timeline', service, 400,
       { app_id: 'system', entry_type: 'fixture', title: 'Cannot impersonate system' });
-    await call('/api/v1/timeline', service, 202, { entry_type: 'fixture', title: 'Scoped event' });
-    const [queued] = await db.select().from(pendingTimelineEvents);
-    assert.equal(queued.appId, appId);
-    assert.equal(queued.userId, userId);
+    // Without the user's timeline key the event is refused, never queued as plaintext.
+    await call('/api/v1/timeline', service, 409, { entry_type: 'fixture', title: 'Scoped event' });
     await db.update(apps).set({ enabled: false }).where(eq(apps.id, appId));
     await call(settingsPath, { ...service, ...browser }, 401);
     await db.update(apps).set({ enabled: true }).where(eq(apps.id, appId));

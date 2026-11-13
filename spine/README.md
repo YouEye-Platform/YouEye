@@ -94,22 +94,7 @@ GOOS=linux GOARCH=arm64 go build -ldflags "..." -o youeye-linux-arm64 ./cmd/youe
 
 ## Systemd Service
 
-Spine runs as `spine.service`:
-
-```ini
-[Unit]
-Description=YouEye Spine - System Management Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/spine api serve
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Spine runs as `youeye.service` (`/usr/local/bin/youeye api serve`, `Restart=always`).
 
 ## License
 

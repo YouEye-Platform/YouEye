@@ -64,7 +64,7 @@ jq -e '.operation == "factory-reset" and .stage == "complete"' "$tmp/request/las
 cat > "$tmp/bin/apply-development-access" <<'EOF'
 #!/bin/sh
 printf '%s\n' apply-development-access >> "${TEST_CALLS:?}"
-printf '%s\n' '{"schema":"youeye.development-access-status.v2","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}' > "${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:?}"
+printf '%s\n' '{"schema":"youeye.development-access-status.v1","local_root_console_requested":false,"local_root_console_persisted":false,"local_root_console_active":false,"local_root_console_effective":false,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"Secure defaults active"}' > "${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:?}"
 EOF
 chmod 0755 "$tmp/bin/apply-development-access"
 mkdir -p "$tmp/first"
@@ -74,7 +74,7 @@ YOUEYE_RECOVERY_FIRST_DEPLOY="$tmp/first" YOUEYE_RECOVERY_YOUEYE="$tmp/bin/youey
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY="$tmp/bin/apply-development-access" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY="$tmp/development-access.json" \
 YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS="$tmp/development-access-status.json" "$script"
-jq -e '.schema == "youeye.development-access-status.v2" and
+jq -e '.schema == "youeye.development-access-status.v1" and
        (.local_root_console_requested | not) and (.local_root_console_effective | not) and
        (.root_password_ssh_requested | not) and (.root_password_ssh_effective | not)' \
     "$tmp/development-access-status.json" >/dev/null

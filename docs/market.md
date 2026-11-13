@@ -57,7 +57,14 @@ Three entry points, all admin-only and CSRF-checked, all streaming progress as s
   `selectedIntegrations`, `aiSettings`, `allowInternet`, `adoptRetainedData`. The CP fills in the default source and
   the subdomain (the manifest's `subdomain:`, else the id). The domain is always the box's own; a client value is
   ignored. Installs are refused while Health has a critical issue.
-- **`youeye app install <id>`** sends only `{ appId }` to the same endpoint.
+- **`youeye app install <id> [--public-access[=false]]`** sends `{ appId }` (plus `publicAccess` when the flag is
+  given) to the same endpoint.
+- **`youeye app credentials <id>`** reads `GET /api/market/credentials?app=<id>` (administrators only) and prints
+  each default account the manifest declares.
+- **What `youeye app remove <id>` leaves behind on purpose:** the app's revoked gateway credential in
+  `state/app-service-credentials/<id>/` (no secret; it keeps the revision the UI expects, so a reinstall continues
+  from it) and the operation record in `networks/operations/<id>.json` (pruned by the reconciler 24 hours after
+  the operation ends).
 - **`youeye app install --url <https-url> --i-trust-this-publisher [--allow-setup]`** calls
   `POST /api/market/install-url`. The manifest and its setup files are fetched from a public HTTPS server only (rules
   in [app-manifest.md](app-manifest.md)). Without `--i-trust-this-publisher` the CLI refuses; an app with setup files
@@ -85,7 +92,8 @@ on, a failure rolls the install back (`rollbackInstall`).
    `sso.callback` and `sso.extra_callbacks`, scopes `openid profile email groups` (plus the `role_claim` name).
 9. **Containers.** Sidecars first, `main` last, because main's health check usually needs its sidecars. Each
    instance is created with the tags `user.youeye.app_id` and `user.youeye.installation_id`, gets its env and
-   `files:`, starts, and must pass its health check. Container names are `app-<id>` or `app-<id>-<container>`.
+   `files:`, starts, and must pass its health check (an HTTP GET answering 2xx, 3xx, 401 or 403 within the
+   manifest's timeout; `market/health.ts`). Container names are `app-<id>` or `app-<id>-<container>`.
 10. **Network wiring.** Incus proxy devices let the app reach the system services it needs: the UI gateway, and
     PostgreSQL, YouEye ID or Pointer inference when it uses them. Caddy joins the app bridge.
 11. **Setup files.** The OCI containers of an SSO app get the box's Caddy root CA. Then `setup/install.yaml` runs,
@@ -98,7 +106,7 @@ on, a failure rolls the install back (`rollbackInstall`).
 14. **Suggestions** for new connections are made (see Connections).
 15. NAT is turned off unless the app has `internet: true` (or the install set `allowInternet`), the network
     lease becomes active and the install is committed.
-16. **Connections** other apps were waiting for (from a bundle) are activated and wired. This needs the new
+16. **Connections** approved earlier while this app was not installed are activated and wired. This needs the new
     app's network lease to be active; a failure is logged and does not fail or roll back the install.
 
 Only one operation per app runs at a time. Progress is also kept on disk, so a browser can reconnect with
@@ -159,7 +167,9 @@ permissions.
   containers), but uninstall stops the app's containers first, so only `remove:` steps that run in the other app
   (not in the uninstalled one, and not calling it as the peer) can still succeed.
 - **Bundles.** `POST /api/market/bundles/<id>/install` installs the missing members in the listed order, then
-  approves and wires the bundle's `connections`. It is safe to run again.
+  approves and wires the bundle's `connections`. It is safe to run again. A connection whose member is not
+  installed (its install failed) is reported as pending and not recorded; running the bundle install again
+  wires it.
 
 `${peer.api_key}` and `${self.api_key}` are each app's secret named by its `api_key:`, read from its own secret
 store. Both manifests come from the frozen installed copies.
@@ -171,10 +181,19 @@ store. Both manifests come from the frozen installed copies.
 
 - The new manifest comes from the app's recorded source: the same Market source, the URL of an Added app, or the
   native app's product release on the box's channel.
-- Only a newer version is installed. An update that needs a newer YouEye is refused and waits.
-- Containers are snapshotted, OCI images are pinned to the fetched digest, containers are stopped, rebuilt and
-  health-checked. A failure restores the snapshots.
-- Secrets, volumes and the YouEye ID client are kept. The new manifest becomes the frozen copy.
+- Only a newer `version` is installed (`src/lib/version.ts`): a new image digest under the same version is never
+  offered. An update that needs a newer YouEye is refused and waits. Checks run 45 s after the CP starts and then
+  every 6 hours; nothing is applied automatically.
+- Before the change the update takes a checkpoint: scoped metadata, a stopped runtime copy of each container,
+  Incus volume snapshots and a logical dump of the app's PostgreSQL database. OCI images are pinned to the fetched
+  digest, containers are stopped, rebuilt (env and `files:` written again) and health-checked. A failure restores
+  the checkpoint. Database migrations are the app's own, on first start.
+- Refused: a changed container set (sidecars added, removed or renamed), changed storage (a `data:` path added or
+  removed) and a changed database mode or name (`update-inventory.ts`). An update also fails when a new env value
+  needs something the install never created: a new `${secret.<name>}`, or a new `${database|sso|identity|youeye|ai}.*`
+  mapping that resolves empty (`update-configuration.ts`).
+- Setup files do not run. Secrets, volumes, the YouEye ID client and the Pointer key are kept. The new manifest
+  becomes the frozen copy.
 
 ## Start, stop and restart
 
@@ -201,7 +220,8 @@ or cleanup retries.
 
 ## When something fails
 
-- The full error chain is logged once to the CP journal (`youeye logs control`) as
+- The full error chain is logged once to the CP journal
+  (`incus exec youeye-control -- journalctl -u youeye-control`; `youeye logs control` shows the last 100 lines) as
   `[Market] Install of <id> failed: …`, with credentials, bearer tokens, app tokens and URL queries redacted.
 - The user sees only a fixed message: the image download failed (network), the image is not available, another
   operation is running, cancelled, an app-network preflight message, or a generic "Installation failed" pointing to

@@ -126,14 +126,11 @@ function removeResolvedMappings(content: string, mappings: EnvMapping[]): string
 }
 
 function primaryContainer(meta: InstallMetadata | null | undefined): ContainerMeta | undefined {
-  const containers = (meta?.containers ?? []) as Array<ContainerMeta | string>;
-  const selected = containers.length > 1
-    ? containers.find((container) => typeof container !== 'string'
-      && (container.primary || container.name === 'main' || container.name === 'server')) ?? containers[0]
+  const containers = meta?.containers ?? [];
+  return containers.length > 1
+    ? containers.find((container) =>
+      container.primary || container.name === 'main' || container.name === 'server') ?? containers[0]
     : containers[0];
-  return typeof selected === 'string'
-    ? { name: selected, containerName: selected, type: 'oci' }
-    : selected;
 }
 
 /**
@@ -371,7 +368,7 @@ export async function createBridge(params: {
  * Called when the target app is installed and its containers are running.
  *
  * For per-app bridge apps, internal_host/url uses the container IP (DNS
- * doesn't cross bridges). For legacy incusbr0 apps, uses DNS names.
+ * doesn't cross bridges). When the container IP is unknown, uses DNS names.
  */
 export async function resolveBridgeMappings(
   envMappings: EnvMapping[],

@@ -44,7 +44,6 @@
     "people": "Benutzer",
     "backup": "Sicherung",
     "settings": "Einstellungen",
-    "appsLegacy": "Apps (veraltet)",
     "controlPanel": "Systemsteuerung",
     "youeye": "YouEye",
     "market": "Market"
@@ -722,12 +721,6 @@
     "notInstalled": "Nicht installiert",
     "notFound": "Nicht gefunden",
     "unknown": "Unbekannt"
-  },
-  "appsLegacy": {
-    "title": "Apps (veraltet)",
-    "description": "Veraltete Apps-Ansicht. Nutzen Sie die neue Apps-Seite.",
-    "manage": "Verwalten",
-    "notDeployedHint": "Nicht bereitgestellt. Führen Sie spine deploy aus."
   },
   "proxyStatus": {
     "start": "Starten",
@@ -2513,7 +2506,11 @@
     "m709433447a43": "Anmeldung mit YouEye ID für {app} wird ausgeschaltet…",
     "m3bf590b2bb82": "Personen melden sich bei {app} mit ihrer YouEye ID an.",
     "m2f5875924e6c": "{app} verwendet eigene Konten. Schalte dies ein, damit sich Personen mit ihrer YouEye ID anmelden können.",
-    "m70843fac04a3": "Anmeldung mit YouEye ID für {app}"
+    "m70843fac04a3": "Anmeldung mit YouEye ID für {app}",
+    "m03e7db61b2e1": "Öffentlicher Zugang",
+    "m7abb883ab0c4": "{name} hat einen eigenen Schutz, etwa ein Passwort oder eine Spiel-PIN. Mit öffentlichem Zugang kann jeder, der die Adresse erreicht, die App ohne {site}-Konto öffnen.",
+    "ma05ac86e60af": "Für alle öffnen, die die Adresse erreichen",
+    "m9fe9ebe58220": "Ausschalten, um die App auf die Personen zu beschränken, denen du Zugriff gibst. Das lässt sich später in den Zugriffseinstellungen der App ändern."
   },
   "settingsNavigation": {
     "profile": "Profil",

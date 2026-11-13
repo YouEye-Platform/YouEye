@@ -132,7 +132,7 @@ async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState
   await resolveIssue(`app.${appId}.storage`);
 
   const maintenanceContainers = (meta.containers ?? [])
-    .map((container) => typeof container === 'string' ? container : container.containerName)
+    .map((container) => container.containerName)
     .filter((name): name is string => Boolean(name));
   if (maintenanceContainers.some((name) => isContainerMaintenanceActive(name))) {
     states.delete(appId);
@@ -355,8 +355,7 @@ async function logExcerpt(containerName: string): Promise<string> {
 
 function primaryContainer(containers: any[] | undefined, appId: string): any {
   if (!containers || containers.length === 0) return { containerName: `app-${appId}`, port: 3000 };
-  const primary = containers.find((c) => typeof c !== 'string' && c.primary) ?? containers[0];
-  if (typeof primary === 'string') return { containerName: primary, port: 3000 };
+  const primary = containers.find((c) => c.primary) ?? containers[0];
   return { ...primary, containerName: primary.containerName || primary.name || `app-${appId}` };
 }
 
@@ -368,7 +367,6 @@ function inferServiceName(primary: any, containerName: string): string | undefin
 function dependencyOrder(containers: any[] | undefined): string[] {
   if (!containers) return [];
   return containers
-    .map((c) => typeof c === 'string' ? { containerName: c, dependsOn: [] } : c)
     .sort((a, b) => Number(Boolean(a.dependsOn?.length)) - Number(Boolean(b.dependsOn?.length)))
     .map((c) => c.containerName || c.name)
     .filter(Boolean);
@@ -377,9 +375,7 @@ function dependencyOrder(containers: any[] | undefined): string[] {
 function dependencyContainers(containers: any[] | undefined, primaryContainerName: string): any[] {
   if (!containers) return [];
   return containers
-    .map((container) => typeof container === 'string'
-      ? { name: container, containerName: container }
-      : { ...container, name: container.name || container.containerName, containerName: container.containerName || container.name })
+    .map((container) => ({ ...container, name: container.name || container.containerName, containerName: container.containerName || container.name }))
     .filter((container) => container.containerName && container.containerName !== primaryContainerName);
 }
 

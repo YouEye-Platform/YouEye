@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -216,7 +216,7 @@ test('bad CSRF, invalid actions and damaged retained state cannot authorize rest
   assert.equal(f.state.restores, 1);
 });
 
-test('backup lease holds across awaits, releases on failure and never expires a retained legacy lock', async t => {
+test('backup lease holds across awaits and releases on failure', async t => {
   const f = await platformFixture(t);
   let entered!: () => void, release!: () => void;
   const waiting = new Promise<void>(resolve => { entered = resolve; });
@@ -228,38 +228,28 @@ test('backup lease holds across awaits, releases on failure and never expires a 
   await running;
   await assert.rejects(f.platform.withRestoreLock(async () => { throw new Error('interrupted'); }), /interrupted/);
   await f.platform.withRestoreLock(async () => {});
-  const legacy = path.join(f.directory, '.operation.lock');
-  const retained = JSON.stringify({ operation: 'restore', startedAt: '2000-01-01T00:00:00Z', pid: 0 });
-  await writeFile(legacy, retained, { mode: 0o600 });
-  await assert.rejects(f.platform.withRestoreLock(async () => { assert.fail('legacy lock was stolen'); }), /operator reconciliation/);
-  assert.equal(await readFile(legacy, 'utf8'), retained);
 });
 
-test('legacy status is inspectable but cannot authorize replay, and damaged legacy status is unavailable', async t => {
+test('a backup restore status with the same id blocks setup restore, and a damaged one is unavailable', async t => {
   const f = await fixture(t);
   const directory = path.join(f.directory, '.restore-status');
   await mkdir(directory, { mode: 0o700 });
   const filename = path.join(directory, `${operationId}.json`);
   await writeFile(filename, JSON.stringify({
     schema: 'youeye.backup.restore-status.v1', operationId, backupId,
-    status: 'completed', message: 'raw legacy fixture details', setupSessionId: 'session',
+    status: 'completed', message: 'backup restore fixture details',
   }), { mode: 0o600 });
-  const status = await (await f.get()).json();
-  assert.equal(status.status, 'failed');
-  assert.equal(status.phase, 'legacy');
-  assert.equal(status.recovery, 'operator-required');
-  assert.doesNotMatch(JSON.stringify(status), /raw legacy/);
+  assert.equal((await f.get()).status, 404);
   assert.equal((await f.post()).status, 409);
-  const legacyResume = await f.post({ action: 'resume' });
-  assert.equal(legacyResume.status, 409);
-  assert.equal((await legacyResume.json()).code, 'operator-required');
+  const resume = await f.post({ action: 'resume' });
+  assert.equal(resume.status, 409);
+  assert.equal((await resume.json()).code, 'operator-required');
   await writeFile(filename, '{');
-  assert.equal((await f.get()).status, 503);
   assert.equal((await f.post()).status, 503);
   assert.equal(await f.platform.readRestoreStatus(operationId), null);
   await rm(filename);
   await symlink(path.join(f.directory, 'absent'), filename);
   // O_NOFOLLOW must distinguish a broken symlink from a missing receipt.
-  assert.equal((await f.get()).status, 503);
+  assert.equal((await f.post()).status, 503);
   assert.equal(f.state.imports, 0);
 });

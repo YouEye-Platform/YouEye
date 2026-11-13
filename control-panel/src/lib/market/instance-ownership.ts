@@ -46,7 +46,7 @@ export function assertInstanceName(name: string): void {
 function recordedNames(record: InstallMetadata): string[] {
   return [
     ...(record.containers ?? []).map((container) =>
-      typeof container === 'string' ? container : container.containerName),
+      container.containerName),
     ...(record.retainedRoots?.roots ?? []).flatMap((root) => [root.sourceName, root.retainedName]),
   ].filter((name): name is string => Boolean(name));
 }

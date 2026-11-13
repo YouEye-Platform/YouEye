@@ -11,7 +11,7 @@
  */
 
 export interface SiteNameStyle {
-  /** Editable MyTitle v1 title and sticker. Absent on legacy appearances. */
+  /** Editable MyTitle title and sticker. Absent on CSS-only styles. */
   mytitle?: import('@youeye/branding').Design;
   mytitleRevision?: string;
   showHeaderLogo?: boolean;

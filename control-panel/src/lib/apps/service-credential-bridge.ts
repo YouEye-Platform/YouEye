@@ -94,7 +94,7 @@ export async function activateProvisionedCredential(appId: string, probeRuntime?
 
 export async function revokeAppCredential(appId: string): Promise<void> {
   const current = await appServiceCredentials.projection(appId);
-  // Legacy installations have no projected credential. Strict UI denies them.
+  // An app without a projected credential has nothing to revoke. Strict UI denies it.
   if (!current) return;
   const revoked = current.status === 'revoked'
     ? current : await appServiceCredentials.revoke(appId, current.revision);

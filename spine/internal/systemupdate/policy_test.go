@@ -35,7 +35,7 @@ func TestReleasePolicyStrictValidation(t *testing.T) {
 		"non-canonical repository": func(p *ReleasePolicy) { p.Repository = "https://GitHub.com/YouEye-Platform/YouEye.git" },
 		"http repository":          func(p *ReleasePolicy) { p.Repository = "http://github.com/YouEye-Platform/YouEye" },
 		"bad service selection":    func(p *ReleasePolicy) { p.ServiceSelection = "latest" },
-		"wrong schema":             func(p *ReleasePolicy) { p.Schema = "youeye.release-policy.v2" },
+		"wrong schema":             func(p *ReleasePolicy) { p.Schema = "youeye.release-policy.v0" },
 	} {
 		p := policy
 		change(&p)

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const applianceInstallJournalSchema = "youeye.appliance.install-journal.v3"
+const applianceInstallJournalSchema = "youeye.appliance.install-journal.v1"
 
 type applianceInstallJournal struct {
 	Schema         string              `json:"schema"`

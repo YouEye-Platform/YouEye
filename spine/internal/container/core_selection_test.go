@@ -80,21 +80,18 @@ func TestControlReconciliationUsesAcceptedSparseMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := optionalCoreSelection(root); err == nil {
-		t.Fatal("missing selection with a core policy fell back to legacy")
+		t.Fatal("missing selection with a core policy was accepted")
 	}
 }
 
-func TestControlReconciliationLegacyAndMissingSelection(t *testing.T) {
+func TestControlReconciliationRequiresSelection(t *testing.T) {
 	root := t.TempDir()
 	image := appliance.Manifest{ReleaseSet: &appliance.ReleaseSet{ControlPanel: appliance.ComponentRelease{Version: "0.5.36"}}}
-	if err := verifyExistingControlVersion("0.5.36", image, root); err != nil {
-		t.Fatal(err)
+	if err := verifyExistingControlVersion("0.5.36", image, root); err == nil {
+		t.Fatal("reconciliation without a System selection accepted the image's CP version")
 	}
-	if err := verifyExistingControlVersion("0.5.37", image, root); err == nil {
-		t.Fatal("legacy mismatch accepted")
-	}
-	// A retained new-format policy cannot become a legacy fallback after loss of
-	// its release document, even when the installed version matches the image.
+	// A retained policy cannot fall back to the image's CP version after loss
+	// of its release document, even when the installed version matches it.
 	policy := fmt.Sprintf(`{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"%s"}`, strings.Repeat("a", 64))
 	if err := os.WriteFile(filepath.Join(root, "release-policy.json"), []byte(policy), 0600); err != nil {
 		t.Fatal(err)

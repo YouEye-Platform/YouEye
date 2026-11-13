@@ -38,9 +38,7 @@ function managedAIIconUrl(manifest: AppManifest): string | undefined {
 
 function containerEntries(meta: InstallMetadata) {
   return meta.containers
-    .map((container) => typeof container === 'string'
-      ? { name: container, containerName: container, type: undefined }
-      : { name: container.name, containerName: container.containerName, type: container.type })
+    .map((container) => ({ name: container.name, containerName: container.containerName, type: container.type }))
     .filter((container) => Boolean(container.containerName));
 }
 

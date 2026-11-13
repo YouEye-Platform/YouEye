@@ -55,7 +55,6 @@ import {
   cidrContains,
   cidrOverlaps,
   cidrUsableAddresses,
-  createLegacyImportedLease,
   formatIPv4,
   mutateIpamState,
   parseCIDR,
@@ -73,10 +72,6 @@ import {
   type AppNetworkIpamState,
   type AppNetworkLease,
 } from './app-network-ipam';
-import {
-  assertLegacyNetworkCandidate,
-  readLegacySubnetRegistry,
-} from './app-network-legacy-migration';
 
 // A pass-local audit can prove that no action is needed. It can never authorize
 // an effect: the first attempted write aborts the audit before reaching Incus.
@@ -577,145 +572,6 @@ function sameStringSet(left: Iterable<string>, right: Iterable<string>): boolean
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-function sameLegacyLease(left: AppNetworkLease, right: AppNetworkLease): boolean {
-  return left.appId === right.appId
-    && left.bridgeId === right.bridgeId
-    && left.bridgeName === right.bridgeName
-    && left.cidr === right.cidr
-    && left.gateway === right.gateway
-    && left.state === right.state
-    && left.operationId === right.operationId
-    && left.requiredAddresses === right.requiredAddresses
-    && left.importedFrom === right.importedFrom
-    && left.failure === undefined;
-}
-
-/**
- * Import only the exact retired allocator state already proved by the legacy
- * registry, install metadata, Incus attachments, Caddy devices, and bridge
- * configuration. The complete lease map is durable before ownership metadata
- * is added, so an interruption remains fail-closed and a later reconcile can
- * resume without adopting any unfamiliar object.
- */
-async function migrateLegacyAppNetworks(input: {
-  config: AppNetworkConfig;
-  networks: IncusNetwork[];
-  routes: string[];
-}): Promise<IncusNetwork[]> {
-  const legacyNamed = input.networks.filter((network) => /^yeapp\d+$/.test(network.name));
-  if (legacyNamed.every(isOwnedAppNetwork)) return input.networks;
-
-  const registry = await readLegacySubnetRegistry();
-  const allocations = Object.entries(registry.allocated)
-    .map(([appId, bridgeId]) => ({ appId, bridgeId }))
-    .sort((left, right) => left.bridgeId - right.bridgeId);
-  if (!sameStringSet(legacyNamed.map((network) => network.name), allocations.map(({ bridgeId }) => `yeapp${bridgeId}`))) {
-    throw new AppNetworkStateError(
-      'Legacy app network registry and Incus yeapp<N> inventory differ; refusing automatic adoption',
-    );
-  }
-
-  const [{ listInstalledApps }, piholeIP] = await Promise.all([
-    import('../market/metadata'),
-    getSystemStaticIP('youeye-pihole'),
-  ]);
-  if (!piholeIP) throw new AppNetworkStateError('Legacy app network migration cannot prove the Pi-hole address');
-  const installed = await listInstalledApps();
-  if (!sameStringSet(installed.map((metadata) => metadata.appId), allocations.map(({ appId }) => appId))) {
-    throw new AppNetworkStateError(
-      'Legacy app network registry and installed application metadata differ; refusing automatic adoption',
-    );
-  }
-  const metadataByApp = new Map(installed.map((metadata) => [metadata.appId, metadata]));
-  const caddyResponse = await incusRequest<IncusInstanceWritable>('GET', '/1.0/instances/youeye-caddy');
-  const caddy = { name: 'youeye-caddy', ...assertIncusSuccess(caddyResponse, 'Read Caddy legacy network attachments') };
-  const now = new Date().toISOString();
-  const leases: AppNetworkLease[] = [];
-
-  for (const { appId, bridgeId } of allocations) {
-    const metadata = metadataByApp.get(appId);
-    if (!metadata || metadata.lifecycleState === 'installing') {
-      throw new AppNetworkStateError(`Legacy app network migration cannot prove active metadata for ${appId}`);
-    }
-    const containerNames = (metadata.containers ?? [])
-      .map((container) => typeof container === 'string' ? container : container.containerName)
-      .filter((name): name is string => Boolean(name));
-    const network = legacyNamed.find((candidate) => candidate.name === `yeapp${bridgeId}`);
-    if (!network) throw new AppNetworkStateError(`Legacy app network ${appId} bridge is absent`);
-    const instances = await Promise.all(containerNames.map(async (name) => {
-      const response = await incusRequest<IncusInstanceWritable>('GET', `/1.0/instances/${name}`);
-      return { name, ...assertIncusSuccess(response, `Read ${appId} legacy network attachment`) };
-    }));
-    assertLegacyNetworkCandidate({ appId, bridgeId, network, containerNames, instances, caddy, piholeIP });
-    leases.push(createLegacyImportedLease({
-      appId,
-      bridgeId,
-      requiredAddresses: containerNames.length + 1,
-      now,
-    }));
-  }
-
-  const allowedCIDRs = new Set(leases.map((lease) => lease.cidr));
-  for (const network of input.networks) {
-    const cidr = networkCIDR(network);
-    if (cidr && input.config.pools.some((pool) => cidrOverlaps(pool, cidr)) && !allowedCIDRs.has(cidr)) {
-      throw new AppNetworkStateError(
-        `Legacy app network pool overlaps unfamiliar Incus network ${network.name} (${cidr}); refusing automatic adoption`,
-      );
-    }
-  }
-  for (const route of input.routes) {
-    if (input.config.pools.some((pool) => cidrOverlaps(pool, route)) && !allowedCIDRs.has(route)) {
-      throw new AppNetworkStateError(
-        `Legacy app network pool overlaps unfamiliar host route ${route}; refusing automatic adoption`,
-      );
-    }
-  }
-
-  const durableLeases = await mutateIpamState({ config: input.config, allowInitialize: true }, (state) => {
-    for (const existing of state.leases) {
-      const expected = leases.find((lease) => lease.appId === existing.appId);
-      if (!expected || !sameLegacyLease(existing, expected)) {
-        throw new AppNetworkStateError('Existing app network IPAM state differs from the proved legacy allocation');
-      }
-    }
-    for (const expected of leases) {
-      const existing = state.leases.find((lease) => lease.appId === expected.appId);
-      if (!existing) state.leases.push(expected);
-    }
-    state.leases.sort((left, right) => left.bridgeId - right.bridgeId);
-    state.updatedAt = now;
-    return state.leases.map((lease) => structuredClone(lease));
-  });
-
-  const migrated = new Map(input.networks.map((network) => [network.name, network]));
-  for (const lease of durableLeases) {
-    const before = migrated.get(lease.bridgeName);
-    if (!before) throw new AppNetworkStateError(`Proved legacy bridge ${lease.bridgeName} disappeared`);
-    if (!isOwnedAppNetwork(before)) {
-      const updated = await incusRequest('PATCH', `/1.0/networks/${lease.bridgeName}`, {
-        config: {
-          [OWNERSHIP_KIND_KEY]: OWNERSHIP_KIND,
-          [OWNERSHIP_APP_KEY]: lease.appId,
-          [OWNERSHIP_CIDR_KEY]: lease.cidr,
-          [OWNERSHIP_OPERATION_KEY]: lease.operationId,
-        },
-      }, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
-      await waitForIncusOperation(updated, `Annotate proved legacy app bridge ${lease.bridgeName}`);
-    }
-    const readBack = await incusRequest<IncusNetwork>(
-      'GET',
-      `/1.0/networks/${lease.bridgeName}`,
-      undefined,
-      { timeout: NETWORK_OBJECT_TIMEOUT_MS },
-    );
-    const network = assertIncusSuccess(readBack, `Read back migrated legacy bridge ${lease.bridgeName}`);
-    assertOwnedNetworkMatchesLease(network, lease);
-    migrated.set(lease.bridgeName, network);
-  }
-  return input.networks.map((network) => migrated.get(network.name) ?? network);
-}
-
 interface AppNetworkObservation {
   config: AppNetworkConfig;
   state: AppNetworkIpamState;
@@ -724,12 +580,11 @@ interface AppNetworkObservation {
 }
 
 async function observeAppNetworkState(): Promise<AppNetworkObservation> {
-  const [config, initialNetworks, routes] = await Promise.all([
+  const [config, networks, routes] = await Promise.all([
     loadAppNetworkConfig(),
     listIncusNetworks(),
     hostRouteCIDRs(),
   ]);
-  const networks = await migrateLegacyAppNetworks({ config, networks: initialNetworks, routes });
   const managed = networks.filter(isOwnedAppNetwork);
   const state = await readIpamState({
     config,
@@ -2060,7 +1915,7 @@ async function stopAffectedAppContainers(
       const { readInstallMetadata } = await import('../market/metadata');
       const metadata = await readInstallMetadata(appId);
       for (const container of metadata?.containers ?? []) {
-        const name = typeof container === 'string' ? container : container.containerName;
+        const name = container.containerName;
         if (name) names.add(name);
       }
     } catch {
@@ -2404,7 +2259,7 @@ async function reconcileActiveAppNetwork(
   metadata: NonNullable<Awaited<ReturnType<typeof import('../market/metadata').readInstallMetadata>>>,
 ): Promise<void> {
   const containerNames = (metadata.containers ?? [])
-    .map(container => typeof container === 'string' ? container : container.containerName)
+    .map(container => container.containerName)
     .filter((name): name is string => Boolean(name));
   if (containerNames.length === 0) throw new AppNetworkStateError(`Active lease ${lease.appId} has no recorded containers`);
   const options = { needsSharedDb: metadata.databaseMode === 'shared', needsSSO: metadata.hasSSO ?? metadata.enableSSO, needsAI: metadata.aiConnection?.state !== undefined };

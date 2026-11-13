@@ -52,9 +52,9 @@ const serviceSchema = z.object({
   apiVersion: z.literal('v1'),
   managedZone: z.string().min(1).max(253),
 }).strict();
-const v3Schema = z
+const bundleSchema = z
   .object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(1),
     exportedAt: z.string().datetime({ offset: true }),
     service: serviceSchema,
     name: nameSchema,
@@ -77,7 +77,7 @@ const v3Schema = z
       .strict(),
   })
   .strict();
-export type NamesBundle = z.infer<typeof v3Schema>;
+export type NamesBundle = z.infer<typeof bundleSchema>;
 
 /** Parse and cryptographically validate the final service-bound bundle. */
 export function parseNamesBundle(value: unknown): NamesBundle {
@@ -85,7 +85,7 @@ export function parseNamesBundle(value: unknown): NamesBundle {
     value && typeof value === 'object' && 'bundle' in value
       ? (value as { bundle?: unknown }).bundle
       : value;
-  const result = v3Schema.safeParse(wrapped);
+  const result = bundleSchema.safeParse(wrapped);
   if (!result.success) throw new Error('youeye_names_bundle_format_invalid');
   const candidate = result.data;
   if (
@@ -114,7 +114,7 @@ export function parseNamesBundle(value: unknown): NamesBundle {
 
   return {
     ...candidate,
-    schemaVersion: 3,
+    schemaVersion: 1,
     name: candidate.name,
     fqdn,
     identity: validatedIdentity as Required<StoredInstallIdentity>,
@@ -152,7 +152,7 @@ export async function exportBundle(): Promise<NamesBundle | null> {
     fqdn,
   });
   return {
-    schemaVersion: 3,
+    schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     service: lifecycle.service,
     name,

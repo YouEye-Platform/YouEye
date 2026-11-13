@@ -320,9 +320,9 @@ func setupIncusHTTPS(containerName string) error {
 func addSocketProxies(containerName, spineSocketPath string) error {
 	util.LogStep(3, 7, "Adding socket proxies...")
 
-	// Incus API access over HTTPS replaces the legacy incus-socket forkproxy,
-	// which copied every API byte in userspace and could grow without a useful
-	// bound. The CP connects with a trusted client certificate instead.
+	// The CP reaches the Incus API over HTTPS with a trusted client
+	// certificate, not through an incus-socket forkproxy (which copies every
+	// API byte in userspace without a useful bound).
 	if err := setupIncusHTTPS(containerName); err != nil {
 		util.LogDebug(fmt.Sprintf("Incus HTTPS setup warning: %v", err))
 	}

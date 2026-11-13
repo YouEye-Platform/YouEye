@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
@@ -112,7 +113,17 @@ var (
 	appInstallURL      string
 	appInstallTrusted  bool
 	appInstallAllowSet bool
+	appInstallPublic   bool
 )
+
+// installAccessFields adds the public-access choice to an install request only when --public-access was given, so
+// the Control Panel applies the manifest's default otherwise (Market apps only; URL apps default to off).
+func installAccessFields(cmd *cobra.Command, body map[string]interface{}) map[string]interface{} {
+	if cmd.Flags().Changed("public-access") {
+		body["publicAccess"] = appInstallPublic
+	}
+	return body
+}
 
 var appInstallCmd = &cobra.Command{
 	Use:   "install <name>",
@@ -134,17 +145,17 @@ var appInstallCmd = &cobra.Command{
 				return fmt.Errorf("an app from a URL is not reviewed by YouEye; add --i-trust-this-publisher to install it")
 			}
 			output.Info("Installing from URL: " + appInstallURL)
-			return controlClient.PostSSE("/api/market/install-url", map[string]interface{}{
+			return controlClient.PostSSE("/api/market/install-url", installAccessFields(cmd, map[string]interface{}{
 				"url":                       appInstallURL,
 				"acceptUnverifiedPublisher": true,
 				"allowSetup":                appInstallAllowSet,
-			}, sseHandler)
+			}), sseHandler)
 		}
 
 		output.Info("Installing " + args[0] + "...")
-		return controlClient.PostSSE("/api/market/install", map[string]interface{}{
+		return controlClient.PostSSE("/api/market/install", installAccessFields(cmd, map[string]interface{}{
 			"appId": args[0],
-		}, sseHandler)
+		}), sseHandler)
 	},
 }
 
@@ -299,22 +310,43 @@ var appCredentialsCmd = &cobra.Command{
 		if err := requireCP(); err != nil {
 			return err
 		}
-		data, err := controlClient.Get("/api/market/credentials?appId=" + args[0])
+		data, err := controlClient.Get(appCredentialsPath(args[0]))
 		if err != nil {
 			return err
 		}
 		output.Section("Credentials for " + args[0])
-		if creds, ok := data["credentials"].(map[string]interface{}); ok {
-			for k, v := range creds {
-				output.StatusLine(k, fmt.Sprintf("%v", v), "")
-			}
-		} else {
-			for k, v := range data {
-				output.StatusLine(k, fmt.Sprintf("%v", v), "")
-			}
+		entries := appCredentialEntries(data)
+		if len(entries) == 0 {
+			output.Info("This app has no default credentials.")
+		}
+		for _, entry := range entries {
+			output.StatusLine(entry.Label, entry.Username+"  "+entry.Password, "")
 		}
 		return nil
 	},
+}
+
+// appCredentialsPath is the Control Panel route for an app's default credentials (`?app=<id>`).
+func appCredentialsPath(appID string) string {
+	return "/api/market/credentials?app=" + url.QueryEscape(appID)
+}
+
+type appCredentialEntry struct{ Label, Username, Password string }
+
+// appCredentialEntries reads the route's `{"credentials":[{label,username,password}]}` answer.
+func appCredentialEntries(data map[string]interface{}) []appCredentialEntry {
+	list, _ := data["credentials"].([]interface{})
+	entries := make([]appCredentialEntry, 0, len(list))
+	for _, item := range list {
+		fields, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		entries = append(entries, appCredentialEntry{
+			Label: fmt.Sprint(fields["label"]), Username: fmt.Sprint(fields["username"]), Password: fmt.Sprint(fields["password"]),
+		})
+	}
+	return entries
 }
 
 var appCheckUpdatesCmd = &cobra.Command{
@@ -357,6 +389,7 @@ func init() {
 	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install the youeye-app.yaml at this HTTPS URL")
 	appInstallCmd.Flags().BoolVar(&appInstallTrusted, "i-trust-this-publisher", false, "Confirm you trust the publisher of a --url app (required with --url)")
 	appInstallCmd.Flags().BoolVar(&appInstallAllowSet, "allow-setup", false, "Allow the --url app's setup files to run (required when it has any)")
+	appInstallCmd.Flags().BoolVar(&appInstallPublic, "public-access", false, "Open the app to anyone who can reach its address (--public-access=false keeps it household-only); default: the app's Market listing decides, off for --url apps")
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
 	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
 	appRemoveCmd.Flags().BoolVar(&appRemoveKeepData, "keep-data", false, "Preserve app data volumes")

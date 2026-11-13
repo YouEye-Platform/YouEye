@@ -87,6 +87,9 @@ export async function POST(request: NextRequest) {
   if (config.adoptRetainedData !== undefined && typeof config.adoptRetainedData !== 'boolean') {
     return Response.json({ error: 'Invalid adoption request' }, { status: 400 });
   }
+  if (config.publicAccess !== undefined && typeof config.publicAccess !== 'boolean') {
+    return Response.json({ error: 'Invalid public access choice' }, { status: 400 });
+  }
 
   if (!config.appId) {
     return new Response(

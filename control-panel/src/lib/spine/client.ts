@@ -10,9 +10,8 @@
 import http from 'http';
 import type { BackupSourceIdentity } from '@/lib/backup/types';
 
-const CANONICAL_SPINE_SOCKET = '/var/run/youeye/youeye.sock';
-const LEGACY_SPINE_SOCKET = '/var/run/spine/spine.sock';
-const FALLBACK_TRANSPORT_CODES = new Set(['ENOENT', 'ECONNREFUSED', 'ENOTSOCK']);
+const SPINE_SOCKET = '/var/run/youeye/youeye.sock';
+const UNREACHABLE_SOCKET_CODES = new Set(['ENOENT', 'ECONNREFUSED', 'ENOTSOCK']);
 
 class SpineTransportError extends Error {
   constructor(
@@ -102,7 +101,7 @@ export interface SpineRemoteAccessKeysResponse {
 }
 
 export interface SpineDevelopmentAccessStatus {
-  schema: 'youeye.development-access-status.v2';
+  schema: 'youeye.development-access-status.v1';
   local_root_console_requested: boolean;
   local_root_console_persisted: boolean;
   local_root_console_active: boolean;
@@ -273,19 +272,10 @@ interface SpinePiholeCredentials {
 }
 
 export class SpineClient {
-  private readonly socketPaths: readonly string[];
+  private readonly socketPath: string;
 
-  constructor(
-    socketPath: string | undefined = process.env.SPINE_SOCKET,
-    compatibilityPaths: { canonical: string; legacy: string } = {
-      canonical: CANONICAL_SPINE_SOCKET,
-      legacy: LEGACY_SPINE_SOCKET,
-    },
-  ) {
-    const explicit = socketPath?.trim();
-    this.socketPaths = explicit
-      ? [explicit]
-      : [compatibilityPaths.canonical, compatibilityPaths.legacy];
+  constructor(socketPath: string | undefined = process.env.SPINE_SOCKET) {
+    this.socketPath = socketPath?.trim() || SPINE_SOCKET;
   }
 
   private async request<T>(
@@ -294,20 +284,14 @@ export class SpineClient {
     body?: Record<string, unknown>,
     timeoutMs: number = 60000,
   ): Promise<T> {
-    let lastTransportError: SpineTransportError | undefined;
-    for (const socketPath of this.socketPaths) {
-      try {
-        return await this.requestOnSocket<T>(socketPath, path, method, body, timeoutMs);
-      } catch (error) {
-        if (!(error instanceof SpineTransportError) || !FALLBACK_TRANSPORT_CODES.has(error.code || '')) {
-          throw error;
-        }
-        lastTransportError = error;
+    try {
+      return await this.requestOnSocket<T>(this.socketPath, path, method, body, timeoutMs);
+    } catch (error) {
+      if (error instanceof SpineTransportError && UNREACHABLE_SOCKET_CODES.has(error.code || '')) {
+        throw new Error(`Control Panel could not reach the Spine API through its socket (${this.socketPath}): ${error.message}`);
       }
+      throw error;
     }
-
-    const attempted = this.socketPaths.join(', ');
-    throw new Error(`Control Panel could not reach the Spine API through its configured socket paths (${attempted}): ${lastTransportError?.message || 'transport unavailable'}`);
   }
 
   private async requestOnSocket<T>(

@@ -14,7 +14,6 @@ youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
 incus=${INCUS_BIN:-incus}
 curl_bin=${CURL_BIN:-curl}
 control_secret=${YOUEYE_CONTROL_SECRET:-/var/lib/youeye/control/.deploy_secret}
-core_required=${YOUEYE_CORE_SELECTION_REQUIRED:-/usr/share/youeye/core-selection-required}
 max_attempts=${YOUEYE_FIRST_DEPLOY_MAX_ATTEMPTS:-8}
 
 install -d -m 0700 "$state_dir"
@@ -90,11 +89,10 @@ write_progress network "Checking the saved wired network profile" 5
 current_stage=network
 $bootstrap_network
 
-core_policy=false
 core_initialized=false
-if [ -e "$core_required" ] && ! jq -e '.core_manifest_sha256 | type == "string" and length == 64' "$release_policy" >/dev/null 2>&1; then
+if ! jq -e '.core_manifest_sha256 | type == "string" and length == 64' "$release_policy" >/dev/null 2>&1; then
     current_stage=core_selection
-    printf '%s\n' 'This appliance requires its complete System selection; recover the original v5 installer answer before retrying.' >&2
+    printf '%s\n' 'This appliance requires its complete System selection; recover the original installer answer before retrying.' >&2
     exit 1
 fi
 
@@ -112,22 +110,19 @@ if [ -z "${YOUEYE_FIRST_DEPLOY_ADOPTED:-}" ]; then
     esac
 fi
 
-if jq -e '.core_manifest_sha256 | type == "string" and length > 0' "$release_policy" >/dev/null 2>&1; then
-    core_policy=true
-    current_stage=core_convergence
-    core_convergence="$state_dir/core-convergence.json"
-    "$youeye" update core first-boot --policy "$release_policy" --resume-only > "${core_convergence}.tmp"
-    chmod 0600 "${core_convergence}.tmp"
-    mv -f "${core_convergence}.tmp" "$core_convergence"
-    if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
-        write_progress system_restart "Continuing the frozen System release after restart" 96
-        trap - EXIT
-        exit 0
-    fi
-    if jq -e '.initialized == true' "$core_convergence" >/dev/null; then
-        jq -e '.converged == true' "$core_convergence" >/dev/null
-        core_initialized=true
-    fi
+current_stage=core_convergence
+core_convergence="$state_dir/core-convergence.json"
+"$youeye" update core first-boot --policy "$release_policy" --resume-only > "${core_convergence}.tmp"
+chmod 0600 "${core_convergence}.tmp"
+mv -f "${core_convergence}.tmp" "$core_convergence"
+if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
+    write_progress system_restart "Continuing the frozen System release after restart" 96
+    trap - EXIT
+    exit 0
+fi
+if jq -e '.initialized == true' "$core_convergence" >/dev/null; then
+    jq -e '.converged == true' "$core_convergence" >/dev/null
+    core_initialized=true
 fi
 
 if [ "$core_initialized" != true ]; then
@@ -179,7 +174,7 @@ write_progress verifying "Running durable appliance health checks" 94
 chmod 0600 "$state_dir/health.json.tmp"
 mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
 
-if [ "$core_policy" = true ] && [ "$core_initialized" != true ]; then
+if [ "$core_initialized" != true ]; then
     "$youeye" update core initialize --policy "$release_policy"
     current_stage=core_convergence
     write_progress core_convergence "Accepting the frozen complete System release before opening setup" 96

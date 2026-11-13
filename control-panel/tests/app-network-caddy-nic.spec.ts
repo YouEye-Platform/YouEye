@@ -14,7 +14,7 @@ import {
   CADDY_APP_ACL_INGRESS,
 } from '../src/lib/incus/app-network-caddy-nic';
 
-test('two app IDs sharing the legacy prefix attach distinct bounded interfaces', () => {
+test('two app IDs sharing an 11-character prefix attach distinct bounded interfaces', () => {
   const first = planCaddyAppNIC('canvas-credential-fixture', 'yeapp1', {});
   const second = planCaddyAppNIC('canvas-credential-restore-fixture', 'yeapp2', {
     [first.deviceName]: first.device,
@@ -24,20 +24,6 @@ test('two app IDs sharing the legacy prefix attach distinct bounded interfaces',
   assert.match(second.device.name, /^eth-[a-f0-9]{11}$/);
   assert.equal(second.device.name.length, 15);
   assert.equal(planCaddyAppNIC('a'.repeat(63), 'yeapp3', {}).device.name.length, 15);
-});
-
-test('a valid legacy attachment survives while a same-prefix new app uses its own name', () => {
-  const old = { type: 'nic', network: 'yeapp1', name: 'eth-canvas-cred' };
-  const devices = { 'net-canvas-credential-fixture': old };
-  assert.deepEqual(planCaddyAppNIC('canvas-credential-fixture', 'yeapp1', devices).device, {
-    ...old,
-    'security.acls': CADDY_APP_ACL,
-    'security.acls.default.ingress.action': 'reject',
-    'security.acls.default.egress.action': 'allow',
-  });
-  const added = planCaddyAppNIC('canvas-credential-restore-fixture', 'yeapp2', devices);
-  assert.notEqual(added.device.name, old.name);
-  assert.deepEqual(devices['net-canvas-credential-fixture'], old);
 });
 
 test('Caddy app NICs admit only HTTP and HTTPS from the app network', () => {

@@ -290,7 +290,7 @@ export async function recordAppProvenance(
 
 /**
  * Record a successful external catalog update without manufacturing native
- * release-channel provenance. Clearing legacy synthetic values is safe only
+ * release-channel provenance. Clearing native-channel values is safe only
  * after the app was positively classified and updated through its Market source.
  */
 export async function recordCatalogAppUpdate(appId: string, version: string): Promise<void> {

@@ -37,16 +37,17 @@ input; completed steps are skipped. The importer moves an old cache aside so
 it cannot conceal changed bytes on the drive. Finalization records completion
 before settlement and never reapplies a completed restore, even if
 `setup_completed` is already true or the final SSE response was lost.
-Unknown partial app, volume, SQL or routing changes, an unacknowledged native import
-or restart, and legacy receipts require operator reconciliation: GET remains
+Unknown partial app, volume, SQL or routing changes and an unacknowledged native import
+or restart require operator reconciliation: GET remains
 readable, resume returns `409` with `code: operator-required`, and exclusion
 stays held. The operator must resolve the original native invocation and its
 bound input/applied effects through supported appliance recovery before
 settling retained work; changing IDs or deleting markers is not a recovery.
 Damaged/unreadable evidence returns `503` and never means no operation exists.
-The backup lease now uses a kernel lock; process loss releases the lease while
-retaining the setup journal. An old `.operation.lock` remains evidence for
-operator recovery and is never stolen by age.
+A setup restore whose operation ID already has a backup restore status is refused
+with `409` (`operator-required`).
+The backup lease uses a kernel lock; process loss releases the lease while
+retaining the setup journal.
 Native System checkpoint admission refuses any retained or unreadable marker.
 Deploy the matching Spine implementation before the Control Panel implementation.
 

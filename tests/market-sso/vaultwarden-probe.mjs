@@ -10,7 +10,7 @@ const ctx = await browser.newContext({ storageState: USERS[who].storageState });
 const page = await ctx.newPage();
 const hops = [];
 page.on('response', (r) => { if (r.request().isNavigationRequest() && r.frame() === page.mainFrame()) hops.push(`${r.status()} ${new URL(r.url()).host.split('.')[0]}${new URL(r.url()).pathname}`); });
-await page.goto(`https://vault.${DOMAIN}/#/login`, { timeout: 60_000 });
+await page.goto(`https://vaultwarden.${DOMAIN}/#/login`, { timeout: 60_000 });
 await page.locator('input[type=email]:visible').first().fill(email);
 await page.getByRole('button', { name: /single sign-on/i }).first().click();
 for (let i = 0; i < 60; i++) {

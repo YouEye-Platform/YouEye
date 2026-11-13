@@ -28,7 +28,7 @@ export const MAX_VERSION_SEGMENTS = 10;
 /**
  * Split a version string into numeric segments.
  * Strips a leading "v" if present.
- * Legacy-only helper; canonical release identities are parsed first.
+ * Fallback for versions that are not release identities, which are parsed first.
  */
 function splitVersion(v: string): number[] {
   const stripped = v.startsWith('v') ? v.slice(1) : v;
