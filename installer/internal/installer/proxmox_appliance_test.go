@@ -38,7 +38,7 @@ func TestParseOptionsSelectsSupportedInstallerCommands(t *testing.T) {
 	if opts.Mode != "install" {
 		t.Fatalf("install command selected mode %q", opts.Mode)
 	}
-	for _, command := range []string{"network", "development-access", "console"} {
+	for _, command := range []string{"network", "console"} {
 		opts, err = ParseOptions([]string{command}, strings.NewReader(""), io.Discard)
 		if err != nil || opts.Mode != command {
 			t.Fatalf("%s command selected mode %q: %v", command, opts.Mode, err)
@@ -188,20 +188,30 @@ func TestProxmoxQuickAndAdvancedUsePagedConditionalControls(t *testing.T) {
 		t.Fatal("releases API URL accepted as a repository")
 	}
 
-	model.page = 6 // Advanced "Development access" page
+	model.page = 6 // Advanced "Console access" page
+	if fields := model.visibleAdvancedFields(); len(fields) != 2 || fields[0].Kind != "console-root" {
+		t.Fatalf("without a root password only its switch and Continue are shown: %+v", fields)
+	}
+	if err := model.validateAdvancedPage(); err != nil || model.config.ConsoleAccess != defaultConsoleAccessPolicy() {
+		t.Fatalf("console access must default to a locked root: %+v err=%v", model.config.ConsoleAccess, err)
+	}
+	model.cycleAdvancedSelection("console-root", true)
+	if fields := model.visibleAdvancedFields(); len(fields) != 5 {
+		t.Fatalf("root password fields are hidden after turning it on: %+v", fields)
+	}
 	for _, key := range []string{"root-password", "root-password-confirm"} {
 		input := model.inputs[key]
 		input.SetValue("a masked testing passphrase")
 		model.inputs[key] = input
 	}
 	if rendered := model.View(); strings.Contains(rendered, "a masked testing passphrase") {
-		t.Fatal("Proxmox TUI rendered a plaintext development password")
+		t.Fatal("Proxmox TUI rendered a plaintext root password")
 	}
 	if err := model.validateAdvancedPage(); err != nil {
 		t.Fatal(err)
 	}
-	if !validYescryptHash(model.config.Development.PasswordHash) || model.inputs["root-password"].Value() != "" || model.inputs["root-password-confirm"].Value() != "" {
-		t.Fatal("development policy was not hashed and plaintext controls cleared")
+	if !validYescryptHash(model.config.ConsoleAccess.RootPasswordHash) || model.inputs["root-password"].Value() != "" || model.inputs["root-password-confirm"].Value() != "" {
+		t.Fatal("root password was not hashed and plaintext controls cleared")
 	}
 }
 
@@ -396,7 +406,7 @@ func TestWriteApplianceAnswerISO(t *testing.T) {
 		TargetSerial:   "TARGET-TEST",
 		Network:        applianceAnswerNetwork{Mode: "dhcp"},
 		ReleasePolicy:  defaultApplianceReleasePolicy(),
-		Development:    defaultDevelopmentAccessPolicy(),
+		ConsoleAccess:  defaultConsoleAccessPolicy(),
 		AuthorizedKeys: []string{testApplianceAuthorizedKey(t)},
 	}
 	if err := writeApplianceAnswerISO(destination, answer); err != nil {
@@ -635,7 +645,7 @@ func TestAnswerISOTransportsFullCacheDigestsAndPreflightsObjects(t *testing.T) {
 		}
 	}
 	destination := filepath.Join(t.TempDir(), "answer.iso")
-	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "0123456789abcdef0123456789abcdef", TargetSerial: "TARGET-TEST", Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy()}
+	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "0123456789abcdef0123456789abcdef", TargetSerial: "TARGET-TEST", Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), ConsoleAccess: defaultConsoleAccessPolicy()}
 	if err := writeApplianceAnswerISO(destination, answer); err != nil {
 		t.Fatal(err)
 	}

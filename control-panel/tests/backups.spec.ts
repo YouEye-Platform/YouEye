@@ -30,7 +30,7 @@ test('recovery import errors stay safe and useful', () => {
 test('recovery-point compatibility rejects newer persistent schemas before restore', () => {
   const current = {
     schema: 'youeye.backup.source.v1', runtime_kind: 'appliance-image', image_version: '0.5.6.0.2.13',
-    source_commit: 'a'.repeat(40), release_branch: 'dev', state_schema_version: 2, data_schema_version: 1,
+    source_tree: 'a'.repeat(40), state_schema_version: 1, data_schema_version: 1,
     disk_layout_version: 3, spine_version: '0.5.17.0.2.7', control_panel_version: '0.5.23.0.0.36', ui_version: '0.5.3.0.2.2',
   } as const;
   assert.equal(assessBackupCompatibility(current, current).compatible, true);
@@ -38,7 +38,24 @@ test('recovery-point compatibility rejects newer persistent schemas before resto
   const newer = assessBackupCompatibility({ ...current, state_schema_version: 3 }, current);
   assert.equal(newer.compatible, false);
   assert.match(newer.summary, /newer YouEye System/);
-  assert.throws(() => parseBackupSourceIdentity({ ...current, source_commit: undefined }), /incomplete appliance/);
+  assert.throws(() => parseBackupSourceIdentity({ ...current, source_tree: undefined }), /incomplete appliance/);
+});
+
+test('restore refuses a recovery point made by a newer Control Panel, UI or Pointer build', () => {
+  const current = {
+    schema: 'youeye.backup.source.v1', runtime_kind: 'appliance-image', image_version: '0.6.5-dev.2',
+    source_tree: 'a'.repeat(40), state_schema_version: 1, data_schema_version: 1, disk_layout_version: 1,
+    spine_version: '0.6.5-dev.2', control_panel_version: '0.6.5-dev.2', ui_version: '0.6.5-dev.2', pointer_version: '0.6.3-dev.1',
+  } as const;
+  assert.equal(assessBackupCompatibility({ ...current, control_panel_version: '0.6.5-dev.1' }, current).compatible, true);
+  for (const [field, label] of [['control_panel_version', /newer Control Panel/], ['ui_version', /newer UI/], ['pointer_version', /newer Pointer/]] as const) {
+    const result = assessBackupCompatibility({ ...current, [field]: '0.6.6-dev.1' }, current);
+    assert.equal(result.compatible, false);
+    assert.match(result.summary, label);
+    assert.match(result.summary, /Update this box/);
+  }
+  // A component the box no longer runs is not a reason to refuse.
+  assert.equal(assessBackupCompatibility({ ...current, pointer_version: '0.6.9-dev.1' }, { ...current, pointer_version: undefined }).compatible, true);
 });
 
 test('authenticated backup metadata binds source identity before live restore mutation', () => {

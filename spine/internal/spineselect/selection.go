@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 const (
@@ -75,6 +77,13 @@ type Host struct {
 // ThisHost is the host contract implemented by the running source.
 func ThisHost() Host { return Host{DiskLayout: DiskLayout, HelperContract: HelperContract} }
 
+// TargetSlotHost is the host to select e for on a slot an image update just
+// wrote: the disk layout is this disk's, the helper contract is the target
+// image's, which only that slot's launcher can check (at boot).
+func TargetSlotHost(e Entry) Host {
+	return Host{DiskLayout: DiskLayout, HelperContract: e.HelperContract}
+}
+
 // ErrNoSelection means no selected Spine exists; the seed runs.
 var ErrNoSelection = errors.New("no selected Spine")
 
@@ -113,15 +122,16 @@ func Load(root string) (Selection, error) {
 	if s.Slots == nil {
 		s.Slots = map[string]*Slot{}
 	}
+	// One unreadable slot or entry is ignored (that slot falls back to its
+	// seed Spine); the rest of the record stays usable.
 	for name, slot := range s.Slots {
 		if !validSlot(name) || slot == nil {
-			return empty, fmt.Errorf("spine selection record names an unknown slot %q", name)
+			delete(s.Slots, name)
+			continue
 		}
-		for _, e := range []*Entry{slot.Current, slot.Previous, slot.Trial} {
-			if e != nil {
-				if err := e.valid(); err != nil {
-					return empty, err
-				}
+		for _, e := range []**Entry{&slot.Current, &slot.Previous, &slot.Trial} {
+			if *e != nil && (*e).valid() != nil {
+				*e = nil
 			}
 		}
 	}
@@ -147,8 +157,12 @@ func Save(root string, s Selection, now time.Time) error {
 			delete(s.Slots, name)
 		}
 	}
-	raw, err := json.MarshalIndent(s, "", "  ")
+	previous, _ := os.ReadFile(filepath.Join(root, selectionFile))
+	raw, err := jsonkeep.Marshal(s, previous)
 	if err != nil {
+		return err
+	}
+	if raw, err = keepUnreadable(raw, previous); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -160,7 +174,7 @@ func Save(root string, s Selection, now time.Time) error {
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if _, err := f.Write(append(raw, '\n')); err != nil {
+	if _, err := f.Write(raw); err != nil {
 		f.Close()
 		return err
 	}
@@ -179,6 +193,52 @@ func Save(root string, s Selection, now time.Time) error {
 		return err
 	}
 	return syncDir(root)
+}
+
+// keepUnreadable puts back the slots and entries of previous that Load
+// skipped (another Spine wrote them in a form this one can't use), unless the
+// new record has something in their place: they belong to that Spine.
+func keepUnreadable(raw, previous []byte) ([]byte, error) {
+	var before struct {
+		Slots map[string]map[string]json.RawMessage `json:"slots"`
+	}
+	if len(previous) == 0 || json.Unmarshal(previous, &before) != nil || len(before.Slots) == 0 {
+		return raw, nil
+	}
+	var after map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &after); err != nil {
+		return nil, err
+	}
+	slots := map[string]map[string]json.RawMessage{}
+	if len(after["slots"]) > 0 && string(after["slots"]) != "null" {
+		if err := json.Unmarshal(after["slots"], &slots); err != nil {
+			return nil, err
+		}
+	}
+	changed := false
+	for name, roles := range before.Slots {
+		for role, entryRaw := range roles {
+			var e Entry
+			readable := validSlot(name) && (role == "current" || role == "previous" || role == "trial") &&
+				json.Unmarshal(entryRaw, &e) == nil && e.valid() == nil
+			if readable || slots[name][role] != nil {
+				continue
+			}
+			if slots[name] == nil {
+				slots[name] = map[string]json.RawMessage{}
+			}
+			slots[name][role], changed = entryRaw, true
+		}
+	}
+	if !changed {
+		return raw, nil
+	}
+	var err error
+	if after["slots"], err = json.Marshal(slots); err != nil {
+		return nil, err
+	}
+	out, err := json.MarshalIndent(after, "", "  ")
+	return append(out, '\n'), err
 }
 
 func syncDir(dir string) error {

@@ -35,6 +35,9 @@ type applianceRelease struct {
 	coreSHA256 string
 	Repository string
 	TagName    string
+	// DownloadBase is the channel index's download_base for this release
+	// (empty: the repository's release-download layout).
+	DownloadBase string
 }
 
 type verifiedApplianceRelease struct {
@@ -49,7 +52,7 @@ type verifiedApplianceRelease struct {
 // resolveApplianceRelease finds the System release to install. With an exact
 // tag (and its required core-release.json digest) it downloads that document;
 // otherwise it reads the channel index. It never lists releases.
-func resolveApplianceRelease(ctx context.Context, client *http.Client, repository, channel, exactTag, exactSHA256 string) (applianceRelease, error) {
+func resolveApplianceRelease(ctx context.Context, client *http.Client, repository, channel, exactTag, exactSHA256, downloadBase string) (applianceRelease, error) {
 	repository, err := releasecache.CanonicalRepository(repository)
 	if err != nil {
 		return applianceRelease{}, err
@@ -64,7 +67,10 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, repositor
 		if !validCoreTag(exactTag) || !validSHA256Hex(exactSHA256) {
 			return applianceRelease{}, fmt.Errorf("an exact release needs its youeye-v tag and core-release.json SHA-256")
 		}
-		raw, err = releasecache.FetchDocument(ctx, client, releasecache.ChannelEntry{Repository: repository, Tag: exactTag, Document: coreReleaseFilename, SHA256: exactSHA256})
+		if downloadBase != "" && !releasecache.ValidDownloadBase(downloadBase) {
+			return applianceRelease{}, fmt.Errorf("download base must be an HTTPS URL without query")
+		}
+		raw, err = releasecache.FetchDocument(ctx, client, releasecache.ChannelEntry{Repository: repository, Tag: exactTag, Document: coreReleaseFilename, SHA256: exactSHA256, DownloadBase: downloadBase})
 		if err != nil {
 			return applianceRelease{}, err
 		}
@@ -73,12 +79,14 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, repositor
 			err = fmt.Errorf("core-release.json of %s names tag %s", exactTag, manifest.Tag)
 		}
 	} else {
-		raw, manifest, digest, err = releasecache.FetchCoreRelease(ctx, client, repository, channel)
+		var choice releasecache.CoreChoice
+		choice, err = releasecache.ChooseCoreRelease(ctx, client, repository, channel, "")
+		raw, manifest, digest, downloadBase = choice.Raw, choice.Release, choice.Digest, choice.Entry.DownloadBase
 	}
 	if err != nil {
 		return applianceRelease{}, err
 	}
-	return applianceRelease{core: &manifest, coreRaw: raw, coreSHA256: digest, Repository: repository, TagName: manifest.Tag}, nil
+	return applianceRelease{core: &manifest, coreRaw: raw, coreSHA256: digest, Repository: repository, TagName: manifest.Tag, DownloadBase: downloadBase}, nil
 }
 
 func pathBaseEscaped(path string) string {
@@ -150,7 +158,7 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 // downloadCoreBlob downloads one digest-bound blob of release and checks size
 // and sha256.
 func downloadCoreBlob(ctx context.Context, client *http.Client, release applianceRelease, blob releasecache.CoreBlob, destination string, maxBytes int64, useCache bool) error {
-	asset := applianceReleaseAsset{Name: blob.Name, BrowserDownloadURL: releasecache.AssetURL(release.Repository, release.TagName, blob), Size: blob.SizeBytes}
+	asset := applianceReleaseAsset{Name: blob.Name, BrowserDownloadURL: releasecache.AssetURL(release.Repository, release.DownloadBase, release.TagName, blob), Size: blob.SizeBytes}
 	if err := downloadApplianceAsset(ctx, client, asset, destination, maxBytes, useCache); err != nil {
 		return err
 	}

@@ -10,6 +10,25 @@ set_slot_once() {
 
 recovery_request_dir=${YOUEYE_RECOVERY_REQUEST_DIR:-/var/lib/youeye-state/recovery}
 
+valid_operation() {
+    printf '%s' "$1" | grep -Eqx '[a-z][a-z0-9-]{0,39}'
+}
+
+# Extra menu items written by updatable code: recovery/menu.json
+# {"schema":"youeye.recovery-menu.v1","items":[{"operation","title","confirm"}]}.
+# Only a protected file is read; anything malformed is ignored.
+recovery_menu=${YOUEYE_RECOVERY_MENU:-$recovery_request_dir/menu.json}
+extra_menu_items() {
+    [ -f "$recovery_menu" ] && [ ! -L "$recovery_menu" ] && [ "$(stat -c %u "$recovery_menu")" = "$(id -u)" ] &&
+        [ $((0$(stat -c %a "$recovery_menu") & 0022)) -eq 0 ] && [ "$(stat -c %s "$recovery_menu")" -le 16384 ] || return 0
+    jq -r '.items[]? | select((.operation|type)=="string" and (.title|type)=="string" and (.confirm|type)=="string")
+        | [.operation, (.title|.[0:60]), (.confirm|.[0:300])] | map(gsub("[\u0000-\u001f]"; " ")) | @tsv' \
+        "$recovery_menu" 2>/dev/null | while IFS=$'\t' read -r operation title confirm; do
+        case "$operation" in reset-platform|factory-reset|reset-owner-password) continue ;; esac
+        valid_operation "$operation" && printf '%s\t%s\t%s\n' "$operation" "$title" "$confirm"
+    done | head -n 8
+}
+
 show_recovery_request() {
     request="$recovery_request_dir/request.json"
     result="$recovery_request_dir/last-result.json"
@@ -27,10 +46,9 @@ show_recovery_request() {
 queue_recovery_request() (
     set -euo pipefail
     operation=$1
-    case "$operation" in
-        reset-platform|factory-reset) ;;
-        *) return 2 ;;
-    esac
+    # Any well-formed kind: the System image (updatable) interprets requests,
+    # so a later kind needs no change to this frozen Recovery.
+    valid_operation "$operation" || return 2
     install -d -m 0700 "$recovery_request_dir"
     if [ -e "$recovery_request_dir/request.json" ]; then
         printf '\nA recovery operation is already pending. Reboot to apply it.\n' >&2
@@ -56,7 +74,14 @@ confirm_recovery_request() {
             ;;
         factory-reset)
             printf '\nThis permanently removes all platform containers, accounts, applications, and YE-DATA content.\n'
-            printf 'The signed System, Recovery, boot files, disk layout, and device identity remain installed.\n'
+            printf 'The System, Recovery, boot files, disk layout, and device identity remain installed.\n'
+            ;;
+        reset-owner-password)
+            printf '\nAfter the next start, this screen shows a one-time reset code.\n'
+            printf 'Open the box in a browser and use the code to set a new password for the owner.\n'
+            ;;
+        *)
+            printf '\n%s\n' "${2:-Queue the $operation operation for the next start.}"
             ;;
     esac
     read -r -p 'Are you sure? [y/N]: ' answer
@@ -202,10 +227,11 @@ repair_boot() (
 	# accepted core release recorded at install time.
 	protected_file "$manifest" || return 1
 	protected_file "$core_release" || return 1
+	# Recovery is never updated: it reads only the appliance member's digest,
+	# never schema or authority fields that later releases may change.
 	accepted=$(jq -er '
-		if .schema != "youeye.core-release.v1" or .authority != "digest" then error("unsupported core release") else
-		[.members[] | select(.role == "appliance") | .artifact.sha256] |
-		if length == 1 then .[0] else error("missing or duplicate appliance member") end end
+		[.members[]? | select(.role == "appliance") | .artifact.sha256] |
+		if length == 1 then .[0] else error("missing or duplicate appliance member") end
 	' "$core_release") || return 1
 	[ "$(sha256sum "$manifest" | cut -d ' ' -f 1)" = "$accepted" ] || return 1
 
@@ -239,10 +265,7 @@ repair_boot() (
 			printf '%s\t%s\n' "$baseline_path" "$baseline_version"
 			return 0
 		fi
-		jq -e '
-			.schema_version >= 2 and
-			(.slots.current == "A" or .slots.current == "B")
-		' "$appliance_state" >/dev/null || return 1
+		jq -e '.slots.current == "A" or .slots.current == "B"' "$appliance_state" >/dev/null || return 1
 		record=$(jq -r --arg slot "${slot^^}" '
 			if ((.transaction.stage == "staged" or .transaction.stage == "pending-reboot" or .transaction.stage == "trial") and .slots.candidate == $slot) then
 				.slots.candidate_image_version
@@ -270,8 +293,7 @@ repair_boot() (
 		role="system-${slot}-uki"
 		expected=$(jq -er --arg role "$role" --arg version "$image_version" \
 			--arg recovery "$recovery_version" '
-			if .schema != "youeye.system-update.v1" or
-			   .target_image_version != $version or
+			if .target_image_version != $version or
 			   .recovery_version != $recovery then error("update identity mismatch") else
 			   [.artifacts[] | select(.role == $role) | .sha256] |
 			   if length == 1 then .[0] else error("missing or duplicate role") end
@@ -295,7 +317,13 @@ repair_boot() (
     umount "$esp_mount" 2>/dev/null || true
     mount -t vfat -o rw,nodev,nosuid,noexec,umask=0077 "$esp_device" "$esp_mount"
 
-    bootctl --esp-path="$esp_mount" --no-variables install
+    # Never downgrade an installed systemd-boot to this Recovery's copy:
+    # update only replaces an older one; install only when none is there.
+    if [ -e "$esp_mount/EFI/systemd/systemd-bootx64.efi" ] || [ -e "$esp_mount/EFI/systemd/systemd-bootaa64.efi" ]; then
+        bootctl --esp-path="$esp_mount" --no-variables --graceful update
+    else
+        bootctl --esp-path="$esp_mount" --no-variables install
+    fi
     install -d -m 0755 "$esp_mount/EFI/YouEye" "$esp_mount/loader/entries"
     rm -f \
         "$esp_mount/EFI/Linux/youeye-system-a.efi" \
@@ -346,6 +374,14 @@ if [ "${1:-}" = --repair-boot ]; then
     repair_boot
     exit $?
 fi
+if [ "${1:-}" = --queue ] && [ "$#" -eq 2 ]; then
+    queue_recovery_request "$2"
+    exit $?
+fi
+if [ "${1:-}" = --list-extra ]; then
+    extra_menu_items
+    exit 0
+fi
 if [ "${1:-}" = --export-support ]; then
     export_support_evidence
     exit $?
@@ -367,7 +403,13 @@ while true; do
         '9. Factory reset all platform data' \
         '10. Reboot' \
         '11. Power off' \
-        ''
+        '12. Reset owner password'
+    mapfile -t extra < <(extra_menu_items)
+    for i in "${!extra[@]}"; do
+        IFS=$'\t' read -r _ title _ <<< "${extra[$i]}"
+        printf '%d. %s\n' "$((13 + i))" "$title"
+    done
+    printf '\n'
     printf 'YOUEYE_RECOVERY_CONSOLE_READY\n' > /dev/ttyS0
     read -r -p 'Select: ' choice
     case "$choice" in
@@ -416,8 +458,18 @@ while true; do
         11)
             systemctl poweroff
             ;;
+        12)
+            confirm_recovery_request reset-owner-password
+            ;;
         *)
-            printf '\nUnknown selection.\n'
+            index=-1
+            if [[ "$choice" =~ ^[0-9]{1,3}$ ]]; then index=$((10#$choice - 13)); fi
+            if [ "$index" -ge 0 ] && [ "$index" -lt "${#extra[@]}" ]; then
+                IFS=$'\t' read -r operation _ confirm <<< "${extra[$index]}"
+                confirm_recovery_request "$operation" "$confirm"
+            else
+                printf '\nUnknown selection.\n'
+            fi
             ;;
     esac
     printf '\n'

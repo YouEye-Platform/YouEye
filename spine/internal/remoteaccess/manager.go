@@ -18,6 +18,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 const (
@@ -30,7 +32,7 @@ const (
 )
 
 type Key struct {
-	ID          string `json:"id"`
+	ID          string `json:"id" jsonkeep:"key"`
 	Fingerprint string `json:"fingerprint"`
 	Type        string `json:"type"`
 	Bits        int    `json:"bits,omitempty"`
@@ -41,7 +43,7 @@ type Key struct {
 }
 
 type KeyMetadata struct {
-	ID          string `json:"id"`
+	ID          string `json:"id" jsonkeep:"key"`
 	Fingerprint string `json:"fingerprint"`
 	Type        string `json:"type"`
 	Bits        int    `json:"bits,omitempty"`
@@ -68,6 +70,9 @@ func Metadata(keys []Key) []KeyMetadata {
 type Store struct {
 	Schema string `json:"schema"`
 	Keys   []Key  `json:"keys"`
+	// skipped holds keys this Spine can't use (a key type a newer Spine
+	// accepts, say): not installed, but kept in the file.
+	skipped []json.RawMessage
 }
 
 type Manager struct {
@@ -165,9 +170,42 @@ func (m *Manager) List() ([]Key, error) {
 			return err
 		}
 		keys = append([]Key(nil), store.Keys...)
+		// Keys this Spine can't use are listed as unsupported (not installed),
+		// so they can still be seen and deleted.
+		for _, raw := range store.skipped {
+			if key, ok := skippedKey(raw); ok {
+				keys = append(keys, key)
+			}
+		}
 		return nil
 	})
 	return keys, err
+}
+
+// skippedKey is the listing of a kept key this Spine can't use.
+func skippedKey(raw json.RawMessage) (Key, bool) {
+	var key Key
+	if json.Unmarshal(raw, &key) != nil || key.ID == "" {
+		return Key{}, false
+	}
+	key.Type, key.PublicKey = "unsupported", ""
+	return key, true
+}
+
+// dropSkipped removes kept unusable entries with id (a delete, or the same
+// key added again in a form this Spine can use).
+func (store *Store) dropSkipped(id string) bool {
+	kept := store.skipped[:0]
+	dropped := false
+	for _, raw := range store.skipped {
+		if key, ok := skippedKey(raw); ok && key.ID == id {
+			dropped = true
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	store.skipped = kept
+	return dropped
 }
 
 func (m *Manager) Add(line, source string) (Key, error) {
@@ -194,6 +232,7 @@ func (m *Manager) Add(line, source string) (Key, error) {
 		}
 		key.Source = source
 		key.AddedAt = m.now().UTC().Format(time.RFC3339)
+		store.dropSkipped(key.ID)
 		store.Keys = append(store.Keys, key)
 		sortKeys(store.Keys)
 		if err := m.commit(store); err != nil {
@@ -220,6 +259,13 @@ func (m *Manager) Delete(id string, confirmLast bool) (Key, error) {
 			}
 		}
 		if index < 0 {
+			if store.dropSkipped(id) {
+				deleted = Key{ID: id, Type: "unsupported"}
+				if err := m.commit(store); err != nil {
+					return err
+				}
+				return m.audit("delete", deleted, len(store.Keys))
+			}
 			return os.ErrNotExist
 		}
 		if len(store.Keys) == 1 && !confirmLast {
@@ -301,31 +347,38 @@ func (m *Manager) load() (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	var store Store
+	// Read on every boot by the image's seed: unknown keys are ignored (and
+	// kept by commit), and one key this Spine can't use is skipped and kept
+	// instead of losing every managed key.
+	var document struct {
+		Schema string            `json:"schema"`
+		Keys   []json.RawMessage `json:"keys"`
+	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&store); err != nil {
+	if err := decoder.Decode(&document); err != nil {
 		return Store{}, fmt.Errorf("decode managed SSH keys: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
 		return Store{}, err
 	}
-	if store.Schema != Schema {
-		return Store{}, fmt.Errorf("unsupported managed SSH key schema %q", store.Schema)
+	if document.Schema != Schema {
+		return Store{}, fmt.Errorf("unsupported managed SSH key schema %q", document.Schema)
 	}
-	seen := make(map[string]bool, len(store.Keys))
-	for i := range store.Keys {
-		parsed, err := ParsePublicKey(store.Keys[i].PublicKey)
-		if err != nil {
-			return Store{}, fmt.Errorf("managed SSH key %d is invalid: %w", i+1, err)
+	store := Store{Schema: document.Schema}
+	seen := make(map[string]bool, len(document.Keys))
+	for _, raw := range document.Keys {
+		var key Key
+		if json.Unmarshal(raw, &key) != nil {
+			store.skipped = append(store.skipped, raw)
+			continue
 		}
-		if parsed.ID != store.Keys[i].ID || parsed.Fingerprint != store.Keys[i].Fingerprint || parsed.Type != store.Keys[i].Type {
-			return Store{}, fmt.Errorf("managed SSH key %d metadata does not match its public key", i+1)
-		}
-		if seen[parsed.ID] {
-			return Store{}, fmt.Errorf("managed SSH key %d is duplicated", i+1)
+		parsed, err := ParsePublicKey(key.PublicKey)
+		if err != nil || parsed.ID != key.ID || parsed.Fingerprint != key.Fingerprint || parsed.Type != key.Type || seen[parsed.ID] {
+			store.skipped = append(store.skipped, raw)
+			continue
 		}
 		seen[parsed.ID] = true
+		store.Keys = append(store.Keys, key)
 	}
 	sortKeys(store.Keys)
 	return store, nil
@@ -342,11 +395,28 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 func (m *Manager) commit(store Store) error {
 	store.Schema = Schema
 	sortKeys(store.Keys)
-	data, err := json.MarshalIndent(store, "", "  ")
+	previous, _ := os.ReadFile(m.StorePath)
+	data, err := jsonkeep.Marshal(store, previous)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
+	if len(store.skipped) > 0 {
+		var document map[string]json.RawMessage
+		var keys []json.RawMessage
+		if err := json.Unmarshal(data, &document); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(document["keys"], &keys); err != nil {
+			return err
+		}
+		if document["keys"], err = json.Marshal(append(keys, store.skipped...)); err != nil {
+			return err
+		}
+		if data, err = json.MarshalIndent(document, "", "  "); err != nil {
+			return err
+		}
+		data = append(data, '\n')
+	}
 	if err := writeAtomic(m.StorePath, data, 0600); err != nil {
 		return fmt.Errorf("write managed SSH keys: %w", err)
 	}

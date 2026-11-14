@@ -55,6 +55,8 @@ function fixture(options: {busy?: boolean; sqlFails?: boolean; pointerFails?: bo
     if(id === '@/lib/pointer/managed-apps') return managed;
     if(id === 'crypto') return require(id);
     if(['./config','@/lib/caddy/client','@/lib/settings'].includes(id)) return {};
+    // Console access syncs after the identity commit, never inside identity admission.
+    if(id === '@/lib/console-access') return {async afterIdentityChange() {assert.equal(held, false);}};
     throw new Error('Unexpected dependency '+id);
   }});
   return {api:exports,events,user,pointer:()=>pointer};

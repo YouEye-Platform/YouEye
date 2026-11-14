@@ -36,18 +36,12 @@ func main() {
 		}
 		return
 	}
-	if mode == installer.InstallerModeNetwork || mode == installer.InstallerModeAccess {
+	if mode == installer.InstallerModeNetwork {
 		if opts.Silent {
 			fmt.Fprintln(os.Stderr, "local appliance configuration requires an interactive terminal")
 			os.Exit(2)
 		}
-		var runErr error
-		if mode == installer.InstallerModeNetwork {
-			runErr = installer.RunLocalNetworkConfiguration()
-		} else {
-			runErr = installer.RunLocalDevelopmentAccess()
-		}
-		if runErr != nil {
+		if runErr := installer.RunLocalNetworkConfiguration(); runErr != nil {
 			fmt.Fprintln(os.Stderr, "configuration error:", runErr)
 			os.Exit(1)
 		}

@@ -45,11 +45,15 @@ func installCoreCommands(parent *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		_, release, digest, err := systemupdate.ResolveCoreRelease(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection)
+		choice, err := systemupdate.ResolveCoreChoice(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection)
 		if err != nil {
 			return err
 		}
+		release, digest := choice.Release, choice.Digest
 		out := map[string]any{"release": release, "manifest_sha256": digest, "channel": selection.Channel}
+		if choice.Stone {
+			out["stepping_stone"], out["channel_head"], out["head_refused"] = true, choice.Head.Version, choice.HeadRefused
+		}
 		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
 			if err := systemupdate.RefuseDowngrade(selection.Channel, receipt.Release, release); err != nil {
 				out["behind"], out["message"] = true, err.Error()
@@ -102,9 +106,6 @@ func installCoreCommands(parent *cobra.Command) {
 			}
 			if action == "cancel" {
 				journal, err = m.Cancel(cmd.Context(), request)
-				if err == nil && journal.Phase == "cancelled" {
-					err = finishCoreBootstrap(cmd.Context(), request)
-				}
 			} else {
 				journal, err = continueCoreRequest(cmd.Context(), runtime, request, action == "activate", action == "recover", once)
 			}
@@ -166,13 +167,10 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		}
 		if current.Phase == "rolled-back" || current.Phase == "committed" {
 			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
-			if err == nil {
-				err = finishCoreBootstrap(ctx, request)
-			}
 			return current, err
 		}
 		if current.Phase == "cancelled" {
-			return current, finishCoreBootstrap(ctx, request)
+			return current, nil
 		}
 		if recover {
 			j, err = m.Recover(ctx, request)
@@ -197,9 +195,6 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		}
 		if j.Phase == "committed" || j.Phase == "rolled-back" {
 			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
-			if err == nil {
-				err = finishCoreBootstrap(ctx, request)
-			}
 			return j, err
 		}
 		if j.Phase == "needs-recovery" {

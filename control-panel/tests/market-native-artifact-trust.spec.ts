@@ -77,7 +77,7 @@ test('Market-native archive inspection rejects escaping links, hard links and mi
 });
 
 
-test('release downloads allow the GitHub release CDN and same-origin redirects only', async () => {
+test('release downloads follow HTTPS redirects to any host, never leaving HTTPS', async () => {
   const source = 'https://github.com/YouEye-Platform/Search/releases/download/v0.5.1/standalone.tar';
   const cdn = 'https://release-assets.githubusercontent.com/asset?signature=example';
   const calls: string[] = [];
@@ -87,14 +87,15 @@ test('release downloads allow the GitHub release CDN and same-origin redirects o
   };
   assert.equal((await downloadReleaseFile(source, MAX, fetcher as typeof fetch)).toString(), 'archive');
   assert.deepEqual(calls, [source, cdn]);
-  for (const location of ['https://evil.test/file', 'http://release-assets.githubusercontent.com/file',
-    'https://release-assets.githubusercontent.com.evil.test/file', 'https://release-assets.githubusercontent.com:444/file',
-    'https://user:password@release-assets.githubusercontent.com/file', cdn+'#fragment']) {
+  // Files are digest-checked, so a mirror or moved CDN is fine.
+  for (const location of ['https://mirror.example.test/file', 'https://cdn.example.test:444/file?sig=1']) {
+    assert.equal((await downloadReleaseFile(source, MAX, (async (input: string | URL | Request) => String(input) === source ? new Response(null,{status:302,headers:{location}}) : new Response('archive')) as typeof fetch)).toString(), 'archive');
+  }
+  for (const location of ['http://release-assets.githubusercontent.com/file', 'https://user:password@release-assets.githubusercontent.com/file', cdn+'#fragment', 'https://api.github.com/repos/o/r/releases']) {
     let count = 0;
-    await assert.rejects(downloadReleaseFile(source, MAX, (async () => {count++;return new Response(null,{status:302,headers:{location}});}) as typeof fetch), /outside its release host/);
+    await assert.rejects(downloadReleaseFile(source, MAX, (async () => {count++;return new Response(null,{status:302,headers:{location}});}) as typeof fetch), /left HTTPS|listing API/);
     assert.equal(count, 1);
   }
-  await assert.rejects(downloadReleaseFile('https://forge.example.test/a/b/releases/download/v1/standalone.tar', MAX, (async()=>new Response(null,{status:302,headers:{location:cdn}})) as typeof fetch), /outside its release host/);
   assert.equal((await downloadReleaseFile('https://forge.example.test/a/b/releases/download/v1/standalone.tar', MAX, (async input=>String(input).endsWith('/attachments/file') ? new Response('private') : new Response(null,{status:302,headers:{location:'/attachments/file'}})) as typeof fetch)).toString(), 'private');
   await assert.rejects(downloadReleaseFile(source, MAX, (async()=>new Response(null,{status:302,headers:{location:source}})) as typeof fetch), /redirect chain/);
   await assert.rejects(downloadReleaseFile(source, MAX, (async()=>new Response('bad',{headers:{'content-length':String(257*1024*1024)}})) as typeof fetch), /exceeds/);

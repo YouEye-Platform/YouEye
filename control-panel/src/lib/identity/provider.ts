@@ -12,6 +12,7 @@ import {
 } from './store';
 import { addForwardAuthToRoute, removeForwardAuthFromRoute, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
 import { settingsService } from '@/lib/settings';
+import { afterIdentityChange } from '@/lib/console-access';
 
 export type IdentityProvider = 'youeye-id';
 
@@ -291,7 +292,7 @@ export async function createUser(input: {
   is_active?: boolean;
 }): Promise<IdentityAdminUser> {
   const password = input.password || randomBytes(24).toString('hex');
-  return toAdminUser(await createIdentityUser({
+  const created = await createIdentityUser({
     username: input.username,
     password,
     firstName: input.firstName ?? input.name ?? input.username,
@@ -300,7 +301,10 @@ export async function createUser(input: {
     groups: normalizeGroups(input.groups, Boolean(input.isAdmin)),
     isAdmin: Boolean(input.isAdmin),
     isActive: input.is_active !== false,
-  }));
+  });
+  // Console access follows the committed identity; a generated password is never a console password.
+  await afterIdentityChange({ userId: created.id, password: input.password || undefined });
+  return toAdminUser(created);
 }
 
 export async function updateUser(id: string, input: {
@@ -312,7 +316,7 @@ export async function updateUser(id: string, input: {
   isAdmin?: boolean;
   is_active?: boolean;
 }): Promise<IdentityAdminUser> {
-  return toAdminUser(await updateIdentityUser(id, async current => {
+  const updated = await updateIdentityUser(id, async current => {
     if (input.is_active === false || input.isAdmin === false) {
       const { assertIdentityDisposition } = await import('./store');
       await assertIdentityDisposition(id, 'disable');
@@ -338,20 +342,26 @@ export async function updateUser(id: string, input: {
       const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
       await setPointerManagedActorState(id, 'active');
     }
-  }));
+  });
+  // A role or active change can change the admin set: promote → console account, demote/disable → locked.
+  await afterIdentityChange({ userId: id });
+  return toAdminUser(updated);
 }
 
 export async function deleteUser(id: string): Promise<void> {
-  return deleteIdentityUser(id, async current => {
+  await deleteIdentityUser(id, async current => {
     // The store checks disposition before this callback and retains admission
     // through Pointer suspension and the authoritative deletion.
     const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
     await setPointerManagedActorState(current.id, 'disabled');
   });
+  await afterIdentityChange({ userId: id });
 }
 
+/** Every YouEye ID password change; an admin's new password also becomes their console password. */
 export async function setPassword(id: string, password: string): Promise<void> {
   await updateIdentityUser(id, { password });
+  await afterIdentityChange({ userId: id, password });
 }
 
 export async function listGroups(): Promise<{ results: IdentityGroup[] }> {

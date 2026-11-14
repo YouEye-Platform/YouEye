@@ -404,7 +404,19 @@ export async function claimApplianceOwner(input: {
     )
     SELECT COALESCE(json_agg(row_to_json(linked)), '[]'::json)::text FROM linked
   `);
-  return rows[0] || null;
+  const owner = rows[0] || null;
+  // The owner is the first admin: give them a console account with this password.
+  if (owner) await (await import('@/lib/console-access')).afterIdentityChange({ userId: owner.id, password: input.password });
+  return owner;
+}
+
+/** The YouEye ID user who claimed the box (null before the claim). */
+export async function getApplianceOwnerId(): Promise<string | null> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ owner_user_id: string | null }>(`
+    SELECT owner_user_id::text FROM identity_appliance_claim WHERE singleton = true
+  `);
+  return rows[0]?.owner_user_id || null;
 }
 
 export async function verifyApplianceOwner(username: string, password: string): Promise<IdentityUser | null> {
@@ -542,7 +554,9 @@ export async function ensureUser(input: {
   groups: string[];
   isAdmin: boolean;
 }): Promise<IdentityUser> {
-  return withIdentityAppLifecycle(() => ensureUserUnderLifecycle(input));
+  const user = await withIdentityAppLifecycle(() => ensureUserUnderLifecycle(input));
+  await (await import('@/lib/console-access')).afterIdentityChange({ userId: user.id, password: input.password });
+  return user;
 }
 
 async function ensureUserUnderLifecycle(input: {

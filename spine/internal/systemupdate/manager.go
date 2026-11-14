@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -163,6 +164,11 @@ func DefaultConfig() Config {
 	}
 }
 
+// validateSystemUpdateRedirect lets a release host send a download anywhere
+// over HTTPS: every release file is checked by sha256 and size (and the index
+// comes from the box's own HTTPS host), so a CDN move, an org rename or a
+// mirror never ends updates. Still refused: leaving HTTPS, credentials,
+// fragments and release-listing APIs.
 func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("too many system update redirects")
@@ -170,23 +176,7 @@ func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) er
 	if len(via) == 0 {
 		return validateRemoteURL(request.URL)
 	}
-	origin := via[0].URL
-	if err := validateSystemUpdateDownloadURL(request.URL, origin); err != nil {
-		return err
-	}
-
-	if strings.EqualFold(origin.Hostname(), "github.com") {
-		switch strings.ToLower(request.URL.Hostname()) {
-		case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
-			return nil
-		default:
-			return fmt.Errorf("GitHub system update redirected to untrusted host %q", request.URL.Hostname())
-		}
-	}
-	if !strings.EqualFold(request.URL.Host, origin.Host) {
-		return errors.New("system update redirected across origins")
-	}
-	return nil
+	return validateSystemUpdateDownloadURL(request.URL, via[0].URL)
 }
 
 func New(config Config) *Manager {
@@ -908,16 +898,25 @@ func validateSystemUpdateDownloadURL(target, origin *url.URL) error {
 	if err := validateRemoteURL(origin); err != nil {
 		return err
 	}
-	if target == nil {
-		return validateRemoteURL(target)
+	if target == nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") {
+		return errors.New("system update redirect must be an absolute URL")
 	}
 	if origin.Scheme == "https" && target.Scheme != "https" {
 		return errors.New("system update redirect must preserve HTTPS")
 	}
-	candidate := *target
-	if origin.Scheme == "https" && strings.EqualFold(origin.Host, "github.com") &&
-		target.Scheme == "https" && (strings.EqualFold(target.Host, "release-assets.githubusercontent.com") || strings.EqualFold(target.Host, "objects.githubusercontent.com")) {
-		candidate.RawQuery = ""
+	if target.User != nil || target.Fragment != "" {
+		return errors.New("credential-bearing and fragment system update redirects are not allowed")
 	}
-	return validateRemoteURL(&candidate)
+	if releaseListingAPI(target) {
+		return errors.New("system update redirected to a release-listing API")
+	}
+	return nil
 }
+
+// releaseListingAPI matches GitHub/Forgejo API hosts and paths; boxes never use them.
+func releaseListingAPI(u *url.URL) bool {
+	host := strings.ToLower(u.Hostname())
+	return strings.HasPrefix(host, "api.") || releaseAPIPath.MatchString(u.EscapedPath())
+}
+
+var releaseAPIPath = regexp.MustCompile(`/api/v[0-9]+/repos/`)

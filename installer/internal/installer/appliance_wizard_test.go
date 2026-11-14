@@ -29,15 +29,12 @@ func TestApplianceWizardCreatesValidatedAnswerFromKeyboardJourney(t *testing.T) 
 		applianceWizardNetwork,
 		applianceWizardRelease,
 		applianceWizardSSH,
-		applianceWizardDevelopment,
+		applianceWizardConsoleAccess,
 	} {
 		wizard, _ = wizard.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		if wizard.stage != expected {
 			t.Fatalf("stage = %v, want %v", wizard.stage, expected)
 		}
-	}
-	for index := range wizard.developmentInputs {
-		wizard.developmentInputs[index].SetValue("x")
 	}
 	wizard, _ = wizard.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if wizard.stage != applianceWizardReview {
@@ -67,12 +64,52 @@ func TestApplianceWizardCreatesValidatedAnswerFromKeyboardJourney(t *testing.T) 
 	if answer.Operation != "erase-install" || !answer.EraseConfirmed {
 		t.Fatalf("erase authorization missing: %+v", answer)
 	}
+	if answer.ConsoleAccess != defaultConsoleAccessPolicy() {
+		t.Fatalf("console access must default to a locked root: %+v", answer.ConsoleAccess)
+	}
 	info, err := os.Stat(wizard.answerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("answer mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestApplianceWizardSetsOptionalRootPassword(t *testing.T) {
+	wizard := newApplianceWizardModel(installConfig{}, &applianceExecutionRunner{})
+	wizard.stage = applianceWizardConsoleAccess
+	if view := wizard.consoleAccessView(); strings.Contains(view, "Confirm password") || !strings.Contains(view, "YouEye ID password") {
+		t.Fatalf("default console access page shows password fields or misses the admin note:\n%s", view)
+	}
+	press := func(keys ...tea.KeyMsg) {
+		for _, key := range keys {
+			wizard, _ = wizard.Update(key)
+		}
+	}
+	typeText := func(text string) {
+		for _, character := range text {
+			press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
+		}
+	}
+	press(tea.KeyMsg{Type: tea.KeyUp}, tea.KeyMsg{Type: tea.KeyEnter}) // root password on
+	press(tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeySpace})
+	press(tea.KeyMsg{Type: tea.KeyDown})
+	typeText("emergency pass")
+	press(tea.KeyMsg{Type: tea.KeyDown})
+	typeText("emergency pass")
+	if view := wizard.consoleAccessView(); strings.Contains(view, "emergency pass") {
+		t.Fatal("the root password was rendered in plain text")
+	}
+	press(tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyEnter})
+	if wizard.stage != applianceWizardReview {
+		t.Fatalf("stage = %v, want review: %s", wizard.stage, wizard.inputErr)
+	}
+	if !validYescryptHash(wizard.consolePolicy.RootPasswordHash) || !wizard.consolePolicy.PasswordSSH {
+		t.Fatalf("root password and password SSH were not recorded: %+v", wizard.consolePolicy)
+	}
+	if wizard.consoleInputs[0].Value() != "" || wizard.consoleInputs[1].Value() != "" {
+		t.Fatal("password inputs were not cleared")
 	}
 }
 
@@ -88,9 +125,6 @@ func TestApplianceWizardDefaultsToNoForUsedTargets(t *testing.T) {
 	wizard, _ = wizard.Update(wizard.Init()())
 	for range 4 {
 		wizard, _ = wizard.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	}
-	for index := range wizard.developmentInputs {
-		wizard.developmentInputs[index].SetValue("x")
 	}
 	wizard, _ = wizard.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if wizard.stage != applianceWizardReview {
@@ -141,9 +175,9 @@ func TestTopLevelInstallerStartsInstallerMediaWizard(t *testing.T) {
 	}
 }
 
-func TestApplianceCompleteViewPromptsForMediaRemoval(t *testing.T) {
+func TestApplianceCompleteViewSaysEnterTurnsOff(t *testing.T) {
 	view := newCompleteModel().View()
-	for _, text := range []string{"YouEye installed", "Remove the installer media", "System A"} {
+	for _, text := range []string{"YouEye installed", "Press Enter to turn the machine off", "When it is off, remove the USB stick", "System A"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("complete view missing %q: %s", text, view)
 		}

@@ -19,8 +19,7 @@ commit=0123456789abcdef0123456789abcdef01234567
 artifact=$state/artifacts/$id
 mkdir -p "$artifact/payload/bin" "$artifact/payload/libexec" "$state/active"
 printf '#!/bin/sh\nexit 0\n' > "$artifact/payload/bin/youeye-installer"
-printf '#!/bin/sh\nexit 0\n' > "$artifact/payload/libexec/youeye-apply-development-access"
-chmod 0755 "$artifact/payload/bin/youeye-installer" "$artifact/payload/libexec/youeye-apply-development-access"
+chmod 0755 "$artifact/payload/bin/youeye-installer"
 tar -C "$artifact/payload" -cf "$artifact/installer-runtime-overlay.tar" .
 rm -rf "$artifact/payload"
 chmod 0700 "$artifact"
@@ -44,7 +43,6 @@ jq -e --arg id "$id" '.state == "active" and .unsigned == true and .artifact_id 
 jq -e '.state == "active" and .reason == "verified-and-activated"' "$state/status/installer.json" >/dev/null
 grep -Fq "$artifact/runtime/bin/youeye-installer console --console-kind physical" "$systemd/youeye-console-status.service.d/90-youeye-development-overlay.conf"
 grep -Fq "$artifact/runtime/bin/youeye-installer console --console-kind serial" "$systemd/youeye-console-serial.service.d/90-youeye-development-overlay.conf"
-grep -Fq "$artifact/runtime/libexec/youeye-apply-development-access" "$systemd/youeye-development-access.service.d/90-youeye-development-overlay.conf"
 
 run_overlay deactivate "$id"
 test ! -e "$state/active/installer.json"

@@ -29,7 +29,7 @@ Schema `youeye.core-release.v1`. Top-level fields:
 | `sequence` | publish time in Unix seconds |
 | `minimum_reader` | `1` |
 | `authority` | `"digest"`; nothing else is accepted |
-| `compatibility` | `state_min`/`state_max` (2), `data_min`/`data_max` (1), `minimum_release`, `capabilities` (must contain `core-release-v1`) |
+| `compatibility` | `state_min`/`state_max` (1), `data_min`/`data_max` (1), `minimum_release`, `capabilities` (must contain `core-release-v1`) |
 | `members` | exactly one member per role, in dependency order |
 
 Each member has `role`, `build_version`, `source_tree`, `input_sha256`, optional `depends_on`, and an `artifact`
@@ -37,7 +37,7 @@ blob `{name, sha256, size_bytes, release?}`. The `appliance` member also has a `
 (`build-inputs.json`); no other member may. `input_sha256` is the SHA-256 of the text
 `youeye.core-member-input.v1\n<role>\n<source_tree>\n<artifact sha256>\n`.
 
-The 14 roles, in document order:
+The 13 roles, in document order:
 
 | Role | File | Built by | Changes need a reboot |
 |---|---|---|---|
@@ -50,7 +50,6 @@ The 14 roles, in document order:
 | `system-updater` | `youeye-system-updater-linux-amd64` | image build | yes |
 | `internal-recovery` | `internal-recovery.img.zst` | image build | yes |
 | `recovery-uki` | `recovery.efi` | image build | yes |
-| `update-bootstrap` | `youeye-system-update-bootstrap` | image build | no |
 | `spine` | `spine-linux-amd64` | Spine build | no (trial on State) |
 | `cp` | `cp-standalone.tar` (depends on `spine`) | CP build | no |
 | `ui` | `ui-standalone.tar` (depends on `cp`) | UI build | no |
@@ -61,19 +60,31 @@ installed one needs a host restart.
 
 ### Parser rules
 
-`ParseCoreRelease` refuses, before any effect: documents over 1 MiB, duplicate JSON keys at any depth, unknown
-fields, trailing data, a wrong schema, reader or authority, a `tag` that is not `youeye-v<version>`, unknown,
-duplicate or missing roles, invalid versions, trees or digests, `build_inputs` on the wrong member, and any
-dependency that is missing or not earlier in the list (CP must depend on Spine, UI on CP). It returns the SHA-256
-of the exact bytes; that digest is the release's identity.
+A reader must be able to read documents published years later, so `ParseCoreRelease` (Go) and `parseCoreRelease`
+(Control Panel) are lenient where a later release may add things and strict where a mistake would matter:
+
+- **Read first:** `schema` must be `youeye.core-release.v1`; a higher `minimum_reader` than this reader's (1)
+  returns `ErrNeedsNewerReader` / `ReleaseNeedsNewerReader` before anything else is read.
+- **Ignored:** unknown fields at any level (they are covered by the document digest but never interpreted).
+- **"Needs a newer reader":** a role this reader doesn't know (a later release added one).
+- **Refused, before any effect:** documents over 1 MiB, duplicate JSON keys at any depth, trailing data, a wrong
+  authority, a `tag` that is not `youeye-v<version>`, duplicate or missing roles, invalid versions, trees or
+  digests, `build_inputs` on the wrong member, and any dependency that is missing or not earlier in the list (CP
+  must depend on Spine, UI on CP).
+
+It returns the SHA-256 of the exact bytes; that digest is the release's identity. A box that gets "needs a newer
+reader" for the channel head takes a stepping stone (below).
 
 ### Host independence
 
 The document names files and never locates them. A client downloads `<repository>/releases/download/<tag>/<name>`,
-using the repository and tag where it found the document. A blob's optional `release` names another `youeye-v`
+using the repository and tag where it found the document, or `<download_base>/<tag>/<name>` when the channel index
+entry names a `download_base` ([releases.md](releases.md)); Spine records the base per tag in
+`core-update/download-bases.json` for later blob downloads. A blob's optional `release` names another `youeye-v`
 release of the same repository that holds the file; publishing uses it to reuse unchanged image files
 (`assemble-core-release.py --reuse`). There is no source, branch, channel, commit or URL inside, so the same
-bytes are published on every host a release is promoted to.
+bytes are published on every host a release is promoted to. Downloads follow HTTPS redirects to any host (every
+file is checked by SHA-256 and size); leaving HTTPS, credentials, fragments and release-listing APIs are refused.
 
 **Payload digest.** `PayloadSHA256()` hashes `schema`, `minimum_reader`, `compatibility` and the members with every
 blob's `release` cleared. All documents of one build (dev, alpha, beta, stable) have the same payload digest.
@@ -100,8 +111,12 @@ blob's `release` cleared. All documents of one build (dev, alpha, beta, stable) 
 
 1. Reads the channel index of the box's repository and channel ([releases.md](releases.md)).
 2. Downloads the `youeye` entry's `core-release.json` and refuses it unless its SHA-256 equals the entry.
-3. Prints `release`, `manifest_sha256` and `channel`, plus `"behind": true` and a message when the channel's build
-   is older than the installed build.
+3. If the box can't install it (its `minimum_release` is newer than the installed build, or it needs a newer
+   reader), takes the newest **stepping stone** of the entry that it can install instead
+   (`releasecache.ChooseCoreRelease`); with none, it reports that no release of the channel fits this build.
+4. Prints `release`, `manifest_sha256` and `channel`, plus `"stepping_stone": true`, `channel_head` and
+   `head_refused` for a stone, or `"behind": true` and a message when the channel's build is older than the
+   installed build.
 
 **Never downgrade.** Two checks enforce it:
 
@@ -204,23 +219,20 @@ Installed-file checks ignore runtime files that are not code: `.env` and `.next/
 `manifest.webmanifest` response under `.next/server/route-cache/` (only that exact route, only regular non-executable
 files; `core_response_cache.go`).
 
-## Older readers
+## Older readers and stepping stones
 
-When an installed Spine cannot read a newer release, the target release's own coordinator can be used:
+There is no bridge that runs a newer coordinator on an older box. When the installed Spine cannot install the
+channel's head, the channel index offers a stepping stone: an intermediate release the box can install first, after
+which it updates again. Each stone repeats its document's `minimum_release` and `minimum_reader` so a box can choose
+without downloading every document; the document must agree. A box takes the newest stone it can install, so a
+chain of stones is walked in order and never skipped. Mark stones with `Tools/release/index stone add`.
 
-```sh
-youeye-system-update-bootstrap --core https://<repository>/releases/download/<tag>/core-release.json \
-  --sha256 <core-release.json digest> [--inputs <protected dir>] [--activate]
-```
+Rules for later releases:
 
-It requires `authority: "digest"` and the exact digest, downloads only the `spine` member (or its `blob-<sha256>`
-copy next to the document after an HTTP 404), checks its size and SHA-256, keeps both under
-`/var/lib/youeye-state/core-update/bootstrap/<artifact-sha256>/`, and runs
-`youeye update core bootstrap --request stable-bootstrap-<digest> --manifest-sha256 <digest>`. A runtime-only
-drop-in under `/run/systemd/system/youeye-core-update.service.d/` points the boot continuation at it. It never
-replaces the image's Spine. Rerunning the same command after an interruption continues the same request.
-
-`youeye api serve --core-reader <path> --core-reader-manifest-sha256 <sha>` is the same bridge for the API (for a
-temporary, runtime-only override of `youeye.service`): the reader must sit at its `core-update/bootstrap/` path next
-to the exact document, `check` refuses any release with another digest, and only an owner's `stage` registers the
-reader and starts the update (`spine/internal/cmd/core_api_reader.go`).
+- Adding a field to the document, a role, or a capability is fine: old readers ignore the field and treat the role
+  as "needs a newer reader" (so publish a stone when old boxes must still update).
+- Removing a role, renaming a field or changing a field's meaning needs a new `minimum_reader` and a stone.
+- Raising `minimum_release` (`appliance/recipe.json` `minimum_current_version`) needs a stone for boxes below it.
+- A State or Data schema bump (a release whose `state_min`/`data_min` excludes older boxes) must also raise
+  `minimum_release` and publish a stone that migrates: stones are chosen by `minimum_release` and reader only, so
+  a head that refuses a box's schema would otherwise be chosen and then refused at staging.

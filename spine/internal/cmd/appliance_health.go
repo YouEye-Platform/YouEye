@@ -400,9 +400,6 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		add("System core provenance", "fail", err.Error())
 	} else {
 		add("System core provenance", "pass", "the running Spine is the seed or the slot's selected Spine")
-		if reader.Bound {
-			add("System reader binding", "pass", "the separate "+reader.ReaderClass+" reader has an exact active binding")
-		}
 	}
 	for _, component := range components {
 		version := firstDeployPackageVersion(component.container, component.appDir)

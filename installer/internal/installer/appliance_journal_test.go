@@ -108,7 +108,7 @@ func TestProviderRestartsConfirmedReinstallWhenTransactionDiffers(t *testing.T) 
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true,
 		TransactionID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", TargetSerial: "TARGET",
-		Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy(),
+		Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), ConsoleAccess: defaultConsoleAccessPolicy(),
 	}
 	raw, err := json.Marshal(answer)
 	if err != nil {

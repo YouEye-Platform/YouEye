@@ -57,7 +57,7 @@ curl -fsSL <repository>/releases/download/<tag>/install.sh | sh -s -- --reposito
 ### Proxmox mode
 
 Without `--silent` the installer opens a text interface with pages for the operation and VM, resources, storage,
-network, software (channel), SSH keys and development access. **Quick** settings: 4 vCPU, 8 GiB RAM, a 128 GiB
+network, software (channel), SSH keys and console access (an optional root password). **Quick** settings: 4 vCPU, 8 GiB RAM, a 128 GiB
 drive, DHCP. Drives under 64 GiB get a capacity warning.
 
 Installer flags for unattended runs (`installer/internal/installer/options.go`):
@@ -102,28 +102,39 @@ is removed afterwards.
    Each release also has a `SHA256SUMS` file for people; nothing reads it.
 3. Write the ISO to a USB drive, boot it in UEFI mode.
 4. In the installer: pick the installation drive (it shows the drive's identity and what is on it), set networking,
-   optional SSH public keys and development access, and confirm erasure. The installer downloads the same release's
+   optional SSH public keys and, under console access, an optional root password, and confirm erasure. The installer downloads the same release's
    `core-release.json` over HTTPS and refuses to continue unless the ISO's image manifest matches its `appliance`
    member.
-5. Remove the USB drive when the completion screen says the written images and boot files passed read-back.
+5. The completion screen says the written images and boot files passed read-back. Press Enter: the machine turns
+   off. Then remove the USB drive and turn the machine on. Do not remove the drive before pressing Enter: the
+   installer runs from it, and without it the machine cannot finish turning off. (Leaving the installer any other
+   way, such as Esc on the first page, also turns the machine off.)
 
 ## What the installer writes
 
 - The disk: ESP 1 GiB, Recovery 4 GiB, System A and B 6 GiB each, State 4 GiB, Data the rest
   ([architecture.md](architecture.md)).
 - On State: `bootstrap/release-policy.json` (`repository`, `channel`, `core_manifest_sha256`),
-  `bootstrap/core-release.json` (the exact bytes it installed from), the network profile, SSH keys and the
-  development-access policy.
+  `bootstrap/core-release.json` (the exact bytes it installed from), the network profile, SSH keys and
+  `bootstrap/console-access.json` (`youeye.console-access.v1`, mode 0600: the optional root password's yescrypt
+  hash, `password_ssh` and an empty account list; Spine adds the admins' accounts later).
 
-## Root access
+## Console and root access
 
-- **Console:** the interactive installer asks for a root password. It is the local console login and recovery
-  credential. There is no default password.
+- **Owner and admins:** they sign in on the console (Ctrl+Alt+F2, a normal login on TTY2) with their YouEye ID
+  username and password, and get `sudo`. The Control Panel gives each admin a console account; nothing needs to be
+  set up in the installer. TTY1 shows the box's status.
+- **Root password** (the "Console access" page, advanced): off by default, so root is locked. Set one only for
+  emergencies (for example when no admin can sign in). Only its yescrypt hash is stored.
+- **Password SSH:** offered only with a root password, off by default. When on, passwords work for SSH only from the
+  directly connected IPv4 subnet. It does not choose the release channel.
 - **SSH keys:** public keys from the installer (and, in Proxmox mode, the Proxmox root keys unless turned off).
   Add more later on the console with `youeye appliance ssh-key add --key-file <file.pub>` (or `-` for standard
   input); list them with `youeye appliance ssh-key list`.
-- **Root password SSH** (the "Development access" page): off by default. When on, the root password works for SSH
-  only from the directly connected IPv4 subnet. It does not choose the release channel.
+- **Network repair** on the box: `sudo youeye-installer network` on Ctrl+Alt+F2 (TTY1 offers it directly when a root
+  password is set).
+- **Forgotten owner password:** boot YouEye Recovery from the UEFI boot menu and choose **Reset owner password**.
+  At the next boot TTY1 shows a one-time code; open `https://<box IP address>/settings/reset-owner` (the page answers only on the address, not the name) and enter it (valid 24 hours, once).
 
 SSH problems: [troubleshooting.md](troubleshooting.md#ssh-permission-denied-publickey).
 

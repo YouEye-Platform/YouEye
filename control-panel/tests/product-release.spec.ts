@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ReleaseNeedsNewerReader } from '../src/lib/releases/core-release';
 import { createHash } from 'node:crypto';
 import { acceptProductSequence, parseProductRelease, productAssetURL, productTag, verifyProductRelease, identicalProductPayloads, loadProductBlob, installedProductProjection, productReceipt, verifyInstalledProductReceipt } from '../src/lib/releases/product-release';
 import { productFixture, tree } from './fixtures/release-fixtures';
@@ -36,16 +37,14 @@ test('host-independent product releases bind assets by name and digest', async (
   }
 });
 
-test('per-host, branch and channel fields are rejected', () => {
+test('later fields are ignored; a newer reader is required by minimum_reader only', () => {
   const f = productFixture('notes','0.6.1-dev.1','https://git.example.test/team/Notes',{'standalone.tar':Buffer.from('x')});
-  for (const field of ['source','branch','channel','source_commit','previous_manifest_sha256']) {
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,[field]:'x'}))),/fields/,field);
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,[field]:'x'})).toString('base64')}))),/fields/,field);
+  for (const field of ['source','branch','channel','signatures']) {
+    assert.doesNotThrow(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,[field]:'x'}))),field);
+    assert.doesNotThrow(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,[field]:'x'})).toString('base64')}))),field);
   }
-  for (const field of ['asset_source','asset_tag']) {
-    assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,[field]:'x'})).toString('base64')}))),/fields/,field);
-  }
-  assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,assets:[{...f.build.assets[0],url:'https://x.test/a/b/releases/download/v1/standalone.tar'}]})).toString('base64')}))),/fields/);
+  assert.doesNotThrow(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,build_manifest_base64:Buffer.from(JSON.stringify({...f.build,assets:[{...f.build.assets[0],mirrors:['https://m.test']}]})).toString('base64')}))));
+  assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,minimum_reader:2,build_manifest_base64:'?'}))),ReleaseNeedsNewerReader);
   // Branch-prefixed tags are gone; the tag never names a channel.
   assert.throws(() => parseProductRelease(Buffer.from(JSON.stringify({...f.release,tag:'dev-v0.6.1-dev.1'}))),/identity/);
   assert.throws(() => parseProductRelease(Buffer.from(f.raw.toString().replace('"sequence":1762950000','"sequence":1,"sequence":1762950000'))),/Duplicate/);

@@ -53,19 +53,43 @@ func TestStateRecordAtomicRoundTripUsesPrivateMode(t *testing.T) {
 	}
 }
 
-func TestParseStateRejectsUnknownFieldsAndIncompleteSlot(t *testing.T) {
+// The seed Spine reads appliance-state.json on every boot: a field or
+// lifecycle value a newer Spine wrote must neither stop the boot nor be lost
+// when this Spine rewrites the file.
+func TestStateToleratesAndKeepsNewerFields(t *testing.T) {
 	data, err := json.Marshal(validStateRecord())
 	if err != nil {
 		t.Fatal(err)
 	}
-	withUnknown := strings.TrimSuffix(string(data), "}") + `,"raw_device_id":"forbidden"}`
-	if _, err := ParseState([]byte(withUnknown)); err == nil {
-		t.Fatal("expected strict unknown-field rejection")
+	newer := strings.TrimSuffix(string(data), "}") + `,"console_accounts_ref":"x","slots_note":{"a":1}}`
+	newer = strings.Replace(newer, `"lifecycle":"configured"`, `"lifecycle":"migrating"`, 1)
+	state, err := ParseState([]byte(newer))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	state := validStateRecord()
-	state.Slots.CurrentImageVersion = ""
-	if err := state.Validate(); err == nil {
+	if state.Lifecycle.Known() || state.Lifecycle == LifecycleConfigured {
+		t.Fatalf("unknown lifecycle must count as not configured: %q", state.Lifecycle)
+	}
+	path := filepath.Join(t.TempDir(), "appliance-state.json")
+	if err := os.WriteFile(path, []byte(newer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.RecoveryVersion = "rewritten"
+	if err := WriteStateAtomic(path, state); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, want := range []string{`"console_accounts_ref": "x"`, `"slots_note"`, `"lifecycle": "migrating"`, `"recovery_version": "rewritten"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("rewrite lost %s:\n%s", want, raw)
+		}
+	}
+	if _, err := ParseState([]byte(strings.Replace(newer, `"lifecycle":"migrating"`, `"lifecycle":"Bad Value"`, 1))); err == nil {
+		t.Fatal("malformed lifecycle accepted")
+	}
+	incomplete := validStateRecord()
+	incomplete.Slots.CurrentImageVersion = ""
+	if err := incomplete.Validate(); err == nil {
 		t.Fatal("expected current slot image version to be required")
 	}
 }

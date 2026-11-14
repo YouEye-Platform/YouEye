@@ -10,7 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 const (
@@ -18,11 +21,25 @@ const (
 	StatePath          = StateMountpoint + "/appliance-state.json"
 	DataMountpoint     = "/var/lib/youeye"
 	DataSchemaPath     = DataMountpoint + "/.youeye-data-schema.json"
-	CurrentStateSchema = 2
+	CurrentStateSchema = 1
 	CurrentDataSchema  = 1
 )
 
 type Lifecycle string
+
+// A lifecycle value this Spine doesn't know (written by a newer one) is kept
+// as it is but counts as "not configured": checks compare with the known
+// values, and none of them match it.
+var lifecyclePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// Known reports whether this Spine knows the lifecycle value.
+func (l Lifecycle) Known() bool {
+	switch l {
+	case LifecycleUnconfigured, LifecycleConfigured, LifecycleRepairRequired, LifecycleFactory:
+		return true
+	}
+	return false
+}
 
 const (
 	LifecycleUnconfigured   Lifecycle = "unconfigured"
@@ -139,10 +156,12 @@ func compatibilityLabel(current, min, max int) string {
 	}
 }
 
+// ParseState reads appliance-state.json. The seed Spine of every image reads
+// it on each boot, so unknown keys (from a newer Spine) are ignored and kept
+// on rewrite (WriteStateAtomic); only schema_version decides compatibility.
 func ParseState(data []byte) (StateRecord, error) {
 	var state StateRecord
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&state); err != nil {
 		return state, fmt.Errorf("decode state: %w", err)
 	}
@@ -174,9 +193,7 @@ func (s StateRecord) Validate() error {
 			return fmt.Errorf("state %s is required", name)
 		}
 	}
-	switch s.Lifecycle {
-	case LifecycleUnconfigured, LifecycleConfigured, LifecycleRepairRequired, LifecycleFactory:
-	default:
+	if !lifecyclePattern.MatchString(string(s.Lifecycle)) {
 		return fmt.Errorf("invalid lifecycle %q", s.Lifecycle)
 	}
 	if !validSystemSlot(s.Slots.Current) {
@@ -441,12 +458,14 @@ func WriteStateAtomic(path string, state StateRecord) error {
 	return writeJSONAtomic(path, state, 0600)
 }
 
+// writeJSONAtomic replaces path with value, keeping the keys of the current
+// file that value's type doesn't know (jsonkeep).
 func writeJSONAtomic(path string, value any, mode os.FileMode) error {
-	data, err := json.MarshalIndent(value, "", "  ")
+	previous, _ := os.ReadFile(path)
+	data, err := jsonkeep.Marshal(value, previous)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
@@ -490,7 +509,6 @@ func LoadDataSchema(path string) (DataSchemaRecord, error) {
 	}
 	var rec DataSchemaRecord
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&rec); err != nil {
 		return rec, fmt.Errorf("decode data schema: %w", err)
 	}

@@ -27,14 +27,16 @@ func (model completeModel) View() string {
 		theme.Body.Render("  System A is active. System B and Recovery are installed."),
 		theme.Body.Render("  Written images and UEFI boot assets passed readback checks."),
 		"",
-		theme.Selected.Render("  Remove the installer media, then reboot."),
+		theme.Selected.Render("  Press Enter to turn the machine off."),
+		theme.Selected.Render("  When it is off, remove the USB stick."),
 		"",
 		theme.Dim.Render("  First boot installs the exact platform release set."),
 		theme.Dim.Render("  Web setup appears only after durable health checks pass."),
-		theme.Dim.Render("  Local root login requires the password you configured."),
-		theme.Dim.Render("  Password SSH is available only if you enabled its local-subnet option."),
+		theme.Dim.Render("  The owner and admins sign in on the console (Ctrl+Alt+F2)"),
+		theme.Dim.Render("  with their YouEye ID password. Root is for emergencies and"),
+		theme.Dim.Render("  stays locked unless you set a root password."),
 		"",
-		theme.Hint.Render("  Press Enter to exit"),
+		theme.Hint.Render("  Press Enter to turn off"),
 		"",
 	}
 	boxed := theme.BoxAccent.Render(strings.Join(rows, "\n"))
@@ -66,7 +68,7 @@ func (model errorModel) View() string {
 		"",
 		theme.Dim.Render("  No further disk mutations will be attempted."),
 		"",
-		theme.Hint.Render("  Press Enter to exit"),
+		theme.Hint.Render("  Press Enter to turn off"),
 		"",
 	}
 	boxed := theme.Box.Render(strings.Join(rows, "\n"))

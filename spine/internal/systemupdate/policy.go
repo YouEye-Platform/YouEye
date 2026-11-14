@@ -8,9 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 const ReleasePolicySchema = "youeye.release-policy.v1"
@@ -51,9 +55,10 @@ func LoadReleasePolicy(path string) (ReleasePolicy, error) {
 	if err != nil {
 		return ReleasePolicy{}, fmt.Errorf("read release policy: %w", err)
 	}
+	// Every Spine that runs on the box reads the policy; unknown keys from a
+	// newer one are ignored here and kept by SaveReleasePolicy.
 	var policy ReleasePolicy
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&policy); err != nil {
 		return ReleasePolicy{}, fmt.Errorf("decode release policy: %w", err)
 	}
@@ -91,11 +96,12 @@ func SaveReleasePolicy(path string, policy ReleasePolicy) error {
 	if err := policy.Validate(); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(policy, "", "  ")
+	previous, _ := os.ReadFile(path)
+	raw, err := jsonkeep.Marshal(policy, previous)
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, append(raw, '\n'), 0600)
+	return atomicWrite(path, raw, 0600)
 }
 
 // BoxRepository is the repository this box follows, from its protected policy.
@@ -108,11 +114,80 @@ var BoxRepository = func() (string, error) {
 	return policy.Repository, nil
 }
 
-// CoreBlobURL locates a blob of release r in the box's repository.
+// CoreBlobURL locates a blob of release r: under the download base the channel
+// index named for r when it was resolved, else in the box's repository.
 func CoreBlobURL(r releasecache.CoreRelease, blob releasecache.CoreBlob) (string, error) {
 	repository, err := BoxRepository()
 	if err != nil {
 		return "", err
 	}
-	return releasecache.AssetURL(repository, r.Tag, blob), nil
+	return releasecache.AssetURL(repository, BoxDownloadBase(r.Tag), r.Tag, blob), nil
+}
+
+// DownloadBasesPath records, per release tag, the download_base the channel
+// index named when the release was resolved. Absent or unreadable means the
+// repository's own layout.
+var DownloadBasesPath = filepath.Join(CoreStatePath, "download-bases.json")
+
+type downloadBases struct {
+	Schema string            `json:"schema"`
+	Bases  map[string]string `json:"bases"`
+}
+
+func readDownloadBases() downloadBases {
+	record := downloadBases{Schema: "youeye.download-bases.v1", Bases: map[string]string{}}
+	raw, err := os.ReadFile(DownloadBasesPath)
+	if err != nil || len(raw) > 64<<10 {
+		return record
+	}
+	var stored downloadBases
+	if json.Unmarshal(raw, &stored) != nil || stored.Schema != record.Schema {
+		return record
+	}
+	for tag, base := range stored.Bases {
+		if releasecache.ValidDownloadBase(base) {
+			record.Bases[tag] = base
+		}
+	}
+	return record
+}
+
+// BoxDownloadBase returns the recorded download base for tag ("" for none).
+// Tests replace it.
+var BoxDownloadBase = func(tag string) string { return readDownloadBases().Bases[tag] }
+
+// RecordDownloadBase stores (or clears) the download base of tag. Only a few
+// recent tags are kept: older releases are never downloaded again.
+func RecordDownloadBase(tag, base string) error {
+	record := readDownloadBases()
+	if record.Bases[tag] == base {
+		return nil
+	}
+	if base == "" {
+		delete(record.Bases, tag)
+	} else {
+		record.Bases[tag] = base
+	}
+	if len(record.Bases) > 16 {
+		tags := make([]string, 0, len(record.Bases))
+		for t := range record.Bases {
+			tags = append(tags, t)
+		}
+		sort.Slice(tags, func(i, j int) bool {
+			return releasecache.CompareVersions(strings.TrimPrefix(tags[i], "youeye-v"), strings.TrimPrefix(tags[j], "youeye-v")) < 0
+		})
+		for _, t := range tags[:len(tags)-16] {
+			if t != tag {
+				delete(record.Bases, t)
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(DownloadBasesPath), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(DownloadBasesPath, append(raw, '\n'), 0o600)
 }

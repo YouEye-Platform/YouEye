@@ -50,8 +50,8 @@ func (s *Server) handleRemoteAccessKeys(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		rootPasswordLocked := true
-		if status, statusErr := s.developmentAccess.Status(); statusErr == nil {
-			rootPasswordLocked = !status.LocalRootConsoleRequested && !status.RootPasswordSSHRequested
+		if status, statusErr := s.consoleAccess.Status(); statusErr == nil {
+			rootPasswordLocked = !status.RootPasswordSet
 		}
 		jsonResponse(w, map[string]any{"schema": remoteaccess.Schema, "keys": remoteaccess.Metadata(keys), "root_password_locked": rootPasswordLocked})
 	case http.MethodPost:

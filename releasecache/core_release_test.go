@@ -2,6 +2,7 @@ package releasecache
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -25,11 +26,11 @@ func TestSharedCoreReleaseFixture(t *testing.T) {
 		t.Fatalf("unexpected fixture identity %+v", r)
 	}
 	ui, ok := r.Member("ui")
-	if !ok || AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.1-dev.1/ui-standalone.tar" {
+	if !ok || AssetURL("https://example.test/o/YouEye", "", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.1-dev.1/ui-standalone.tar" {
 		t.Fatalf("asset URL is wrong")
 	}
 	ui.Artifact.Release = "youeye-v0.6.0-dev.2"
-	if AssetURL("https://example.test/o/YouEye", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.0-dev.2/ui-standalone.tar" {
+	if AssetURL("https://example.test/o/YouEye", "", r.Tag, ui.Artifact) != "https://example.test/o/YouEye/releases/download/youeye-v0.6.0-dev.2/ui-standalone.tar" {
 		t.Fatalf("referenced release is not used")
 	}
 }
@@ -48,28 +49,59 @@ func mutate(t *testing.T, change func(map[string]any)) []byte {
 func TestCoreReleaseRejectsBadDocuments(t *testing.T) {
 	member := func(doc map[string]any, i int) map[string]any { return doc["members"].([]any)[i].(map[string]any) }
 	cases := map[string]func(map[string]any){
-		"host field":       func(d map[string]any) { d["source"] = "https://github.com/YouEye-Platform/YouEye" },
-		"channel field":    func(d map[string]any) { d["channel"] = "stable" },
-		"blob url":         func(d map[string]any) { member(d, 0)["artifact"].(map[string]any)["url"] = "https://x/y" },
-		"commit not tree":  func(d map[string]any) { d["source_commit"] = strings.Repeat("a", 40) },
 		"bad tree":         func(d map[string]any) { d["source_tree"] = "xyz" },
 		"tag mismatch":     func(d map[string]any) { d["tag"] = "youeye-v9.9.9" },
 		"missing role":     func(d map[string]any) { d["members"] = d["members"].([]any)[1:] },
+		"duplicate role":   func(d map[string]any) { d["members"] = append(d["members"].([]any), d["members"].([]any)[0]) },
 		"foreign release":  func(d map[string]any) { member(d, 0)["artifact"].(map[string]any)["release"] = "v1.0.0" },
-		"signature field":  func(d map[string]any) { d["signatures"] = []any{} },
 		"bad member tree":  func(d map[string]any) { member(d, 2)["source_tree"] = "" },
 		"cp without spine": func(d map[string]any) { delete(member(d, 12), "depends_on") },
 		"no build":         func(d map[string]any) { delete(d, "build") },
 		"bad build":        func(d map[string]any) { d["build"] = "dev2" },
+		"other schema":     func(d map[string]any) { d["schema"] = "youeye.core-release.v2" },
+		"no reader":        func(d map[string]any) { delete(d, "minimum_reader") },
 	}
 	for name, change := range cases {
-		if _, _, err := ParseCoreRelease(mutate(t, change)); err == nil {
-			t.Errorf("%s: accepted", name)
+		if _, _, err := ParseCoreRelease(mutate(t, change)); err == nil || errors.Is(err, ErrNeedsNewerReader) {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 	dup := strings.Replace(string(fixture(t)), `"version": "0.6.1-dev.1",`, `"version": "0.6.1-dev.1", "version": "0.6.1-dev.1",`, 1)
 	if _, _, err := ParseCoreRelease([]byte(dup)); err == nil {
 		t.Error("duplicate key accepted")
+	}
+}
+
+// A document from a later release: unknown fields are ignored; a higher
+// minimum_reader or an unknown role is "needs a newer reader".
+func TestFutureCoreRelease(t *testing.T) {
+	member := func(doc map[string]any, i int) map[string]any { return doc["members"].([]any)[i].(map[string]any) }
+	ignored := map[string]func(map[string]any){
+		"top-level field": func(d map[string]any) { d["signatures"] = []any{map[string]any{"key": "k1"}} },
+		"member field":    func(d map[string]any) { member(d, 0)["sbom"] = "x" },
+		"blob field":      func(d map[string]any) { member(d, 0)["artifact"].(map[string]any)["mirrors"] = []any{"https://m.test"} },
+		"compat field":    func(d map[string]any) { d["compatibility"].(map[string]any)["kernel_min"] = "6.12" },
+	}
+	for name, change := range ignored {
+		if _, _, err := ParseCoreRelease(mutate(t, change)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	newer := map[string]func(map[string]any){
+		"reader 2": func(d map[string]any) { d["minimum_reader"] = 2; d["members"] = "a different shape" },
+		"new role": func(d map[string]any) {
+			extra := map[string]any{}
+			for k, v := range member(d, 0) {
+				extra[k] = v
+			}
+			extra["role"] = "firmware"
+			d["members"] = append(d["members"].([]any), extra)
+		},
+	}
+	for name, change := range newer {
+		if _, _, err := ParseCoreRelease(mutate(t, change)); !errors.Is(err, ErrNeedsNewerReader) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

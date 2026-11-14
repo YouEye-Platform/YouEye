@@ -61,7 +61,7 @@ groups are:
 | `/api/postgres/credentials`, `/api/pihole/credentials`, `/api/control/sso`, `/api/ui/sso` | credentials the Control Panel needs |
 | `/api/releases/index`, `/api/releases/channel` | the box's channel index (for apps, Pointer and the Market) and its channel |
 | `/api/appliance/core-update/{status,check,stage,activate,resume,recover,cancel}` | System updates |
-| `/api/appliance/remote-access/keys`, `/api/appliance/development-access`, `/api/appliance/network` | host access and network |
+| `/api/appliance/remote-access/keys`, `/api/console…` (console access), `/api/appliance/network` | host access and network |
 | `/api/backup/*` | backups and restore |
 
 Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi-hole
@@ -86,3 +86,49 @@ reboot the new slot runs it.
 `spineselect.DiskLayout` (1) and `spineselect.HelperContract` (1) are compiled into each Spine. Raise
 `HelperContract` when the interface between the seed (prepare, launcher, recovery, units) and Spine changes in a
 way an older Spine can't follow; such a Spine then needs an image that implements the new contract.
+
+When an image update writes the other slot, Spine selects the target release's Spine for that slot checking only
+the disk layout; the helper contract is checked against the target image by that slot's launcher at boot (a
+mismatch runs the slot's seed).
+
+## Files on State and Data: readers ignore, writers keep
+
+The seed Spine of every image reads State on every boot, and after a rollback the other slot's (older) Spine reads
+what a newer one wrote. So every record on State and Data follows one rule (`internal/jsonkeep`):
+
+- **Readers ignore unknown keys** (`appliance-state.json`, the Data marker `.youeye-data-schema.json`, the host
+  journal, `bootstrap/release-policy.json`, `spine/selection.json`, `bootstrap/console-access.json`, the image
+  marker and the system-update manifest).
+- **Writers keep them:** a rewrite re-reads the file and carries over every key the writer's type doesn't declare,
+  at every level the type describes (`jsonkeep.Marshal`). Declared fields always come from the writer, so clearing a
+  field still clears it.
+- An unknown `lifecycle` value is kept as it is but counts as "not configured" (no check matches it).
+- One unreadable `selection.json` slot or entry is skipped (that slot runs its seed); the rest stays usable.
+- `schema_version` (State 1, Data 1) is the only compatibility switch: a bump means the format changed
+  incompatibly, and images declare the range they accept. Add fields instead of bumping when old readers can
+  ignore them.
+
+## Console access
+
+Admins get host accounts so a dead Control Panel never locks the owner out (`internal/consoleaccess`):
+
+- **Record:** `bootstrap/console-access.json` (`youeye.console-access.v1`): one account per YouEye ID admin
+  (`user_id`, host `username`, `uid`, own yescrypt `password_hash`, `admin`, `locked`), an optional
+  `root_password_hash` (advanced) and `password_ssh`. Spine stores only hashes.
+- **Host files:** `youeye console apply` (boot unit `youeye-console-access.service`, and after every change) builds
+  `passwd`, `shadow`, `group` and `gshadow` from the image's pristine copies in `/usr/lib/youeye/etc-base` plus the
+  admins, writes them to `/run/youeye/console/` and binds them over `/etc`. A newer image's system users therefore
+  always arrive; nothing persists `/etc/shadow`. Admins are in `youeye-admins` (gid 2000, sudo), homes are
+  `/var/lib/youeye-state/home/<user>`, root stays locked unless a root password is set. Password SSH (opt-in) is
+  allowed from the local subnet only, for admins and (if set) root; SSH by key is unchanged.
+- **Names:** an admin keeps the host name chosen when the account was created (a YouEye ID rename doesn't move
+  it). A name that isn't a valid Linux name or clashes with the image's users becomes `ye-<name>` (`-2`, `-3`…).
+- **The Control Panel keeps it current** over the socket: `POST /api/console/accounts/sync` with the full admin set
+  after every identity change and at start (a new admin gets a locked account; an admin missing from the set is
+  locked at once and its sessions end), `PUT /api/console/accounts/password` when an admin sets a password (sent
+  once), `PUT /api/console/settings` (root password, password SSH), `GET /api/console`.
+- **Owner reset:** Recovery's "Reset owner password" queues a request; at the next boot `youeye console owner-reset`
+  shows a one-time code on the console (valid 24 hours, once; after every 10 wrong tries it pauses 15 minutes; State keeps only its
+  digest). The Control Panel's `/settings/reset-owner` page consumes it with `POST /api/console/owner-reset` and sets a new
+  owner password.
+- **tty2** always runs a login prompt (Ctrl+Alt+F2); tty1 is the status screen.

@@ -25,7 +25,6 @@ const (
 	InstallerModeInstall InstallerMode = "install"
 	InstallerModeProxmox InstallerMode = "proxmox"
 	InstallerModeNetwork InstallerMode = "network"
-	InstallerModeAccess  InstallerMode = "development-access"
 	InstallerModeConsole InstallerMode = "console"
 )
 
@@ -65,6 +64,7 @@ type CLIOptions struct {
 	ApplianceChannel          string
 	ApplianceServiceSelection string
 	ApplianceReleaseTag       string
+	DownloadBase              string
 	CoreManifestSHA256        string
 	ApplianceISOSHA256        string
 	ApplianceRepository       string
@@ -121,6 +121,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.StringVar(&opts.ApplianceServiceSelection, "service-selection", opts.ApplianceServiceSelection, "first-boot services: current selection or sealed image pins")
 	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "install this exact youeye-v release of the channel (needs --core-manifest-sha256)")
 	fs.StringVar(&opts.CoreManifestSHA256, "core-manifest-sha256", "", "core-release.json SHA-256 of --release-tag")
+	fs.StringVar(&opts.DownloadBase, "download-base", "", "where --release-tag's files live (the channel index's download_base), when not in the repository")
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "optional ISO SHA-256 for exact selection")
 	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL (default: the official public repository)")
 	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
@@ -142,12 +143,10 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 			opts.Mode = "proxmox"
 		case "network":
 			opts.Mode = "network"
-		case "development-access":
-			opts.Mode = "development-access"
 		case "console":
 			opts.Mode = "console"
 		default:
-			return opts, fmt.Errorf("unsupported installer command %q (use install, proxmox, network, or development-access)", commandArg)
+			return opts, fmt.Errorf("unsupported installer command %q (use install, proxmox, network, or console)", commandArg)
 		}
 	}
 	opts.Mode = strings.ToLower(strings.TrimSpace(opts.Mode))
@@ -179,8 +178,6 @@ func SelectedInstallerMode(opts CLIOptions) (InstallerMode, error) {
 		return InstallerModeProxmox, nil
 	case "network":
 		return InstallerModeNetwork, nil
-	case "development-access":
-		return InstallerModeAccess, nil
 	case "console":
 		if opts.ConsoleKind != "physical" && opts.ConsoleKind != "serial" {
 			return "", fmt.Errorf("unsupported console kind %q", opts.ConsoleKind)

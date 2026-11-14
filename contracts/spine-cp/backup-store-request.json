@@ -1,0 +1,24 @@
+{
+  "media_id": "media-1",
+  "backup_id": "backup-20261114T000000Z-0a1b2c3d",
+  "use_stored_passphrase": true,
+  "apps": [
+    "razzia"
+  ],
+  "created_at": "2026-11-14T00:00:00.000Z",
+  "size_bytes": 4096,
+  "reason": "manual",
+  "source": {
+    "schema": "youeye.backup.source.v1",
+    "runtime_kind": "appliance-image",
+    "image_version": "0.6.5-dev.1",
+    "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0",
+    "state_schema_version": 1,
+    "data_schema_version": 1,
+    "disk_layout_version": 1,
+    "spine_version": "0.6.5-dev.1",
+    "control_panel_version": "0.6.5-dev.1",
+    "ui_version": "0.6.5-dev.1",
+    "pointer_version": "0.6.3-dev.1"
+  }
+}

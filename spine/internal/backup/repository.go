@@ -32,13 +32,13 @@ type BackupSourceIdentity struct {
 	RuntimeKind         string `json:"runtime_kind"`
 	ImageVersion        string `json:"image_version,omitempty"`
 	SourceTree          string `json:"source_tree,omitempty"`
-	ReleaseBranch       string `json:"release_branch,omitempty"`
 	StateSchemaVersion  int    `json:"state_schema_version,omitempty"`
 	DataSchemaVersion   int    `json:"data_schema_version,omitempty"`
 	DiskLayoutVersion   int    `json:"disk_layout_version,omitempty"`
 	SpineVersion        string `json:"spine_version"`
 	ControlPanelVersion string `json:"control_panel_version,omitempty"`
 	UIVersion           string `json:"ui_version,omitempty"`
+	PointerVersion      string `json:"pointer_version,omitempty"`
 }
 
 type recoveryCatalog struct {
@@ -179,9 +179,9 @@ func validateBackupSource(source BackupSourceIdentity) error {
 		return fmt.Errorf("incomplete appliance backup source identity")
 	}
 	if source.SourceTree != "" && !repositorySourceTree.MatchString(source.SourceTree) {
-		return fmt.Errorf("invalid backup source commit")
+		return fmt.Errorf("invalid backup source tree")
 	}
-	for _, value := range []string{source.ImageVersion, source.SourceTree, source.ReleaseBranch, source.ControlPanelVersion, source.UIVersion} {
+	for _, value := range []string{source.ImageVersion, source.SourceTree, source.ControlPanelVersion, source.UIVersion, source.PointerVersion} {
 		if len(value) > 256 {
 			return fmt.Errorf("backup source identity field is too long")
 		}
@@ -244,7 +244,7 @@ func StoreBackupSet(request RepositoryStoreRequest) error {
 	verifiedAt := time.Now().UTC().Format(time.RFC3339)
 	sourceIdentity := request.Source
 	point := RecoveryPoint{
-		BackupID: request.BackupID, CreatedAt: request.CreatedAt, Apps: append([]string(nil), request.Apps...),
+		BackupID: request.BackupID, CreatedAt: request.CreatedAt, Apps: append([]string{}, request.Apps...),
 		SizeBytes: request.SizeBytes, Reason: reason, VerifiedAt: verifiedAt, Source: &sourceIdentity,
 	}
 	replaced := false

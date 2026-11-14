@@ -54,7 +54,7 @@ export interface SpineRuntimeStatus {
   error_code?: string;
   image_version?: string;
   build_id?: string;
-  source_commit?: string;
+  source_tree?: string;
   architecture?: string;
   firmware_mode?: string;
   disk_layout_version?: number;
@@ -100,18 +100,22 @@ export interface SpineRemoteAccessKeysResponse {
   root_password_locked: boolean;
 }
 
-export interface SpineDevelopmentAccessStatus {
-  schema: 'youeye.development-access-status.v1';
-  local_root_console_requested: boolean;
-  local_root_console_persisted: boolean;
-  local_root_console_active: boolean;
-  local_root_console_effective: boolean;
-  root_password_ssh_requested: boolean;
-  root_password_ssh_effective: boolean;
-  network_scope?: string;
-  detail: string;
-  can_enable_remotely: false;
-  can_disable_remotely: boolean;
+export interface SpineConsoleAccount {
+  user_id: string;
+  /** Host login name; chosen once by Spine, never follows a YouEye ID rename. */
+  username: string;
+  admin: boolean;
+  locked: boolean;
+  has_password: boolean;
+}
+
+/** Console access: the admins' host accounts (never a hash). */
+export interface SpineConsoleStatus {
+  accounts: SpineConsoleAccount[];
+  root_password_set: boolean;
+  password_ssh: boolean;
+  ssh_scope?: string;
+  owner_reset_pending: boolean;
 }
 
 export interface SpineHostNetworkStatus {
@@ -246,6 +250,9 @@ export interface SpineReleaseIndex {
   index: unknown;
   index_sha256: string;
 }
+
+/** Console access calls run inside identity requests; never hold one for long. */
+const CONSOLE_TIMEOUT_MS = 15_000;
 
 export class SpineAPIError extends Error {
   constructor(
@@ -435,12 +442,28 @@ export class SpineClient {
     return this.request('/api/appliance/remote-access/keys');
   }
 
-  async getDevelopmentAccessStatus(): Promise<SpineDevelopmentAccessStatus> {
-    return this.request('/api/appliance/development-access');
+  async consoleStatus(): Promise<SpineConsoleStatus> {
+    return this.request('/api/console', 'GET', undefined, CONSOLE_TIMEOUT_MS);
   }
 
-  async disableDevelopmentAccess(): Promise<SpineDevelopmentAccessStatus> {
-    return this.request('/api/appliance/development-access', 'DELETE');
+  /** Exactly these YouEye ID users are admins now; Spine locks every other account at once. */
+  async syncConsoleAdmins(admins: Array<{ user_id: string; username: string }>): Promise<SpineConsoleStatus> {
+    return this.request('/api/console/accounts/sync', 'POST', { admins }, CONSOLE_TIMEOUT_MS);
+  }
+
+  /** Sends an admin's console password once; Spine keeps only a yescrypt hash. */
+  async setConsolePassword(userId: string, password: string): Promise<SpineConsoleStatus> {
+    return this.request('/api/console/accounts/password', 'PUT', { user_id: userId, password }, CONSOLE_TIMEOUT_MS);
+  }
+
+  /** root_password: "" removes it. password_ssh: password SSH from the local subnet. */
+  async updateConsoleSettings(settings: { root_password?: string; password_ssh?: boolean }): Promise<SpineConsoleStatus> {
+    return this.request('/api/console/settings', 'PUT', { ...settings }, CONSOLE_TIMEOUT_MS);
+  }
+
+  /** Consumes the owner reset code shown on the box's console; a wrong, used or expired code is a 403. */
+  async useOwnerResetCode(code: string): Promise<{ valid: true }> {
+    return this.request('/api/console/owner-reset', 'POST', { code }, CONSOLE_TIMEOUT_MS);
   }
 
   async getHostNetworkStatus(): Promise<SpineHostNetworkStatus> {
@@ -766,7 +789,9 @@ export class SpineClient {
   }
 
   async getExternalRecoveryPoints(mediaId: string): Promise<{ recovery_points: import('@/lib/backup/types').ExternalRecoveryPoint[] }> {
-    return this.request(`/api/backup/repository/catalog?media_id=${encodeURIComponent(mediaId)}`);
+    const catalog = await this.request<{ recovery_points: import('@/lib/backup/types').ExternalRecoveryPoint[] | null }>(`/api/backup/repository/catalog?media_id=${encodeURIComponent(mediaId)}`);
+    // A recovery point without apps may list them as null (written by an older Spine).
+    return { recovery_points: (catalog.recovery_points ?? []).map(point => ({ ...point, apps: point.apps ?? [] })) };
   }
 }
 

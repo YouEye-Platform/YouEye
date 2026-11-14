@@ -45,12 +45,11 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 		fail()
 		return true
 	}
-	executable, bootstrap, err := coreInstalledExecutable()
+	executable, err := coreInstalledExecutable()
 	if err != nil || image.ReleaseSet == nil {
 		fail()
 		return true
 	}
-	_ = bootstrap
 	if err := verifyRunningSpine(executable); err != nil {
 		fail()
 		return true

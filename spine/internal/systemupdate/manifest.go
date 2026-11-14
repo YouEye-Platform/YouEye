@@ -97,9 +97,10 @@ func VerifyManifest(manifestPath, expectedSHA256 string) (VerifiedManifest, erro
 }
 
 func ParseManifest(raw []byte) (Manifest, error) {
+	// Digest-bound release file read by the running (older) Spine: keys a
+	// newer release adds are ignored.
 	var manifest Manifest
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&manifest); err != nil {
 		return manifest, fmt.Errorf("decode system update manifest: %w", err)
 	}

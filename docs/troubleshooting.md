@@ -61,18 +61,27 @@ The console shows "Needs attention" and `progress.json` has `"stage": "needs_att
 
 ## SSH: Permission denied (publickey)
 
-Root SSH is key-only unless "Root password SSH" was turned on at install; even then the password works only from
-the directly connected IPv4 subnet. On the console:
+SSH is key-only unless password SSH was turned on (Settings → Console access, or at install with a root password);
+even then a password works only from the directly connected IPv4 subnet, for admins and (if set) root. On the
+console (Ctrl+Alt+F2, sign in as an admin with your YouEye ID password, then `sudo -i`):
 
 ```sh
-cat /var/lib/youeye-state/bootstrap/development-access-status.json   # requested vs effective, and why
-systemctl status youeye-development-access.service --no-pager
+youeye console status                                                  # admins' accounts, root password, password SSH
+systemctl status youeye-console-access.service --no-pager
 youeye appliance ssh-key list
 youeye appliance ssh-key add --key-file /path/to/key.pub              # or --key-file - to read stdin
 ```
 
 Keys added this way are kept on State and survive reboots and image updates. Do not share
-`bootstrap/development-access.json` or `/etc/shadow`; they hold password hashes.
+`bootstrap/console-access.json`; it holds password hashes.
+
+## Locked out: the Control Panel is down, or the owner password is lost
+
+- **Control Panel down:** every admin can sign in on the box's screen (Ctrl+Alt+F2) with their YouEye ID password
+  and use `sudo`. An admin who signs in with a passkey only sets a separate console password in Settings → Console
+  access. A demoted or deleted admin is locked at once.
+- **Owner password lost:** boot Recovery, choose "Reset owner password", reboot. The status screen (tty1) shows a
+  one-time code (valid 24 hours). Open `https://<box IP address>/settings/reset-owner` (it answers only on the address, not on the name), enter the code and a new password.
 
 ## Spine is broken
 
@@ -134,11 +143,18 @@ seconds at power-on (`applianceLoaderConfigScript` in `installer/internal/instal
 8. Reset platform, keep data
 9. Factory reset
 10. / 11. Reboot or power off
+12. Reset owner password (a one-time code on the console at the next boot)
+13. and later: extra items an update lists in `recovery/menu.json` on State
 
-A reset is queued and applied on the next boot by `youeye-recovery-apply` before normal services start.
+Recovery is never updated, so it reads only slots, file ownership and digests (no schema or format checks), repairs
+systemd-boot with `bootctl update` when one is installed (never downgrading it), and queues any well-formed request
+kind. Requests are applied on the next boot by `youeye-recovery-apply` (part of the System image, so updates can
+add kinds) before normal services start; a kind it doesn't know is recorded as `unsupported` in
+`recovery/last-result.json`.
 
-- **Factory reset** removes all containers and platform data (`youeye cleanup --yes`), turns root password access
-  off, and clears first deployment, so the box deploys again and opens setup as new.
+- **Factory reset** removes all containers and platform data (`youeye cleanup --yes`), removes every console
+  account, the root password and password SSH, and clears first deployment, so the box deploys again and opens setup
+  as new.
 - **Reset platform, keep data** (option 8) does not rebuild anything yet. It runs `youeye cleanup --yes --keep-data`
   early in boot, before Incus starts, so the cleanup finds no containers to remove; it then clears first
   deployment, which finds the platform already in place. The request completes and nothing is lost, but the

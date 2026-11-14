@@ -17,23 +17,23 @@ import (
 )
 
 const (
-	applianceAnswerSchema   = "youeye.appliance.answer.v1"
-	releasePolicySchema     = "youeye.release-policy.v1"
-	developmentAccessSchema = "youeye.development-access.v1"
+	applianceAnswerSchema = "youeye.appliance.answer.v1"
+	releasePolicySchema   = "youeye.release-policy.v1"
+	consoleAccessSchema   = "youeye.console-access.v1"
 )
 
 type applianceAnswer struct {
-	CoreRelease        *coreAnswerSelection    `json:"core_release,omitempty"`
-	ReleaseCacheSHA256 string                  `json:"release_cache_sha256,omitempty"`
-	Schema             string                  `json:"schema"`
-	Operation          string                  `json:"operation"`
-	TransactionID      string                  `json:"transaction_id,omitempty"`
-	TargetSerial       string                  `json:"target_serial,omitempty"`
-	EraseConfirmed     bool                    `json:"erase_confirmed,omitempty"`
-	Network            applianceAnswerNetwork  `json:"network"`
-	ReleasePolicy      applianceReleasePolicy  `json:"release_policy,omitempty"`
-	Development        developmentAccessPolicy `json:"development_access,omitempty"`
-	AuthorizedKeys     []string                `json:"authorized_keys,omitempty"`
+	CoreRelease        *coreAnswerSelection   `json:"core_release,omitempty"`
+	ReleaseCacheSHA256 string                 `json:"release_cache_sha256,omitempty"`
+	Schema             string                 `json:"schema"`
+	Operation          string                 `json:"operation"`
+	TransactionID      string                 `json:"transaction_id,omitempty"`
+	TargetSerial       string                 `json:"target_serial,omitempty"`
+	EraseConfirmed     bool                   `json:"erase_confirmed,omitempty"`
+	Network            applianceAnswerNetwork `json:"network"`
+	ReleasePolicy      applianceReleasePolicy `json:"release_policy,omitempty"`
+	ConsoleAccess      consoleAccessPolicy    `json:"console_access"`
+	AuthorizedKeys     []string               `json:"authorized_keys,omitempty"`
 }
 
 type applianceAnswerNetwork struct {
@@ -55,20 +55,22 @@ type applianceReleasePolicy struct {
 	ServiceSelection   string `json:"service_selection,omitempty"`
 }
 
-type developmentAccessPolicy struct {
+// consoleAccessPolicy is what the installer writes to State as
+// bootstrap/console-access.json (with an empty account list): an optional
+// root password (yescrypt) and opt-in password SSH from the local subnet.
+// Spine owns the record afterwards and adds the admins' accounts.
+type consoleAccessPolicy struct {
 	Schema           string `json:"schema"`
-	LocalRootConsole bool   `json:"local_root_console"`
-	RootPasswordSSH  bool   `json:"root_password_ssh"`
-	PasswordHash     string `json:"password_hash,omitempty"`
-	SSHNetworkScope  string `json:"ssh_network_scope,omitempty"`
+	RootPasswordHash string `json:"root_password_hash,omitempty"`
+	PasswordSSH      bool   `json:"password_ssh"`
 }
 
 func defaultApplianceReleasePolicy() applianceReleasePolicy {
 	return applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: "stable"}
 }
 
-func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
-	return developmentAccessPolicy{Schema: developmentAccessSchema}
+func defaultConsoleAccessPolicy() consoleAccessPolicy {
+	return consoleAccessPolicy{Schema: consoleAccessSchema}
 }
 
 func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
@@ -122,7 +124,7 @@ func validateApplianceAnswer(answer applianceAnswer) error {
 	if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
 		return err
 	}
-	if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
+	if err := validateConsoleAccessPolicy(answer.ConsoleAccess); err != nil {
 		return err
 	}
 	if answer.CoreRelease != nil || answer.ReleasePolicy.CoreManifestSHA256 != "" {
@@ -181,25 +183,15 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 	return nil
 }
 
-func validateDevelopmentAccessPolicy(policy developmentAccessPolicy) error {
-	if policy.Schema != developmentAccessSchema {
-		return fmt.Errorf("development access schema must be %s", developmentAccessSchema)
+func validateConsoleAccessPolicy(policy consoleAccessPolicy) error {
+	if policy.Schema != consoleAccessSchema {
+		return fmt.Errorf("console access schema must be %s", consoleAccessSchema)
 	}
-	if !policy.LocalRootConsole && !policy.RootPasswordSSH {
-		if policy.PasswordHash != "" || policy.SSHNetworkScope != "" {
-			return fmt.Errorf("disabled development access cannot retain a password hash or SSH scope")
-		}
-		return nil
+	if policy.RootPasswordHash != "" && !validYescryptHash(policy.RootPasswordHash) {
+		return fmt.Errorf("console access root password must be a valid yescrypt hash")
 	}
-	if !validYescryptHash(policy.PasswordHash) {
-		return fmt.Errorf("enabled development access requires a valid yescrypt password hash")
-	}
-	if policy.RootPasswordSSH {
-		if policy.SSHNetworkScope != "local-subnet" {
-			return fmt.Errorf("root password SSH must be limited to the local subnet")
-		}
-	} else if policy.SSHNetworkScope != "" {
-		return fmt.Errorf("SSH network scope requires root password SSH")
+	if policy.PasswordSSH && policy.RootPasswordHash == "" {
+		return fmt.Errorf("password SSH needs a root password here; admins can turn it on later in the Control Panel")
 	}
 	return nil
 }

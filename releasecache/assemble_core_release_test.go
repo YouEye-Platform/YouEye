@@ -17,7 +17,7 @@ func TestAssembleCoreReleaseScriptOutputParses(t *testing.T) {
 		t.Skip("python3 is not installed")
 	}
 	dir := t.TempDir()
-	names := []string{"youeye-installer-linux-amd64", "youeye-appliance-amd64.iso", "appliance-manifest.json", "system-update-manifest.json", "build-inputs.json", "system-root.img.zst", "system-a.efi", "system-b.efi", "youeye-system-updater-linux-amd64", "internal-recovery.img.zst", "recovery.efi", "youeye-system-update-bootstrap", "spine-linux-amd64", "cp-standalone.tar", "ui-standalone.tar"}
+	names := []string{"youeye-installer-linux-amd64", "youeye-appliance-amd64.iso", "appliance-manifest.json", "system-update-manifest.json", "build-inputs.json", "system-root.img.zst", "system-a.efi", "system-b.efi", "youeye-system-updater-linux-amd64", "internal-recovery.img.zst", "recovery.efi", "spine-linux-amd64", "cp-standalone.tar", "ui-standalone.tar"}
 	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("fixture "+name+"\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -38,7 +38,7 @@ func TestAssembleCoreReleaseScriptOutputParses(t *testing.T) {
 	if err != nil {
 		t.Fatal("assembled document rejected:", err)
 	}
-	if r.Authority != CoreReleaseAuthority || r.Tag != "youeye-v0.6.1-dev.3" || r.SourceTree != tree || len(r.Members) != 14 {
+	if r.Authority != CoreReleaseAuthority || r.Tag != "youeye-v0.6.1-dev.3" || r.SourceTree != tree || len(r.Members) != 13 {
 		t.Fatalf("unexpected identity %+v", r)
 	}
 	for _, forbidden := range []string{"source\"", "branch", "channel", "source_commit", "url", "https://"} {
@@ -70,7 +70,7 @@ func TestAssembleCoreReleaseReusesImage(t *testing.T) {
 		t.Skip("python3 is not installed")
 	}
 	full, services := t.TempDir(), t.TempDir()
-	names := []string{"youeye-installer-linux-amd64", "youeye-appliance-amd64.iso", "appliance-manifest.json", "system-update-manifest.json", "build-inputs.json", "system-root.img.zst", "system-a.efi", "system-b.efi", "youeye-system-updater-linux-amd64", "internal-recovery.img.zst", "recovery.efi", "youeye-system-update-bootstrap", "spine-linux-amd64", "cp-standalone.tar", "ui-standalone.tar"}
+	names := []string{"youeye-installer-linux-amd64", "youeye-appliance-amd64.iso", "appliance-manifest.json", "system-update-manifest.json", "build-inputs.json", "system-root.img.zst", "system-a.efi", "system-b.efi", "youeye-system-updater-linux-amd64", "internal-recovery.img.zst", "recovery.efi", "spine-linux-amd64", "cp-standalone.tar", "ui-standalone.tar"}
 	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(full, name), []byte("v1 "+name), 0o644); err != nil {
 			t.Fatal(err)
@@ -109,7 +109,7 @@ func TestAssembleCoreReleaseReusesImage(t *testing.T) {
 	if app, _ := r.Member("appliance"); app.BuildInputs == nil || app.BuildInputs.Release != "youeye-v0.6.1-dev.3" {
 		t.Fatal("appliance build inputs not reused")
 	}
-	if AssetURL("https://x.test/o/YouEye", r.Tag, mustMember(t, r, "media").Artifact) != "https://x.test/o/YouEye/releases/download/youeye-v0.6.1-dev.3/youeye-appliance-amd64.iso" {
+	if AssetURL("https://x.test/o/YouEye", "", r.Tag, mustMember(t, r, "media").Artifact) != "https://x.test/o/YouEye/releases/download/youeye-v0.6.1-dev.3/youeye-appliance-amd64.iso" {
 		t.Fatal("reused media not located in its own release")
 	}
 }

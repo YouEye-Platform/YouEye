@@ -63,7 +63,7 @@ nftables, Incus (`incus-base` from trixie-backports), the systemd units in `appl
 | Path under `/var/lib/youeye-state/` | What |
 |---|---|
 | `bootstrap/release-policy.json`, `bootstrap/core-release.json` | the box's repository and channel, and the release it was installed from |
-| `bootstrap/network-profile.json`, `bootstrap/development-access.json` | install-time network and root-access choices |
+| `bootstrap/network-profile.json`, `bootstrap/console-access.json` | install-time network; admins' console accounts, root password, password SSH |
 | `spine/` | the selected Spine per slot (`selection.json` and the binaries) |
 | `first-deploy/` | first-deployment progress, health and the `complete` marker |
 | `core-update/` | the System update journal, receipt, frozen targets and version floor |

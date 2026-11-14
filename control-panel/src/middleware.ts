@@ -56,6 +56,11 @@ const PUBLIC_ROUTES = [
   '/settings/api/auth/csrf',
   '/settings/api/auth/callback',
   '/settings/api/auth/mode',
+  // Owner password reset with the code the box's console shows (no session).
+  '/reset-owner',
+  '/settings/reset-owner',
+  '/api/auth/reset-owner',
+  '/settings/api/auth/reset-owner',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
 
@@ -364,6 +369,7 @@ export async function middleware(request: NextRequest) {
     // Allow these paths through (needed for setup flow to work)
     const setupAllowedPaths = [
       '/setup', '/setup-complete', '/login',
+      '/reset-owner', '/settings/reset-owner', '/settings/api/auth/reset-owner',
       '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
       '/api/appliance/',
       '/api/dns-providers/cloudflare/validate',

@@ -530,3 +530,56 @@ func TestApplyTrialRefusesIncompatibleEntry(t *testing.T) {
 		t.Fatal("restarted for an incompatible Spine")
 	}
 }
+
+// Another slot's Spine may have written fields or entries this one doesn't
+// know: one bad entry is skipped, and a rewrite keeps the unknown fields.
+func TestSelectionToleratesNewerContent(t *testing.T) {
+	root := t.TempDir()
+	sha := strings.Repeat("a", 64)
+	raw := `{"schema":"youeye.spine-selection.v1","updated_at":"2026-11-14T00:00:00Z","future":{"x":1},"slots":{
+	 "A":{"current":{"sha256":"` + sha + `","version":"0.6.5-dev.1","helper_contract":1,"disk_layout":1,"pinned":true},"trial":{"sha256":"bad"}},
+	 "C":{"current":{"sha256":"` + sha + `"}}}}`
+	if err := os.WriteFile(filepath.Join(root, selectionFile), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Slots["A"] == nil || s.Slots["A"].Current == nil || s.Slots["A"].Trial != nil || s.Slots["C"] != nil {
+		t.Fatalf("bad entries not skipped: %+v", s.Slots)
+	}
+	if err := Save(root, s, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := os.ReadFile(filepath.Join(root, selectionFile))
+	if !strings.Contains(string(kept), `"future"`) || !strings.Contains(string(kept), `"pinned": true`) {
+		t.Fatalf("rewrite lost newer fields: %s", kept)
+	}
+	// What this Spine couldn't read stays for the Spine that wrote it.
+	if !strings.Contains(string(kept), `"sha256": "bad"`) || !strings.Contains(string(kept), `"C"`) {
+		t.Fatalf("rewrite erased entries it could not read: %s", kept)
+	}
+}
+
+// An image update may bring a Spine with another helper contract: selecting it
+// for the written slot must not be judged by the running Spine's contract.
+func TestSelectForTargetSlotIgnoresRunningHelperContract(t *testing.T) {
+	root := t.TempDir()
+	e := Entry{SHA256: strings.Repeat("c", 64), Version: "0.6.6-dev.1", HelperContract: HelperContract + 1, DiskLayout: DiskLayout}
+	src := filepath.Join(t.TempDir(), "youeye")
+	if err := os.WriteFile(src, []byte("spine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Select(root, "B", e, ThisHost(), time.Now()); err == nil {
+		t.Fatal("running contract should refuse a different helper contract")
+	}
+	if err := Select(root, "B", e, TargetSlotHost(e), time.Now()); err != nil && !strings.Contains(err.Error(), "payload") && !strings.Contains(err.Error(), "digest") && !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("target slot host refused the new contract: %v", err)
+	}
+	other := e
+	other.DiskLayout = DiskLayout + 1
+	if err := Select(root, "B", other, TargetSlotHost(other), time.Now()); err == nil || !strings.Contains(err.Error(), "disk layout") {
+		t.Fatalf("disk layout must still be checked: %v", err)
+	}
+}

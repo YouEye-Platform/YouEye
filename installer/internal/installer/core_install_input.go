@@ -28,7 +28,7 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 			return input, fmt.Errorf("resume requires the original System answer; supply the retained answer")
 		}
 		policy := input.ReleasePolicy
-		release, err := resolveApplianceRelease(ctx, client, policy.Repository, policy.Channel, "", "")
+		release, err := resolveApplianceRelease(ctx, client, policy.Repository, policy.Channel, "", "", "")
 		if err != nil {
 			return input, err
 		}

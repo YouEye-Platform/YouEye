@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/youeye-platform/YouEye/releasecache"
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
 
 func TestNativeCoreAuthorityUsesFrozenTargetWithoutDiscovery(t *testing.T) {
@@ -25,8 +26,8 @@ func TestNativeCoreAuthorityUsesFrozenTargetWithoutDiscovery(t *testing.T) {
 	}
 	r.Version, r.Build, r.Tag = "0.6.1-dev.2", "0.6.1-dev.2", "youeye-v0.6.1-dev.2"
 	r.Compatibility.MinimumRelease = "0.5.36"
-	r.Compatibility.StateMin = 2
-	r.Compatibility.StateMax = 2
+	r.Compatibility.StateMin = appliance.CurrentStateSchema
+	r.Compatibility.StateMax = appliance.CurrentStateSchema
 	raw, _ = json.Marshal(r)
 	digest := checksum(raw)
 	state := testState()
@@ -80,8 +81,8 @@ func TestNativeCoreAuthorityUsesFrozenTargetWithoutDiscovery(t *testing.T) {
 func TestCoreCompatibilityBoundaries(t *testing.T) {
 	_, _, r := coreJournalFixture(t)
 	r.Compatibility.MinimumRelease = "0.5.36"
-	r.Compatibility.StateMin = 2
-	r.Compatibility.StateMax = 2
+	r.Compatibility.StateMin = appliance.CurrentStateSchema
+	r.Compatibility.StateMax = appliance.CurrentStateSchema
 	state := testState()
 	if err := validateCoreCompatibility(r, state, r.Version); err != nil {
 		t.Fatal(err)

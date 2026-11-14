@@ -6,7 +6,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { parseReleaseVersion } from '../version';
 import { SpineAPIError, spineClient } from '../spine/client';
 import { releaseCacheFetch } from './cache';
-import { canonicalReleaseRepository, uniqueJSON, validReleaseTag } from './core-release';
+import { canonicalReleaseRepository, releaseAssetURL, uniqueJSON, validReleaseTag } from './core-release';
 import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProductRelease, type VerifiedProductRelease } from './product-release';
 
 /**
@@ -14,8 +14,11 @@ import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProduct
  * every product on its channel. The Control Panel gets it from Spine (which
  * downloads and caches it) and resolves native apps, Pointer and the official
  * Market catalog through it. Documents and assets are then plain HTTPS
- * downloads of `<repository>/releases/download/<tag>/<name>`, each checked by
- * SHA-256. No release-listing API is ever called.
+ * downloads (`releaseAssetURL`: the entry's download base when it names one,
+ * else the repository's release-download layout), each checked by SHA-256. No
+ * release-listing API is ever called. The index is read leniently, like
+ * Spine's: unknown keys and products are ignored, and an invalid entry fails
+ * only its own product (`invalid`).
  */
 
 export const RELEASE_CHANNELS = ['dev', 'alpha', 'beta', 'stable'] as const;
@@ -30,8 +33,12 @@ export const INDEX_PRODUCTS = ['youeye', 'pointer', 'market', 'notes', 'wiki', '
  * version it carries (core: the document's `build`; products: the build
  * manifest's `build_version`). Only `build` orders entries.
  */
-export type ChannelEntry = { repository: string; tag: string; version: string; build: string; document: string; sha256: string };
-export type ChannelIndex = { schema: 'youeye.channel.v1'; channel: ReleaseChannelName; published_at: string; products: Record<string, ChannelEntry> };
+export type ChannelEntry = { repository: string; tag: string; version: string; build: string; document: string; sha256: string; download_base?: string };
+export type ChannelIndex = {
+  schema: 'youeye.channel.v1'; channel: ReleaseChannelName; published_at: string; products: Record<string, ChannelEntry>;
+  /** Products whose entry this reader could not use, with the reason. */
+  invalid: Record<string, string>;
+};
 export type BoxChannelIndex = { repository: string; channel: ReleaseChannelName; index: ChannelIndex; indexSHA256: string };
 
 const RATE_LIMITED = 'release host refused or rate-limited the request, retrying';
@@ -62,31 +69,51 @@ export function describeReleaseError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function fields(value: unknown, allowed: string[]) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) throw new Error('Unsupported channel index fields');
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** HTTPS URL without credentials, query, fragment or trailing slash (matches releasecache.ValidDownloadBase). */
+export function validDownloadBase(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 512 || value.endsWith('/')) return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && !!u.host && !u.username && !u.password && !u.search && !u.hash && u.toString().replace(/\/$/, '') === value;
+  } catch { return false; }
 }
 
-/** Validate an index exactly as Spine does (releasecache.ParseChannelIndex). */
+function channelEntry(product: string, value: unknown): ChannelEntry {
+  if (!isObject(value)) throw new Error(`Channel index entry ${product} is invalid`);
+  const entry = value as ChannelEntry;
+  let repository = '';
+  try { repository = canonicalReleaseRepository(String(entry.repository)); } catch { /* reported below */ }
+  if (repository !== entry.repository || typeof entry.version !== 'string' || !parseReleaseVersion(entry.version) || typeof entry.build !== 'string' || !parseReleaseVersion(entry.build) || !validReleaseTag(entry.tag) || typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)
+    || entry.download_base !== undefined && !validDownloadBase(entry.download_base)) {
+    throw new Error(`Channel index entry ${product} is invalid`);
+  }
+  const [tag, documentName] = product === 'youeye' ? [`youeye-v${entry.version}`, 'core-release.json']
+    : product === 'market' ? [`catalog-v${entry.version}`, 'product-release.json']
+    : [`v${entry.version}`, 'product-release.json'];
+  if (entry.tag !== tag || entry.document !== documentName) throw new Error(`Channel index entry ${product} must name ${tag}/${documentName}`);
+  return {
+    repository: entry.repository, tag: entry.tag, version: entry.version, build: entry.build, document: entry.document, sha256: entry.sha256,
+    ...(entry.download_base ? { download_base: entry.download_base } : {}),
+  };
+}
+
+/** Read an index as Spine does (releasecache.ParseChannelIndex). */
 export function parseChannelIndex(value: unknown): ChannelIndex {
-  fields(value, ['schema', 'channel', 'published_at', 'products']);
-  const index = value as ChannelIndex;
-  if (index.schema !== 'youeye.channel.v1' || !isReleaseChannel(index.channel) || typeof index.published_at !== 'string' || Number.isNaN(Date.parse(index.published_at))) {
+  if (!isObject(value)) throw new Error('Unsupported channel index');
+  if (value.schema !== 'youeye.channel.v1' || !isReleaseChannel(value.channel) || typeof value.published_at !== 'string' || Number.isNaN(Date.parse(value.published_at))) {
     throw new Error('Unsupported channel index');
   }
-  fields(index.products, [...INDEX_PRODUCTS]);
-  for (const [product, entry] of Object.entries(index.products)) {
-    fields(entry, ['repository', 'tag', 'version', 'build', 'document', 'sha256']);
-    let repository = '';
-    try { repository = canonicalReleaseRepository(entry.repository); } catch { /* reported below */ }
-    if (repository !== entry.repository || !parseReleaseVersion(entry.version) || typeof entry.build !== 'string' || !parseReleaseVersion(entry.build) || !validReleaseTag(entry.tag) || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
-      throw new Error(`Channel index entry ${product} is invalid`);
-    }
-    const [tag, documentName] = product === 'youeye' ? [`youeye-v${entry.version}`, 'core-release.json']
-      : product === 'market' ? [`catalog-v${entry.version}`, 'product-release.json']
-      : [`v${entry.version}`, 'product-release.json'];
-    if (entry.tag !== tag || entry.document !== documentName) throw new Error(`Channel index entry ${product} must name ${tag}/${documentName}`);
+  const listed = isObject(value.products) ? value.products : {};
+  const products: Record<string, ChannelEntry> = {};
+  const invalid: Record<string, string> = {};
+  for (const product of INDEX_PRODUCTS) {
+    if (!(product in listed)) continue;
+    try { products[product] = channelEntry(product, listed[product]); }
+    catch (error) { invalid[product] = error instanceof Error ? error.message : String(error); }
   }
-  return index;
+  return { schema: 'youeye.channel.v1', channel: value.channel, published_at: value.published_at, products, invalid };
 }
 
 export function parseChannelIndexBytes(raw: Buffer): ChannelIndex {
@@ -121,12 +148,14 @@ export function assertReleaseDownloadURL(url: string): URL {
   return parsed;
 }
 
-const GITHUB_ASSET_ORIGINS = new Set(['https://release-assets.githubusercontent.com', 'https://objects.githubusercontent.com']);
-function redirectAllowed(from: URL, to: URL): boolean {
+/**
+ * A release host may redirect a download anywhere over HTTPS: every release
+ * file is checked by SHA-256 (and size), so a CDN move or mirror never ends
+ * updates. Leaving HTTPS, credentials, fragments and listing APIs are refused.
+ */
+function redirectAllowed(_from: URL, to: URL): boolean {
   if (to.protocol !== 'https:' || to.username || to.password || to.hash) return false;
-  if (to.origin === from.origin) return true;
-  // GitHub serves release assets from its asset CDN.
-  return from.origin === 'https://github.com' && GITHUB_ASSET_ORIGINS.has(to.origin);
+  return !/^api\./.test(to.hostname) && !/\/api\/v\d+\/repos\//.test(to.pathname);
 }
 
 /**
@@ -166,7 +195,7 @@ async function openReleaseDownload(url: string, maximumBytes: number, fetchImpl:
     await response.body?.cancel();
     if (!location || redirects >= 5) throw new Error('Release download redirect chain is invalid');
     const next = new URL(location, current);
-    if (!redirectAllowed(initial, next)) throw new Error('Release download redirected outside its release host');
+    if (!redirectAllowed(initial, next)) throw new Error('Release download redirect left HTTPS or points at a listing API');
     current = next;
   }
   if (!response.ok) {
@@ -199,7 +228,7 @@ export async function downloadReleaseFile(url: string, maximumBytes: number, fet
 }
 
 export function channelEntryDocumentURL(entry: ChannelEntry): string {
-  return `${entry.repository}/releases/download/${encodeURIComponent(entry.tag)}/${encodeURIComponent(entry.document)}`;
+  return releaseAssetURL(entry.repository, entry.tag, { name: entry.document }, entry.download_base);
 }
 
 export type ProductResolver = {
@@ -216,10 +245,13 @@ export async function resolveChannelProduct(product: string, options: ProductRes
   if (product === 'youeye' || !(INDEX_PRODUCTS as readonly string[]).includes(product)) throw new Error(`${product} is not a channel product`);
   const box = await (options.index ?? readChannelIndex)();
   const entry = box.index.products[product];
-  if (!entry) return null;
+  if (!entry) {
+    if (box.index.invalid[product]) throw new Error(box.index.invalid[product]);
+    return null;
+  }
   const raw = await downloadReleaseFile(channelEntryDocumentURL(entry), 1024 * 1024, options.fetch);
   if (createHash('sha256').update(raw).digest('hex') !== entry.sha256) throw new Error(`${entry.document} of ${entry.tag} differs from the channel index digest`);
-  const selected = verifyProductRelease(raw, { product, repository: entry.repository, tag: entry.tag });
+  const selected = verifyProductRelease(raw, { product, repository: entry.repository, tag: entry.tag, downloadBase: entry.download_base });
   if (selected.release.version !== entry.version || selected.build.build_version !== entry.build) throw new Error(`${product} release differs from its channel index version`);
   return selected;
 }

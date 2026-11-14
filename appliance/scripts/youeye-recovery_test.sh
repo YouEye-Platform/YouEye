@@ -204,7 +204,7 @@ jq -nc \
 	  recovery_version:"1",artifacts:[{role:"system-b-uki",sha256:$hash}]}' \
 	> "$tmp/update-boot/b/0.6.0-dev.27/manifest.json"
 chmod 0600 "$tmp/update-boot/b/0.6.0-dev.27/manifest.json"
-jq -nc '{schema_version:2,slots:{current:"B",current_image_version:"0.6.0-dev.27",
+jq -nc '{schema_version:1,slots:{current:"B",current_image_version:"0.6.0-dev.27",
 	previous:"A",previous_image_version:"0.6.0-dev.26"},transaction:{}}' \
 	> "$tmp/appliance-state.json"
 run_repair
@@ -268,5 +268,43 @@ if TEST_EXISTING_MOUNT=1 TEST_EXISTING_OPTIONS=rw run_export >/dev/null 2>&1; th
     printf '%s\n' 'support media mounted without restrictive options was accepted' >&2
     exit 1
 fi
+
+# Recovery is frozen at install: it must accept State and release documents
+# whose schema numbers and authority fields later releases change.
+write_manifest
+jq -nc --arg sha "$(sha256sum "$state/appliance-manifest.json" | cut -d ' ' -f 1)" \
+    '{schema:"youeye.core-release.v9",authority:"signed",members:[{role:"appliance",artifact:{sha256:$sha},extra:1}]}' > "$tmp/core-release.json"
+chmod 0600 "$tmp/core-release.json"
+printf '%s\n' '{"schema_version":1,"slots":{"current":"A","current_image_version":"0.6.0-dev.26"},"newer":true}' > "$tmp/appliance-state.json"
+chmod 0600 "$tmp/appliance-state.json"
+rm -f "$tmp/bootctl.log"
+run_repair >/dev/null || { echo "FAIL: repair refused a newer State/release format" >&2; exit 1; }
+grep -q -- ' install$' "$tmp/bootctl.log" || { echo "FAIL: first repair must install systemd-boot" >&2; exit 1; }
+# With systemd-boot present, repair updates (never downgrades) it.
+mkdir -p "$esp/EFI/systemd" && printf 'newer\n' > "$esp/EFI/systemd/systemd-bootx64.efi"
+rm -f "$tmp/bootctl.log"
+run_repair >/dev/null || { echo "FAIL: repair with systemd-boot present" >&2; exit 1; }
+grep -q -- '--graceful update$' "$tmp/bootctl.log" && ! grep -q -- ' install$' "$tmp/bootctl.log" ||
+    { echo "FAIL: repair must use bootctl update when systemd-boot exists" >&2; cat "$tmp/bootctl.log" >&2; exit 1; }
+
+# Generic requests: any well-formed kind is queued; extra items come from a
+# protected menu file written by updatable code.
+requests="$tmp/requests"
+YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --queue reset-owner-password
+jq -e '.operation == "reset-owner-password" and .stage == "queued"' "$requests/request.json" >/dev/null ||
+    { echo "FAIL: reset-owner-password not queued" >&2; exit 1; }
+rm -f "$requests/request.json"
+YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --queue some-later-kind ||
+    { echo "FAIL: a later request kind was refused" >&2; exit 1; }
+rm -f "$requests/request.json"
+if YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --queue 'Bad Kind;rm' 2>/dev/null; then
+    echo "FAIL: malformed request kind queued" >&2; exit 1
+fi
+printf '%s\n' '{"schema":"youeye.recovery-menu.v1","items":[{"operation":"rotate-keys","title":"Rotate keys","confirm":"Rotates them."},{"operation":"BAD","title":"x","confirm":"y"},{"operation":"factory-reset","title":"dup","confirm":"z"}]}' > "$requests/menu.json"
+chmod 0600 "$requests/menu.json"
+extra=$(YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --list-extra)
+[ "$extra" = "$(printf 'rotate-keys\tRotate keys\tRotates them.')" ] || { echo "FAIL: extra menu items: $extra" >&2; exit 1; }
+chmod 0666 "$requests/menu.json"
+[ -z "$(YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --list-extra)" ] || { echo "FAIL: unprotected menu file read" >&2; exit 1; }
 
 printf '%s\n' 'PASS: Recovery repair and support export fail closed'

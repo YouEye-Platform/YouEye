@@ -17,38 +17,40 @@ test('host bootstrap network status is administrator-only and read-only', () => 
   assert.match(compatibilityRoute, /export \{ GET \}/);
 });
 
-test('development access can only be inspected or disabled by an administrator', () => {
-  const route = source('src/app/api/appliance/development-access/route.ts');
-  const card = source('src/components/settings-shell/development-access-card.tsx');
-  assert.match(route, /export async function GET/);
-  assert.match(route, /export async function DELETE/);
-  assert.match(route, /session\?\.isAdmin/);
-  assert.match(route, /verifyCSRFToken/);
-  assert.match(route, /status: 403/);
-  assert.doesNotMatch(route, /export async function (POST|PUT|PATCH)/);
-  assert.match(card, /Enable access or change the password locally on the device/);
-  assert.match(card, /method: "DELETE"/);
-  assert.match(card, /X-CSRF-Token/);
+test('console access settings are administrator-only and CSRF-protected', () => {
+  const route = source('src/app/api/appliance/console-access/route.ts');
+  const password = source('src/app/api/appliance/console-access/password/route.ts');
+  for (const handler of [route, password]) {
+    assert.match(handler, /session\?\.isAdmin/);
+    assert.match(handler, /status: 403/);
+    assert.doesNotMatch(handler, /export async function (POST|PATCH|DELETE)/);
+  }
+  assert.match(route, /export async function GET\(\)[\s\S]*session\?\.isAdmin[\s\S]*export async function PUT/);
+  assert.match(route, /export async function PUT[\s\S]*verifyCSRFToken/);
+  assert.match(password, /export async function PUT[\s\S]*verifyCSRFToken/);
+  // An admin sets only their own console password.
+  assert.match(password, /setConsolePassword\(session\.identityId/);
+  assert.match(source('src/app/settings/api/appliance/console-access/route.ts'), /export \{ GET, PUT \}/);
+  assert.match(source('src/app/settings/api/appliance/console-access/password/route.ts'), /export \{ PUT \}/);
 });
 
-test('development access reports applied TTY2 state without treating a request as enabled', () => {
+test('the console access card explains box sign-in and keeps root and password SSH advanced', () => {
+  const card = source('src/components/settings-shell/console-access-card.tsx');
+  const system = source('src/components/settings-shell/system-client.tsx');
+  assert.match(system, /isAppliance && <ConsoleAccessCard \/>/);
+  assert.match(card, /Admins can sign in on the box's screen \(Ctrl\+Alt\+F2\) with their YouEye ID password, even when the Control Panel is down\./);
+  assert.match(card, /\/settings\/api\/appliance\/console-access/);
+  assert.match(card, /X-CSRF-Token/);
+  assert.match(card, /\{advanced && view && \([\s\S]*rootPassword[\s\S]*passwordSSH/);
+  assert.doesNotMatch(card, /password_hash|PasswordHash/);
+});
+
+test('development access is gone from the Control Panel', () => {
   const client = source('src/lib/spine/client.ts');
-  const card = source('src/components/settings-shell/development-access-card.tsx');
-  assert.match(client, /schema: 'youeye\.development-access-status\.v1'/);
-  for (const field of [
-    'local_root_console_requested',
-    'local_root_console_persisted',
-    'local_root_console_active',
-    'local_root_console_effective',
-    'root_password_ssh_requested',
-    'root_password_ssh_effective',
-  ]) assert.match(client, new RegExp(`${field}: boolean`));
-  assert.match(card, /Local root console \(TTY2\)/);
-  assert.match(card, /Requested/);
-  assert.match(card, /Active now/);
-  assert.match(card, /status\.local_root_console_requested && !status\.local_root_console_effective/);
-  assert.match(card, /!status\.local_root_console_requested && status\.local_root_console_active/);
-  assert.match(card, /Requested local console access is not effective yet/);
-  assert.match(card, /Local console access remains active while its policy is off/);
-  assert.doesNotMatch(card, /local_root_console_requested\)} detail=/);
+  assert.doesNotMatch(client, /development-access|DevelopmentAccess|local_root_console|root_password_ssh/);
+  for (const method of ['consoleStatus', 'syncConsoleAdmins', 'setConsolePassword', 'updateConsoleSettings', 'useOwnerResetCode']) {
+    assert.match(client, new RegExp(`async ${method}\\(`));
+  }
+  assert.match(client, /'\/api\/console\/accounts\/sync', 'POST'/);
+  assert.match(client, /'\/api\/console\/owner-reset', 'POST'/);
 });

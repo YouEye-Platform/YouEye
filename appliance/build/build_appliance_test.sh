@@ -5,7 +5,6 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 "$root/scripts/check-public-release-hygiene.sh" "$root" >/dev/null
 node "$root/scripts/generate-third-party-notices.mjs" "$root/THIRD_PARTY_NOTICES.txt"
 node "$root/legal/third-party-assets.test.mjs" >/dev/null
-python3 "$root/appliance/scripts/youeye-system-update-bootstrap_test.py"
 build="$root/appliance/build/build-appliance.sh"
 entrypoint="$root/.youeye/build/appliance"
 
@@ -32,14 +31,12 @@ bash -n \
     "$root/spine/internal/boot/scripts/first-deploy.sh" \
     "$root/spine/internal/boot/scripts/network.sh" \
     "$root/appliance/scripts/youeye-console-status" \
-    "$root/appliance/scripts/youeye-apply-development-access" \
     "$root/spine/internal/boot/scripts/bless.sh" \
     "$root/spine/internal/boot/scripts/setup-gate.sh" \
 	"$root/appliance/scripts/youeye-recovery" \
 	"$root/appliance/scripts/youeye-recovery-console" \
 	"$root/appliance/scripts/youeye-recovery-apply" \
 	"$root/appliance/scripts/youeye-apply-development-overlay" \
-	"$root/appliance/scripts/youeye-system-update-bootstrap" \
     "$root/appliance/initramfs/youeye-state" \
     "$root/appliance/initramfs/youeye-state-hook"
 
@@ -81,7 +78,7 @@ done
 for text in \
     'YOUEYE_SOURCE_TREE must provide the exact source tree when Git metadata is absent.' \
     'SOURCE_DATE_EPOCH must be a positive integer when Git metadata is absent.' \
-    'Appliance build must emit exactly twelve regular files' \
+    'Appliance build must emit exactly eleven regular files' \
     'components.spine.source_tree must be the exact Spine source tree.' \
     'components.spine.source_date_epoch must be the exact Spine source epoch.' \
     'components.spine.artifact_sha256 must be the exact Spine binary SHA-256.' \
@@ -109,7 +106,11 @@ if ! grep -Fq $'lb clean || true\n        configure_live_build' "$build"; then
     fail 'live-build retry must restore its config-stage marker'
 fi
 
-awk '/youeye-live-installer.*<</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build" | bash -n
+live_installer="$(awk '/youeye-live-installer.*<</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build")"
+bash -n <<<"$live_installer"
+# The interactive installer must turn the machine off when it returns, not leave a blank console.
+[[ $live_installer == *$'\n/usr/local/bin/youeye-installer install || true\nsystemctl poweroff' ]] ||
+    fail 'live installer must power off after the interactive installer exits'
 live_packages="$(awk '/youeye.list.chroot.*<</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build")"
 grep -qx 'systemd-boot-tools' <<<"$live_packages" || fail 'live installer is missing systemd-boot-tools'
 grep -qx 'systemd-boot-efi-amd64-signed' <<<"$live_packages" || fail 'live installer is missing the signed systemd-boot EFI binary'
@@ -132,7 +133,6 @@ for text in \
     'system-a.efi' \
 	'system-b.efi' \
 	'youeye-system-updater-linux-amd64' \
-	'youeye-system-update-bootstrap' \
 	'recovery.efi' \
 	'youeye.appliance.manifest.v1' \
 	'youeye.system-update.v1' \
@@ -143,7 +143,7 @@ for text in \
 	'artifact_kind:$artifact_kind,supported_actions:["recovery","image-update"]' \
     'spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256}' \
 	'disk_layout:{version:1,target_min_gib:32' \
-    'state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1' \
+    'state_schema_min:1,state_schema_max:1,data_schema_min:1,data_schema_max:1' \
     'kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2"' \
     'incus_compatibility:">=7.0",recovery_version:"1"' \
     'live-build' \
@@ -248,17 +248,23 @@ require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr
 require_text "$root/spine/internal/boot/scripts/setup-gate.sh" 'tcp dport { 80, 443 } drop'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/machine-id'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/hostid'
-require_text "$root/appliance/initramfs/youeye-state" '/root/etc/shadow'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/ssh'
 require_text "$root/appliance/initramfs/youeye-state" '"$state_root/root" /root/root'
 require_text "$root/appliance/initramfs/youeye-state" '/root/var/lib/systemd'
 require_text "$root/appliance/initramfs/youeye-state" '/root/var/log'
-require_text "$root/appliance/initramfs/youeye-state" 'migrate_youeye_state_file "$state_root/etc/shadow" /root/etc/shadow 0640'
-require_text "$root/appliance/initramfs/youeye-state-hook" 'youeye-state-migration'
-require_text "$build" 'usr/lib/youeye/initramfs/youeye-state-migration'
-require_text "$build" 'youeye-development-access.service'
+# Console access: Spine builds the account files at boot; State's shadow is no
+# longer bound over the image's (a newer image's system users must arrive).
+if grep -Fq '/root/etc/shadow' "$root/appliance/initramfs/youeye-state"; then
+    fail 'the initramfs must not bind a persistent shadow over the image'
+fi
+require_text "$build" 'youeye-console-access.service'
+require_text "$build" 'getty@tty2.service'
+require_text "$build" 'usr/lib/youeye/etc-base'
+require_text "$build" '%youeye-admins ALL=(ALL:ALL) ALL'
+require_text "$build" 'openssh-server,login,sudo,'
 require_text "$build" 'youeye-development-overlay.service'
-require_text "$build" 'youeye-apply-development-access'
+require_text "$root/appliance/systemd/youeye-console-access.service" 'ExecStart=/usr/local/bin/youeye console apply'
+require_text "$root/appliance/systemd/youeye-console-access.service" 'Before=ssh.service getty@tty2.service'
 require_text "$build" 'youeye-console-serial.service'
 require_text "$root/appliance/systemd/youeye-console-status.service" 'youeye-installer console --console-kind physical'
 require_text "$root/appliance/systemd/youeye-console-serial.service" 'youeye-installer console --console-kind serial'
@@ -282,19 +288,7 @@ require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Requires=you
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Wants=network-online.target youeye.service'
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'StartLimitBurst=8'
 require_text "$root/appliance/systemd/youeye-console-status.service" 'Conflicts=getty@tty1.service serial-getty@ttyS0.service'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'youeye.development-access-status.v1'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'local_root_console_requested:$console_requested'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'local_root_console_persisted:$console_persisted'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'local_root_console_active:$console_active'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'local_root_console_effective:$console_effective'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'systemctl enable --runtime "$console_unit"'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'systemctl start --no-block "$console_unit"'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'systemctl disable --runtime "$console_unit"'
-require_text "$root/appliance/scripts/youeye-apply-development-access" 'systemctl stop --no-block "$console_unit"'
-if grep -Eq 'getty@tty1|serial-getty@ttyS0|enable --now|disable --now' "$root/appliance/scripts/youeye-apply-development-access"; then
-    fail 'development access may only operate the stock tty2 getty lifecycle'
-fi
-require_text "$root/appliance/build/build-appliance.sh" 'openssh-server,login,ca-certificates'
+require_text "$root/appliance/build/build-appliance.sh" 'openssh-server,login,sudo,ca-certificates'
 require_text "$root/appliance/build/build-appliance.sh" 'PasswordAuthentication no'
 require_text "$root/appliance/build/build-appliance.sh" 'KbdInteractiveAuthentication no'
 require_text "$root/appliance/build/build-appliance.sh" 'PermitRootLogin prohibit-password'
@@ -323,9 +317,7 @@ require_text "$root/spine/internal/boot/scripts/bless.sh" '/usr/lib/systemd/syst
 require_text "$root/spine/internal/boot/scripts/bless.sh" '"$bless_boot_bin" good'
 require_text "$root/spine/internal/boot/scripts/bless.sh" 'youeye.appliance.boot-bless.v1'
 require_text "$root/appliance/systemd/journald.conf.d/20-youeye-appliance.conf" 'SystemMaxUse=256M'
-require_text "$root/appliance/scripts/youeye-system-update-bootstrap" '.authority == "digest"'
-require_text "$root/appliance/scripts/youeye-system-update-bootstrap" 'update core bootstrap --request'
-for file in "$root/appliance/scripts/youeye-system-update-bootstrap" "$root/appliance/scripts/youeye-recovery" "$root/spine/internal/boot/scripts/network.sh"; do
+for file in "$root/appliance/scripts/youeye-recovery" "$root/spine/internal/boot/scripts/network.sh"; do
     if grep -Fq 'openssl pkey' "$file"; then
         fail "release signature verification remains in $file"
     fi
@@ -368,7 +360,6 @@ if grep -Eq -- '--appliance-(root-payload|internal-recovery|uki|kernel|initrd)' 
 fi
 
 bash "$root/spine/internal/boot/scripts/bless_test.sh"
-bash "$root/appliance/scripts/youeye-apply-development-access_test.sh"
 bash "$root/appliance/scripts/youeye-console-status_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-overlay_test.sh"
 bash "$root/spine/internal/boot/scripts/setup-gate_test.sh"

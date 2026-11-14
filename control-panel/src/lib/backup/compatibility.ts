@@ -1,5 +1,6 @@
-import { spineClient } from '@/lib/spine/client';
+import { spineClient, type SpineStatusResponse } from '@/lib/spine/client';
 import type { BackupSourceIdentity } from './types';
+import { compareVersions } from '@/lib/version';
 
 export type { BackupSourceIdentity } from './types';
 
@@ -38,26 +39,27 @@ export function parseBackupSourceIdentity(value: unknown): BackupSourceIdentity 
     schema: 'youeye.backup.source.v1',
     runtime_kind: candidate.runtime_kind,
     image_version: optionalText(candidate.image_version, 'System version'),
-    source_commit: optionalText(candidate.source_commit, 'source identity'),
+    source_tree: optionalText(candidate.source_tree, 'source identity'),
     state_schema_version: optionalPositiveInteger(candidate.state_schema_version, 'State schema'),
     data_schema_version: optionalPositiveInteger(candidate.data_schema_version, 'Data schema'),
     disk_layout_version: optionalPositiveInteger(candidate.disk_layout_version, 'disk layout'),
     spine_version: candidate.spine_version,
     control_panel_version: optionalText(candidate.control_panel_version, 'Server interface version'),
     ui_version: optionalText(candidate.ui_version, 'UI version'),
+    pointer_version: optionalText(candidate.pointer_version, 'Pointer version'),
   };
   if (parsed.runtime_kind === 'appliance-image'
-    && (!parsed.image_version || !parsed.source_commit || !parsed.state_schema_version || !parsed.data_schema_version)) {
+    && (!parsed.image_version || !parsed.source_tree || !parsed.state_schema_version || !parsed.data_schema_version)) {
     throw new Error('Recovery point has an incomplete appliance compatibility identity.');
   }
-  if (parsed.source_commit && !/^[0-9a-f]{40}$/.test(parsed.source_commit)) {
+  if (parsed.source_tree && !/^[0-9a-f]{40}$/.test(parsed.source_tree)) {
     throw new Error('Backup source identity is invalid.');
   }
   return parsed;
 }
 
-export async function readCurrentBackupSourceIdentity(): Promise<BackupSourceIdentity> {
-  const status = await spineClient.status();
+/** Builds this box's source identity from a Spine status response (`GET /api/status`). */
+export function backupSourceIdentityFromStatus(status: SpineStatusResponse, pointerVersion?: string): BackupSourceIdentity {
   if (status.runtime.kind === 'appliance-image') {
     if (!status.runtime.manifest_valid || status.runtime.repair_required
       || !status.persistent_state?.compatibility.compatible
@@ -69,14 +71,22 @@ export async function readCurrentBackupSourceIdentity(): Promise<BackupSourceIde
     schema: 'youeye.backup.source.v1',
     runtime_kind: status.runtime.kind,
     image_version: status.runtime.image_version,
-    source_commit: status.runtime.source_commit,
+    source_tree: status.runtime.source_tree,
     state_schema_version: status.persistent_state?.state_schema_version,
     data_schema_version: status.persistent_state?.data_schema_version,
     disk_layout_version: status.persistent_state?.disk_layout_version ?? status.runtime.disk_layout_version,
     spine_version: status.spine.version,
     control_panel_version: status.control_panel.version,
     ui_version: status.ui?.version,
+    pointer_version: pointerVersion,
   });
+}
+
+export async function readCurrentBackupSourceIdentity(): Promise<BackupSourceIdentity> {
+  const { pointerRelease, readPointerReleaseState } = await import('@/lib/pointer/release-metadata');
+  // A damaged Pointer record must not block backups; the identity then omits Pointer.
+  const pointer = await readPointerReleaseState().then(pointerRelease).catch(() => null);
+  return backupSourceIdentityFromStatus(await spineClient.status(), pointer?.build.build_version);
 }
 
 export function assessBackupCompatibility(
@@ -92,6 +102,15 @@ export function assessBackupCompatibility(
     if ((source.state_schema_version ?? 0) > (current.state_schema_version ?? 0)
       || (source.data_schema_version ?? 0) > (current.data_schema_version ?? 0)) {
       return { compatible: false, summary: 'This recovery point was created by a newer YouEye System. Update this server before restoring it.' };
+    }
+  }
+  // Builds only move forward: an older Control Panel, UI or Pointer must not
+  // open data that a newer build may already have migrated.
+  for (const [field, label] of [['control_panel_version', 'Control Panel'], ['ui_version', 'UI'], ['pointer_version', 'Pointer']] as const) {
+    const made = source[field];
+    const running = current[field];
+    if (made && running && compareVersions(made, running) > 0) {
+      return { compatible: false, summary: `This recovery point was created by a newer ${label} (${made}; this box runs ${running}). Update this box before restoring it.` };
     }
   }
   return {

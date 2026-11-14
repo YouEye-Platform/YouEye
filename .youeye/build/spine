@@ -21,7 +21,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/spine" build \
     -trimpath -buildvcs=false \
     -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$build_date" \
     -o "$temporary" ./cmd/youeye
-"$temporary" version | grep -Fq "$version" || youeye_build_fail 'Spine binary does not report the build version'
+# Capture first: grep -q stops reading at the match, and with pipefail the
+# writer's SIGPIPE would fail the check at random.
+version_output="$("$temporary" version 2>&1 || true)"
+grep -Fq "$version" <<<"$version_output" || youeye_build_fail 'Spine binary does not report the build version'
 install -m 0755 "$temporary" "$output"
 rm -f -- "$temporary"
 sha256sum "$output"

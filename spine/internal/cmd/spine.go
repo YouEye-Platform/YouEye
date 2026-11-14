@@ -375,7 +375,11 @@ func coreSpineHooks(cache systemupdate.CoreArtifactCache) (func(context.Context,
 		if err := spineselect.Stage(spineRoot, path, e); err != nil {
 			return err
 		}
-		return spineselect.Select(spineRoot, slot, e, spineselect.ThisHost(), time.Now())
+		// The slot boots the target release's image, not this one, so this
+		// Spine's helper contract is not the one to judge by: the target slot's
+		// launcher checks the contract against its own image at boot (and runs
+		// the seed if they differ). The disk layout is the disk's and is checked.
+		return spineselect.Select(spineRoot, slot, e, spineselect.TargetSlotHost(e), time.Now())
 	}
 	restore := func(ctx context.Context, j systemupdate.CoreJournal) error {
 		// By digest only: a broken target Spine cannot answer any probe.

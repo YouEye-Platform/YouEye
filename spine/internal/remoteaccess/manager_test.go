@@ -165,3 +165,41 @@ func TestManagerRejectsCorruptStoreInsteadOfTrustingLiveFile(t *testing.T) {
 		t.Fatalf("corrupt store result = %v", err)
 	}
 }
+
+// A key another Spine wrote in a form this one can't use is kept, listed as
+// unsupported, never installed, and can be deleted.
+func TestUnusableKeyIsKeptListedAndDeletable(t *testing.T) {
+	m := testManager(t)
+	good := testPublicKey(t, 0, "good")
+	if _, err := m.Add(good, "settings"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(m.StorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := `{"id":"0123456789abcdef01234567","fingerprint":"SHA256:future","type":"sk-future@openssh.com","public_key":"sk-future@openssh.com AAAA","source":"settings","added_at":"2027-01-01T00:00:00Z"}`
+	raw = []byte(strings.Replace(string(raw), `"keys": [`, `"keys": [`+future+`,`, 1))
+	if err := os.WriteFile(m.StorePath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := m.List()
+	if err != nil || len(keys) != 2 || keys[1].Type != "unsupported" {
+		t.Fatalf("list: %v %+v", err, keys)
+	}
+	if _, err := m.Add(testPublicKey(t, 0, "other"), "settings"); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := os.ReadFile(m.LivePath); strings.Contains(string(live), "sk-future") {
+		t.Fatal("unusable key installed")
+	}
+	if kept, _ := os.ReadFile(m.StorePath); !strings.Contains(string(kept), "sk-future") {
+		t.Fatal("unusable key dropped on rewrite")
+	}
+	if _, err := m.Delete("0123456789abcdef01234567", false); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := os.ReadFile(m.StorePath); strings.Contains(string(kept), "sk-future") {
+		t.Fatal("deleted unusable key came back")
+	}
+}

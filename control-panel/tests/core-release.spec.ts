@@ -4,7 +4,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync, unlinkSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { canonicalReleaseRepository, parseCoreRelease, coreArtifactVerificationShell, releaseAssetURL, selectedCoreRole, loadSelectedCoreDocument, verifyCoreArtifactBuffer } from '../src/lib/releases/core-release';
+import { canonicalReleaseRepository, ReleaseNeedsNewerReader, parseCoreRelease, coreArtifactVerificationShell, releaseAssetURL, selectedCoreRole, loadSelectedCoreDocument, verifyCoreArtifactBuffer } from '../src/lib/releases/core-release';
 import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '../src/lib/releases/artifact';
 
 // The same fixture the Go reader (releasecache) parses: one document, one interpretation.
@@ -19,13 +19,13 @@ test('the shared host-independent core release fixture parses strictly', () => {
   assert.equal(r.build,'0.6.1-dev.1');
   assert.match(r.source_tree,/^[0-9a-f]{40}$/);
   assert.equal(r.authority,'digest');
-  assert.equal(r.members.length,14);
+  assert.equal(r.members.length,13);
   assert.equal(r.members.find(m => m.role === 'appliance')?.build_inputs?.name,'build-inputs.json');
   for (const member of r.members) {
     assert.match(member.source_tree,/^[0-9a-f]{40}$/);
     assert.equal(Object.hasOwn(member.artifact,'url'),false);
   }
-  for (const raw of [fixture.toString().replace('"sequence": 1762950000','"sequence": 1, "sequence": 1762950000'), fixture.toString().replace('"state_min": 2','"state_min": 1, "state_min": 2')]) assert.throws(() => parseCoreRelease(Buffer.from(raw)), /Duplicate/);
+  for (const raw of [fixture.toString().replace('"sequence": 1762950000','"sequence": 1, "sequence": 1762950000'), fixture.toString().replace('"state_min": 1','"state_min": 2, "state_min": 1')]) assert.throws(() => parseCoreRelease(Buffer.from(raw)), /Duplicate/);
   assert.throws(() => parseCoreRelease(mutate(r => r.members.pop())), /Incomplete/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.authority; })), /identity/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.source_tree = 'abc'; })), /identity/);
@@ -37,14 +37,16 @@ test('the shared host-independent core release fixture parses strictly', () => {
   assert.equal(promoted.version,'0.6.1-beta.1');
   assert.equal(promoted.build,'0.6.1-dev.1');
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].source_tree = 'x'.repeat(40); })), /member/);
-  // Per-host fields are gone: they are unknown fields now, never silently accepted.
-  for (const field of ['source','branch','source_commit','channel','previous_manifest_sha256']) {
-    assert.throws(() => parseCoreRelease(mutate(r => { r[field] = 'x'; })), /fields/, field);
+  // Fields a later release may add are ignored (covered by the digest, never used).
+  for (const field of ['source','branch','channel','signatures']) {
+    assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r[field] = 'x'; })), field);
   }
-  for (const field of ['source','branch','source_commit','tag']) {
-    assert.throws(() => parseCoreRelease(mutate(r => { r.members[0][field] = 'x'; })), /fields/, field);
-  }
-  assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.url = 'https://github.com/YouEye-Platform/YouEye/releases/download/x/y'; })), /fields/);
+  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[0].sbom = 'x'; r.members[0].artifact.mirrors = ['https://m.test']; })));
+  // A higher reader or an unknown role is "needs a newer reader", not an invalid document.
+  assert.throws(() => parseCoreRelease(mutate(r => { r.minimum_reader = 2; r.members = 'another shape'; })), ReleaseNeedsNewerReader);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.members.push({ ...r.members[0], role: 'firmware' }); })), ReleaseNeedsNewerReader);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.members.shift(); })), /Incomplete core membership/);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.schema = 'youeye.core-release.v2'; })), /schema/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.members.find((m: any) => m.role === 'appliance').build_inputs; })), /build inputs/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].artifact.size_bytes = 1.5; })), /integer/);
   // A blob may live in another youeye-v release of the same repository, nothing else.

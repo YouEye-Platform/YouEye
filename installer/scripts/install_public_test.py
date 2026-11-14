@@ -18,7 +18,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parent / "install.sh"
 ROLES = ["installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki",
-         "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"]
+         "system-updater", "internal-recovery", "recovery-uki", "spine", "cp", "ui"]
 INSTALLER = b"#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$LAUNCH_LOG\"\n"
 
 
@@ -94,7 +94,7 @@ class BootstrapTests(unittest.TestCase):
             Handler.routes[base + name] = (200, served if served is not None and role == "installer" else body, {})
         document = {"schema": "youeye.core-release.v1", "version": version, "build": version, "tag": tag, "source_tree": "a" * 40,
                     "sequence": 1, "minimum_reader": 1, "authority": "digest",
-                    "compatibility": {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1,
+                    "compatibility": {"state_min": 1, "state_max": 1, "data_min": 1, "data_max": 1,
                                       "minimum_release": version, "capabilities": ["core-release-v1"]},
                     "members": members}
         raw = json.dumps(document, indent=2).encode() + b"\n"
@@ -206,15 +206,34 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsNone(launched)
         self.assertFalse(list((self.case / "cache").rglob("youeye-installer-linux-amd64")))
 
-    def test_redirect_to_another_host_is_refused(self):
+    def test_redirect_leaving_https_or_to_a_listing_api_is_refused(self):
+        # Any HTTPS host may serve a file (it is checked by SHA-256); plain HTTP
+        # and release-listing APIs never.
         tag = self.publish("0.6.1-dev.1")
         self.index("stable", tag)
         path = "/owner/YouEye/releases/download/%s/youeye-installer-linux-amd64" % tag
-        Handler.routes[path] = (302, b"", {"Location": "https://127.0.0.1:%d%s" % (self.port, path)})
+        for location in ("http://localhost:%d%s" % (self.port, path), "https://api.github.com/repos/o/r/releases"):
+            Handler.routes[path] = (302, b"", {"Location": location})
+            result, launched = self.run_bootstrap()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("untrusted location", result.stderr)
+            self.assertIsNone(launched)
+
+    def test_download_base_is_used_and_handed_to_the_installer(self):
+        tag = self.publish("0.6.1-dev.1")
+        self.index("stable", tag)
+        mirror = "https://localhost:%d/mirror" % self.port
+        prefix = "/owner/YouEye/releases/download/%s/" % tag
+        for route in [r for r in Handler.routes if r.startswith(prefix)]:
+            Handler.routes["/mirror/%s/%s" % (tag, route[len(prefix):])] = Handler.routes.pop(route)
+        Handler.routes["/mirror/%s/core-release.json" % tag] = (200, self.documents[tag], {})
+        index = json.loads(Handler.routes["/owner/YouEye/releases/download/channel-stable/index.json"][1])
+        index["products"]["youeye"]["download_base"] = mirror
+        index["products"]["youeye"]["future_field"] = True
+        Handler.routes["/owner/YouEye/releases/download/channel-stable/index.json"] = (200, json.dumps(index).encode(), {})
         result, launched = self.run_bootstrap()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("untrusted location", result.stderr)
-        self.assertIsNone(launched)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--download-base " + mirror, launched)
 
     def test_malformed_document_is_refused(self):
         tag = self.publish("0.6.1-dev.1")

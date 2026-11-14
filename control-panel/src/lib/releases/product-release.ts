@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { compareVersions, parseReleaseVersion } from '../version';
-import { canonicalReleaseRepository, releaseAssetURL, uniqueJSON, validAssetName, validSourceTree, type CoreBlob } from './core-release';
+import { canonicalReleaseRepository, RELEASE_READER, ReleaseNeedsNewerReader, releaseAssetURL, uniqueJSON, validAssetName, validSourceTree, type CoreBlob } from './core-release';
 
 /**
  * Unsigned product release documents (`youeye.product-release.v1`, authority
@@ -8,7 +8,8 @@ import { canonicalReleaseRepository, releaseAssetURL, uniqueJSON, validAssetName
  * on every host and channel. The box finds it through its channel index entry
  * (repository + tag + document digest); it embeds the immutable build
  * document, which binds every asset by SHA-256 and size. Assets are located
- * at `<repository>/releases/download/<blob.release ?? tag>/<name>`.
+ * with `releaseAssetURL` (under the index entry's download base when it names one).
+ * Unknown fields are ignored; a higher `minimum_reader` is `ReleaseNeedsNewerReader`.
  */
 
 export type ProductBuild = {
@@ -20,11 +21,11 @@ export type ProductRelease = {
   schema: 'youeye.product-release.v1'; product: string; version: string; tag: string; source_tree: string;
   sequence: number; minimum_reader: 1; authority: 'digest'; build_manifest_base64: string;
 };
-/** A verified document plus the repository it was found in (from the channel index). */
+/** A verified document plus where it was found (from the channel index). */
 export type VerifiedProductRelease = {
-  release: ProductRelease; build: ProductBuild; manifestSHA256: string; raw: Buffer; repository: string;
+  release: ProductRelease; build: ProductBuild; manifestSHA256: string; raw: Buffer; repository: string; downloadBase?: string;
 };
-export type ProductReleaseExpectation = { product: string; repository: string; tag: string };
+export type ProductReleaseExpectation = { product: string; repository: string; tag: string; downloadBase?: string };
 /** Exact accepted bytes and where they came from, persisted with the protected install record. */
 export type InstalledProductReceipt = {
   manifestBase64: string; manifestSHA256: string; repository: string;
@@ -43,8 +44,8 @@ function productTagVersion(product: string, tag: string): string | null {
   const prefix = product === 'market' ? 'catalog-v' : 'v';
   return tag.startsWith(prefix) && parseReleaseVersion(tag.slice(prefix.length)) ? tag.slice(prefix.length) : null;
 }
-function fields(value: unknown, allowed: string[]) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) throw new Error('Unsupported product metadata fields');
+function object(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid product metadata object');
 }
 function document(raw: Buffer): unknown {
   if (!raw.length || raw.length > 1024*1024) throw new Error('Product metadata size is invalid');
@@ -52,13 +53,13 @@ function document(raw: Buffer): unknown {
 }
 export function parseProductBuild(raw: Buffer): ProductBuild {
   const b = document(raw) as ProductBuild;
-  fields(b,['schema','product','kind','build_version','source_tree','input_sha256','contract_sha256','primary','assets']);
+  object(b);
   if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || !validSourceTree(b.source_tree)
     || !hash(b.input_sha256) || !hash(b.contract_sha256) || !['native','source','catalog'].includes(b.kind)) throw new Error('Invalid immutable product build');
   if (!Array.isArray(b.assets) || !b.assets.length || b.assets.length > 32) throw new Error('Invalid product asset set');
   const names = new Set<string>();
   for (const a of b.assets) {
-    fields(a,['name','sha256','size_bytes','release']);
+    object(a);
     if (!validAssetName(a.name) || names.has(a.name) || !hash(a.sha256) || !Number.isSafeInteger(a.size_bytes) || a.size_bytes <= 0
       || a.release !== undefined && !productTagVersion(b.product, a.release)) throw new Error('Invalid original product asset');
     names.add(a.name);
@@ -75,7 +76,10 @@ function base64(value: string, maximum: number): Buffer {
 }
 export function parseProductRelease(raw: Buffer) {
   const r = document(raw) as ProductRelease;
-  fields(r,['schema','product','version','tag','source_tree','sequence','minimum_reader','authority','build_manifest_base64']);
+  object(r);
+  if (r.schema === 'youeye.product-release.v1' && Number.isSafeInteger(r.minimum_reader) && r.minimum_reader > RELEASE_READER) {
+    throw new ReleaseNeedsNewerReader(`Product release needs reader ${r.minimum_reader}`);
+  }
   if (r.schema !== 'youeye.product-release.v1' || r.authority !== 'digest' || !products.has(r.product) || !parseReleaseVersion(r.version)
     || r.tag !== productTag(r.product,r.version) || !validSourceTree(r.source_tree) || r.minimum_reader !== 1
     || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid product release identity');
@@ -89,7 +93,7 @@ export function verifyProductRelease(raw: Buffer, expected: ProductReleaseExpect
   const repository = canonicalReleaseRepository(expected.repository);
   if (repository !== expected.repository) throw new Error('Product repository is not canonical');
   if (r.product !== expected.product || r.tag !== expected.tag) throw new Error('Product release differs from selected product/tag');
-  return {release:r,build,manifestSHA256:digest(raw),raw,repository};
+  return {release:r,build,manifestSHA256:digest(raw),raw,repository,...(expected.downloadBase ? {downloadBase:expected.downloadBase} : {})};
 }
 export function productReceipt(selected: VerifiedProductRelease): InstalledProductReceipt {
   return {manifestBase64:selected.raw.toString('base64'), manifestSHA256:selected.manifestSHA256, repository:selected.repository};
@@ -104,7 +108,7 @@ export function verifyInstalledProductReceipt(receipt: InstalledProductReceipt, 
 /** Where one asset of a verified release is downloaded. */
 export function productAssetURL(selected: VerifiedProductRelease, blob: CoreBlob): string {
   if (!selected.build.assets.includes(blob)) throw new Error('Foreign product asset');
-  return releaseAssetURL(selected.repository, selected.release.tag, blob);
+  return releaseAssetURL(selected.repository, selected.release.tag, blob, selected.downloadBase);
 }
 export function identicalProductPayloads(before: VerifiedProductRelease, after: VerifiedProductRelease): boolean {
   return before.release.product === after.release.product && before.release.build_manifest_base64 === after.release.build_manifest_base64;

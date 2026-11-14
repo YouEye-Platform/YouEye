@@ -15,8 +15,8 @@ const validManifest = `{
   "architecture": "amd64",
   "firmware_mode": "uefi",
   "disk_layout_version": 1,
-  "state_schema_min": 2,
-  "state_schema_max": 2,
+  "state_schema_min": 1,
+  "state_schema_max": 1,
   "data_schema_min": 1,
   "data_schema_max": 1,
   "kernel_compatibility": ">=6.12",
@@ -80,14 +80,14 @@ func TestWritableMarkerFailsClosed(t *testing.T) {
 	}
 }
 
-func TestManifestRejectsUnknownAndTrailingContent(t *testing.T) {
-	for _, mutation := range []string{
-		strings.Replace(validManifest, `"supported_actions"`, `"unexpected": true, "supported_actions"`, 1),
-		validManifest + ` {}`,
-	} {
-		if _, err := ParseManifest([]byte(mutation)); err == nil {
-			t.Fatalf("expected strict parse failure for %q", mutation[len(mutation)-8:])
-		}
+// The running Spine reads the target image's marker: keys a newer image adds
+// are ignored; trailing content is still refused.
+func TestManifestIgnoresUnknownKeysRejectsTrailingContent(t *testing.T) {
+	if _, err := ParseManifest([]byte(strings.Replace(validManifest, `"supported_actions"`, `"unexpected": true, "supported_actions"`, 1))); err != nil {
+		t.Fatalf("unknown key refused: %v", err)
+	}
+	if _, err := ParseManifest([]byte(validManifest + ` {}`)); err == nil {
+		t.Fatal("trailing content accepted")
 	}
 }
 
@@ -126,10 +126,6 @@ func TestManifestKeepsApplianceAndComponentSourceIdentitiesIndependent(t *testin
 func TestManifestReleaseSetFailsClosed(t *testing.T) {
 	base := exactReleaseSetManifest()
 	for _, mutation := range []string{
-		// The image is host- and channel-neutral: no source, branch or tag.
-		strings.Replace(base, `"release_set": {`, `"release_set": {"source": "https://github.com/YouEye-Platform/YouEye",`, 1),
-		strings.Replace(base, `"release_set": {`, `"release_set": {"branch": "dev",`, 1),
-		strings.Replace(base, `"version":"2.0.0",`, `"version":"2.0.0","tag":"v2.0.0",`, 1),
 		strings.Replace(base, `"version":"2.0.0",`, `"version":"latest",`, 1),
 		strings.Replace(base, strings.Repeat("b", 64), "bad", 1),
 		strings.Replace(base, "1123456789012345678901234567890123456789", "1123456", 1),
@@ -150,10 +146,10 @@ func TestCompatibilityMatrix(t *testing.T) {
 		wantState, wantData string
 		ok                  bool
 	}{
-		{2, 1, "compatible", "compatible", true},
-		{1, 1, "upgrade-required", "compatible", false},
-		{3, 1, "image-too-old", "compatible", false},
-		{2, 2, "compatible", "image-too-old", false},
+		{1, 1, "compatible", "compatible", true},
+		{0, 1, "upgrade-required", "compatible", false},
+		{2, 1, "image-too-old", "compatible", false},
+		{1, 2, "compatible", "image-too-old", false},
 	}
 	for _, tc := range tests {
 		got := CheckCompatibility(m, tc.state, tc.data)
