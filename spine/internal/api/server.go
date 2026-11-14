@@ -20,8 +20,8 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/backup"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/consoleaccess"
 	"github.com/youeye-platform/YouEye/spine/internal/container"
-	"github.com/youeye-platform/YouEye/spine/internal/developmentaccess"
 	"github.com/youeye-platform/YouEye/spine/internal/networkstatus"
 	"github.com/youeye-platform/YouEye/spine/internal/remoteaccess"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
@@ -124,7 +124,7 @@ type Server struct {
 	runtimeDetect        func() (appliance.RuntimeStatus, *appliance.Manifest, error)
 	systemUpdate         systemUpdateService
 	remoteAccess         remoteAccessService
-	developmentAccess    developmentAccessService
+	consoleAccess        consoleAccessService
 	networkStatus        networkStatusService
 
 	// Status cache — avoids shelling out on every request
@@ -145,16 +145,16 @@ type Server struct {
 
 func NewServer(version string, cfg *config.Config) *Server {
 	s := &Server{
-		version:           version,
-		socketPath:        cfg.API.SocketPath,
-		mux:               http.NewServeMux(),
-		cfg:               cfg,
-		authLimiter:       newAuthRateLimiter(cfg),
-		runtimeDetect:     appliance.Detect,
-		systemUpdate:      systemupdate.NewDefault(),
-		remoteAccess:      remoteaccess.NewDefault(),
-		developmentAccess: developmentaccess.NewDefault(),
-		networkStatus:     networkstatus.NewDefault(),
+		version:       version,
+		socketPath:    cfg.API.SocketPath,
+		mux:           http.NewServeMux(),
+		cfg:           cfg,
+		authLimiter:   newAuthRateLimiter(cfg),
+		runtimeDetect: appliance.Detect,
+		systemUpdate:  systemupdate.NewDefault(),
+		remoteAccess:  remoteaccess.NewDefault(),
+		consoleAccess: consoleaccess.Default(),
+		networkStatus: networkstatus.NewDefault(),
 	}
 	s.setupRoutes()
 	return s
@@ -253,7 +253,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/appliance/system-update/status", s.handleSystemUpdateStatus)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys", s.handleRemoteAccessKeys)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys/", s.handleRemoteAccessKey)
-	s.mux.HandleFunc("/api/appliance/development-access", s.handleDevelopmentAccess)
+	s.mux.HandleFunc("/api/console", s.handleConsoleAccess)
+	s.mux.HandleFunc("/api/console/", s.handleConsoleAccess)
 	s.mux.HandleFunc("/api/appliance/network", s.handleNetworkStatus)
 	s.mux.HandleFunc("/api/registry/digest", s.handleRegistryDigest)
 	s.mux.HandleFunc("/api/backup/run", s.handleBackupRun)
@@ -392,30 +393,45 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	runtimeStatus, manifest, runtimeErr := s.runtimeDetect()
-	status := map[string]interface{}{
-		"spine":         map[string]string{"version": s.version},
-		"incus":         map[string]string{"version": incusVer},
-		"control_panel": controlSt,
-		"ui":            uiSt,
-		"host":          map[string]string{"os": osRel},
-		"runtime":       runtimeStatus,
-	}
+	var persistent *appliance.PersistentStatus
+	warning := ""
 	if runtimeStatus.Kind == appliance.RuntimeApplianceImage && manifest != nil {
-		persistent, err := appliance.InspectPersistentStatus(*manifest)
-		status["persistent_state"] = persistent
+		inspected, err := appliance.InspectPersistentStatus(*manifest)
+		persistent = &inspected
 		if err != nil {
-			status["runtime_warning"] = persistent.ErrorCode
+			warning = inspected.ErrorCode
 		}
 	}
 	if runtimeErr != nil {
-		status["runtime_warning"] = "appliance_recovery_required"
+		warning = "appliance_recovery_required"
 	}
+	status := statusDocument(s.version, incusVer, osRel, controlSt, uiSt, runtimeStatus, persistent, warning)
 
 	s.statusCache = status
 	s.statusTime = time.Now()
 	s.statusMu.Unlock()
 
 	jsonResponse(w, status)
+}
+
+// statusDocument is the body of GET /api/status. The Control Panel builds its
+// backup identity from it (contracts/spine-cp/status-appliance.json).
+func statusDocument(spineVersion, incusVersion, osRelease string, controlPanel, ui map[string]interface{}, runtime appliance.RuntimeStatus, persistent *appliance.PersistentStatus, warning string) map[string]interface{} {
+	status := map[string]interface{}{
+		"spine":         map[string]string{"version": spineVersion},
+		"incus":         map[string]string{"version": incusVersion},
+		"control_panel": controlPanel,
+		"ui":            ui,
+		"host":          map[string]string{"os": osRelease},
+		"runtime":       runtime,
+	}
+	if persistent != nil {
+		status["persistent_state"] = *persistent
+	}
+	if warning != "" {
+		status["runtime_warning"] = warning
+	}
+	return status
 }
 
 // getAppContainerStatus returns the status of an Incus container.

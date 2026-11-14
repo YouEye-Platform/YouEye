@@ -10,27 +10,40 @@ import (
 )
 
 // CoreReleaseSelection is what a box follows: its repository and channel.
+// InstalledBuild, when known, lets resolution choose a stepping stone if the
+// channel head can't be installed from it.
 type CoreReleaseSelection struct {
-	Repository string
-	Channel    string
+	Repository     string
+	Channel        string
+	InstalledBuild string
 }
 
 // ErrChannelBehind means the channel head is older than the installed release.
 // A box never downgrades; it waits for the channel to catch up.
 var ErrChannelBehind = errors.New("channel is behind the installed version")
 
-// ResolveCoreRelease reads the channel index and returns the channel's current
-// core-release.json, verified against the index digest. It never lists
-// releases.
+// ResolveCoreRelease reads the channel index and returns the release this box
+// installs next (the head, or a stepping stone), verified against the index
+// digest. It never lists releases.
 func ResolveCoreRelease(ctx context.Context, client *http.Client, selection CoreReleaseSelection) (CoreHostSelection, releasecache.CoreRelease, string, error) {
+	choice, err := ResolveCoreChoice(ctx, client, selection)
+	return CoreHostSelection{Raw: choice.Raw}, choice.Release, choice.Digest, err
+}
+
+// ResolveCoreChoice is ResolveCoreRelease with the stepping-stone details, and
+// records where the chosen release's files live.
+func ResolveCoreChoice(ctx context.Context, client *http.Client, selection CoreReleaseSelection) (releasecache.CoreChoice, error) {
 	if client == nil {
 		client = ReleaseHTTPClient()
 	}
-	raw, release, digest, err := releasecache.FetchCoreRelease(releasecache.LiveDiscovery(ctx), client, selection.Repository, selection.Channel)
+	choice, err := releasecache.ChooseCoreRelease(releasecache.LiveDiscovery(ctx), client, selection.Repository, selection.Channel, selection.InstalledBuild)
 	if err != nil {
-		return CoreHostSelection{}, releasecache.CoreRelease{}, "", err
+		return releasecache.CoreChoice{}, err
 	}
-	return CoreHostSelection{Raw: raw}, release, digest, nil
+	if err := RecordDownloadBase(choice.Release.Tag, choice.Entry.DownloadBase); err != nil {
+		return releasecache.CoreChoice{}, fmt.Errorf("record download location: %w", err)
+	}
+	return choice, nil
 }
 
 // RefuseDowngrade returns ErrChannelBehind when target is an older build than

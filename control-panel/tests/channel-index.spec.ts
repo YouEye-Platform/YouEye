@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
+import { channelEntryDocumentURL,
   ReleaseFileNotFound, ReleaseHostRateLimited, assertReleaseDownloadURL, describeReleaseError, downloadProductAsset,
   downloadReleaseFile, isReleaseRateLimited, parseChannelIndex, readChannelIndex, releaseHTTPError, resetReleaseHostBackoff, resolveChannelProduct,
 } from '../src/lib/releases/channel-index';
@@ -57,9 +57,9 @@ test('no code path reaches a release-listing API', async () => {
     await assert.rejects(downloadReleaseFile(url, 1024, host.fetch));
   }
   assert.equal(host.requests.length, 0);
-  // Redirects may not leave the release host (GitHub's asset CDN excepted).
-  const redirecting = (async () => new Response(null, { status: 302, headers: { location: 'https://evil.example.test/x' } })) as typeof fetch;
-  await assert.rejects(downloadReleaseFile(`${notesRepo}/releases/download/v1.0.0/standalone.tar`, 1024, redirecting), /outside its release host/);
+  // A redirect into a listing API is refused.
+  const redirecting = (async () => new Response(null, { status: 302, headers: { location: 'https://api.github.com/repos/o/r/releases' } })) as typeof fetch;
+  await assert.rejects(downloadReleaseFile(`${notesRepo}/releases/download/v1.0.0/standalone.tar`, 1024, redirecting), /listing API/);
 });
 
 test('HTTP 403/429 is rate limiting with back-off, never a network failure', async () => {
@@ -93,13 +93,22 @@ test('channel index entries follow the contract', () => {
   assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { notes: entry } }));
   assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { youeye: { ...entry, repository: youeye, tag: 'youeye-v0.6.1-dev.2', document: 'core-release.json' }, market: { ...entry, tag: 'catalog-v0.6.1-dev.2' } } }));
   assert.throws(() => parseChannelIndex({ ...base, channel: 'feature' }), /Unsupported/);
-  assert.throws(() => parseChannelIndex({ ...base, products: { canvas: entry } }), /fields/);
-  assert.throws(() => parseChannelIndex({ ...base, products: { notes: { ...entry, tag: 'dev-v0.6.1-dev.2' } } }), /must name/);
-  assert.throws(() => parseChannelIndex({ ...base, products: { notes: { ...entry, repository: `${notesRepo}/` } } }), /invalid/);
-  assert.throws(() => parseChannelIndex({ ...base, products: { notes: { ...entry, url: 'x' } } }), /fields/);
+  // Unknown products and fields are ignored; a bad entry fails only its product.
+  const invalid = (products: Record<string, unknown>) => parseChannelIndex({ ...base, products: { ...products, wiki: { ...entry, tag: 'v0.6.1-dev.2' } } });
+  assert.deepEqual(Object.keys(invalid({ canvas: entry, photos: entry }).products), ['wiki']);
+  assert.equal(invalid({ notes: { ...entry, url: 'x', size_bytes: 1 } }).products.notes.tag, 'v0.6.1-dev.2');
+  assert.match(invalid({ notes: { ...entry, tag: 'dev-v0.6.1-dev.2' } }).invalid.notes, /must name/);
+  assert.match(invalid({ notes: { ...entry, repository: `${notesRepo}/` } }).invalid.notes, /invalid/);
+  assert.match(invalid({ notes: { ...entry, download_base: 'https://m.test/f?sig=1' } }).invalid.notes, /invalid/);
+  assert.equal(invalid({ notes: 7 }).products.wiki.version, '0.6.1-dev.2');
   // `build` is required; a promoted entry names another release of the same build.
   const { build: _omitted, ...withoutBuild } = entry;
-  assert.throws(() => parseChannelIndex({ ...base, products: { notes: withoutBuild } }), /invalid/);
-  assert.throws(() => parseChannelIndex({ ...base, products: { notes: { ...entry, build: 'dev.2' } } }), /invalid/);
+  assert.match(invalid({ notes: withoutBuild }).invalid.notes, /invalid/);
+  assert.match(invalid({ notes: { ...entry, build: 'dev.2' } }).invalid.notes, /invalid/);
+  assert.doesNotThrow(() => parseChannelIndex({ ...base, extra: { future: true } }));
+  assert.throws(() => parseChannelIndex({ ...base, schema: 'youeye.channel.v2' }), /Unsupported/);
+  // A download base moves the document off the repository layout.
+  const mirrored = parseChannelIndex({ ...base, products: { notes: { ...entry, download_base: 'https://releases.example.test/files' } } }).products.notes;
+  assert.equal(channelEntryDocumentURL(mirrored), 'https://releases.example.test/files/v0.6.1-dev.2/product-release.json');
   assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { notes: { ...entry, tag: 'v0.6.1', version: '0.6.1' } } }));
 });

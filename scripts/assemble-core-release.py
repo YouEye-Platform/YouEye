@@ -50,7 +50,6 @@ ROLES = [
     ("system-updater", "youeye-system-updater-linux-amd64"),
     ("internal-recovery", "internal-recovery.img.zst"),
     ("recovery-uki", "recovery.efi"),
-    ("update-bootstrap", "youeye-system-update-bootstrap"),
     ("spine", "spine-linux-amd64"),
     ("cp", "cp-standalone.tar"),
     ("ui", "ui-standalone.tar"),
@@ -61,7 +60,7 @@ DEPENDS_ON = {"cp": ["spine"], "ui": ["cp"]}
 SERVICE_ROLES = {"spine", "cp", "ui"}
 # The persistent State/Data schema range this image line supports; it matches
 # state_schema_* and data_schema_* in the appliance manifest.
-COMPATIBILITY = {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1}
+COMPATIBILITY = {"state_min": 1, "state_max": 1, "data_min": 1, "data_max": 1}
 
 VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$")
 BUILD = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*")

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 func loadJournal(path string) (Journal, error) {
@@ -17,8 +19,9 @@ func loadJournal(path string) (Journal, error) {
 		return Journal{}, err
 	}
 	var journal Journal
+	// The other slot's Spine reads this after a rollback: unknown keys are
+	// ignored here and kept by writeJournal.
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&journal); err != nil {
 		return Journal{}, fmt.Errorf("decode system update journal: %w", err)
 	}
@@ -58,11 +61,12 @@ func writeJournal(path string, journal Journal) error {
 	if err := journal.Validate(); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(journal, "", "  ")
+	previous, _ := os.ReadFile(path)
+	raw, err := jsonkeep.Marshal(journal, previous)
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, append(raw, '\n'), 0600)
+	return atomicWrite(path, raw, 0600)
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {

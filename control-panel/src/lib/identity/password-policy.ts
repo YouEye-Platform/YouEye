@@ -6,6 +6,8 @@ export function validateIdentityPassword(password: unknown): string | null {
   if (password.length < IDENTITY_PASSWORD_MIN_LENGTH || password.length > IDENTITY_PASSWORD_MAX_LENGTH) {
     return `Password must be between ${IDENTITY_PASSWORD_MIN_LENGTH} and ${IDENTITY_PASSWORD_MAX_LENGTH} characters.`;
   }
+  // The same password signs in on the box's console, which takes one line.
+  if (/[\u0000-\u001f\u007f]/.test(password)) return 'Password must not contain line breaks or control characters.';
   return null;
 }
 

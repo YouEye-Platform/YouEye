@@ -6,17 +6,19 @@ request="$request_dir/request.json"
 result="$request_dir/last-result.json"
 first_deploy=${YOUEYE_RECOVERY_FIRST_DEPLOY:-/var/lib/youeye-state/first-deploy}
 youeye=${YOUEYE_RECOVERY_YOUEYE:-/usr/local/bin/youeye}
-development_access_apply=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY:-/usr/local/libexec/youeye-apply-development-access}
-development_access_policy=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY:-/var/lib/youeye-state/bootstrap/development-access.json}
-development_access_status=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:-/var/lib/youeye-state/bootstrap/development-access-status.json}
+console_access=${YOUEYE_RECOVERY_CONSOLE_ACCESS:-/var/lib/youeye-state/bootstrap/console-access.json}
+console_homes=${YOUEYE_RECOVERY_CONSOLE_HOMES:-/var/lib/youeye-state/home}
+console_state=${YOUEYE_RECOVERY_CONSOLE_STATE:-/var/lib/youeye-state/console}
 
 [ -s "$request" ] || exit 0
 install -d -m 0700 "$request_dir"
 exec 9>"$request_dir/apply.lock"
 flock -n 9 || exit 0
 
+# Recovery (frozen at install) queues any well-formed kind; this updatable
+# script decides what each kind does.
 operation=$(jq -er 'if .schema == "youeye.appliance.recovery.v1" and
-    (.operation == "reset-platform" or .operation == "factory-reset") and
+    (.operation | type == "string" and test("^[a-z][a-z0-9-]{0,39}$")) and
     (.stage == "queued" or .stage == "applying" or .stage == "failed") and
     (.transaction_id | type == "string" and test("^[0-9a-f]{32}$"))
   then .operation else error("invalid recovery request") end' "$request")
@@ -45,6 +47,27 @@ on_exit() {
 }
 trap on_exit EXIT
 
+finish() {
+    tmp="$result.tmp"
+    jq --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg stage "$1" --arg error "${2:-}" \
+        '.stage=$stage | .completed_at=$completed_at | if $error == "" then del(.error) else .error=$error end' "$request" > "$tmp"
+    chmod 0600 "$tmp"
+    sync -f "$tmp"
+    mv -f "$tmp" "$result"
+    rm -f "$request"
+    sync -f "$request_dir"
+    trap - EXIT
+}
+
+case "$operation" in
+    reset-platform|factory-reset|reset-owner-password) ;;
+    *)
+        # A kind this System doesn't implement must not block every boot.
+        finish unsupported "This YouEye System does not support the $operation recovery operation"
+        exit 0
+        ;;
+esac
+
 write_stage applying
 case "$operation" in
     reset-platform)
@@ -54,27 +77,24 @@ case "$operation" in
         ;;
     factory-reset)
         "$youeye" cleanup --yes
-        # Development access is persistent State, not sealed System content.
-        # Factory reset must therefore replace it explicitly, then apply the
-        # secure default so the persistent shadow file and sshd drop-in cannot
-        # survive the reset or an A/B slot transition.
-        install -d -m 0700 "$(dirname "$development_access_policy")"
-        printf '%s\n' '{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}' \
-            > "${development_access_policy}.tmp"
-        chmod 0600 "${development_access_policy}.tmp"
-        mv -f "${development_access_policy}.tmp" "$development_access_policy"
-        rm -f "$development_access_status"
-        "$development_access_apply"
+        # Console access is State, not sealed System content: a factory reset
+        # removes every admin account and home, the root password, password
+        # SSH and any pending owner reset code.
+        rm -rf "$console_homes" "$console_state"
+        install -d -m 0700 "$(dirname "$console_access")"
+        printf '%s\n' '{"schema":"youeye.console-access.v1","password_ssh":false,"accounts":[]}' > "${console_access}.tmp"
+        chmod 0600 "${console_access}.tmp"
+        mv -f "${console_access}.tmp" "$console_access"
+        "$youeye" console apply
+        ;;
+    reset-owner-password)
+        # The console screen shows the one-time code; the owner uses it on the
+        # Control Panel's reset page. Nothing else changes.
+        "$youeye" console owner-reset
+        finish complete
+        exit 0
         ;;
 esac
 
 rm -rf "$first_deploy"
-tmp="$result.tmp"
-jq --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.stage="complete" | .completed_at=$completed_at | del(.error)' "$request" > "$tmp"
-chmod 0600 "$tmp"
-sync -f "$tmp"
-mv -f "$tmp" "$result"
-rm -f "$request"
-sync -f "$request_dir"
-trap - EXIT
+finish complete

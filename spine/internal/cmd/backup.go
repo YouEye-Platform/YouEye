@@ -159,10 +159,12 @@ var backupCreateCmd = &cobra.Command{
 			return err
 		}
 		output.Info("Creating encrypted platform backup...")
+		// The CP requires a list; no --app means a backup without apps.
+		apps := append([]string{}, backupAppIDs...)
 		return controlClient.PostSSE("/api/backup/core", map[string]interface{}{
 			"passphrase": passphrase,
 			"mediaId":    backupMediaID,
-			"appIds":     backupAppIDs,
+			"appIds":     apps,
 		}, sseHandler)
 	},
 }

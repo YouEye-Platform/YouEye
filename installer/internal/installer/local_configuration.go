@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +16,9 @@ import (
 )
 
 const (
-	localBootstrapRoot       = "/var/lib/youeye-state/bootstrap"
-	localNetworkApply        = "/usr/local/bin/youeye boot network" // the network check ships with Spine
-	localDevelopmentApply    = "/usr/local/libexec/youeye-apply-development-access"
-	localNetworkProfileName  = "network-profile.json"
-	localDevelopmentFileName = "development-access.json"
+	localBootstrapRoot      = "/var/lib/youeye-state/bootstrap"
+	localNetworkApply       = "/usr/local/bin/youeye boot network" // the network check ships with Spine
+	localNetworkProfileName = "network-profile.json"
 )
 
 type localApplyRunner interface {
@@ -108,42 +105,6 @@ func applyLocalNetworkProfile(path string, profile localNetworkProfile, runner l
 			_ = os.Remove(path)
 		}
 		return fmt.Errorf("the new network profile did not pass connectivity checks; the saved profile was restored: %w", err)
-	}
-	return nil
-}
-
-func loadLocalDevelopmentPolicy(path string) (developmentAccessPolicy, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return defaultDevelopmentAccessPolicy(), nil
-	}
-	if err != nil {
-		return developmentAccessPolicy{}, err
-	}
-	var policy developmentAccessPolicy
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&policy); err != nil {
-		return developmentAccessPolicy{}, err
-	}
-	if err := validateDevelopmentAccessPolicy(policy); err != nil {
-		return developmentAccessPolicy{}, err
-	}
-	return policy, nil
-}
-
-func applyLocalDevelopmentPolicy(path string, policy developmentAccessPolicy, runner localApplyRunner) error {
-	if err := validateDevelopmentAccessPolicy(policy); err != nil {
-		return err
-	}
-	if err := writeProtectedJSON(path, policy); err != nil {
-		return err
-	}
-	if runner == nil {
-		runner = localExecRunner{}
-	}
-	if err := runner.Run(localDevelopmentApply); err != nil {
-		return fmt.Errorf("apply development access policy: %w", err)
 	}
 	return nil
 }
@@ -372,168 +333,6 @@ func (model localNetworkModel) adapterLabel() string {
 	return "Automatic"
 }
 
-type localDevelopmentModel struct {
-	policy     developmentAccessPolicy
-	inputs     []textinput.Model
-	cursor     int
-	err        string
-	complete   bool
-	path       string
-	runner     localApplyRunner
-	standalone bool
-}
-
-func newLocalDevelopmentModel(path string, runner localApplyRunner) localDevelopmentModel {
-	policy, err := loadLocalDevelopmentPolicy(path)
-	password := textinput.New()
-	password.Placeholder = "new password (blank keeps current)"
-	password.EchoMode = textinput.EchoPassword
-	password.EchoCharacter = '•'
-	confirm := textinput.New()
-	confirm.Placeholder = "repeat password"
-	confirm.EchoMode = textinput.EchoPassword
-	confirm.EchoCharacter = '•'
-	model := localDevelopmentModel{policy: policy, inputs: []textinput.Model{password, confirm}, path: path, runner: runner, standalone: true}
-	if err != nil {
-		model.policy = defaultDevelopmentAccessPolicy()
-		model.err = "The saved policy is invalid. Complete lock remains available."
-	}
-	return model
-}
-
-func (model localDevelopmentModel) Init() tea.Cmd { return nil }
-
-func (model localDevelopmentModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := message.(tea.KeyMsg)
-	if !ok {
-		return model, nil
-	}
-	if key.String() == "ctrl+c" || key.String() == "esc" {
-		model.clearPasswords()
-		return model, tea.Quit
-	}
-	if model.complete {
-		if key.String() == "enter" || key.String() == "q" {
-			return model, tea.Quit
-		}
-		return model, nil
-	}
-	if model.cursor == 2 || model.cursor == 3 {
-		switch key.String() {
-		case "tab", "down":
-			model.inputs[model.cursor-2].Blur()
-			model.cursor++
-			return model, model.focusDevelopmentInput()
-		case "shift+tab", "up":
-			model.inputs[model.cursor-2].Blur()
-			model.cursor--
-			return model, model.focusDevelopmentInput()
-		}
-		var command tea.Cmd
-		model.inputs[model.cursor-2], command = model.inputs[model.cursor-2].Update(key)
-		return model, command
-	}
-	switch key.String() {
-	case "up", "shift+tab":
-		model.cursor--
-	case "down", "tab":
-		model.cursor++
-	case " ", "enter":
-		switch model.cursor {
-		case 0:
-			model.policy.LocalRootConsole = true
-		case 1:
-			model.policy.RootPasswordSSH = !model.policy.RootPasswordSSH
-		case 4:
-			updated, err := buildDevelopmentAccessPolicy(model.policy.RootPasswordSSH, model.inputs[0].Value(), model.inputs[1].Value(), model.policy)
-			model.clearPasswords()
-			if err != nil {
-				model.err = err.Error()
-				break
-			}
-			if err := applyLocalDevelopmentPolicy(model.path, updated, model.runner); err != nil {
-				model.err = err.Error()
-				break
-			}
-			model.policy = updated
-			model.err = ""
-			model.complete = true
-		case 5:
-			model.clearPasswords()
-			updated, err := buildDevelopmentAccessPolicy(false, "", "", model.policy)
-			if err != nil {
-				model.err = err.Error()
-				break
-			}
-			if err := applyLocalDevelopmentPolicy(model.path, updated, model.runner); err != nil {
-				model.err = err.Error()
-				break
-			}
-			model.policy = updated
-			model.err = ""
-			model.complete = true
-		}
-	}
-	if model.cursor < 0 {
-		model.cursor = 5
-	}
-	if model.cursor > 5 {
-		model.cursor = 0
-	}
-	return model, model.focusDevelopmentInput()
-}
-
-func (model *localDevelopmentModel) focusDevelopmentInput() tea.Cmd {
-	for index := range model.inputs {
-		model.inputs[index].Blur()
-	}
-	if model.cursor == 2 || model.cursor == 3 {
-		return model.inputs[model.cursor-2].Focus()
-	}
-	return nil
-}
-
-func (model *localDevelopmentModel) clearPasswords() {
-	for index := range model.inputs {
-		value := []byte(model.inputs[index].Value())
-		wipeBytes(value)
-		model.inputs[index].SetValue("")
-	}
-}
-
-func (model localDevelopmentModel) View() string {
-	if model.complete {
-		detail := "The protected local root credential remains active and password SSH is disabled."
-		if model.policy.RootPasswordSSH {
-			detail = "The protected local root credential and local-subnet password SSH are active."
-		}
-		return localPanel("Development access updated", detail+"\n\nPress Enter to return.")
-	}
-	rows := []string{
-		theme.Title.Render("Development access"), "",
-		theme.Danger.Render("Local root login always requires authentication. Enable password SSH only when needed."), "",
-		localCursor(model.cursor, 0) + "Root console                                  Always on · password authenticated",
-		localCursor(model.cursor, 1) + localToggle("Root password SSH on the local subnet", model.policy.RootPasswordSSH),
-		localCursor(model.cursor, 2) + "Password       " + model.inputs[0].View(),
-		localCursor(model.cursor, 3) + "Confirm        " + model.inputs[1].View(), "",
-		localCursor(model.cursor, 4) + "Apply selected access",
-		localCursor(model.cursor, 5) + "Disable password SSH (keep local root login)", "",
-		theme.Dim.Render("Up/Down move · Space toggle · Enter select · Esc return"),
-	}
-	if model.err != "" {
-		rows = append(rows, "", theme.Danger.Render(strings.Join(wrapText(model.err, 66), "\n")))
-	}
-	return localPanelContent(rows)
-}
-
-func localToggle(label string, enabled bool) string {
-	state := "Off"
-	if enabled {
-		state = "On"
-	}
-	return fmt.Sprintf("%-46s %s", label, state)
-}
-
 func localCursor(cursor, row int) string {
 	if cursor == row {
 		return theme.Selected.Render("› ")
@@ -558,9 +357,4 @@ func runLocalModel(model tea.Model) error {
 // RunLocalNetworkConfiguration opens the supported on-device wired network TUI.
 func RunLocalNetworkConfiguration() error {
 	return runLocalModel(newLocalNetworkModel(filepath.Join(localBootstrapRoot, localNetworkProfileName), nil))
-}
-
-// RunLocalDevelopmentAccess opens the supported physical-console development-access TUI.
-func RunLocalDevelopmentAccess() error {
-	return runLocalModel(newLocalDevelopmentModel(filepath.Join(localBootstrapRoot, localDevelopmentFileName), nil))
 }

@@ -1,16 +1,15 @@
 package installer
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,20 +23,23 @@ type consoleTick time.Time
 type consoleCommandFinished struct{ err error }
 
 type applianceConsoleSnapshot struct {
-	ImageVersion              string
-	Slot                      string
-	Stage                     string
-	Detail                    string
-	NetworkPhase              string
-	NetworkDetail             string
-	IPv4Address               string
-	Domain                    string
-	DevelopmentLocalRequested bool
-	DevelopmentLocalEffective bool
-	DevelopmentSSH            bool
-	OverlayArtifact           string
-	OverlayCommit             string
-	Complete                  bool
+	ImageVersion        string
+	Slot                string
+	Stage               string
+	Detail              string
+	NetworkPhase        string
+	NetworkDetail       string
+	IPv4Address         string
+	Domain              string
+	ConsoleRootPassword bool
+	ConsolePasswordSSH  bool
+	// ConsoleUnclaimed: the record was read and holds no admin who can sign
+	// in, so there is nobody to protect network setup from yet.
+	ConsoleUnclaimed bool
+	OwnerResetCode   string
+	OverlayArtifact  string
+	OverlayCommit    string
+	Complete         bool
 }
 
 type applianceConsoleModel struct {
@@ -74,14 +76,15 @@ func (model applianceConsoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 	case tea.KeyMsg:
 		switch value.String() {
 		case "n":
-			return model, applianceConsoleAuthenticatedProcess("network")
-		case "d":
-			return model, applianceConsoleAuthenticatedProcess("development-access")
-		case "l":
-			model.snapshot = readApplianceConsoleSnapshot()
-			if model.snapshot.DevelopmentLocalRequested && model.snapshot.DevelopmentLocalEffective {
-				return model, applianceConsoleLogin()
+			switch {
+			case model.snapshot.ConsoleUnclaimed && !model.snapshot.ConsoleRootPassword:
+				// Before an admin exists, whoever is at the box could claim it
+				// anyway; a broken network must not force a reinstall.
+				return model, applianceConsoleDirectProcess("network")
+			case model.snapshot.ConsoleRootPassword:
+				return model, applianceConsoleAuthenticatedProcess("network")
 			}
+			return model, nil
 		case "ctrl+c":
 			// This console is a supervised appliance surface. Ignore accidental
 			// termination and keep the local recovery path available.
@@ -89,6 +92,14 @@ func (model applianceConsoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 		}
 	}
 	return model, nil
+}
+
+func applianceConsoleDirectProcess(command string) tea.Cmd {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = "/usr/local/bin/youeye-installer"
+	}
+	return tea.ExecProcess(exec.Command(executable, command), func(err error) tea.Msg { return consoleCommandFinished{err: err} })
 }
 
 func applianceConsoleAuthenticatedProcess(command string) tea.Cmd {
@@ -100,8 +111,7 @@ func applianceConsoleAuthenticatedProcess(command string) tea.Cmd {
 }
 
 func applianceConsoleAuthenticatedCommand(command string) (*exec.Cmd, error) {
-	allowed := map[string]bool{"network": true, "development-access": true}
-	if !allowed[command] {
+	if command != "network" {
 		return nil, fmt.Errorf("unsupported authenticated console command")
 	}
 	executable, err := os.Executable()
@@ -118,40 +128,6 @@ func applianceConsoleAuthenticatedCommand(command string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("prepare authenticated console identity")
 	}
 	return applianceConsoleSUCommand("exec "+shellQuote(executable)+" "+shellQuote(command), uint32(uid), uint32(gid)), nil
-}
-
-func applianceConsoleLogin() tea.Cmd {
-	cmd, err := applianceConsoleLoginCommand([]string{"/bin/login", "/usr/bin/login"})
-	if err != nil {
-		return func() tea.Msg { return consoleCommandFinished{err: err} }
-	}
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return consoleCommandFinished{err: err}
-	})
-}
-
-func applianceConsoleLoginCommand(loginPaths []string) (*exec.Cmd, error) {
-	for _, path := range loginPaths {
-		info, err := os.Stat(path)
-		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
-			cmd := exec.Command(path, "root")
-			// Bubble Tea otherwise attaches child stderr to the service journal.
-			// Debian login and su render their password prompt on stderr, so join
-			// it to the active console's stdout before handing off the terminal.
-			cmd.Stderr = os.Stdout
-			return cmd, nil
-		}
-	}
-	account, err := user.Lookup("nobody")
-	if err != nil {
-		return nil, fmt.Errorf("prepare stock root login: %w", err)
-	}
-	uid, uidErr := strconv.ParseUint(account.Uid, 10, 32)
-	gid, gidErr := strconv.ParseUint(account.Gid, 10, 32)
-	if uidErr != nil || gidErr != nil {
-		return nil, fmt.Errorf("prepare stock root login identity")
-	}
-	return applianceConsoleSUCommand("", uint32(uid), uint32(gid)), nil
 }
 
 func applianceConsoleSUCommand(rootCommand string, uid, gid uint32) *exec.Cmd {
@@ -204,20 +180,25 @@ func (model applianceConsoleModel) View() string {
 	if snapshot.NetworkDetail != "" {
 		rows = append(rows, "             "+snapshot.NetworkDetail)
 	}
-	development := "Local root login unavailable"
-	if snapshot.DevelopmentLocalRequested && snapshot.DevelopmentLocalEffective {
-		development = "Local root login on TTY2"
+	rows = append(rows, "Console     Admins sign in on Ctrl+Alt+F2")
+	if snapshot.ConsolePasswordSSH {
+		rows = append(rows, "            Password SSH on (local network)")
 	}
-	if snapshot.DevelopmentSSH {
-		development += " + local-network password SSH"
+	rows = append(rows, "")
+	if snapshot.OwnerResetCode != "" {
+		// The reset page answers only on the box's own address (not its name).
+		box := snapshot.IPv4Address
+		rows = append(rows,
+			theme.Selected.Render("Owner password reset code: "+snapshot.OwnerResetCode),
+			fmt.Sprintf("Open https://%s/settings/reset-owner and enter it.", valueOr(box, "<this box's IP address>")),
+			"The code is valid 24 hours, once.", "")
 	}
-	rows = append(rows, fmt.Sprintf("Developer    %s", development), "")
-	rows = append(rows,
-		theme.Selected.Render("N")+"  Configure and test wired network (root password required)",
-		theme.Selected.Render("D")+"  Development access (root password required)",
-	)
-	if snapshot.DevelopmentLocalRequested && snapshot.DevelopmentLocalEffective {
-		rows = append(rows, theme.Selected.Render("L")+"  Open authenticated root login on this console")
+	if snapshot.ConsoleUnclaimed && !snapshot.ConsoleRootPassword {
+		rows = append(rows, theme.Selected.Render("N")+"  Configure and test wired network (until the box has an admin)")
+	} else if snapshot.ConsoleRootPassword {
+		rows = append(rows, theme.Selected.Render("N")+"  Configure and test wired network (root password required)")
+	} else {
+		rows = append(rows, "Net setup   on Ctrl+Alt+F2: sudo youeye-installer network")
 	}
 	rows = append(rows, "", "Recovery: choose YouEye Recovery from the UEFI boot menu")
 	if model.err != "" {
@@ -267,36 +248,34 @@ func readApplianceConsoleSnapshot() applianceConsoleSnapshot {
 			snapshot.NetworkDetail = safeConsoleText(status.Detail, 100)
 		}
 	})
-	readConsoleJSON(filepath.Join(root, "bootstrap/development-access-status.json"), func(raw []byte) {
-		var status struct {
-			Schema                    string  `json:"schema"`
-			LocalRootConsoleRequested *bool   `json:"local_root_console_requested"`
-			LocalRootConsolePersisted *bool   `json:"local_root_console_persisted"`
-			LocalRootConsoleActive    *bool   `json:"local_root_console_active"`
-			LocalRootConsoleEffective *bool   `json:"local_root_console_effective"`
-			RootPasswordSSHRequested  *bool   `json:"root_password_ssh_requested"`
-			RootPasswordSSHEffective  *bool   `json:"root_password_ssh_effective"`
-			NetworkScope              *string `json:"network_scope"`
-			Detail                    *string `json:"detail"`
+	// Console access: only whether root has a password and password SSH is
+	// on. The record holds password hashes; they are never shown.
+	readConsoleJSON(filepath.Join(root, "bootstrap/console-access.json"), func(raw []byte) {
+		var record struct {
+			Schema           string `json:"schema"`
+			RootPasswordHash string `json:"root_password_hash"`
+			PasswordSSH      bool   `json:"password_ssh"`
+			Claimed          bool   `json:"claimed"`
+			Accounts         []struct {
+				Admin  bool `json:"admin"`
+				Locked bool `json:"locked"`
+			} `json:"accounts"`
 		}
-		if strictConsoleJSON(raw, &status) != nil || !hasConsoleJSONFields(raw,
-			"schema", "local_root_console_requested", "local_root_console_persisted",
-			"local_root_console_active", "local_root_console_effective",
-			"root_password_ssh_requested", "root_password_ssh_effective",
-			"network_scope", "detail",
-		) || status.Schema != "youeye.development-access-status.v1" ||
-			status.LocalRootConsoleRequested == nil || status.LocalRootConsolePersisted == nil ||
-			status.LocalRootConsoleActive == nil || status.LocalRootConsoleEffective == nil ||
-			status.RootPasswordSSHRequested == nil || status.RootPasswordSSHEffective == nil ||
-			(*status.LocalRootConsoleEffective && (!*status.LocalRootConsoleRequested || !*status.LocalRootConsolePersisted || !*status.LocalRootConsoleActive)) ||
-			(*status.RootPasswordSSHEffective && (!*status.RootPasswordSSHRequested || status.NetworkScope == nil || strings.TrimSpace(*status.NetworkScope) == "")) ||
-			(!*status.RootPasswordSSHEffective && status.NetworkScope != nil) {
-			return
+		if json.Unmarshal(raw, &record) == nil && record.Schema == "youeye.console-access.v1" {
+			// Spine treats a hash it can't use as no root password (root locked).
+			snapshot.ConsoleRootPassword = validYescryptHash(record.RootPasswordHash)
+			snapshot.ConsolePasswordSSH = record.PasswordSSH
+			// Claimed is sticky (set by the first admin sync, cleared only by a
+			// factory reset), so a lost or locked admin account never reopens it.
+			snapshot.ConsoleUnclaimed = !record.Claimed
+			for _, account := range record.Accounts {
+				if account.Admin && !account.Locked {
+					snapshot.ConsoleUnclaimed = false
+				}
+			}
 		}
-		snapshot.DevelopmentLocalRequested = *status.LocalRootConsoleRequested
-		snapshot.DevelopmentLocalEffective = *status.LocalRootConsoleEffective
-		snapshot.DevelopmentSSH = *status.RootPasswordSSHEffective
 	})
+	snapshot.OwnerResetCode = readOwnerResetCode(root, envOrDefault("YOUEYE_CONSOLE_RUN_DIR", "/run/youeye/console"), time.Now())
 	readConsoleJSON(envOrDefault("YOUEYE_CONSOLE_DEVELOPMENT_OVERLAY", "/run/youeye/development-overlay/installer.json"), func(raw []byte) {
 		var overlay struct {
 			Schema       string `json:"schema"`
@@ -331,6 +310,37 @@ func readApplianceConsoleSnapshot() applianceConsoleSnapshot {
 	return snapshot
 }
 
+var ownerResetCodePattern = regexp.MustCompile(`^[A-Z0-9]{5}-[A-Z0-9]{5}$`)
+
+// readOwnerResetCode returns the one-time owner reset code Spine issued after
+// Recovery's "Reset owner password", while its State record is unexpired.
+func readOwnerResetCode(stateRoot, runDir string, now time.Time) string {
+	raw, err := os.ReadFile(filepath.Join(runDir, "owner-reset-code"))
+	if err != nil || len(raw) > 64 {
+		return ""
+	}
+	code := strings.TrimSpace(string(raw))
+	if !ownerResetCodePattern.MatchString(code) {
+		return ""
+	}
+	pending, err := os.ReadFile(filepath.Join(stateRoot, "console/owner-reset.json"))
+	if err != nil || len(pending) > 1<<16 {
+		return ""
+	}
+	var record struct {
+		Schema    string `json:"schema"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if json.Unmarshal(pending, &record) != nil || record.Schema != "youeye.owner-reset.v1" {
+		return ""
+	}
+	expires, err := time.Parse(time.RFC3339, record.ExpiresAt)
+	if err != nil || !now.Before(expires) {
+		return ""
+	}
+	return code
+}
+
 func netInterfaces() (string, error) {
 	interfaces, err := net.InterfaceAddrs()
 	if err != nil {
@@ -350,32 +360,6 @@ func readConsoleJSON(path string, apply func([]byte)) {
 	if err == nil && len(raw) <= 1<<20 {
 		apply(raw)
 	}
-}
-
-func strictConsoleJSON(raw []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON value")
-	}
-	return nil
-}
-
-func hasConsoleJSONFields(raw []byte, names ...string) bool {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return false
-	}
-	for _, name := range names {
-		if _, ok := fields[name]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func safeConsoleText(value string, limit int) string {

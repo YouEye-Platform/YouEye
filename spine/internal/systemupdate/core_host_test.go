@@ -52,10 +52,10 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 			}
 		}
 		if m.Role == "system-update" {
-			responses[releasecache.AssetURL(repository, r.Tag, m.Artifact)] = hostRaw
+			responses[releasecache.AssetURL(repository, "", r.Tag, m.Artifact)] = hostRaw
 		}
 		if data, ok := f.files[m.Artifact.Name]; ok {
-			responses[releasecache.AssetURL(repository, r.Tag, m.Artifact)] = data
+			responses[releasecache.AssetURL(repository, "", r.Tag, m.Artifact)] = data
 		}
 	}
 	raw, _ = json.Marshal(r)

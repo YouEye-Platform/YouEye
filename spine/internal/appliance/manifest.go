@@ -252,9 +252,10 @@ func invalidStatus(code string) RuntimeStatus {
 }
 
 func ParseManifest(data []byte) (Manifest, error) {
+	// The running Spine parses the target image's marker during an update, so
+	// keys a newer image adds are ignored.
 	var m Manifest
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&m); err != nil {
 		return m, fmt.Errorf("decode manifest: %w", err)
 	}

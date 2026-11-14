@@ -30,7 +30,7 @@ func TestCoreCacheRequiresCapacityAndCompleteDigestBoundBytes(t *testing.T) {
 		m := &r.Members[i]
 		blob := func(name string, data []byte) releasecache.CoreBlob {
 			b := releasecache.CoreBlob{Name: m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
-			files[releasecache.AssetURL(repository, r.Tag, b)] = data
+			files[releasecache.AssetURL(repository, "", r.Tag, b)] = data
 			return b
 		}
 		artifact := []byte(`{"fixture":"` + m.Role + `"}`)

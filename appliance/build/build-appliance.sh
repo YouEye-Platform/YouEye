@@ -201,7 +201,7 @@ cat > "$work_dir/youeye-dkms.conf" <<'EOF'
 # the development image is reproducible; production signing has its own trust design.
 sign_file="/usr/lib/youeye/no-module-signing"
 EOF
-base_packages="systemd-sysv,systemd-boot,systemd-resolved,systemd-timesyncd,systemd-zram-generator,dbus,linux-image-amd64,linux-headers-amd64,initramfs-tools,zfsutils-linux,zfs-initramfs,openssh-server,login,ca-certificates,curl,jq,openssl,pamtester,apparmor,apparmor-utils,uidmap,nftables,iptables,dnsmasq-base,bridge-utils,iproute2,iputils-ping,ethtool,util-linux,gdisk,dosfstools,e2fsprogs,restic,zstd,bash,coreutils,findutils,grep,sed,gawk,tar,xz-utils,rsync,qemu-guest-agent"
+base_packages="systemd-sysv,systemd-boot,systemd-resolved,systemd-timesyncd,systemd-zram-generator,dbus,linux-image-amd64,linux-headers-amd64,initramfs-tools,zfsutils-linux,zfs-initramfs,openssh-server,login,sudo,ca-certificates,curl,jq,openssl,pamtester,apparmor,apparmor-utils,uidmap,nftables,iptables,dnsmasq-base,bridge-utils,iproute2,iputils-ping,ethtool,util-linux,gdisk,dosfstools,e2fsprogs,restic,zstd,bash,coreutils,findutils,grep,sed,gawk,tar,xz-utils,rsync,qemu-guest-agent"
 mmdebstrap \
     --variant=apt \
     --architectures=amd64 \
@@ -240,18 +240,16 @@ install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery" "$rootfs/usr/
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery-console" "$rootfs/usr/local/libexec/youeye-recovery-console"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-recovery-apply" "$rootfs/usr/local/libexec/youeye-recovery-apply"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-console-status" "$rootfs/usr/local/libexec/youeye-console-status"
-install -D -m 0755 "$source_dir/appliance/scripts/youeye-apply-development-access" "$rootfs/usr/local/libexec/youeye-apply-development-access"
 install -D -m 0755 "$source_dir/appliance/scripts/youeye-apply-development-overlay" "$rootfs/usr/local/libexec/youeye-apply-development-overlay"
 install -D -m 0755 "$source_dir/appliance/initramfs/youeye-state-hook" "$rootfs/etc/initramfs-tools/hooks/youeye-state"
 install -D -m 0755 "$source_dir/appliance/initramfs/youeye-state" "$rootfs/etc/initramfs-tools/scripts/local-bottom/youeye-state"
-install -D -m 0644 "$source_dir/appliance/initramfs/youeye-state-migration" "$rootfs/usr/lib/youeye/initramfs/youeye-state-migration"
 
 for unit in \
     youeye.service youeye-appliance-state.service youeye-appliance-storage.service \
     youeye-appliance-ssh-keys.service \
     youeye-appliance-incus-sockets.service \
     youeye-setup-gate.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service \
-    youeye-console-status.service youeye-console-serial.service youeye-development-access.service youeye-development-overlay.service youeye-recovery-apply.service youeye-recovery.service youeye-recovery.target; do
+    youeye-console-status.service youeye-console-serial.service youeye-console-access.service youeye-development-overlay.service youeye-recovery-apply.service youeye-recovery.service youeye-recovery.target; do
     install -D -m 0644 "$source_dir/appliance/systemd/$unit" "$rootfs/usr/lib/systemd/system/$unit"
 done
 install -D -m 0644 "$source_dir/appliance/systemd/incus-startup.service.d/youeye-dependency.conf" "$rootfs/usr/lib/systemd/system/incus-startup.service.d/youeye-dependency.conf"
@@ -317,7 +315,7 @@ jq -S -n \
     '{
       schema_version:1,image_version:$image_version,build_id:$build_id,
       source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
-      disk_layout_version:1,state_schema_min:2,state_schema_max:2,
+      disk_layout_version:1,state_schema_min:1,state_schema_max:1,
       data_schema_min:1,data_schema_max:1,kernel_compatibility:">=6.12",
       zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
@@ -355,8 +353,18 @@ install -m 0444 "$rootfs/var/lib/youeye/config/config.yaml" "$rootfs/usr/lib/you
 install -m 0444 "$rootfs/var/lib/youeye/config/youeye.yaml" "$rootfs/usr/lib/youeye/config-seeds/youeye.yaml"
 
 chroot "$rootfs" passwd -l root >/dev/null
+# Console access: at every boot Spine builds the host's passwd, shadow, group
+# and gshadow from these pristine copies plus the admins' accounts recorded on
+# State (youeye console apply), so a newer image's system users always arrive.
+install -d -m 0755 "$rootfs/usr/lib/youeye/etc-base"
+install -m 0644 "$rootfs/etc/passwd" "$rootfs/etc/group" "$rootfs/usr/lib/youeye/etc-base/"
+install -m 0600 "$rootfs/etc/shadow" "$rootfs/etc/gshadow" "$rootfs/usr/lib/youeye/etc-base/"
+install -d -m 0750 "$rootfs/etc/sudoers.d"
+printf '%s\n' '# YouEye admins (console access) may use sudo with their own password.' '%youeye-admins ALL=(ALL:ALL) ALL' \
+    > "$rootfs/etc/sudoers.d/youeye-admins"
+chmod 0440 "$rootfs/etc/sudoers.d/youeye-admins"
 systemctl --root="$rootfs" enable systemd-networkd.service systemd-networkd-wait-online.service ssh.service qemu-guest-agent.service >/dev/null
-systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-development-access.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
+systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-console-access.service getty@tty2.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
 systemctl --root="$rootfs" disable incus.socket incus-user.socket >/dev/null 2>&1 || true
 systemctl --root="$rootfs" mask \
     systemd-bless-boot.service \
@@ -457,7 +465,6 @@ mv "$artifacts/b.efi" "$artifacts/system-b.efi"
 
 printf '[6/7] Preparing appliance release payload\n'
 install -m 0755 "$bin_dir/youeye" "$artifacts/youeye-system-updater-linux-amd64"
-install -m 0755 "$source_dir/appliance/scripts/youeye-system-update-bootstrap" "$artifacts/youeye-system-update-bootstrap"
 asset_record() {
     local role=$1 path=$2 compression=${3:-}
     local file="$artifacts/$path"
@@ -501,7 +508,7 @@ jq -S -n \
     '{schema:"youeye.appliance.manifest.v1",image_version:$image_version,build_id:$build_id,
       source_tree:$source_tree,architecture:"amd64",firmware_mode:"uefi",
       disk_layout:{version:1,target_min_gib:32,esp_gib:1,recovery_gib:4,root_slot_gib:6,state_gib:4},
-      state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
+      state_schema_min:1,state_schema_max:1,data_schema_min:1,data_schema_max:1,
       kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
       release_set:{
@@ -523,11 +530,11 @@ jq -S -n \
 	'{schema:"youeye.system-update.v1",target_image_version:$target_image_version,
 	  build_id:$build_id,source_tree:$source_tree,
 	  architecture:"amd64",firmware_mode:"uefi",hardware_profile:"youeye-appliance-amd64-v1",
-	  disk_layout_version:1,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
+	  disk_layout_version:1,state_schema_min:1,state_schema_max:1,data_schema_min:1,data_schema_max:1,
 	  recovery_version:"1",minimum_current_image_version:$minimum_current_image_version,
 	  root_slot_size_bytes:6442450944,
 	  boot_attempts:3,health_profile:"operational",artifact_kind:$artifact_kind,
-	  rollback:{supported:true,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
+	  rollback:{supported:true,state_schema_min:1,state_schema_max:1,data_schema_min:1,data_schema_max:1,
 	    preserve_state:true,preserve_data:true,preserve_recovery:true},
 	  release_set:{
 	    spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256},
@@ -660,7 +667,10 @@ if [ -n "$answer" ]; then
     fi
     exit "$status"
 fi
-exec /usr/local/bin/youeye-installer install
+# The interactive installer returns when the owner leaves its last screen (or quits). Nothing else runs on this
+# console, so turn the machine off instead of leaving a blank screen.
+/usr/local/bin/youeye-installer install || true
+systemctl poweroff
 EOF
 chmod 0755 config/includes.chroot/usr/local/libexec/youeye-live-installer
 cat > config/includes.chroot/usr/lib/systemd/system/youeye-installer.service <<'EOF'
@@ -786,12 +796,11 @@ install -m 0644 \
     "$artifacts/system-a.efi" "$artifacts/system-b.efi" "$artifacts/system-root.img.zst" \
     "$artifacts/system-update-manifest.json" "$artifacts/youeye-appliance-amd64.iso" "$output_dir/"
 install -m 0755 "$artifacts/youeye-installer-linux-amd64" "$output_dir/youeye-installer-linux-amd64"
-install -m 0755 "$artifacts/youeye-system-update-bootstrap" "$output_dir/youeye-system-update-bootstrap"
 install -m 0755 "$artifacts/youeye-system-updater-linux-amd64" "$output_dir/youeye-system-updater-linux-amd64"
 
 output_count="$(find "$output_dir" -maxdepth 1 -type f -printf . | wc -c)"
-if [[ $output_count -ne 12 ]]; then
-    printf 'Appliance build must emit exactly twelve regular files; found %s.\n' "$output_count" >&2
+if [[ $output_count -ne 11 ]]; then
+    printf 'Appliance build must emit exactly eleven regular files; found %s.\n' "$output_count" >&2
     exit 1
 fi
 printf 'Appliance build complete: %s\n' "$output_dir"

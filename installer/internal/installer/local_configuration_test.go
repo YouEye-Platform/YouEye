@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type recordingLocalRunner struct {
@@ -58,44 +56,6 @@ func TestValidateLocalNetworkProfileRejectsGatewayOutsideSubnetAndWiFi(t *testin
 	}
 }
 
-func TestLocalDevelopmentPolicyIsProtectedAndDisablingSSHRetainsLocalHash(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "development-access.json")
-	policy, err := buildDevelopmentAccessPolicy(true, "a long local test passphrase", "a long local test passphrase", developmentAccessPolicy{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := &recordingLocalRunner{}
-	if err := applyLocalDevelopmentPolicy(path, policy, runner); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 || runner.called != 1 {
-		t.Fatalf("development access policy was not safely applied: info=%v calls=%d err=%v", info, runner.called, err)
-	}
-	localOnly, err := buildDevelopmentAccessPolicy(false, "", "", policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := applyLocalDevelopmentPolicy(path, localOnly, runner); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(raw), "password_hash") || strings.Contains(string(raw), "local-subnet") {
-		t.Fatalf("local console credential was not retained safely: %s (%v)", raw, err)
-	}
-}
-
-func TestLocalDevelopmentTUIAlwaysMasksPassword(t *testing.T) {
-	model := newLocalDevelopmentModel(filepath.Join(t.TempDir(), "development-access.json"), &recordingLocalRunner{})
-	model.policy.LocalRootConsole = true
-	model.cursor = 2
-	model.inputs[0].Focus()
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("never-render-this-passphrase")})
-	view := updated.(localDevelopmentModel).View()
-	if strings.Contains(view, "never-render-this-passphrase") || !strings.Contains(view, "••") {
-		t.Fatalf("password input was not masked: %q", view)
-	}
-}
-
 func TestSafeConsoleTextRemovesControlCharactersAndBoundsOutput(t *testing.T) {
 	got := safeConsoleText("  line\nwith\x1b[31mcontrol and a deliberately long suffix", 20)
 	if strings.ContainsAny(got, "\n\x1b") || len(got) > 20 {
@@ -103,8 +63,8 @@ func TestSafeConsoleTextRemovesControlCharactersAndBoundsOutput(t *testing.T) {
 	}
 }
 
-func TestApplianceConsoleMutationsUsePAMSuAndRootLoginIsNotKindGated(t *testing.T) {
-	for _, operation := range []string{"network", "development-access"} {
+func TestApplianceConsoleNetworkCommandUsesPAMSu(t *testing.T) {
+	for _, operation := range []string{"network"} {
 		command, err := applianceConsoleAuthenticatedCommand(operation)
 		if err != nil {
 			t.Fatal(err)
@@ -120,32 +80,9 @@ func TestApplianceConsoleMutationsUsePAMSuAndRootLoginIsNotKindGated(t *testing.
 			t.Fatalf("%s command is not fixed to authenticated root execution: %q", operation, command.Args)
 		}
 	}
-	if _, err := applianceConsoleAuthenticatedCommand("shell"); err == nil {
-		t.Fatal("arbitrary console command was accepted")
-	}
-}
-
-func TestApplianceConsoleRootLoginUsesStockLoginWithSUFallback(t *testing.T) {
-	login := filepath.Join(t.TempDir(), "login")
-	if err := os.WriteFile(login, []byte("fixture"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	command, err := applianceConsoleLoginCommand([]string{login})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if command.Path != login || strings.Join(command.Args[1:], " ") != "root" || command.Stderr != os.Stdout {
-		t.Fatalf("stock login is not attached to the active console: path=%q args=%q stderr=%v", command.Path, command.Args, command.Stderr)
-	}
-
-	command, err = applianceConsoleLoginCommand([]string{filepath.Join(t.TempDir(), "missing")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if command.Path != "/bin/su" || command.SysProcAttr == nil || command.SysProcAttr.Credential == nil || command.SysProcAttr.Credential.Uid == 0 || command.Stderr != os.Stdout {
-		t.Fatalf("stock su fallback is not an authenticated console command: path=%q attr=%+v stderr=%v", command.Path, command.SysProcAttr, command.Stderr)
-	}
-	if strings.Join(command.Args[1:], " ") != "- root" {
-		t.Fatalf("stock su fallback does not request a root login shell: %q", command.Args)
+	for _, operation := range []string{"shell", "login"} {
+		if _, err := applianceConsoleAuthenticatedCommand(operation); err == nil {
+			t.Fatalf("console command %q was accepted", operation)
+		}
 	}
 }

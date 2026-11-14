@@ -72,7 +72,7 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 		m := &r.Members[i]
 		blob := func(name string, data []byte) releasecache.CoreBlob {
 			b := releasecache.CoreBlob{Name: m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
-			u, err := url.Parse(releasecache.AssetURL(repository, r.Tag, b))
+			u, err := url.Parse(releasecache.AssetURL(repository, "", r.Tag, b))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,8 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 			case 2:
 				data = append(append([]byte(nil), data...), '!')
 			case 3:
-				http.Redirect(w, request, "https://hostile.example/asset", http.StatusFound)
+				// Leaving HTTPS is refused; any HTTPS host is fine (digest-checked).
+				http.Redirect(w, request, "http://hostile.example/asset", http.StatusFound)
 				return
 			}
 		}

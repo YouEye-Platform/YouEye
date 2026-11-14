@@ -104,6 +104,8 @@ function fixture(t: TestContext, options: {
     if(id==='./store') return store;
     if(id==='@/lib/pointer/managed-apps') return {async setPointerManagedActorState(_id:string,state:string) {assert.ok(held);events.push('pointer:'+state);}};
     if(['./config','@/lib/caddy/client','@/lib/settings'].includes(id)) return {};
+    // Console access syncs after the identity commit, never inside identity admission.
+    if(id==='@/lib/console-access') return {async afterIdentityChange() {assert.equal(held, false);}};
     throw Error('Unexpected provider dependency '+id);
   }});
   return {api,store,events,directory};

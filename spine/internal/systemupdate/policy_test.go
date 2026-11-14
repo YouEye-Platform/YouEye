@@ -51,15 +51,30 @@ func TestReleasePolicyStrictValidation(t *testing.T) {
 	if again, err := LoadReleasePolicy(saved); err != nil || again != policy {
 		t.Fatal(again, err)
 	}
+	// A key a newer Spine added is read past and kept on rewrite.
+	newer := `{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"` + digest + `","mirror":"https://m.test"}`
+	if err := os.WriteFile(path, []byte(newer), 0600); err != nil {
+		t.Fatal(err)
+	}
+	read, err := LoadReleasePolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read.Channel = "beta"
+	if err := SaveReleasePolicy(path, read); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := os.ReadFile(path); !strings.Contains(string(kept), `"mirror": "https://m.test"`) || !strings.Contains(string(kept), `"channel": "beta"`) {
+		t.Fatalf("rewrite lost a newer key: %s", kept)
+	}
 	for _, raw := range []string{
-		`{"schema":"youeye.release-policy.v1","repository":"https://github.com/YouEye-Platform/YouEye","channel":"stable","core_manifest_sha256":"` + digest + `","unknown":true}`,
 		`{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","core_manifest_sha256":"` + digest + `"}`,
 	} {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := LoadReleasePolicy(path); err == nil {
-			t.Fatal("unknown or removed release-policy field was accepted", raw)
+			t.Fatal("release policy without its required fields was accepted", raw)
 		}
 	}
 }

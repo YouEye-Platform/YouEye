@@ -77,6 +77,10 @@ curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
 | Control Panel | each spec file with `node --import tsx --test <file>` from `control-panel/`, using Node 24.22.0, plus `tsc --noEmit` |
 | UI | `pnpm --dir ui run typecheck` |
 
+Where two components exchange a document, a fixture in `contracts/` is written by the producer's test and parsed by
+the consumer's real code (`contracts/README.md`). Regenerate it with `YOUEYE_UPDATE_CONTRACTS=1` after an intended
+change and run both sides.
+
 ## Naming rule
 
 While YouEye is pre-release, nothing first-party is versioned as a second or later variant. A replacement takes the
@@ -94,3 +98,27 @@ original name, schema IDs stay `.v1`, and the old reader is deleted rather than 
   a field it doesn't know, and that app drops out of its catalog.
 
 Check with `git grep -nE '\b[vV][2-9]\b|[._-][vV][2-9]\b|V[2-9][A-Z]|schemaVersion:\s*[2-9]|format:\s*[2-9]|[Ll]egacy'`.
+
+## Compatibility rules for later changes
+
+After the Release every box must keep updating for years, and any feature must arrive by update. Three kinds of code
+are never replaced by an ordinary update before they act, so their formats follow fixed rules (the update-readiness
+audit, Plan 7):
+
+- **The readers that decide whether to accept the next update** (channel index, release documents, download rules):
+  - Add fields freely; readers ignore unknown keys (index, core and product releases), skip unknown index products,
+    and fail only the one entry that is invalid.
+  - A new core role, a removed role, a renamed field or a changed meaning needs a higher `minimum_reader` and a
+    **stepping stone** in the index (`Tools/release/index stone add`), so old boxes install an intermediate release
+    first. The same for raising `appliance/recipe.json` `minimum_current_version`.
+  - Files may move to any HTTPS host: set `download_base` in the index entry. Never require a query string,
+    credentials or a release-listing API on a box path.
+- **Code frozen on a box** (the seed Spine in each image, the other slot after a rollback, Recovery):
+  - Records on State and Data: readers ignore unknown keys and writers keep them (`internal/jsonkeep`); add fields,
+    don't bump `schema_version` unless old readers must refuse the file ([spine.md](spine.md)).
+  - Recovery reads only slots, ownership and digests. New Recovery actions are request kinds that the System image's
+    `youeye-recovery-apply` implements; list them for the Recovery menu in `recovery/menu.json` on State.
+- **Backups:** the CP and Spine exchange `youeye.backup.source.v1` (fixtures in `contracts/spine-cp/`, tested from
+  both sides). A restore refuses a backup made by a newer CP, UI or Pointer build or a newer State/Data schema.
+- **Databases:** CP and UI tables change additively only (new columns nullable or defaulted) until they have a
+  version table (Backlog).

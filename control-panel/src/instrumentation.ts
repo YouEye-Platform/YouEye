@@ -39,7 +39,12 @@ export async function register() {
       console.log("[instrumentation] identity service mode — platform background jobs skipped");
       return;
     }
-  
+
+    // Console access: Spine's admin accounts follow YouEye ID's admins. Every
+    // identity change syncs; this startup and periodic pass repairs a missed one.
+    const { startConsoleAccessSync } = await import('@/lib/console-access');
+    startConsoleAccessSync();
+
     // The app-network pool is a deployment-time fact because Incus chooses its
     // system bridge independently. Persist the bounded, collision-free plan
     // before any health loop or app reconciliation can initialize IPAM state.

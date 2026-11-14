@@ -141,7 +141,7 @@ func TestResolveApplianceReleaseFromCustomRepositoryDevIndex(t *testing.T) {
 		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":                   testChannelIndex("dev", testForgeRepository, testFixtureTag, testFixtureVersion, digest),
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw),
 	}, nil)
-	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository+".git", "dev", "", "")
+	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository+".git", "dev", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,12 +157,12 @@ func TestResolveApplianceReleaseFromCustomRepositoryDevIndex(t *testing.T) {
 	}
 	// Every blob is located in the repository release the document came from.
 	member, _ := release.core.Member("media")
-	if got := releasecache.AssetURL(release.Repository, release.TagName, member.Artifact); got != testForgeRepository+"/releases/download/"+testFixtureTag+"/youeye-appliance-amd64.iso" {
+	if got := releasecache.AssetURL(release.Repository, "", release.TagName, member.Artifact); got != testForgeRepository+"/releases/download/"+testFixtureTag+"/youeye-appliance-amd64.iso" {
 		t.Fatalf("media URL = %s", got)
 	}
 
 	// A custom repository's stable channel never consults releases.youeye.me.
-	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "stable", "", ""); !errors.Is(err, releasecache.ErrNotFound) {
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "stable", "", "", ""); !errors.Is(err, releasecache.ErrNotFound) {
 		t.Fatalf("missing stable index: %v", err)
 	}
 	for _, request := range hosts.Requests() {
@@ -176,7 +176,7 @@ func TestResolveApplianceReleaseFromCustomRepositoryDevIndex(t *testing.T) {
 		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json":                   testChannelIndex("dev", testForgeRepository, testFixtureTag, testFixtureVersion, digest),
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw) + " ",
 	}, nil)
-	if _, err := resolveApplianceRelease(t.Context(), tampered.Client, testForgeRepository, "dev", "", ""); err == nil || !strings.Contains(err.Error(), "differs") {
+	if _, err := resolveApplianceRelease(t.Context(), tampered.Client, testForgeRepository, "dev", "", "", ""); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("tampered document accepted: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestResolveApplianceReleaseFromCustomRepositoryDevIndex(t *testing.T) {
 	foreign := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json": testChannelIndex("dev", "https://other.example.test/owner/YouEye", testFixtureTag, testFixtureVersion, digest),
 	}, nil)
-	if _, err := resolveApplianceRelease(t.Context(), foreign.Client, testForgeRepository, "dev", "", ""); err == nil {
+	if _, err := resolveApplianceRelease(t.Context(), foreign.Client, testForgeRepository, "dev", "", "", ""); err == nil {
 		t.Fatal("index naming another repository accepted")
 	}
 
@@ -192,7 +192,7 @@ func TestResolveApplianceReleaseFromCustomRepositoryDevIndex(t *testing.T) {
 	empty := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/channel-alpha/index.json": testChannelIndex("alpha", "", "", "", ""),
 	}, nil)
-	if _, err := resolveApplianceRelease(t.Context(), empty.Client, testForgeRepository, "alpha", "", ""); err == nil || !strings.Contains(err.Error(), "no YouEye release") {
+	if _, err := resolveApplianceRelease(t.Context(), empty.Client, testForgeRepository, "alpha", "", "", ""); err == nil || !strings.Contains(err.Error(), "no YouEye release") {
 		t.Fatalf("empty channel: %v", err)
 	}
 }
@@ -209,7 +209,7 @@ func TestResolveApplianceReleaseOfficialStablePrefersReleasesHost(t *testing.T) 
 		repositoryIndex: index,
 		document:        string(raw),
 	}, nil)
-	release, err := resolveApplianceRelease(t.Context(), hosts.Client, official, "stable", "", "")
+	release, err := resolveApplianceRelease(t.Context(), hosts.Client, official, "stable", "", "", "")
 	if err != nil || release.TagName != testFixtureTag || release.Repository != official {
 		t.Fatalf("official stable: %s %v", release.TagName, err)
 	}
@@ -221,7 +221,7 @@ func TestResolveApplianceReleaseOfficialStablePrefersReleasesHost(t *testing.T) 
 	// The releases host is down or serves a bad index: the repository copy is used.
 	for name, status := range map[string]int{"down": http.StatusServiceUnavailable, "missing": http.StatusNotFound, "rate-limited": http.StatusTooManyRequests} {
 		fallback := newReleaseHosts(t, map[string]string{repositoryIndex: index, document: string(raw)}, map[string]int{"releases.youeye.me/v1/channels/stable.json": status})
-		release, err := resolveApplianceRelease(t.Context(), fallback.Client, official, "stable", "", "")
+		release, err := resolveApplianceRelease(t.Context(), fallback.Client, official, "stable", "", "", "")
 		if err != nil || release.TagName != testFixtureTag {
 			t.Fatalf("%s releases host: %v", name, err)
 		}
@@ -235,7 +235,7 @@ func TestResolveApplianceReleaseOfficialStablePrefersReleasesHost(t *testing.T) 
 		repositoryIndex: index,
 		document:        string(raw),
 	}, nil)
-	if _, err := resolveApplianceRelease(t.Context(), wrongChannel.Client, official, "stable", "", ""); err != nil {
+	if _, err := resolveApplianceRelease(t.Context(), wrongChannel.Client, official, "stable", "", "", ""); err != nil {
 		t.Fatalf("index of another channel on the releases host was not skipped: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestResolveApplianceReleaseOfficialStablePrefersReleasesHost(t *testing.T) 
 		"github.com/YouEye-Platform/YouEye/releases/download/channel-dev/index.json": testChannelIndex("dev", official, testFixtureTag, testFixtureVersion, digest),
 		document: string(raw),
 	}, nil)
-	if _, err := resolveApplianceRelease(t.Context(), dev.Client, official, "dev", "", ""); err != nil {
+	if _, err := resolveApplianceRelease(t.Context(), dev.Client, official, "dev", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, request := range dev.Requests() {
@@ -260,7 +260,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw),
 		"forge.example.test/owner/YouEye/releases/download/youeye-v0.6.2-dev.1/core-release.json":    string(raw),
 	}, nil)
-	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest)
+	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest, "")
 	if err != nil || release.TagName != testFixtureTag || release.coreSHA256 != digest {
 		t.Fatalf("exact release: %s %v", release.TagName, err)
 	}
@@ -270,10 +270,10 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 	}
 
 	other := strings.Repeat("0", 64)
-	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, other); err == nil || !strings.Contains(err.Error(), "differs") {
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, other, ""); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("digest mismatch accepted: %v", err)
 	}
-	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "youeye-v0.6.2-dev.1", digest); err == nil || !strings.Contains(err.Error(), "names tag") {
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "youeye-v0.6.2-dev.1", digest, ""); err == nil || !strings.Contains(err.Error(), "names tag") {
 		t.Fatalf("document of another tag accepted: %v", err)
 	}
 	before := len(hosts.Requests())
@@ -282,15 +282,15 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 		"appliance tag":      {"appliance-v0.6.1", digest},
 		"uppercase digest":   {testFixtureTag, strings.ToUpper(digest)},
 	} {
-		if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", args[0], args[1]); err == nil {
+		if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", args[0], args[1], ""); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
-	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "feature", "", ""); err == nil {
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "feature", "", "", ""); err == nil {
 		t.Fatal("unknown channel accepted")
 	}
 	for _, repository := range []string{"http://forge.example.test/owner/YouEye", "https://forge.example.test/api/v1/repos/owner/YouEye/releases", "https://user:pw@forge.example.test/owner/YouEye"} {
-		if _, err := resolveApplianceRelease(t.Context(), hosts.Client, repository, "dev", "", ""); err == nil {
+		if _, err := resolveApplianceRelease(t.Context(), hosts.Client, repository, "dev", "", "", ""); err == nil {
 			t.Fatalf("repository %s accepted", repository)
 		}
 	}
@@ -302,7 +302,7 @@ func TestResolveApplianceReleaseExactTagAndDigest(t *testing.T) {
 func TestResolveApplianceReleaseSurfacesRateLimit(t *testing.T) {
 	for _, code := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
 		hosts := newReleaseHosts(t, nil, map[string]int{"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json": code})
-		_, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "")
+		_, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "", "")
 		if !errors.Is(err, releasecache.ErrRateLimited) {
 			t.Fatalf("HTTP %d from the index: %v", code, err)
 		}
@@ -311,14 +311,14 @@ func TestResolveApplianceReleaseSurfacesRateLimit(t *testing.T) {
 			"releases.youeye.me/v1/channels/stable.json":                                    code,
 			"github.com/YouEye-Platform/YouEye/releases/download/channel-stable/index.json": code,
 		})
-		if _, err := resolveApplianceRelease(t.Context(), official.Client, releasecache.OfficialRepository, "stable", "", ""); !errors.Is(err, releasecache.ErrRateLimited) {
+		if _, err := resolveApplianceRelease(t.Context(), official.Client, releasecache.OfficialRepository, "stable", "", "", ""); !errors.Is(err, releasecache.ErrRateLimited) {
 			t.Fatalf("HTTP %d from both official indexes: %v", code, err)
 		}
 	}
 	raw, digest := fixtureCoreRelease(t)
 	_ = raw
 	exact := newReleaseHosts(t, nil, map[string]int{"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": http.StatusTooManyRequests})
-	if _, err := resolveApplianceRelease(t.Context(), exact.Client, testForgeRepository, "dev", testFixtureTag, digest); !errors.Is(err, releasecache.ErrRateLimited) {
+	if _, err := resolveApplianceRelease(t.Context(), exact.Client, testForgeRepository, "dev", testFixtureTag, digest, ""); !errors.Is(err, releasecache.ErrRateLimited) {
 		t.Fatalf("HTTP 429 for an exact document: %v", err)
 	}
 }
@@ -360,12 +360,12 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 		"forge.example.test/owner/YouEye/releases/download/" + testFixtureTag + "/core-release.json": string(raw),
 	}
 	hosts := newReleaseHosts(t, files, nil)
-	selected, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "")
+	selected, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	core := *selected.core
-	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", TransactionID: strings.Repeat("a", 32), TargetSerial: "TARGET", EraseConfirmed: true, Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: applianceReleasePolicy{Schema: releasePolicySchema, Repository: testForgeRepository, Channel: "dev", CoreManifestSHA256: selected.coreSHA256}, Development: defaultDevelopmentAccessPolicy(), CoreRelease: coreAnswerFromRelease(selected)}
+	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", TransactionID: strings.Repeat("a", 32), TargetSerial: "TARGET", EraseConfirmed: true, Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: applianceReleasePolicy{Schema: releasePolicySchema, Repository: testForgeRepository, Channel: "dev", CoreManifestSHA256: selected.coreSHA256}, ConsoleAccess: defaultConsoleAccessPolicy(), CoreRelease: coreAnswerFromRelease(selected)}
 	encoded, _ := json.MarshalIndent(answer, "", "    ")
 	decoded, err := parseApplianceAnswer(encoded)
 	if err != nil {
@@ -383,7 +383,7 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 		ReleaseSet: applianceManifestReleases{
 			Spine: applianceManifestComponent{Version: spine.BuildVersion, SourceTree: spine.SourceTree, ArtifactSHA256: spine.Artifact.SHA256}},
 	}}
-	input := applianceInstallInput{Operation: "erase-install", TransactionID: answer.TransactionID, TargetSerial: "TARGET", EraseConfirmed: true, Network: answer.Network, Development: answer.Development, ReleasePolicy: answer.ReleasePolicy, AnswerPath: "/original/answer.json"}
+	input := applianceInstallInput{Operation: "erase-install", TransactionID: answer.TransactionID, TargetSerial: "TARGET", EraseConfirmed: true, Network: answer.Network, ConsoleAccess: answer.ConsoleAccess, ReleasePolicy: answer.ReleasePolicy, AnswerPath: "/original/answer.json"}
 	input.ReleasePolicy.CoreManifestSHA256 = ""
 	prepared, err := prepareCoreInstallInput(t.Context(), input, bundle, hosts.Client, true)
 	if err != nil || prepared.CoreRelease == nil || prepared.AnswerPath != "" || prepared.CoreRelease.ManifestBase64 != answer.CoreRelease.ManifestBase64 || prepared.ReleasePolicy.CoreManifestSHA256 != digest {
@@ -452,3 +452,34 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 type coreSelectionRunner struct{ raw string }
 
 func (r coreSelectionRunner) Run(_ string, _ ...string) (string, error) { return r.raw, nil }
+
+// A download_base in the index moves the document and every file of the
+// release, and the answer carries it to State for first deployment.
+func TestResolveApplianceReleaseFollowsDownloadBase(t *testing.T) {
+	raw, digest := fixtureCoreRelease(t)
+	index := strings.Replace(testChannelIndex("dev", testForgeRepository, testFixtureTag, testFixtureVersion, digest),
+		`"document":"core-release.json"`, `"document":"core-release.json","download_base":"https://mirror.example.test/files"`, 1)
+	hosts := newReleaseHosts(t, map[string]string{
+		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json": index,
+		"mirror.example.test/files/" + testFixtureTag + "/core-release.json":      string(raw),
+	}, nil)
+	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release.DownloadBase != "https://mirror.example.test/files" || coreAnswerFromRelease(release).DownloadBase != release.DownloadBase {
+		t.Fatalf("download base not kept: %+v", release.DownloadBase)
+	}
+	member, _ := release.core.Member("media")
+	if got := releasecache.AssetURL(release.Repository, release.DownloadBase, release.TagName, member.Artifact); got != "https://mirror.example.test/files/"+testFixtureTag+"/youeye-appliance-amd64.iso" {
+		t.Fatalf("media URL = %s", got)
+	}
+	// An exact release handed over by install.sh brings its base along.
+	exact, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest, "https://mirror.example.test/files")
+	if err != nil || exact.DownloadBase != "https://mirror.example.test/files" {
+		t.Fatalf("exact release with base: %v", err)
+	}
+	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest, "http://mirror.example.test/files"); err == nil {
+		t.Fatal("plain HTTP download base accepted")
+	}
+}

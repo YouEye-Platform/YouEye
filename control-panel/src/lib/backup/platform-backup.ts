@@ -143,6 +143,21 @@ async function acquireOperationLock(directory = BACKUP_ROOT) {
   return async () => { lock.release(); };
 }
 
+/** The body of Spine's `POST /api/backup/repository/store` (contract: `contracts/spine-cp/backup-store-request.json`). */
+export function backupStoreRequest(record: BackupSetRecord, mediaId: string, passphrase: string | undefined, useStoredPassphrase: boolean) {
+	return {
+		media_id: mediaId,
+		backup_id: record.id,
+		passphrase,
+		use_stored_passphrase: useStoredPassphrase,
+		apps: record.apps ?? [],
+		created_at: record.createdAt,
+		size_bytes: record.sizeBytes ?? 0,
+		reason: record.reason ?? 'manual',
+		source: record.source,
+	};
+}
+
 export async function createPlatformBackup(input: unknown | CreatePlatformBackupOptions, onEvent: BackupEventCallback): Promise<BackupSetRecord> {
 	const emit: BackupEventCallback = event => {
 		try { onEvent(event); } catch { /* The backup must outlive a disconnected progress stream. */ }
@@ -199,17 +214,7 @@ export async function createPlatformBackup(input: unknown | CreatePlatformBackup
 		await writeRecord(root, record);
 		if (options.mediaId) {
 			emit({ step: apps.length + 1, totalSteps: apps.length + 2, status: 'progress', stage: 'external-drive', message: 'Writing and verifying the encrypted recovery point', progress: 92 });
-			await spineClient.storeBackupSet({
-				media_id: options.mediaId,
-				backup_id: record.id,
-				passphrase,
-				use_stored_passphrase: useStoredPassphrase,
-				apps: selectedIDs,
-				created_at: record.createdAt,
-				size_bytes: record.sizeBytes,
-				reason: record.reason ?? 'manual',
-				source,
-			});
+			await spineClient.storeBackupSet(backupStoreRequest(record, options.mediaId, passphrase, useStoredPassphrase));
 			record.verifiedAt = new Date().toISOString();
 			// The durable copy is now the checked external repository. Do not let
 			// recurring backups silently consume YE-DATA with duplicate full sets.

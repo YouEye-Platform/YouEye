@@ -82,7 +82,7 @@ func (manager *Manager) Status() (Status, error) {
 		return Status{}, fmt.Errorf("read saved host network profile: %w", err)
 	}
 	var desired profile
-	if err := strictJSON(profileRaw, &desired); err != nil || desired.Schema != "youeye.network-profile.v1" || desired.ID != "primary" || desired.Kind != "ethernet" || (desired.IPv4.Mode != "dhcp" && desired.IPv4.Mode != "static") {
+	if err := readJSON(profileRaw, &desired); err != nil || desired.Schema != "youeye.network-profile.v1" || desired.ID != "primary" || desired.Kind != "ethernet" || (desired.IPv4.Mode != "dhcp" && desired.IPv4.Mode != "static") {
 		return Status{}, errors.New("saved host network profile is invalid")
 	}
 	result := Status{
@@ -97,7 +97,7 @@ func (manager *Manager) Status() (Status, error) {
 		return Status{}, fmt.Errorf("read applied host network status: %w", err)
 	}
 	var applied appliedStatus
-	if err := strictJSON(statusRaw, &applied); err != nil || applied.Schema != "youeye.bootstrap-network.v1" || !validAppliedStatus(applied) {
+	if err := readJSON(statusRaw, &applied); err != nil || applied.Schema != "youeye.bootstrap-network.v1" || !validAppliedStatus(applied) {
 		return Status{}, errors.New("applied host network status is invalid")
 	}
 	result.Phase = applied.Phase
@@ -149,9 +149,10 @@ func boundedDetail(value string) string {
 	return value
 }
 
-func strictJSON(raw []byte, target any) error {
+// readJSON reads one record written by the installer or the boot network
+// step; keys a newer one adds are ignored.
+func readJSON(raw []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}

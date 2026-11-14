@@ -8,9 +8,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
-type coreAPIOperations struct {
-	reader *coreAPIReaderBridge
-}
+type coreAPIOperations struct{}
 
 func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, error) {
 	var out api.CoreUpdateCandidate
@@ -26,14 +24,15 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 	if err != nil {
 		return out, err
 	}
-	_, release, digest, err := systemupdate.ResolveCoreRelease(ctx, runtime.Cache.Client, policy)
+	policy.InstalledBuild = installed.Release.Build
+	choice, err := systemupdate.ResolveCoreChoice(ctx, runtime.Cache.Client, policy)
 	if err != nil {
 		return out, err
 	}
-	if o.reader != nil {
-		if err := o.reader.verify(digest); err != nil {
-			return out, err
-		}
+	release, digest := choice.Release, choice.Digest
+	if choice.Stone {
+		out.SteppingStone, out.ChannelHead, out.Message = true, choice.Head.Version,
+			fmt.Sprintf("%s is a stepping stone: the channel's %s can't be installed from this build yet (%s)", release.Version, choice.Head.Version, choice.HeadRefused)
 	}
 	out.Release, out.ManifestSHA256 = release, digest
 	if err := systemupdate.RefuseDowngrade(policy.Channel, installed.Release, release); err != nil {
@@ -60,18 +59,6 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 }
 func (o coreAPIOperations) Submit(ctx context.Context, action string, request api.CoreUpdateRequest) (api.CoreUpdateActionResult, error) {
 	var out api.CoreUpdateActionResult
-	reader := o.reader
-	if reader != nil {
-		// Serialize this adapter's stage/register/cancel boundary. Native journal
-		// and command locks still own cross-process admission and no-replay.
-		reader.mu.Lock()
-		defer reader.mu.Unlock()
-		if action == "stage" {
-			if err := reader.verify(request.ManifestSHA256); err != nil {
-				return out, err
-			}
-		}
-	}
 	runtime, err := installedCoreRuntime()
 	if err != nil {
 		return out, err
@@ -105,7 +92,7 @@ func (o coreAPIOperations) Submit(ctx context.Context, action string, request ap
 	}
 	out = api.CoreUpdateActionResult{RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256, Phase: j.Phase, Control: systemupdate.CoreControlObservation{RequestID: j.RequestID, CommandID: request.CommandID, State: "settled"}}
 	if j.Phase == "cancelled" {
-		return out, finishCoreBootstrap(ctx, request.RequestID)
+		return out, nil
 	}
 	current, err := m.Read()
 	if err != nil {
@@ -114,26 +101,6 @@ func (o coreAPIOperations) Submit(ctx context.Context, action string, request ap
 	if current.RequestID != j.RequestID {
 		out.Control.State = "retained"
 		return out, nil
-	}
-	if reader != nil {
-		bound, err := reader.bindStage(action, current, m.TransactionComplete(current),
-			func(request, digest, executable string) (string, error) {
-				return m.RegisterBootstrap(request, digest, executable)
-			}, writeCoreBootstrapOverride)
-		if err != nil {
-			return out, err
-		}
-		if bound {
-			// Registration must precede native continuation: the canonical baked
-			// reader may be too old to parse this exact selection.
-			runtime, err = installedCoreRuntime()
-			if err != nil {
-				return out, err
-			}
-		}
-		if !m.TransactionComplete(current) && !coreAPIReaderTerminal(current) && runtime.Runner.Executable != reader.executable {
-			return out, fmt.Errorf("the selected reader must be registered by the retained Stage request before continuation")
-		}
 	}
 	runner := systemupdate.CoreControlRunner{Root: runtime.Root, Executable: runtime.Runner.Executable}
 	out.Control, err = runner.Start(ctx, request.RequestID, request.CommandID)

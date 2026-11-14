@@ -10,28 +10,8 @@ import (
 	"testing"
 )
 
-func TestSystemUpdateRedirectsStayOnTheReleaseOrigin(t *testing.T) {
-	request := func(raw string) *http.Request {
-		req, err := http.NewRequest(http.MethodGet, raw, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return req
-	}
-	githubOrigin := request("https://github.com/YouEye-Platform/YouEye/releases/download/tag/system-update-manifest.json")
-	if err := validateSystemUpdateRedirect(request("https://release-assets.githubusercontent.com/asset"), []*http.Request{githubOrigin}); err != nil {
-		t.Fatalf("trusted GitHub release redirect rejected: %v", err)
-	}
-	if err := validateSystemUpdateRedirect(request("https://untrusted.example/asset"), []*http.Request{githubOrigin}); err == nil {
-		t.Fatal("cross-origin GitHub redirect was accepted")
-	}
-	forgejoOrigin := request("https://forgejo.example.test/owner/repo/releases/download/tag/system-update-manifest.json")
-	if err := validateSystemUpdateRedirect(request("https://cdn.example.test/asset"), []*http.Request{forgejoOrigin}); err == nil {
-		t.Fatal("cross-origin Forgejo redirect was accepted")
-	}
-}
-
-func TestSignedGitHubDownloadRedirects(t *testing.T) {
+// Release files are checked by digest, so any HTTPS host may serve them.
+func TestSystemUpdateRedirectsAnyHTTPSHost(t *testing.T) {
 	origin, _ := http.NewRequest("GET", "https://github.com/example/project/releases/download/v1/manifest.json", nil)
 	cases := []struct {
 		url     string
@@ -39,12 +19,13 @@ func TestSignedGitHubDownloadRedirects(t *testing.T) {
 	}{
 		{"https://release-assets.githubusercontent.com/asset?sig=example&jwt=example", true},
 		{"https://objects.githubusercontent.com/asset?sig=example", true},
-		{"https://release-assets.githubusercontent.com:8443/asset?sig=example", false},
+		{"https://cdn.example.test/youeye/asset", true},
+		{"https://mirror.example.test:8443/asset?sig=example", true},
 		{"http://release-assets.githubusercontent.com/asset?sig=example", false},
-		{"https://release-assets.githubusercontent.com.evil.test/asset?sig=example", false},
 		{"https://user:pass@release-assets.githubusercontent.com/asset?sig=example", false},
 		{"https://release-assets.githubusercontent.com/asset?sig=example#fragment", false},
-		{"https://github.com/example/project?sig=example", false},
+		{"https://api.github.com/repos/example/project/releases", false},
+		{"https://forge.example.test/api/v1/repos/o/r/releases", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.url, func(t *testing.T) {
@@ -52,15 +33,19 @@ func TestSignedGitHubDownloadRedirects(t *testing.T) {
 			if err := validateSystemUpdateRedirect(req, []*http.Request{origin}); (err == nil) != tc.allowed {
 				t.Fatalf("redirect allowed=%v: %v", tc.allowed, err)
 			}
-			if err := validateRemoteURL(req.URL); tc.allowed && err == nil {
-				t.Fatal("query-bearing initial source accepted")
-			}
 		})
 	}
-	other, _ := http.NewRequest("GET", "https://forge.example.test/manifest.json", nil)
-	req, _ := http.NewRequest("GET", cases[0].url, nil)
-	if validateSystemUpdateRedirect(req, []*http.Request{other}) == nil {
-		t.Fatal("non-GitHub CDN redirect accepted")
+	// The original URL itself stays exact: no query, no credentials.
+	for _, raw := range []string{"https://github.com/o/r/releases/download/t/a?x=1", "https://u:p@github.com/o/r/releases/download/t/a"} {
+		req, _ := http.NewRequest("GET", raw, nil)
+		if validateSystemUpdateRedirect(req, nil) == nil {
+			t.Fatalf("inexact initial URL accepted: %s", raw)
+		}
+	}
+	other, _ := http.NewRequest("GET", "http://forge.example.test/manifest.json", nil)
+	req, _ := http.NewRequest("GET", "http://cdn.example.test/asset", nil)
+	if validateSystemUpdateRedirect(req, []*http.Request{other}) != nil {
+		t.Fatal("plain HTTP origin may redirect over HTTP (tests and local forges)")
 	}
 }
 

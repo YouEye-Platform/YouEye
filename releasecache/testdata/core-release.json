@@ -8,8 +8,8 @@
   "minimum_reader": 1,
   "authority": "digest",
   "compatibility": {
-    "state_min": 2,
-    "state_max": 2,
+    "state_min": 1,
+    "state_max": 1,
     "data_min": 1,
     "data_max": 1,
     "minimum_release": "0.6.1-dev.1",
@@ -131,17 +131,6 @@
         "name": "recovery.efi",
         "sha256": "5241a9707094612b518f067f20fef70c327af78cc8aa3036ee4726128cfdb7a4",
         "size_bytes": 21
-      }
-    },
-    {
-      "role": "update-bootstrap",
-      "build_version": "0.6.1-dev.1",
-      "source_tree": "1111111111111111111111111111111111111111",
-      "input_sha256": "6337e2300c3769e0dee160d2edcc9c0147b44590ac95e6496e20016dd793358f",
-      "artifact": {
-        "name": "youeye-system-update-bootstrap",
-        "sha256": "4aea60cbbbee0ea92b1aeb1057ae597a5b57bb4438479ee4057771ef8ad654f8",
-        "size_bytes": 39
       }
     },
     {

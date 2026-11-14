@@ -18,8 +18,6 @@ export GOMODCACHE="${YOUEYE_GOMODCACHE:-$YOUEYE_WORK_DIR/go-mod-cache}"
 install -d -m 0755 "$GOCACHE" "$GOMODCACHE"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/installer" build \
     -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$root/bin/youeye-installer" .
-install -m 0755 "$YOUEYE_SOURCE_DIR/appliance/scripts/youeye-apply-development-access" \
-    "$root/libexec/youeye-apply-development-access"
 install -m 0755 "$YOUEYE_SOURCE_DIR/appliance/scripts/youeye-apply-development-overlay" \
     "$root/libexec/youeye-apply-development-overlay"
 tar --sort=name --format=posix --numeric-owner --owner=0 --group=0 \

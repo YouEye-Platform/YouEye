@@ -50,12 +50,10 @@ remove_runtime() {
 	rm -rf "$runtime_root"
 	rm -f \
 		"$systemd_root/youeye-console-status.service.d/90-youeye-development-overlay.conf" \
-		"$systemd_root/youeye-console-serial.service.d/90-youeye-development-overlay.conf" \
-		"$systemd_root/youeye-development-access.service.d/90-youeye-development-overlay.conf"
+		"$systemd_root/youeye-console-serial.service.d/90-youeye-development-overlay.conf"
 	for directory in \
 		"$systemd_root/youeye-console-status.service.d" \
-		"$systemd_root/youeye-console-serial.service.d" \
-		"$systemd_root/youeye-development-access.service.d"; do
+		"$systemd_root/youeye-console-serial.service.d"; do
 		rmdir "$directory" 2>/dev/null || true
 	done
 	if [ "$no_systemctl" != true ]; then
@@ -176,7 +174,7 @@ activate() {
 		[ "$boot" = true ] && return 0
 		return 1
 	fi
-	for executable in bin/youeye-installer libexec/youeye-apply-development-access; do
+	for executable in bin/youeye-installer; do
 		if [ ! -f "$next/$executable" ] || [ -L "$next/$executable" ]; then
 			fallback incomplete-artifact "$id" "$commit" "$digest"
 			[ "$boot" = true ] && return 0
@@ -196,11 +194,6 @@ activate() {
 		chmod 0644 "$tmp"
 		mv -f "$tmp" "$systemd_root/$unit.service.d/90-youeye-development-overlay.conf"
 	done
-	install -d -m 0755 "$systemd_root/youeye-development-access.service.d"
-	tmp=$(mktemp "$systemd_root/youeye-development-access.service.d/.overlay.XXXXXX")
-	printf '[Service]\nExecStart=\nExecStart=%s/libexec/youeye-apply-development-access\n' "$execution_root" > "$tmp"
-	chmod 0644 "$tmp"
-	mv -f "$tmp" "$systemd_root/youeye-development-access.service.d/90-youeye-development-overlay.conf"
 
 	install -d -m 0755 "$runtime_root"
 	tmp=$(mktemp "$runtime_root/.installer.XXXXXX")

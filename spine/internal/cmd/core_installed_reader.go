@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/spineselect"
-	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"golang.org/x/sys/unix"
 )
 
@@ -21,7 +20,6 @@ const coreBakedExecutable = "/usr/local/bin/youeye"
 type coreInstalledReaderObservation struct {
 	Executable  string
 	ReaderClass string
-	Bound       bool
 }
 
 // Process observations are separate from protected runtime files so tests can
@@ -35,16 +33,6 @@ type coreInstalledReaderObserver struct {
 
 func (o coreInstalledReaderObserver) path(logical string) string {
 	return filepath.Join(o.Root, logical)
-}
-
-func (o coreInstalledReaderObserver) logical(physical string) (string, error) {
-	if o.Root == "/" {
-		return physical, nil
-	}
-	if !strings.HasPrefix(physical, o.Root+"/") {
-		return "", fmt.Errorf("reader is outside protected runtime")
-	}
-	return strings.TrimPrefix(physical, o.Root), nil
 }
 
 // Resolve every directory without following links. The root is a confined test
@@ -89,24 +77,6 @@ func (o coreInstalledReaderObserver) open(path string, limit int64, executable b
 	return file, nil
 }
 
-func (o coreInstalledReaderObserver) read(path string) ([]byte, error) {
-	file, err := o.open(path, 16384, false)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	before, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, 16385))
-	after, statErr := file.Stat()
-	if err != nil || statErr != nil || int64(len(raw)) != before.Size() || !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
-		return nil, fmt.Errorf("reader evidence changed during observation")
-	}
-	return raw, nil
-}
-
 func (o coreInstalledReaderObserver) hash(path string) (string, error) {
 	file, err := o.open(path, 128<<20, true)
 	if err != nil {
@@ -138,72 +108,40 @@ func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserv
 	if err != nil || !filepath.IsAbs(self) || filepath.Clean(self) != self {
 		return empty, fmt.Errorf("current reader executable unavailable")
 	}
-	ordinary := coreInstalledReaderObservation{Executable: coreBakedExecutable, ReaderClass: "baked"}
-	finish := func(path, digest, class string) (coreInstalledReaderObservation, error) {
-		if err := ctx.Err(); err != nil {
+	if strings.HasPrefix(self, spineRoot+string(filepath.Separator)) {
+		// A Spine selected for the booted slot runs from State: bind to
+		// its own bytes, checked against the slot's selection.
+		currentHash, err := o.CurrentSHA256()
+		if err != nil {
 			return empty, err
 		}
-		currentPath, err := o.CurrentExecutable()
-		if err != nil || currentPath != self {
-			return empty, fmt.Errorf("current reader changed during observation")
+		if err := verifyRunningSpine(self); err != nil {
+			return empty, err
 		}
-		if strings.HasPrefix(self, spineRoot+string(filepath.Separator)) {
-			// A Spine selected for the booted slot runs from State: bind to
-			// its own bytes, checked against the slot's selection.
-			currentHash, err := o.CurrentSHA256()
-			if err != nil {
-				return empty, err
-			}
-			if err := verifyRunningSpine(self); err != nil {
-				return empty, err
-			}
-			if digest, err := spineselect.FileDigest(self); err != nil || digest != currentHash {
-				return empty, fmt.Errorf("executing Spine bytes differ from its selection")
-			}
-			return coreInstalledReaderObservation{Executable: self, ReaderClass: "selected"}, nil
+		if digest, err := spineselect.FileDigest(self); err != nil || digest != currentHash {
+			return empty, fmt.Errorf("executing Spine bytes differ from its selection")
 		}
-		if self == coreBakedExecutable {
-			digest, err = o.hash(coreBakedExecutable)
-			if err != nil {
-				return empty, err
-			}
-		} else if self != path {
-			return empty, fmt.Errorf("executing reader has no exact runtime binding")
-		}
-		currentHash, err := o.CurrentSHA256()
-		if err != nil || currentHash != digest {
-			return empty, fmt.Errorf("executing reader bytes differ from runtime binding")
-		}
-		if self == coreBakedExecutable {
-			return ordinary, nil
-		}
-		return coreInstalledReaderObservation{Executable: coreBakedExecutable, ReaderClass: class, Bound: true}, nil
+		return coreInstalledReaderObservation{Executable: self, ReaderClass: "selected"}, nil
 	}
-	manager := systemupdate.CoreManager{Root: o.path(systemupdate.CoreStatePath)}
-	// A registered production coordinator is verified first. Corrupt retained
-	// state cannot fall back to the baked reader.
-	bootstrap, err := manager.BootstrapExecutable()
+	if self != coreBakedExecutable {
+		return empty, fmt.Errorf("executing reader has no exact runtime binding")
+	}
+	digest, err := o.hash(coreBakedExecutable)
 	if err != nil {
 		return empty, err
 	}
-	if bootstrap != "" {
-		path, err := o.logical(bootstrap)
-		if err != nil {
-			return empty, err
-		}
-		// A valid production coordinator belongs only to this exact registered
-		// self; an unrelated external executable cannot inherit it through
-		// equal bytes.
-		if self != path && self != coreBakedExecutable {
-			return empty, fmt.Errorf("executing reader differs from registered production coordinator")
-		}
-		digest, err := o.hash(path)
-		if err != nil {
-			return empty, err
-		}
-		return finish(path, digest, "production-bootstrap")
+	if err := ctx.Err(); err != nil {
+		return empty, err
 	}
-	return finish(coreBakedExecutable, "", "baked")
+	currentPath, err := o.CurrentExecutable()
+	if err != nil || currentPath != self {
+		return empty, fmt.Errorf("current reader changed during observation")
+	}
+	currentHash, err := o.CurrentSHA256()
+	if err != nil || currentHash != digest {
+		return empty, fmt.Errorf("executing reader bytes differ from runtime binding")
+	}
+	return coreInstalledReaderObservation{Executable: coreBakedExecutable, ReaderClass: "baked"}, nil
 }
 
 var coreInstalledReaderHost = func() coreInstalledReaderObserver {
@@ -219,4 +157,11 @@ func readCoreInstalledReader() (coreInstalledReaderObservation, error) {
 		reader.Executable = host.path(reader.Executable)
 	}
 	return reader, err
+}
+
+// coreInstalledExecutable is the verified path of the running Spine: the seed
+// baked into the image or the slot's selected Spine on State.
+func coreInstalledExecutable() (string, error) {
+	reader, err := readCoreInstalledReader()
+	return reader.Executable, err
 }

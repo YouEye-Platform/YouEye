@@ -90,11 +90,10 @@ repository, channel, exact_tag, pinned, cache_root = sys.argv[1:]
 OFFICIAL = "https://github.com/YouEye-Platform/YouEye"
 INDEX_HOST = "https://releases.youeye.me"
 ROLES = {"installer", "media", "appliance", "system-update", "spine", "cp", "ui", "system-root", "system-a-uki",
-         "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap"}
+         "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"}
 TAG = re.compile(r"youeye-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?")
 HASH = re.compile(r"[0-9a-f]{64}")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
-GITHUB_ASSET_HOSTS = {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
 INSTALLER_LIMIT = 512 << 20
 RETRY_SECONDS = [int(x) for x in os.environ.get("YOUEYE_BOOTSTRAP_RETRY_SECONDS", "30,60,120").split(",") if x]
 
@@ -120,19 +119,16 @@ if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.p
     fail("--repository must be an HTTPS repository URL with owner and repository, without credentials, query or fragment")
 host = parsed.netloc.lower()
 repository = "https://" + host + path
-github = host == "github.com"
 
 
 def allowed(url):
+    # Every release file is checked by SHA-256 (the index comes over HTTPS), so
+    # a redirect may go to any HTTPS host; never to a release-listing API.
     target = urllib.parse.urlparse(url)
     if target.scheme != "https" or not target.netloc or target.username or target.password or target.fragment:
         return False
     name = (target.hostname or "").lower()
-    if url.startswith(INDEX_HOST + "/"):
-        return True
-    if github:
-        return name in GITHUB_ASSET_HOSTS
-    return target.netloc.lower() == host
+    return not name.startswith("api.") and not re.search(r"/api/v[0-9]+/repos/", target.path)
 
 
 class Redirects(urllib.request.HTTPRedirectHandler):
@@ -207,8 +203,21 @@ def unique_object(pairs):
     return result
 
 
+download_base = ""
+
+
 def download_url(tag, name):
-    return repository + "/releases/download/" + urllib.parse.quote(tag, safe="") + "/" + urllib.parse.quote(name, safe="")
+    # The index entry's download_base, when set, is where the release's files live.
+    root = download_base if download_base else repository + "/releases/download"
+    return root + "/" + urllib.parse.quote(tag, safe="") + "/" + urllib.parse.quote(name, safe="")
+
+
+def valid_download_base(value):
+    target = urllib.parse.urlparse(value)
+    # The same rule as releasecache.ValidDownloadBase: lowercase host, no explicit :443.
+    return (isinstance(value, str) and len(value) <= 512 and target.scheme == "https" and bool(target.netloc)
+            and not target.username and not target.password and not target.query and not target.fragment
+            and not value.endswith("/") and target.netloc == target.netloc.lower() and target.port != 443)
 
 
 if exact_tag:
@@ -245,6 +254,10 @@ else:
             or not TAG.fullmatch(str(entry.get("tag", ""))) or not HASH.fullmatch(str(entry.get("sha256", "")))):
         fail("the %s channel index of %s does not name a YouEye release of this repository" % (channel, repository))
     tag, expected = entry["tag"], entry["sha256"]
+    if "download_base" in entry:
+        if not valid_download_base(entry["download_base"]):
+            fail("the %s channel index names an invalid download_base" % channel)
+        download_base = entry["download_base"]
 
 try:
     raw = fetch(download_url(tag, "core-release.json"), 1 << 20)
@@ -305,12 +318,14 @@ print(tag)
 print(digest)
 print(target)
 print(repository)
+print(download_base)
 YOUEYE_BOOTSTRAP_PY
 
 selected_tag="$(sed -n '1p' "$selection")"
 selected_digest="$(sed -n '2p' "$selection")"
 installer="$(sed -n '3p' "$selection")"
 repository="$(sed -n '4p' "$selection")"
+download_base="$(sed -n '5p' "$selection")"
 rm -f "$selection"
 trap - EXIT HUP INT TERM
 
@@ -325,11 +340,14 @@ for argument do
         continue
     fi
     case "$argument" in
-        --repository|--channel|--release-tag|--core-manifest-sha256) skip_next=1; continue ;;
-        --repository=*|--channel=*|--release-tag=*|--core-manifest-sha256=*) continue ;;
+        --repository|--channel|--release-tag|--core-manifest-sha256|--download-base) skip_next=1; continue ;;
+        --repository=*|--channel=*|--release-tag=*|--core-manifest-sha256=*|--download-base=*) continue ;;
     esac
     set -- "$@" "$argument"
 done
 
 printf 'Launching YouEye Installer from %s (core-release.json sha256 %s)...\n' "$selected_tag" "$selected_digest"
+if [ -n "$download_base" ]; then
+    set -- "$@" --download-base "$download_base"
+fi
 exec "$installer" proxmox "$@" --repository "$repository" --channel "$channel" --release-tag "$selected_tag" --core-manifest-sha256 "$selected_digest"

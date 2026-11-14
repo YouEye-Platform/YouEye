@@ -25,7 +25,8 @@ setup_completed: true
 EOF
 printf 'ssh-ed25519 AAAATEST operator\n' > "$tmp/root/.ssh/authorized_keys"
 printf '%s\n' '{"phase":"trial"}' > "$tmp/update/journal.json"
-printf '%s\n' '{"schema":"youeye.development-access-status.v1","local_root_console_requested":true,"local_root_console_persisted":true,"local_root_console_active":true,"local_root_console_effective":true,"root_password_ssh_requested":false,"root_password_ssh_effective":false,"network_scope":null,"detail":"active"}' > "$tmp/development-access-status.json"
+printf '%s\n' '{"schema":"youeye.console-access.v1","root_password_hash":"$y$j9T$saltsaltsalt$hashhashhashhashhashhashhashhashhashhashhas","password_ssh":true,"accounts":[]}' > "$tmp/console-access.json"
+printf 'ABCDE-FGHJK\n' > "$tmp/owner-reset-code"
 : > "$tmp/tty"
 
 YOUEYE_CONSOLE_RELEASE="$tmp/release" \
@@ -33,7 +34,8 @@ YOUEYE_CONSOLE_STATE="$tmp/state" \
 YOUEYE_CONSOLE_FIRST_DEPLOY="$tmp/first/progress.json" \
 YOUEYE_CONSOLE_FIRST_COMPLETE="$tmp/first/complete" \
 YOUEYE_CONSOLE_UPDATE="$tmp/update/journal.json" \
-YOUEYE_CONSOLE_DEVELOPMENT="$tmp/development-access-status.json" \
+YOUEYE_CONSOLE_ACCESS="$tmp/console-access.json" \
+YOUEYE_CONSOLE_RESET_CODE="$tmp/owner-reset-code" \
 YOUEYE_CONSOLE_CONFIG="$tmp/config" \
 YOUEYE_CONSOLE_AUTHORIZED_KEYS="$tmp/root/.ssh/authorized_keys" \
 YOUEYE_CONSOLE_CMDLINE="$tmp/cmdline" \
@@ -52,9 +54,16 @@ grep -Fq 'test.ui.bingo' "$tmp/tty"
 grep -Fq 'System update: trial' "$tmp/tty"
 grep -Fq 'slot B' "$tmp/tty"
 grep -Fq '0.5.23.0.0.12' "$tmp/tty"
-grep -Fq 'public key only' "$tmp/tty"
-grep -Fq 'Developer console enabled - press Ctrl+Alt+F2' "$tmp/tty"
-if grep -Eiq 'password|secret|token' "$tmp/tty"; then
+grep -Fq 'public key' "$tmp/tty"
+grep -Fq 'admins sign in on Ctrl+Alt+F2' "$tmp/tty"
+grep -Fq 'password SSH on (local network)' "$tmp/tty"
+grep -Fq 'Owner password reset code: ABCDE-FGHJK' "$tmp/tty"
+grep -Eq 'Open https://[^ ]+/settings/reset-owner' "$tmp/tty"
+if grep -Fq 'https://test.ui.bingo/settings/reset-owner' "$tmp/tty"; then
+    printf 'the reset page answers only on the IP address, not the name\n' >&2
+    exit 1
+fi
+if grep -Eiq '\$y\$|hash|secret|token' "$tmp/tty"; then
     printf 'console status exposed a forbidden credential term\n' >&2
     exit 1
 fi

@@ -1,0 +1,61 @@
+{
+  "control_panel": {
+    "status": "running",
+    "version": "0.6.5-dev.1"
+  },
+  "host": {
+    "os": "Debian GNU/Linux 13 (trixie)"
+  },
+  "incus": {
+    "version": "7.0.1"
+  },
+  "persistent_state": {
+    "available": true,
+    "lifecycle": "configured",
+    "state_schema_version": 1,
+    "data_schema_version": 1,
+    "disk_layout_version": 1,
+    "compatibility": {
+      "state": "compatible",
+      "data": "compatible",
+      "compatible": true,
+      "repair_required": false
+    },
+    "slots": {
+      "current": "",
+      "current_image_version": ""
+    }
+  },
+  "runtime": {
+    "kind": "appliance-image",
+    "manifest_valid": true,
+    "repair_required": false,
+    "image_version": "0.6.5-dev.1",
+    "build_id": "youeye-0.6.5-dev.1",
+    "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0",
+    "architecture": "amd64",
+    "firmware_mode": "uefi",
+    "disk_layout_version": 1,
+    "artifact_kind": "development",
+    "capabilities": {
+      "spine_update": false,
+      "system_update": false,
+      "incus_update": false,
+      "control_update": false,
+      "ui_update": false,
+      "app_update": false,
+      "image_update": false,
+      "recovery": false,
+      "health": false
+    }
+  },
+  "spine": {
+    "version": "0.6.5-dev.1"
+  },
+  "ui": {
+    "enabled": true,
+    "installed": true,
+    "status": "running",
+    "version": "0.6.5-dev.1"
+  }
+}

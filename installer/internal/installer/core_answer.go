@@ -12,10 +12,13 @@ import (
 type coreAnswerSelection struct {
 	ManifestBase64 string `json:"manifest_base64"`
 	ManifestSHA256 string `json:"manifest_sha256"`
+	// DownloadBase: where the release's files live (channel index
+	// download_base); recorded on State for first deployment.
+	DownloadBase string `json:"download_base,omitempty"`
 }
 
 func coreAnswerFromRelease(release applianceRelease) *coreAnswerSelection {
-	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), ManifestSHA256: release.coreSHA256}
+	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), ManifestSHA256: release.coreSHA256, DownloadBase: release.DownloadBase}
 }
 
 func decodeCoreAnswer(c *coreAnswerSelection) (releasecache.CoreRelease, []byte, error) {
@@ -43,6 +46,9 @@ func validateCoreAnswer(answer applianceAnswer) error {
 	}
 	if _, _, err := decodeCoreAnswer(c); err != nil {
 		return err
+	}
+	if c.DownloadBase != "" && !releasecache.ValidDownloadBase(c.DownloadBase) {
+		return fmt.Errorf("core answer download_base must be an HTTPS URL with a lowercase host, no query and no trailing slash")
 	}
 	return validateApplianceReleasePolicy(answer.ReleasePolicy)
 }

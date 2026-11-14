@@ -211,7 +211,7 @@ type applianceInstallInput struct {
 	Network            applianceAnswerNetwork
 	AuthorizedKeys     []string
 	ReleasePolicy      applianceReleasePolicy
-	Development        developmentAccessPolicy
+	ConsoleAccess      consoleAccessPolicy
 	AnswerPath         string
 	ManifestSHA256     string
 	Description        string
@@ -249,12 +249,12 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 				f.Close()
 			}
 		}
-		policy, development := answer.ReleasePolicy, answer.Development
+		policy, consoleAccess := answer.ReleasePolicy, answer.ConsoleAccess
 		return applianceInstallInput{
 			CoreRelease: answer.CoreRelease, ReleaseCacheSHA256: answer.ReleaseCacheSHA256,
 			Operation: answer.Operation, TransactionID: answer.TransactionID,
 			TargetSerial: answer.TargetSerial, EraseConfirmed: answer.EraseConfirmed,
-			Network: answer.Network, ReleasePolicy: policy, Development: development,
+			Network: answer.Network, ReleasePolicy: policy, ConsoleAccess: consoleAccess,
 			AuthorizedKeys: answer.AuthorizedKeys, AnswerPath: cfg.ApplianceAnswerPath,
 			Description: "Reading standalone appliance answer",
 		}, nil
@@ -278,7 +278,7 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 		return applianceInstallInput{
 			Operation: seed.Operation, TransactionID: transactionID, TargetSerial: seed.TargetSerial, ManifestSHA256: seed.ManifestSHA256,
 			EraseConfirmed: seed.Operation == "reinstall",
-			Network:        applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy(),
+			Network:        applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), ConsoleAccess: defaultConsoleAccessPolicy(),
 			Description: "Reading Infra automation seed for rig " + seed.RigID,
 		}, nil
 	}
@@ -287,7 +287,7 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 		if err != nil {
 			return applianceInstallInput{}, err
 		}
-		return applianceInstallInput{Operation: "install", TransactionID: transactionID, Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy(), Description: "Using an explicitly selected installation drive"}, nil
+		return applianceInstallInput{Operation: "install", TransactionID: transactionID, Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), ConsoleAccess: defaultConsoleAccessPolicy(), Description: "Using an explicitly selected installation drive"}, nil
 	}
 	return applianceInstallInput{}, fmt.Errorf("install requires --answer, --seed, or an explicitly selected installation drive")
 }
@@ -314,7 +314,7 @@ func writeRuntimeApplianceAnswer(input applianceInstallInput, target applianceDi
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: operation, TransactionID: input.TransactionID,
 		TargetSerial: target.Serial, EraseConfirmed: eraseConfirmed,
-		Network: input.Network, ReleasePolicy: input.ReleasePolicy, Development: input.Development,
+		Network: input.Network, ReleasePolicy: input.ReleasePolicy, ConsoleAccess: input.ConsoleAccess,
 		AuthorizedKeys: input.AuthorizedKeys,
 	}
 	answer.CoreRelease = input.CoreRelease

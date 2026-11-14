@@ -85,6 +85,23 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
 - The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry. `build` is the
   entry's build version, used for ordering.
 - Products: `youeye`, `pointer`, `market`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`.
+- **Read leniently, so later indexes never cut a box off:** unknown keys at any level are ignored, a product this
+  reader doesn't know is skipped, and an invalid entry makes only that product unavailable (`Invalid` in Go,
+  `invalid` in the CP). Only a different `schema` means an incompatible index. A new product or field therefore
+  needs no stepping stone.
+- Optional per entry:
+  - `download_base`: an HTTPS URL (no query, no trailing slash). The release's document and files are then
+    downloaded from `<download_base>/<tag>/<name>` instead of `<repository>/releases/download/<tag>/<name>`, so
+    the publisher can move files off GitHub (a CDN change, an org rename, rate limits) without a box update.
+    The base must also hold every other tag the release's blobs name (`release` fields of reused image files):
+    they are fetched from `<download_base>/<that tag>/<name>`. Nothing sets it yet; a file mirror on
+    `releases.youeye.me` is a Backlog item.
+  - `stepping_stones` (`youeye` only): older releases a box installs first when it can't install the head
+    (`{tag, version, build, document, sha256, minimum_release, minimum_reader[, download_base]}`; see
+    [core-release-contract.md](core-release-contract.md#older-readers-and-stepping-stones)). An unreadable stone is
+    skipped. `Tools/release/index stone add|remove <channel> <version>` manages them; they stay when the head moves.
+- Downloads may be redirected to any HTTPS host (every file is checked by SHA-256 and size); leaving HTTPS,
+  credentials, fragments and release-listing APIs are refused.
 - An HTTP 403 or 429 from a release host is reported as "release host refused or rate-limited the request" and
   retried with backoff — never as a network failure. `install.sh` also retries 5xx and network failures the same
   way (30, 60, 120 s) and does not retry a 404.

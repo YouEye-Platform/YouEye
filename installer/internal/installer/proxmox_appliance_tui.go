@@ -76,9 +76,9 @@ var proxmoxAdvancedFields = []proxmoxFormField{
 	{Label: "Host SSH keys", Kind: "ssh-toggle", Page: 4},
 	{Label: "Extra SSH keys", Kind: "input", InputKey: "keys", Page: 4},
 	{Label: "Continue", Kind: "continue", Page: 4},
-	{Label: "Root console", Kind: "development-local", Page: 5},
-	{Label: "Root password SSH", Kind: "development-ssh", Page: 5},
-	{Label: "Root password", Kind: "input", InputKey: "root-password", Page: 5},
+	{Label: "Root password", Kind: "console-root", Page: 5},
+	{Label: "Password SSH", Kind: "console-ssh", Page: 5},
+	{Label: "New root password", Kind: "input", InputKey: "root-password", Page: 5},
 	{Label: "Confirm password", Kind: "input", InputKey: "root-password-confirm", Page: 5},
 	{Label: "Continue", Kind: "continue", Page: 5},
 }
@@ -90,15 +90,16 @@ type proxmoxApplianceModel struct {
 	config    proxmoxApplianceConfig
 	existing  compatibleProxmoxApplianceVM
 
-	choice         int
-	cursor         int
-	page           int
-	quick          bool
-	eraseChoice    int
-	inputs         map[string]textinput.Model
-	releaseAPIs    map[string]string
-	developmentSSH bool
-	keyPreflight   sshKeyImportResult
+	choice       int
+	cursor       int
+	page         int
+	quick        bool
+	eraseChoice  int
+	inputs       map[string]textinput.Model
+	releaseAPIs  map[string]string
+	consoleRoot  bool
+	consoleSSH   bool
+	keyPreflight sshKeyImportResult
 
 	progressCh <-chan proxmoxApplianceProgress
 	bar        progress.Model
@@ -461,7 +462,7 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 		answer := applianceAnswer{
 			Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true,
 			TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET",
-			Network: m.config.Network, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy(),
+			Network: m.config.Network, ReleasePolicy: defaultApplianceReleasePolicy(), ConsoleAccess: defaultConsoleAccessPolicy(),
 		}
 		if err := validateApplianceAnswer(answer); err != nil {
 			return err
@@ -485,17 +486,18 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 		m.keyPreflight = preflight
 		return nil
 	}
-	validateDevelopment := func() error {
-		policy, err := buildDevelopmentAccessPolicy(
-			m.developmentSSH,
+	validateConsoleAccess := func() error {
+		policy, err := buildConsoleAccess(
+			m.consoleRoot,
+			m.consoleSSH,
 			m.inputs["root-password"].Value(),
 			m.inputs["root-password-confirm"].Value(),
-			m.config.Development,
+			m.config.ConsoleAccess,
 		)
 		if err != nil {
 			return err
 		}
-		m.config.Development = policy
+		m.config.ConsoleAccess = policy
 		for _, key := range []string{"root-password", "root-password-confirm"} {
 			input := m.inputs[key]
 			input.SetValue("")
@@ -521,7 +523,7 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 			if err := validateSSH(); err != nil {
 				return err
 			}
-			return validateDevelopment()
+			return validateConsoleAccess()
 		}
 	}
 
@@ -539,7 +541,7 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 	case 5:
 		return validateSSH()
 	case 6:
-		return validateDevelopment()
+		return validateConsoleAccess()
 	}
 	return nil
 }
@@ -628,7 +630,7 @@ func (m proxmoxApplianceModel) visibleAdvancedFields() []proxmoxFormField {
 		if m.quick && field.Kind == "operation" {
 			continue
 		}
-		if m.quick && m.page == 4 && field.Page == 4 && field.Kind == "continue" {
+		if (field.Kind == "console-ssh" || field.InputKey == "root-password" || field.InputKey == "root-password-confirm") && !m.consoleRoot {
 			continue
 		}
 		if (field.InputKey == "address" || field.InputKey == "gateway" || field.InputKey == "dns") && m.config.Network.Mode != "static" {
@@ -648,7 +650,7 @@ func (m proxmoxApplianceModel) advancedFieldOnCurrentPage(field proxmoxFormField
 		case 0, 1, 2:
 			return field.Page == m.page
 		case 4:
-			return field.Page == 4 || field.Page == 5
+			return field.Page == 4
 		default:
 			return false
 		}
@@ -755,10 +757,13 @@ func (m *proxmoxApplianceModel) cycleAdvancedSelection(kind string, forward bool
 		m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
 	case "ssh-toggle":
 		m.config.ImportHostSSHKeys = !m.config.ImportHostSSHKeys
-	case "development-local":
-		// Root console login is always available and cannot be disabled here.
-	case "development-ssh":
-		m.developmentSSH = !m.developmentSSH
+	case "console-root":
+		m.consoleRoot = !m.consoleRoot
+		if !m.consoleRoot {
+			m.consoleSSH = false
+		}
+	case "console-ssh":
+		m.consoleSSH = !m.consoleSSH
 	}
 }
 
@@ -786,11 +791,14 @@ func (m proxmoxApplianceModel) advancedFieldValue(field proxmoxFormField) string
 			return "Import"
 		}
 		return "Do not import"
-	case "development-local":
-		return "Always available · password authenticated"
-	case "development-ssh":
-		if m.developmentSSH {
-			return "Enabled · local network only"
+	case "console-root":
+		if m.consoleRoot {
+			return "Set · advanced, for emergencies"
+		}
+		return "Off · root locked"
+	case "console-ssh":
+		if m.consoleSSH {
+			return "On · local network only"
 		}
 		return "Off"
 	case "continue":
@@ -878,7 +886,7 @@ func (m proxmoxApplianceModel) advancedView() string {
 			start = 0
 		}
 	}
-	pageTitles := []string{"Operation and VM", "Resources", "Storage", "Network", "Software", "SSH keys", "Development access"}
+	pageTitles := []string{"Operation and VM", "Resources", "Storage", "Network", "Software", "SSH keys", "Console access"}
 	totalPages := 8
 	journey := "Advanced"
 	if m.quick {
@@ -897,6 +905,10 @@ func (m proxmoxApplianceModel) advancedView() string {
 			label = theme.Body.Render(fmt.Sprintf("%-19s", field.Label))
 		}
 		rows = append(rows, prefix+label+" "+value)
+	}
+	if !m.quick && m.page == m.lastConfigPage() {
+		rows = append(rows, "", theme.Dim.Render("The owner and admins sign in on the console with their YouEye ID password."),
+			theme.Dim.Render("Root is locked unless you set a password; it is for emergencies."))
 	}
 	if m.err != nil {
 		rows = append(rows, "", theme.Danger.Render(m.err.Error()))
@@ -921,8 +933,7 @@ func (m proxmoxApplianceModel) reviewView() string {
 	}
 	rows = append(rows,
 		fmt.Sprintf("SSH keys           %d compatible · %d skipped", len(m.keyPreflight.Accepted), m.keyPreflight.RejectedTotal()),
-		fmt.Sprintf("Root console       %s", "Always available · password authenticated"),
-		fmt.Sprintf("Root password SSH  %s", enabledLabel(m.config.Development.RootPasswordSSH)),
+		fmt.Sprintf("Console access     %s", consoleAccessSummary(m.config.ConsoleAccess)),
 	)
 	if m.config.TargetDiskGiB < proxmoxLowCapacityGiB {
 		rows = append(rows, theme.Danger.Render(fmt.Sprintf("Low capacity       About %d GiB remains for apps and personal data.", estimatedProxmoxDataGiB(m.config.TargetDiskGiB))))

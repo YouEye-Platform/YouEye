@@ -2,7 +2,7 @@
 Description=YouEye unsigned development overlay activator
 Requires=youeye-appliance-state.service
 After=youeye-appliance-state.service
-Before=youeye-development-access.service youeye-console-status.service youeye-console-serial.service
+Before=youeye-console-access.service youeye-console-status.service youeye-console-serial.service
 ConditionPathExists=/usr/lib/youeye/appliance-release
 
 [Service]

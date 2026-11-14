@@ -6,7 +6,8 @@ state=${YOUEYE_CONSOLE_STATE:-/var/lib/youeye-state/appliance-state.json}
 first_deploy=${YOUEYE_CONSOLE_FIRST_DEPLOY:-/var/lib/youeye-state/first-deploy/progress.json}
 first_complete=${YOUEYE_CONSOLE_FIRST_COMPLETE:-/var/lib/youeye-state/first-deploy/complete}
 update=${YOUEYE_CONSOLE_UPDATE:-/var/lib/youeye-state/system-update/journal.json}
-development=${YOUEYE_CONSOLE_DEVELOPMENT:-/var/lib/youeye-state/bootstrap/development-access-status.json}
+console_access=${YOUEYE_CONSOLE_ACCESS:-/var/lib/youeye-state/bootstrap/console-access.json}
+reset_code_file=${YOUEYE_CONSOLE_RESET_CODE:-/run/youeye/console/owner-reset-code}
 config=${YOUEYE_CONSOLE_CONFIG:-/var/lib/youeye/config/youeye.yaml}
 authorized_keys=${YOUEYE_CONSOLE_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}
 cmdline=${YOUEYE_CONSOLE_CMDLINE:-/proc/cmdline}
@@ -43,8 +44,10 @@ render() {
     stage=$(json_value "$first_deploy" '.stage')
     detail=$(json_value "$first_deploy" '.detail')
     update_phase=$(json_value "$update" '.phase')
-    developer_console=$(json_value "$development" '.local_root_console_effective')
-    password_ssh=$(json_value "$development" '.root_password_ssh_effective')
+    # Console access: only whether password SSH is on; hashes are never read out.
+    password_ssh=$(json_value "$console_access" 'select(.schema == "youeye.console-access.v1") | .password_ssh')
+    reset_code=$(head -c 64 "$reset_code_file" 2>/dev/null | tr -d '\n' || true)
+    case "$reset_code" in [A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]-[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]) ;; *) reset_code= ;; esac
     setup_completed=$(awk '/^[[:space:]]*setup_completed:/ {print $2; exit}' "$config" 2>/dev/null || true)
     domain=$(awk '/^[[:space:]]*domain:/ {sub(/^[[:space:]]*domain:[[:space:]]*/, ""); print; exit}' "$config" 2>/dev/null | tr -d "\"'" || true)
     case "$domain" in *[!A-Za-z0-9.-]*) domain= ;; esac
@@ -94,18 +97,23 @@ render() {
             printf '  Server    https://%-45s\n' "$domain"
         fi
         printf '  System    slot %-2s  image %-36s\n' "$slot" "${image:-unknown}"
-        if [ -s "$authorized_keys" ] && [ "$password_ssh" = true ]; then
-            printf '  Root SSH  ssh root@%-35s key or local password\n' "$ip_address"
-        elif [ -s "$authorized_keys" ]; then
-            printf '  Root SSH  ssh root@%-35s public key only\n' "$ip_address"
-        elif [ "$password_ssh" = true ]; then
-            printf '  Root SSH  ssh root@%-35s local password\n' "$ip_address"
+        if [ -s "$authorized_keys" ]; then
+            printf '  Root SSH  ssh root@%-35s public key\n' "$ip_address"
         else
-            printf '  Root SSH  disabled\n'
+            printf '  Root SSH  no key\n'
+        fi
+        printf '  Console   admins sign in on Ctrl+Alt+F2\n'
+        if [ "$password_ssh" = true ]; then
+            printf '            password SSH on (local network)\n'
         fi
         printf '\n'
-        if [ "$developer_console" = true ]; then
-            printf '  Developer console enabled - press Ctrl+Alt+F2 to sign in as root.\n'
+        if [ -n "$reset_code" ]; then
+            # The reset page answers only on the box's own address (not its name).
+            box=$ip_address
+            [ -n "$box" ] || box="<IP address of this box>"
+            printf '  \033[1;36mOwner password reset code: %s\033[0m\n' "$reset_code"
+            printf '  Open https://%s/settings/reset-owner and enter it.\n' "$box"
+            printf '  The code is valid 24 hours, once.\n\n'
         fi
         printf '  Recovery  choose YouEye Recovery from the UEFI boot menu\n'
         printf '  Refresh   every %ss\n' "$refresh"

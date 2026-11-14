@@ -223,7 +223,7 @@ Quick mode uses six focused pages: VM, resources, storage/network, read-only
 Official GitHub Stable software policy, access, and review. It defaults to 4
 vCPU, 8 GiB RAM, one 128 GiB installation drive and wired DHCP. Advanced mode
 uses eight pages and adds independent storage, network, software source, SSH,
-and Development-access controls. It offers the Stable, Beta, Alpha and Dev
+and console-access controls (an optional root password). It offers the Stable, Beta, Alpha and Dev
 channels. See [releases](docs/releases.md) for channels, versions and promotion.
 
 Channels select published releases only; raw source and mutable branch
@@ -267,11 +267,11 @@ The first-boot transaction freezes one System release (by its
 `core-release.json` digest) on the recorded track, writes the inactive A/B slot
 when the host changes, resumes after reboot, and installs the exact
 Server-interface and UI artifacts that release lists. TTY1 reports bounded real
-deployment stages. TTY2 is a normal PAM root login only when locally enabled;
-`youeye-installer network` and `youeye-installer development-access` provide
-the supported on-device repair paths. An administrator may inspect or disable
-Development access in Settings, but enabling it or changing its password stays
-physical-console-only.
+deployment stages. TTY2 (Ctrl+Alt+F2) is a normal login: the owner and admins
+sign in with their YouEye ID password, and root only if a root password was set
+for emergencies. `sudo youeye-installer network` is the on-device network
+repair path. Recovery's "Reset owner password" shows a one-time code on TTY1
+for `https://<box>/reset-owner`.
 
 The supported minimum is 2 vCPU, 4 GiB RAM, and one 32 GiB installation drive;
 128 GiB is recommended. Below 64 GiB the Installer shows a strong capacity

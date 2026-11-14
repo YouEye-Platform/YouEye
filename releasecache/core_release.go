@@ -11,9 +11,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,6 +21,11 @@ import (
 
 const CoreReleaseSchema = "youeye.core-release.v1"
 const CoreReleaseReader = 1
+
+// ErrNeedsNewerReader marks a release document this reader is too old for:
+// its minimum_reader is higher, or it names a role this reader doesn't know.
+// The box needs a stepping stone (or a newer Spine), not a repair.
+var ErrNeedsNewerReader = errors.New("release needs a newer reader")
 
 // CoreReleaseAuthority is the only accepted trust model: the exact document
 // digest (recorded in protected State by the installer, or fetched over HTTPS
@@ -158,19 +163,23 @@ func (blob CoreBlob) validate() error {
 	return nil
 }
 
-// AssetURL locates a blob of a release found at repository/tag.
-func AssetURL(repository, tag string, blob CoreBlob) string {
+// AssetURL locates a blob of a release found at repository/tag, under base
+// when the channel index names a download base for it.
+func AssetURL(repository, base, tag string, blob CoreBlob) string {
 	if blob.Release != "" {
 		tag = blob.Release
 	}
-	return repository + "/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(blob.Name)
+	return ReleaseFileURL(repository, base, tag, blob.Name)
 }
 
 // CoreRoles lists the 14 System roles in document order.
-var CoreRoles = []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"}
+var CoreRoles = []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "spine", "cp", "ui"}
 
 func (r CoreRelease) Validate() error {
-	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || !ValidCoreVersion(r.Build) || r.Tag != "youeye-v"+r.Version || r.MinimumReader != CoreReleaseReader {
+	if r.MinimumReader > CoreReleaseReader {
+		return fmt.Errorf("%w: core release needs reader %d", ErrNeedsNewerReader, r.MinimumReader)
+	}
+	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || !ValidCoreVersion(r.Build) || r.Tag != "youeye-v"+r.Version || r.MinimumReader < 1 {
 		return fmt.Errorf("unsupported core release identity or reader")
 	}
 	if r.Authority != CoreReleaseAuthority {
@@ -199,8 +208,11 @@ func (r CoreRelease) Validate() error {
 	}
 	for _, member := range r.Members {
 		present, known := required[member.Role]
-		if !known || present {
-			return fmt.Errorf("unknown or duplicate core role %q", member.Role)
+		if !known {
+			return fmt.Errorf("%w: unknown core role %q", ErrNeedsNewerReader, member.Role)
+		}
+		if present {
+			return fmt.Errorf("duplicate core role %q", member.Role)
 		}
 		required[member.Role] = true
 		if !ValidCoreVersion(member.BuildVersion) || !ValidGitTree(member.SourceTree) || !installationHash.MatchString(member.InputSHA256) {
@@ -300,8 +312,23 @@ func ParseCoreRelease(raw []byte) (CoreRelease, string, error) {
 	if err := uniqueCoreJSON(raw); err != nil {
 		return release, "", err
 	}
+	// Read the reader requirement before anything else: a newer document may
+	// change any other field. Unknown fields are ignored (they are covered by
+	// the document digest but not used by this reader).
+	var peek struct {
+		Schema        string `json:"schema"`
+		MinimumReader int    `json:"minimum_reader"`
+	}
+	if err := json.Unmarshal(raw, &peek); err != nil {
+		return release, "", err
+	}
+	if peek.Schema != CoreReleaseSchema {
+		return release, "", fmt.Errorf("unsupported core release schema %q", peek.Schema)
+	}
+	if peek.MinimumReader > CoreReleaseReader {
+		return release, "", fmt.Errorf("%w: core release needs reader %d, this is reader %d", ErrNeedsNewerReader, peek.MinimumReader, CoreReleaseReader)
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
 	if err := d.Decode(&release); err != nil {
 		return release, "", err
 	}

@@ -34,7 +34,7 @@ func testApplianceManifest(version, commit string) appliance.Manifest {
 	return appliance.Manifest{
 		SchemaVersion: 1, ImageVersion: version,
 		BuildID: "build-" + version, SourceTree: commit, Architecture: "amd64", FirmwareMode: "uefi",
-		DiskLayoutVersion: appliance.CurrentDiskLayout, StateSchemaMin: 2, StateSchemaMax: 2,
+		DiskLayoutVersion: appliance.CurrentDiskLayout, StateSchemaMin: 1, StateSchemaMax: 1,
 		DataSchemaMin: 1, DataSchemaMax: 1, KernelCompatibility: ">=6.12", ZFSCompatibility: ">=2.3",
 		ZFSFeatureProfile: "openzfs-2.2", IncusCompatibility: ">=7.0", RecoveryVersion: "1",
 		ArtifactKind: "development", SupportedActions: []string{"recovery", "image-update"}, ReleaseSet: &set,
@@ -49,7 +49,7 @@ func testPlan1Manifest() appliance.Manifest {
 
 func testState() appliance.StateRecord {
 	return appliance.StateRecord{
-		SchemaVersion: 2, Lifecycle: appliance.LifecycleConfigured,
+		SchemaVersion: 1, Lifecycle: appliance.LifecycleConfigured,
 		InstallIDRef: "install:test", DeviceIDRef: "device:test", DiskLayoutVersion: appliance.CurrentDiskLayout,
 		StatePartUUID: "state-partuuid", DataPartUUID: "data-partuuid", ParentDiskID: "disk:test",
 		DataSchemaVersion: 1,
@@ -81,11 +81,11 @@ func testUpdateManifest(files map[string][]byte) Manifest {
 		Schema: ManifestSchema, TargetImageVersion: "0.6.0-dev.27",
 		BuildID: "build-target", SourceTree: targetCommit, Architecture: "amd64", FirmwareMode: "uefi",
 		HardwareProfile: "youeye-appliance-amd64-v1", DiskLayoutVersion: appliance.CurrentDiskLayout,
-		StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, RecoveryVersion: "1",
+		StateSchemaMin: 1, StateSchemaMax: 1, DataSchemaMin: 1, DataSchemaMax: 1, RecoveryVersion: "1",
 		MinimumCurrentImageVersion: "0.6.0-dev.26",
 		RootSlotSizeBytes:          RootSlotBytes, BootAttempts: BootAttempts, HealthProfile: "operational",
 		ArtifactKind: "development",
-		Rollback:     RollbackContract{Supported: true, StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, PreserveState: true, PreserveData: true, PreserveRecovery: true},
+		Rollback:     RollbackContract{Supported: true, StateSchemaMin: 1, StateSchemaMax: 1, DataSchemaMin: 1, DataSchemaMax: 1, PreserveState: true, PreserveData: true, PreserveRecovery: true},
 		ReleaseSet:   testReleaseSet(targetCommit), Artifacts: artifacts, SourceDateEpoch: 1,
 	}
 }

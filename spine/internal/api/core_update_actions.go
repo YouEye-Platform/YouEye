@@ -19,6 +19,10 @@ type CoreUpdateCandidate struct {
 	// release: the box never downgrades and waits for the channel.
 	Behind  bool   `json:"behind,omitempty"`
 	Message string `json:"message,omitempty"`
+	// SteppingStone is set when Release is an intermediate release on the way
+	// to ChannelHead, which this box can't install directly.
+	SteppingStone bool   `json:"stepping_stone,omitempty"`
+	ChannelHead   string `json:"channel_head,omitempty"`
 }
 type CoreUpdateRequest struct {
 	RequestID      string `json:"request_id"`

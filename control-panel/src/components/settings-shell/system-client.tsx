@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ApplianceSystemUpdate } from "@/components/settings-shell/appliance-system-update";
-import { DevelopmentAccessCard } from "@/components/settings-shell/development-access-card";
+import { ConsoleAccessCard } from "@/components/settings-shell/console-access-card";
 import { HostNetworkCard } from "@/components/settings-shell/host-network-card";
 import { restartServiceRequest } from "@/lib/health/client";
 import type { SpinePersistentStatus, SpineRuntimeStatus } from "@/lib/spine/client";
@@ -443,7 +443,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
 
       {isAppliance && <HostNetworkCard />}
       {isAppliance && <ApplianceSystemUpdate />}
-      {isAppliance && <DevelopmentAccessCard />}
+      {isAppliance && <ConsoleAccessCard />}
 
       {/* Platform services */}
       <Card className="gap-0 py-0">

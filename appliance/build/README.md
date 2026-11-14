@@ -40,10 +40,10 @@ test-only. Other optional variables: `OUTPUT_DIR`, `WORK_DIR`,
 
 ## Outputs
 
-Exactly twelve files: `system-root.img.zst`, `internal-recovery.img.zst`,
+Exactly eleven files: `system-root.img.zst`, `internal-recovery.img.zst`,
 `system-a.efi`, `system-b.efi`, `recovery.efi`, `youeye-appliance-amd64.iso`,
 `youeye-installer-linux-amd64`, `youeye-system-updater-linux-amd64`,
-`youeye-system-update-bootstrap`, `appliance-manifest.json`
+`appliance-manifest.json`
 (`youeye.appliance.manifest.v1`), `system-update-manifest.json`
 (`youeye.system-update.v1`) and `build-inputs.json`. Both manifests are unsigned
 and list their image assets by sha256 and size. The ISO carries the manifests

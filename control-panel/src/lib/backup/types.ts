@@ -151,11 +151,12 @@ export interface BackupSourceIdentity {
   schema: 'youeye.backup.source.v1';
   runtime_kind: 'mutable-host' | 'appliance-image';
   image_version?: string;
-  source_commit?: string;
+  source_tree?: string;
   state_schema_version?: number;
   data_schema_version?: number;
   disk_layout_version?: number;
   spine_version: string;
   control_panel_version?: string;
   ui_version?: string;
+  pointer_version?: string;
 }

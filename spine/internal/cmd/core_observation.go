@@ -28,7 +28,7 @@ func (coreAPIOperations) ObserveInstalled(ctx context.Context, receipt systemupd
 			if err = systemupdate.BindCoreImage(receipt.Release, *image); err != nil {
 				return err
 			}
-			executable, _, err := coreInstalledExecutable()
+			executable, err := coreInstalledExecutable()
 			if err != nil {
 				return err
 			}

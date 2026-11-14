@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
 )
 
 const firstDeployProgressSchema = "youeye.installer.progress.v1"
@@ -71,10 +74,12 @@ func writeFirstDeployProgress(path, stage, detail string, percent int) error {
 		Stage: stage, Detail: safeFirstDeployDetail(detail), Percent: percent, Attempt: attempt,
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	raw, err := json.MarshalIndent(record, "", "  ")
+	previousRaw, _ := os.ReadFile(path)
+	raw, err := jsonkeep.Marshal(record, previousRaw)
 	if err != nil {
 		return err
 	}
+	raw = bytes.TrimSuffix(raw, []byte("\n"))
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -126,7 +131,6 @@ func safeFirstDeployDetail(value string) string {
 func decodeFirstDeployProgress(raw []byte) (firstDeployProgressRecord, error) {
 	var record firstDeployProgressRecord
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&record); err != nil {
 		return record, err
 	}

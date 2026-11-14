@@ -18,7 +18,7 @@ import (
 
 const (
 	applianceBundleSchema        = "youeye.appliance.manifest.v1"
-	applianceStateSchema         = 2
+	applianceStateSchema         = 1
 	applianceDataSchema          = 1
 	applianceKernelCompatibility = ">=6.12"
 	applianceZFSCompatibility    = ">=2.3"

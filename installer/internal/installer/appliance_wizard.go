@@ -28,7 +28,7 @@ const (
 	applianceWizardNetwork
 	applianceWizardRelease
 	applianceWizardSSH
-	applianceWizardDevelopment
+	applianceWizardConsoleAccess
 	applianceWizardReview
 	applianceWizardErase
 )
@@ -63,20 +63,21 @@ type applianceWizardModel struct {
 	networkAdapter int
 	releaseCur     int
 	sshCur         int
-	developmentCur int
+	consoleCur     int
 
-	networkInputs     []textinput.Model
-	networkFocus      int
-	sshInput          textinput.Model
-	releaseInputs     map[string]textinput.Model
-	releaseFocus      int
-	releaseProvider   string
-	developmentInputs []textinput.Model
-	developmentSSH    bool
-	developmentPolicy developmentAccessPolicy
-	eraseCur          int
-	inputErr          string
-	done              bool
+	networkInputs   []textinput.Model
+	networkFocus    int
+	sshInput        textinput.Model
+	releaseInputs   map[string]textinput.Model
+	releaseFocus    int
+	releaseProvider string
+	consoleInputs   []textinput.Model
+	consoleRoot     bool
+	consoleSSH      bool
+	consolePolicy   consoleAccessPolicy
+	eraseCur        int
+	inputErr        string
+	done            bool
 }
 
 func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) applianceWizardModel {
@@ -112,9 +113,9 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 		config: cfg, runner: runner, answerPath: defaultInteractiveApplianceAnswerPath,
 		stage: applianceWizardLoading, networkInputs: []textinput.Model{address, gateway, dns},
 		sshInput: sshKey, releaseInputs: releaseInputs, releaseProvider: defaultApplianceProvider,
-		developmentInputs: []textinput.Model{password, confirm},
-		developmentPolicy: defaultDevelopmentAccessPolicy(),
-		developmentCur:    4,
+		consoleInputs: []textinput.Model{password, confirm},
+		consolePolicy: defaultConsoleAccessPolicy(),
+		consoleCur:    4,
 	}
 }
 
@@ -204,12 +205,15 @@ func (w applianceWizardModel) handleKey(msg tea.KeyMsg) (applianceWizardModel, t
 		return w.handleReleaseKey(msg)
 	case applianceWizardSSH:
 		return w.handleSSHKey(msg)
-	case applianceWizardDevelopment:
-		return w.handleDevelopmentKey(msg)
+	case applianceWizardConsoleAccess:
+		return w.handleConsoleAccessKey(msg)
 	case applianceWizardReview:
 		switch key {
 		case "esc":
-			w.stage = applianceWizardDevelopment
+			w.stage = applianceWizardConsoleAccess
+			if w.isPreserveReinstall() {
+				w.stage = applianceWizardSSH
+			}
 		case "enter", " ":
 			w.stage = applianceWizardErase
 			w.eraseCur = 0
@@ -447,7 +451,11 @@ func (w applianceWizardModel) handleSSHKey(msg tea.KeyMsg) (applianceWizardModel
 			return w, nil
 		}
 		w.sshInput.Blur()
-		w.stage = applianceWizardDevelopment
+		// A preserve reinstall keeps console access on State as it is.
+		w.stage = applianceWizardConsoleAccess
+		if w.isPreserveReinstall() {
+			w.stage = applianceWizardReview
+		}
 		w.inputErr = ""
 	default:
 		if w.sshCur == 1 {
@@ -460,51 +468,86 @@ func (w applianceWizardModel) handleSSHKey(msg tea.KeyMsg) (applianceWizardModel
 	return w, nil
 }
 
-func (w applianceWizardModel) handleDevelopmentKey(msg tea.KeyMsg) (applianceWizardModel, tea.Cmd) {
+// Console access rows: 0 root password on/off, 1 password SSH, 2 password,
+// 3 confirm, 4 continue. Rows 1-3 exist only with a root password.
+func (w applianceWizardModel) consoleRows() []int {
+	if w.consoleRoot {
+		return []int{0, 1, 2, 3, 4}
+	}
+	return []int{0, 4}
+}
+
+func (w applianceWizardModel) moveConsoleCursor(step int) applianceWizardModel {
+	rows := w.consoleRows()
+	position := 0
+	for index, row := range rows {
+		if row == w.consoleCur {
+			position = index
+		}
+	}
+	w.consoleCur = rows[(position+step+len(rows))%len(rows)]
+	return w
+}
+
+func (w applianceWizardModel) toggleConsoleRow() applianceWizardModel {
+	switch w.consoleCur {
+	case 0:
+		w.consoleRoot = !w.consoleRoot
+		if !w.consoleRoot {
+			w.consoleSSH = false
+		}
+	case 1:
+		w.consoleSSH = !w.consoleSSH
+	}
+	return w
+}
+
+func (w applianceWizardModel) handleConsoleAccessKey(msg tea.KeyMsg) (applianceWizardModel, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "up", "shift+tab":
-		w.developmentCur = (w.developmentCur + 4) % 5
-		return w, w.focusDevelopmentInput()
+		w = w.moveConsoleCursor(-1)
+		return w, w.focusConsoleInput()
 	case "down", "tab":
-		w.developmentCur = (w.developmentCur + 1) % 5
-		return w, w.focusDevelopmentInput()
+		w = w.moveConsoleCursor(1)
+		return w, w.focusConsoleInput()
 	case "left", "right", " ":
-		if w.developmentCur == 1 {
-			w.developmentSSH = !w.developmentSSH
+		if w.consoleCur <= 1 {
+			w = w.toggleConsoleRow()
 		}
 		w.inputErr = ""
 	case "esc":
-		w.blurDevelopmentInputs()
+		w.blurConsoleInputs()
 		w.stage = applianceWizardSSH
 		w.inputErr = ""
 	case "enter":
-		if w.developmentCur != 4 {
-			if w.developmentCur == 1 {
-				w.developmentSSH = !w.developmentSSH
+		if w.consoleCur != 4 {
+			if w.consoleCur <= 1 {
+				w = w.toggleConsoleRow()
+				return w, nil
 			}
-			w.developmentCur = (w.developmentCur + 1) % 5
-			return w, w.focusDevelopmentInput()
+			w = w.moveConsoleCursor(1)
+			return w, w.focusConsoleInput()
 		}
-		policy, err := w.buildDevelopmentPolicy()
+		policy, err := w.buildConsolePolicy()
 		if err != nil {
 			w.inputErr = err.Error()
 			return w, nil
 		}
-		w.developmentPolicy = policy
-		w.blurDevelopmentInputs()
-		for index := range w.developmentInputs {
-			w.developmentInputs[index].SetValue("")
+		w.consolePolicy = policy
+		w.blurConsoleInputs()
+		for index := range w.consoleInputs {
+			w.consoleInputs[index].SetValue("")
 		}
 		w.stage = applianceWizardReview
 		w.inputErr = ""
 	default:
-		if w.developmentCur == 2 || w.developmentCur == 3 {
-			index := w.developmentCur - 2
-			input := w.developmentInputs[index]
+		if w.consoleCur == 2 || w.consoleCur == 3 {
+			index := w.consoleCur - 2
+			input := w.consoleInputs[index]
 			var cmd tea.Cmd
 			input, cmd = input.Update(msg)
-			w.developmentInputs[index] = input
+			w.consoleInputs[index] = input
 			w.inputErr = ""
 			return w, cmd
 		}
@@ -512,12 +555,13 @@ func (w applianceWizardModel) handleDevelopmentKey(msg tea.KeyMsg) (applianceWiz
 	return w, nil
 }
 
-func (w applianceWizardModel) buildDevelopmentPolicy() (developmentAccessPolicy, error) {
-	return buildDevelopmentAccessPolicy(
-		w.developmentSSH,
-		w.developmentInputs[0].Value(),
-		w.developmentInputs[1].Value(),
-		w.developmentPolicy,
+func (w applianceWizardModel) buildConsolePolicy() (consoleAccessPolicy, error) {
+	return buildConsoleAccess(
+		w.consoleRoot,
+		w.consoleSSH,
+		w.consoleInputs[0].Value(),
+		w.consoleInputs[1].Value(),
+		w.consolePolicy,
 	)
 }
 
@@ -555,18 +599,18 @@ func (w *applianceWizardModel) focusReleaseInput(key string) tea.Cmd {
 	return command
 }
 
-func (w *applianceWizardModel) blurDevelopmentInputs() {
-	for index := range w.developmentInputs {
-		w.developmentInputs[index].Blur()
+func (w *applianceWizardModel) blurConsoleInputs() {
+	for index := range w.consoleInputs {
+		w.consoleInputs[index].Blur()
 	}
 }
 
-func (w *applianceWizardModel) focusDevelopmentInput() tea.Cmd {
-	w.blurDevelopmentInputs()
-	if w.developmentCur != 2 && w.developmentCur != 3 {
+func (w *applianceWizardModel) focusConsoleInput() tea.Cmd {
+	w.blurConsoleInputs()
+	if w.consoleCur != 2 && w.consoleCur != 3 {
 		return nil
 	}
-	return w.developmentInputs[w.developmentCur-2].Focus()
+	return w.consoleInputs[w.consoleCur-2].Focus()
 }
 
 func (w applianceWizardModel) firstValidDisk() int {
@@ -657,7 +701,7 @@ func (w applianceWizardModel) currentAnswer(eraseConfirmed bool, transactionID s
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: operation, TransactionID: transactionID,
 		TargetSerial: target.Serial, EraseConfirmed: eraseConfirmed, Network: w.networkAnswer(),
-		ReleasePolicy: w.releasePolicyAnswer(), Development: w.developmentPolicy,
+		ReleasePolicy: w.releasePolicyAnswer(), ConsoleAccess: w.consolePolicy,
 	}
 	if w.sshCur == 1 {
 		answer.AuthorizedKeys = []string{strings.TrimSpace(w.sshInput.Value())}
@@ -758,7 +802,7 @@ func (w applianceWizardModel) View() string {
 	case w.err != nil:
 		title = "Installer preflight failed"
 		body = theme.Danger.Render(strings.Join(wrapText(w.err.Error(), 66), "\n"))
-		hint = "Ctrl+C exits without changing disks"
+		hint = "Ctrl+C turns the machine off without changing disks"
 	case w.stage == applianceWizardLoading:
 		title = "YouEye Installer"
 		body = theme.Body.Render("Verifying the release and discovering target disks...")
@@ -766,7 +810,7 @@ func (w applianceWizardModel) View() string {
 	case w.stage == applianceWizardTarget:
 		title, step = "Choose installation drive", "Step 1"
 		body = w.diskListView(w.targetCur)
-		hint = "Up/Down select | Enter continue | Esc exit"
+		hint = "Up/Down select | Enter continue | Esc turn off"
 	case w.stage == applianceWizardOperation:
 		title, step = "Choose installation type", "Step 2"
 		body = w.operationView()
@@ -783,9 +827,9 @@ func (w applianceWizardModel) View() string {
 		title, step = "SSH access", "Next step"
 		body = w.sshView()
 		hint = "Up/Down select | Enter continue | Esc back"
-	case w.stage == applianceWizardDevelopment:
-		title, step = "Development access", "Next step"
-		body = w.developmentView()
+	case w.stage == applianceWizardConsoleAccess:
+		title, step = "Console access", "Next step"
+		body = w.consoleAccessView()
 		hint = "Up/Down move | Space toggle | Enter continue | Esc back"
 	case w.stage == applianceWizardReview:
 		title, step = "Review installation", "Final review"
@@ -925,22 +969,28 @@ func (w applianceWizardModel) sshView() string {
 	return strings.Join(rows, "\n")
 }
 
-func (w applianceWizardModel) developmentView() string {
+func (w applianceWizardModel) consoleAccessView() string {
 	rows := []string{
-		fmt.Sprintf("%s%-20s %s", w.cursorPrefix(0), "Root console", "Always available · password authenticated"),
-		w.toggleLine(1, "Root password SSH", w.developmentSSH, "Limit password sign-in to the directly connected local network"),
+		"The owner and admins sign in on the console (Ctrl+Alt+F2) with their",
+		"YouEye ID password. Root is locked unless you set a password here.", "",
+		w.toggleLine(0, "Root password", w.consoleRoot, "Advanced: for emergencies only; most people leave this off"),
 	}
-	rows = append(rows,
-		fmt.Sprintf("%s%-20s %s", w.cursorPrefix(2), "Root password", w.developmentInputs[0].View()),
-		fmt.Sprintf("%s%-20s %s", w.cursorPrefix(3), "Confirm password", w.developmentInputs[1].View()),
-	)
+	if w.consoleRoot {
+		rows = append(rows,
+			w.toggleLine(1, "Password SSH", w.consoleSSH, "Allow SSH with a password from the local network"),
+			fmt.Sprintf("%s%-20s %s", w.cursorPrefix(2), "New password", w.consoleInputs[0].View()),
+			fmt.Sprintf("%s%-20s %s", w.cursorPrefix(3), "Confirm password", w.consoleInputs[1].View()),
+		)
+	}
 	rows = append(rows, w.cursorPrefix(4)+"Continue")
-	rows = append(rows, "", theme.Dim.Render("The local shell always requires this password. Password SSH remains optional and local-subnet only. Only a yescrypt hash is stored."))
+	if w.consoleRoot {
+		rows = append(rows, "", theme.Dim.Render("Only a yescrypt hash of the root password is stored."))
+	}
 	return strings.Join(rows, "\n")
 }
 
 func (w applianceWizardModel) cursorPrefix(index int) string {
-	if w.developmentCur == index {
+	if w.consoleCur == index {
 		return theme.Selected.Render("> ")
 	}
 	return "  "
@@ -986,8 +1036,10 @@ func (w applianceWizardModel) reviewView() string {
 		"Network: " + network,
 		fmt.Sprintf("Software: %s · %s", releaseProviderLabel(w.releaseProvider), w.releasePolicySummary()),
 		"SSH:     " + ssh,
-		fmt.Sprintf("Developer console: %s", enabledLabel(w.developmentPolicy.LocalRootConsole)),
-		fmt.Sprintf("Root password SSH: %s", enabledLabel(w.developmentPolicy.RootPasswordSSH)),
+		"Console: " + consoleAccessSummary(w.consolePolicy),
+	}
+	if w.isPreserveReinstall() {
+		rows[len(rows)-1] = "Console: kept as is (admins, root password, password SSH)"
 	}
 	if w.networkAdapter >= 0 && w.networkAdapter < len(w.adapters) {
 		selected := w.adapters[w.networkAdapter]
@@ -1011,13 +1063,6 @@ func (w applianceWizardModel) reviewView() string {
 		rows = append(rows, "", theme.Danger.Render("The selected drive will be repartitioned and erased."))
 	}
 	return strings.Join(rows, "\n")
-}
-
-func enabledLabel(enabled bool) string {
-	if enabled {
-		return "Enabled"
-	}
-	return "Off"
 }
 
 func (w applianceWizardModel) releasePolicySummary() string {

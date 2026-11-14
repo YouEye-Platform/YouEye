@@ -348,7 +348,6 @@ install -d -m 0700 "$state_root/installer" "$state_root/bootstrap" "$state_root/
 install -d -m 0755 "$state_root/etc/ssh" "$state_root/etc/systemd/network"
 install -d -m 0755 "$state_root/var/lib/systemd" "$state_root/var/log"
 cp -a "$source_root/etc/ssh/." "$state_root/etc/ssh/"
-install -m 0640 "$source_root/etc/shadow" "$state_root/etc/shadow"
 cp -a "$source_root/var/lib/systemd/." "$state_root/var/lib/systemd/"
 cp -a "$source_root/var/log/." "$state_root/var/log/"
 rm -f "$state_root/etc/ssh/ssh_host_"*
@@ -392,13 +391,15 @@ chmod 0644 "$state_root/etc/systemd/network/20-youeye.network"
 # file is protected and the password hash is never copied through argv or logs.
 jq -e '.schema == "youeye.appliance.answer.v1"' "$answer" >/dev/null
 jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
-jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
+# Console access: the optional root password and password SSH. Spine adds
+# admins' accounts later; the installer never writes any.
+jq -e '.console_access + {accounts: []}' "$answer" > "$state_root/bootstrap/console-access.json.tmp"
 jq -n --arg mode "$network_mode" --arg adapter_mac "$adapter_mac" --arg address "$address" --arg gateway "$gateway" --arg dns "$dns" '
   {schema:"youeye.network-profile.v1",id:"primary",kind:"ethernet",ipv4:{mode:$mode}}
   + if $adapter_mac != "" then {adapter_mac:$adapter_mac} else {} end
   + if $mode == "static" then {ipv4:{mode:$mode,address:$address,gateway:$gateway,dns:[$dns]}} else {} end
 ' > "$state_root/bootstrap/network-profile.json.tmp"
-for file in release-policy development-access network-profile; do
+for file in release-policy console-access network-profile; do
   chmod 0600 "$state_root/bootstrap/$file.json.tmp"
   mv -f "$state_root/bootstrap/$file.json.tmp" "$state_root/bootstrap/$file.json"
 done
@@ -408,6 +409,14 @@ if jq -e '.core_release != null' "$answer" >/dev/null 2>&1; then
   test "$(sha256sum "$state_root/bootstrap/core-release.json.tmp" | awk '{print $1}')" = "$(jq -er '.release_policy.core_manifest_sha256' "$answer")"
   chmod 0600 "$state_root/bootstrap/core-release.json.tmp"
   mv -f "$state_root/bootstrap/core-release.json.tmp" "$state_root/bootstrap/core-release.json"
+  download_base="$(jq -r '.core_release.download_base // ""' "$answer")"
+  if [ -n "$download_base" ]; then
+    # First deployment downloads this release's Spine, CP and UI from here.
+    install -d -m 0700 "$state_root/core-update"
+    jq -n --arg tag "$(jq -er .tag "$state_root/bootstrap/core-release.json")" --arg base "$download_base" \
+      '{schema:"youeye.download-bases.v1",bases:{($tag):$base}}' > "$state_root/core-update/download-bases.json"
+    chmod 0600 "$state_root/core-update/download-bases.json"
+  fi
 fi
 sync -f "$state_root/bootstrap"
 # Optional transport cache from the same answer medium. Artifact digests and

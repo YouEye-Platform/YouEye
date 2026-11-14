@@ -72,12 +72,13 @@ type proxmoxApplianceConfig struct {
 	Channel            string
 	ServiceSelection   string
 	ReleaseTag         string
+	DownloadBase       string
 	CoreManifestSHA256 string
 	ISOSHA256          string
 	RepositoryURL      string
 	ReleaseProvider    string
 	CacheRoot          string
-	Development        developmentAccessPolicy
+	ConsoleAccess      consoleAccessPolicy
 }
 
 type proxmoxApplianceInventory struct {
@@ -210,13 +211,13 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		Network:           applianceAnswerNetwork{Mode: opts.ProxmoxNetworkMode, Address: opts.ProxmoxAddress, Gateway: opts.ProxmoxGateway, DNS: opts.ProxmoxDNS},
 		ImportHostSSHKeys: opts.ProxmoxImportHostSSHKeys, SSHKeysPath: opts.ProxmoxSSHKeysPath,
 		EraseConfirmed: opts.ProxmoxEraseConfirmed,
-		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
+		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag, DownloadBase: opts.DownloadBase,
 		CoreManifestSHA256: opts.CoreManifestSHA256,
 		ServiceSelection:   opts.ApplianceServiceSelection,
 		ISOSHA256:          opts.ApplianceISOSHA256, ReleaseProvider: defaultApplianceProvider,
 		RepositoryURL: opts.ApplianceRepository,
 		CacheRoot:     "/var/cache/youeye-installer/releases",
-		Development:   defaultDevelopmentAccessPolicy(),
+		ConsoleAccess: defaultConsoleAccessPolicy(),
 	}
 	if opts.ApplianceRepository != "" && opts.ApplianceRepository != releasecache.OfficialRepository {
 		config.ReleaseProvider = "custom"
@@ -234,11 +235,11 @@ func (config proxmoxApplianceConfig) releasePolicy() applianceReleasePolicy {
 	}
 }
 
-func (config proxmoxApplianceConfig) developmentPolicy() developmentAccessPolicy {
-	if config.Development.Schema == "" {
-		return defaultDevelopmentAccessPolicy()
+func (config proxmoxApplianceConfig) consoleAccessPolicy() consoleAccessPolicy {
+	if config.ConsoleAccess.Schema == "" {
+		return defaultConsoleAccessPolicy()
 	}
-	return config.Development
+	return config.ConsoleAccess
 }
 
 func firstSelected(selected string, values []string) string {
@@ -304,10 +305,10 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 	}
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET", Network: config.Network,
-		ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
+		ReleasePolicy: config.releasePolicy(), ConsoleAccess: config.consoleAccessPolicy(),
 	}
 	// The core selection is checked after discovery; this preflight answer
-	// checks the remaining policy, network and development-access fields.
+	// checks the remaining policy, network and console access fields.
 	answer.ReleasePolicy.CoreManifestSHA256 = ""
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
@@ -359,7 +360,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	emitProxmoxProgress(progress, "Resolve release", "Reading the "+config.Channel+" channel index", 0.03)
 	// A given tag and digest (from install.sh) installs exactly that release;
 	// the box still records its channel for updates.
-	release, err := resolveApplianceRelease(ctx, client, config.RepositoryURL, config.Channel, config.ReleaseTag, config.CoreManifestSHA256)
+	release, err := resolveApplianceRelease(ctx, client, config.RepositoryURL, config.Channel, config.ReleaseTag, config.CoreManifestSHA256, config.DownloadBase)
 	if err != nil {
 		return err
 	}
@@ -400,7 +401,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true,
 		TransactionID: transactionID, TargetSerial: targetSerial,
-		Network: config.Network, ReleasePolicy: config.releasePolicy(), Development: config.developmentPolicy(),
+		Network: config.Network, ReleasePolicy: config.releasePolicy(), ConsoleAccess: config.consoleAccessPolicy(),
 		AuthorizedKeys: keyFinal.Accepted,
 	}
 	if config.Operation != "create" {
