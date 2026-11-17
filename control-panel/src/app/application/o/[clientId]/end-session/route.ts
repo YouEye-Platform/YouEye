@@ -5,6 +5,7 @@ import { getIdentitySession, getIdentitySessionId } from '@/lib/identity/http';
 import { SESSION_COOKIE, verifyClientIdToken } from '@/lib/identity/tokens';
 import { queueSessionLogout } from '@/lib/identity/backchannel-logout';
 import { identitySearchParams } from '@/lib/identity/authorize-query';
+import { secureCookieFor } from '@/lib/auth/mode';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ clientId: string }> }) {
   const { clientId } = await params;
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const response = NextResponse.redirect(redirect);
   response.cookies.set(SESSION_COOKIE, '', {
     domain: config.cookieDomain, path: '/', maxAge: 0,
-    httpOnly: true, secure: process.env.SECURE_COOKIES !== 'false', sameSite: 'lax',
+    httpOnly: true, secure: secureCookieFor(request), sameSite: 'lax',
   });
   return response;
 }

@@ -37,6 +37,33 @@ export async function containerExists(name: string): Promise<boolean> {
 }
 
 /**
+ * Stop and delete a platform system container before it is recreated, and wait until it is really gone. Incus
+ * reports errors in the response instead of throwing; ignoring them (a stop that hadn't finished, an operation still
+ * running after a hard reset) made the recreate fail with "already exists" on every retry.
+ */
+export async function removePlatformInstance(name: string, attempts = 3): Promise<void> {
+  let lastError = '';
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const stop = await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 30 });
+      if (stop.type === 'async' && stop.operation) await incusRequest('GET', `${stop.operation}/wait?timeout=40`);
+    } catch { /* may already be stopped */ }
+    const deleted = await incusRequest('DELETE', `/1.0/instances/${name}`);
+    if (deleted.error && !deleted.error.includes('not found')) {
+      lastError = deleted.error;
+    } else if (deleted.type === 'async' && deleted.operation) {
+      const done = await incusRequest('GET', `${deleted.operation}/wait?timeout=60`);
+      if (done.error) lastError = done.error;
+    }
+    for (let i = 0; i < 30; i++) {
+      if (!(await containerExists(name))) return;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  throw new Error(`The old ${name} container could not be removed${lastError ? `: ${lastError}` : ''}`);
+}
+
+/**
  * Select devices added after the base OCI manifest was deployed.
  *
  * Per-app NAT doorways live on the system container they connect to (`app-*`),
@@ -185,16 +212,7 @@ export async function deployOCIContainer(
     // the current manifest and are intentionally not carried forward.
     runtimeExtensionDevices = await readRuntimeExtensionDevices(manifest.containerName);
 
-    try {
-      await incusRequest('PUT', `/1.0/instances/${manifest.containerName}/state`, {
-        action: 'stop', force: true, timeout: 10,
-      });
-    } catch { /* may already be stopped */ }
-
-    const delResult = await incusRequest('DELETE', `/1.0/instances/${manifest.containerName}`);
-    if (delResult.type === 'async' && delResult.operation) {
-      await incusRequest('GET', `${delResult.operation}/wait?timeout=30`);
-    }
+    await removePlatformInstance(manifest.containerName);
   }
 
   const remoteImage = manifest.imageFingerprint ? null : parseOCIImage(manifest.image);

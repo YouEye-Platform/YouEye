@@ -43,6 +43,6 @@ export async function POST(request: NextRequest) {
   const session = await createIdentitySession(user.id);
   const token = await createIdentityToken(user, session.id);
   const response = NextResponse.redirect(`https://${config.domain}/`, { status: 303 });
-  setIdentityCookie(response, token, config.cookieDomain);
+  setIdentityCookie(request, response, token, config.cookieDomain);
   return response;
 }

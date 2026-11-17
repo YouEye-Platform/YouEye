@@ -5,6 +5,8 @@ import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import { isLocalSetupHost, isPasswordSignInHost } from '../src/lib/auth/mode';
+import * as setupHostPaths from '../src/lib/auth/setup-host-paths';
 
 const require = createRequire(import.meta.url);
 const { NextRequest, NextResponse } = require('next/server');
@@ -65,7 +67,8 @@ test('IP setup admits its protected branding read while keeping the general brid
       if (token !== 'setup-owner') throw Error('Invalid session');
       return { payload: { isAdmin: true, authMethod: 'setup' } };
     } },
-    '@/lib/auth/mode': { getAuthModeForHost: () => 'pam' },
+    '@/lib/auth/mode': { getAuthModeForHost: () => 'pam', isLocalSetupHost, isPasswordSignInHost },
+    '@/lib/auth/setup-host-paths': setupHostPaths,
     '@/lib/settings-public-path': { isSettingsPath: () => false },
   }, {
     URL, TextEncoder, AbortController, setTimeout, clearTimeout, console,

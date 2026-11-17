@@ -36,6 +36,13 @@ func main() {
 		}
 		return
 	}
+	if mode == installer.InstallerModeServe {
+		if err := installer.RunInstallerServe(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "installer error:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if mode == installer.InstallerModeNetwork {
 		if opts.Silent {
 			fmt.Fprintln(os.Stderr, "local appliance configuration requires an interactive terminal")

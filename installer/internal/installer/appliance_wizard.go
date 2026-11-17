@@ -121,43 +121,50 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 
 func (w applianceWizardModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		bundle, err := verifyApplianceBundle(w.config.ApplianceManifestPath)
-		if err != nil {
-			return applianceWizardLoadedMsg{err: err}
-		}
-		root := bundle.Assets["system-root"].Manifest
-		rootBytes := root.UncompressedSizeBytes
-		if rootBytes == 0 {
-			rootBytes = root.SizeBytes
-		}
-		if _, err := applianceRootSlotSize(rootBytes); err != nil {
-			return applianceWizardLoadedMsg{err: err}
-		}
-		disks, err := discoverApplianceDisks(w.runner)
-		if err != nil {
-			return applianceWizardLoadedMsg{err: err}
-		}
-		adapters, err := discoverApplianceNetworkAdapters()
-		if err != nil {
-			return applianceWizardLoadedMsg{err: fmt.Errorf("discover wired network adapters: %w", err)}
-		}
-		installed := make(map[string]installedApplianceIdentity)
-		warnings := make(map[string]string)
-		for _, disk := range disks {
-			if len(nonBlankSignatures(disk.Signatures)) == 0 {
-				continue
-			}
-			identity, identityErr := inspectInstalledApplianceIdentity(w.runner, disk)
-			if identityErr != nil {
-				warnings[disk.Path] = "Existing YouEye metadata is unreadable; full erase remains available."
-				continue
-			}
-			if identity != nil {
-				installed[disk.Path] = *identity
-			}
-		}
-		return applianceWizardLoadedMsg{bundle: bundle, disks: disks, adapters: adapters, installed: installed, identityWarnings: warnings}
+		return loadApplianceWizardInventory(w.config.ApplianceManifestPath, w.runner)
 	}
+}
+
+// loadApplianceWizardInventory verifies the media's release and discovers the
+// drives, wired adapters and existing installations. The text wizard and the
+// web installer (serve) both start from it.
+func loadApplianceWizardInventory(manifestPath string, runner applianceCommandRunner) applianceWizardLoadedMsg {
+	bundle, err := verifyApplianceBundle(manifestPath)
+	if err != nil {
+		return applianceWizardLoadedMsg{err: err}
+	}
+	root := bundle.Assets["system-root"].Manifest
+	rootBytes := root.UncompressedSizeBytes
+	if rootBytes == 0 {
+		rootBytes = root.SizeBytes
+	}
+	if _, err := applianceRootSlotSize(rootBytes); err != nil {
+		return applianceWizardLoadedMsg{err: err}
+	}
+	disks, err := discoverApplianceDisks(runner)
+	if err != nil {
+		return applianceWizardLoadedMsg{err: err}
+	}
+	adapters, err := discoverApplianceNetworkAdapters()
+	if err != nil {
+		return applianceWizardLoadedMsg{err: fmt.Errorf("discover wired network adapters: %w", err)}
+	}
+	installed := make(map[string]installedApplianceIdentity)
+	warnings := make(map[string]string)
+	for _, disk := range disks {
+		if len(nonBlankSignatures(disk.Signatures)) == 0 {
+			continue
+		}
+		identity, identityErr := inspectInstalledApplianceIdentity(runner, disk)
+		if identityErr != nil {
+			warnings[disk.Path] = "Existing YouEye metadata is unreadable; full erase remains available."
+			continue
+		}
+		if identity != nil {
+			installed[disk.Path] = *identity
+		}
+	}
+	return applianceWizardLoadedMsg{bundle: bundle, disks: disks, adapters: adapters, installed: installed, identityWarnings: warnings}
 }
 
 func (w applianceWizardModel) Update(msg tea.Msg) (applianceWizardModel, tea.Cmd) {
@@ -402,6 +409,10 @@ func (w applianceWizardModel) handleReleaseKey(msg tea.KeyMsg) (applianceWizardM
 		w.stage = applianceWizardNetwork
 		w.inputErr = ""
 	case "enter":
+		if w.releaseProvider != defaultApplianceProvider && strings.TrimSpace(w.releaseInputs["api"].Value()) == "" {
+			w.inputErr = customRepositoryRequired
+			return w, nil
+		}
 		if _, err := w.currentAnswer(true, "00000000000000000000000000000000"); err != nil {
 			w.inputErr = err.Error()
 			return w, nil
@@ -656,27 +667,70 @@ func (w applianceWizardModel) selectedDisk() (applianceDisk, error) {
 	return w.disks[w.targetCur], nil
 }
 
-func (w applianceWizardModel) networkAnswer() applianceAnswerNetwork {
-	adapterMAC := ""
-	if w.networkAdapter >= 0 && w.networkAdapter < len(w.adapters) {
-		adapterMAC = w.adapters[w.networkAdapter].MAC
+// applianceChoices are the owner's installer choices. The text wizard reads
+// them from its widgets and the web installer receives them as JSON; both turn
+// them into the answer through answerFor, so the same choices always give the
+// same answer.
+type applianceChoices struct {
+	// Disk is the installation drive's device path.
+	Disk string `json:"disk"`
+	// Preserve keeps settings and data on a drive with YouEye installed.
+	Preserve   bool   `json:"preserve"`
+	AdapterMAC string `json:"adapter_mac"`
+	// Network is "dhcp" or "static"; the static fields are ignored for DHCP.
+	Network string `json:"network"`
+	Address string `json:"address"`
+	Gateway string `json:"gateway"`
+	DNS     string `json:"dns"`
+	Channel string `json:"channel"`
+	// Repository is a custom release repository URL; empty means the official one.
+	Repository string `json:"repository"`
+	// SSHKey is one public key for root SSH; empty means none.
+	SSHKey string `json:"ssh_key"`
+}
+
+const customRepositoryRequired = "Enter the repository URL, or choose the official source."
+
+// choices reads the text wizard's widgets.
+func (w applianceWizardModel) choices() applianceChoices {
+	c := applianceChoices{Network: "dhcp", Channel: wizardChannels[w.releaseCur]}
+	if w.targetCur >= 0 && w.targetCur < len(w.disks) {
+		c.Disk = w.disks[w.targetCur].Path
+		_, installed := w.installed[c.Disk]
+		c.Preserve = installed && w.operationCur == 0
 	}
-	if w.networkCur == 0 {
-		return applianceAnswerNetwork{Mode: "dhcp", AdapterMAC: adapterMAC}
+	if w.networkAdapter >= 0 && w.networkAdapter < len(w.adapters) {
+		c.AdapterMAC = w.adapters[w.networkAdapter].MAC
+	}
+	if w.networkCur == 1 {
+		c.Network = "static"
+		c.Address = w.networkInputs[0].Value()
+		c.Gateway = w.networkInputs[1].Value()
+		c.DNS = w.networkInputs[2].Value()
+	}
+	if w.releaseProvider != defaultApplianceProvider {
+		c.Repository = w.releaseInputs["api"].Value()
+	}
+	if w.sshCur == 1 {
+		c.SSHKey = w.sshInput.Value()
+	}
+	return c
+}
+
+func (c applianceChoices) networkAnswer() applianceAnswerNetwork {
+	if c.Network != "static" {
+		return applianceAnswerNetwork{Mode: "dhcp", AdapterMAC: c.AdapterMAC}
 	}
 	return applianceAnswerNetwork{
-		Mode: "static", AdapterMAC: adapterMAC, Address: strings.TrimSpace(w.networkInputs[0].Value()),
-		Gateway: strings.TrimSpace(w.networkInputs[1].Value()), DNS: strings.TrimSpace(w.networkInputs[2].Value()),
+		Mode: "static", AdapterMAC: c.AdapterMAC, Address: strings.TrimSpace(c.Address),
+		Gateway: strings.TrimSpace(c.Gateway), DNS: strings.TrimSpace(c.DNS),
 	}
 }
 
-// wizardChannels are the release channels in the order the wizard lists them.
-var wizardChannels = []string{"stable", "beta", "alpha", "dev"}
-
-func (w applianceWizardModel) releasePolicyAnswer() applianceReleasePolicy {
-	policy := applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: wizardChannels[w.releaseCur]}
-	if w.releaseProvider != defaultApplianceProvider {
-		repository, err := releasecache.CanonicalRepository(w.releaseInputs["api"].Value())
+func (c applianceChoices) releasePolicy() applianceReleasePolicy {
+	policy := applianceReleasePolicy{Schema: releasePolicySchema, Repository: releasecache.OfficialRepository, Channel: c.Channel}
+	if strings.TrimSpace(c.Repository) != "" {
+		repository, err := releasecache.CanonicalRepository(c.Repository)
 		if err != nil {
 			repository = "invalid-repository-url"
 		}
@@ -685,13 +739,37 @@ func (w applianceWizardModel) releasePolicyAnswer() applianceReleasePolicy {
 	return policy
 }
 
+func (w applianceWizardModel) networkAnswer() applianceAnswerNetwork {
+	return w.choices().networkAnswer()
+}
+
+// wizardChannels are the release channels in the order the wizard lists them.
+var wizardChannels = []string{"stable", "beta", "alpha", "dev"}
+
+func (w applianceWizardModel) releasePolicyAnswer() applianceReleasePolicy {
+	return w.choices().releasePolicy()
+}
+
 func (w applianceWizardModel) currentAnswer(eraseConfirmed bool, transactionID string) (applianceAnswer, error) {
+	return w.answerFor(w.choices(), w.consolePolicy, eraseConfirmed, transactionID)
+}
+
+// answerFor validates choices against the discovered drives and builds the
+// answer the installer engine reads.
+func (w applianceWizardModel) answerFor(c applianceChoices, console consoleAccessPolicy, eraseConfirmed bool, transactionID string) (applianceAnswer, error) {
+	w.targetCur = -1
+	for index, disk := range w.disks {
+		if disk.Path == c.Disk {
+			w.targetCur = index
+		}
+	}
 	target, err := w.selectedDisk()
 	if err != nil {
 		return applianceAnswer{}, err
 	}
 	operation := "erase-install"
-	if _, ok := w.installed[target.Path]; ok && w.operationCur == 0 {
+	if c.Preserve {
+		w.operationCur = 0
 		if err := w.preserveEligibility(); err != nil {
 			return applianceAnswer{}, err
 		}
@@ -700,11 +778,11 @@ func (w applianceWizardModel) currentAnswer(eraseConfirmed bool, transactionID s
 	}
 	answer := applianceAnswer{
 		Schema: applianceAnswerSchema, Operation: operation, TransactionID: transactionID,
-		TargetSerial: target.Serial, EraseConfirmed: eraseConfirmed, Network: w.networkAnswer(),
-		ReleasePolicy: w.releasePolicyAnswer(), ConsoleAccess: w.consolePolicy,
+		TargetSerial: target.Serial, EraseConfirmed: eraseConfirmed, Network: c.networkAnswer(),
+		ReleasePolicy: c.releasePolicy(), ConsoleAccess: console,
 	}
-	if w.sshCur == 1 {
-		answer.AuthorizedKeys = []string{strings.TrimSpace(w.sshInput.Value())}
+	if key := strings.TrimSpace(c.SSHKey); key != "" {
+		answer.AuthorizedKeys = []string{key}
 	}
 	if err := validateApplianceAnswer(answer); err != nil {
 		return applianceAnswer{}, err

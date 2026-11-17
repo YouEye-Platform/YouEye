@@ -12,6 +12,7 @@ import { revokeIdentitySession } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { SESSION_COOKIE as ID_SESSION_COOKIE } from '@/lib/identity/tokens';
 import { queueSessionLogout } from '@/lib/identity/backchannel-logout';
+import { secureCookieFor } from '@/lib/auth/mode';
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
     if (identitySessionId) {
       const config = await getIdentityConfig();
       response.cookies.set(ID_SESSION_COOKIE, '', { domain: config.cookieDomain, path: '/', maxAge: 0,
-        httpOnly: true, secure: process.env.SECURE_COOKIES !== 'false', sameSite: 'lax' });
+        httpOnly: true, secure: secureCookieFor(request), sameSite: 'lax' });
     }
     return response;
   } catch (error) {

@@ -6,6 +6,7 @@ import {
   buildRollbackCopyRequest,
 } from '@/lib/incus/snapshot';
 import { getConfig, setConfig } from '@/lib/caddy/client';
+import { routeServers } from '@/lib/caddy/servers';
 import { readInstallMetadata, saveInstallMetadata, listInstalledApps } from './metadata';
 import { appServiceCredentials } from '../apps/service-credential-store';
 import { getAdmissionSnapshot } from '../admission/store';
@@ -448,7 +449,7 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     const config = await getConfig();
     const before = JSON.stringify(config);
     const id = `app-update-${record.appId}`;
-    for (const server of Object.values(config.apps?.http?.servers ?? {})) {
+    for (const server of routeServers(config)) {
       server.routes = (server.routes ?? []).filter(r => r['@id'] !== id);
       if (blocked) {
         // Preserve every existing route and current auth/grants; insert only this app's deny.

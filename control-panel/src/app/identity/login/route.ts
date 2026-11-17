@@ -475,6 +475,6 @@ export async function POST(request: NextRequest) {
   const token = await createIdentityToken(user, session.id);
   const response = NextResponse.redirect(returnTo, { status: 303 });
   response.headers.set('Cache-Control', 'no-store');
-  setIdentityCookie(response, token, config.cookieDomain);
+  setIdentityCookie(request, response, token, config.cookieDomain);
   return response;
 }

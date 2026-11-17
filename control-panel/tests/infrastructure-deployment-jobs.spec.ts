@@ -170,3 +170,27 @@ test('diagnostic sanitization removes bearer credentials', () => {
   assert.match(sanitized, /Authorization=<redacted>/);
   assert.doesNotMatch(sanitized, /abc\.def\.ghi/);
 });
+
+test('deploy-job events record when each step started and finished', async () => {
+  await useTemporaryState();
+  const id = `deploy-timing-${Date.now()}`;
+  await startDeploymentJob({
+    id,
+    kind: 'deploy',
+    hostIP: '192.0.2.30',
+    runner: async (_hostIP, emit) => {
+      emit({ step: 5, totalSteps: 5, status: 'running', message: 'Building the YouEye AI service...' });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      emit({ step: 5, totalSteps: 5, status: 'running', message: 'Still building...' });
+      emit({ step: 5, totalSteps: 5, status: 'skipped', message: 'YouEye AI service build deferred until setup configures the platform domain' });
+    },
+  });
+  const state = await waitForTerminal(id);
+  assert.equal(state.status, 'succeeded', 'a skipped first-boot Pointer build does not fail first deployment');
+  const [first, second, result, terminal] = state.events;
+  assert.ok(first.startedAt && !first.finishedAt);
+  assert.equal(second.startedAt, first.startedAt, 'a step keeps the time of its first running event');
+  assert.equal(result.startedAt, first.startedAt);
+  assert.ok(Date.parse(result.finishedAt!) - Date.parse(result.startedAt!) >= 10);
+  assert.ok(terminal.terminal && terminal.finishedAt);
+});

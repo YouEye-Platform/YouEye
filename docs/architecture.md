@@ -89,7 +89,9 @@ in containers on Data. See [spine.md](spine.md).
 1. The initramfs mounts State (`youeye-state` hook).
 2. `youeye appliance prepare` (state, then storage) imports the ZFS pool and mounts the datasets.
 3. `youeye.service` runs `youeye api serve`. The seed hands this to the slot's selected Spine.
-4. On the first boot, `youeye-first-deploy.service` runs `youeye boot first-deploy` (see [install.md](install.md)).
+4. On the first boot, `youeye-setup-gate.service` redirects ports 80/443 to `youeye-setup-page.service` (the
+   Preparing page), and `youeye-first-deploy.service` runs `youeye boot first-deploy` (see [install.md](install.md)).
+   `youeye-mdns.service` publishes `youeye.local` on every boot.
    After an update, `youeye-core-update.service` continues a retained update (`youeye update core resume --boot`).
 5. `youeye-appliance-bless.service` (`youeye boot bless`) marks the boot healthy, so an image trial is kept.
 
@@ -159,7 +161,8 @@ The variables apps get for these are in [app-environment.md](app-environment.md)
 |---|---|
 | Unprivileged containers | platform and app containers are created with `security.privileged=false` (Spine falls back to a privileged `youeye-control` only on the `dir` storage driver, which the appliance does not use) |
 | One way in | Caddy on 80/443 for HTTP(S); Pi-hole on 53 for DNS. PostgreSQL, the Control Panel and the UI have no host port |
-| Closed until set up | until first deployment completes, nftables table `youeye_setup_gate` drops ports 80 and 443 on the host (`youeye boot setup-gate`) |
+| Closed until set up | until first deployment completes, nftables table `youeye_setup_gate` redirects ports 80 and 443 to the Preparing page (`youeye boot setup-page` on 47080/47443), for traffic addressed to the host itself (prerouting with `fib daddr type local`, so containers' internet traffic passes) and the box's own requests to its LAN address (output; loopback still reaches Caddy). Nothing else answers on 80/443 until then |
+| Local setup surface | the box IP and its mDNS name (`youeye.local`, Avahi on the LAN adapter only) serve claim and setup over HTTP and HTTPS; certificates there come from the box CA on State ([install.md](install.md#youeyelocal-and-http)) |
 | Owner claims the box | the first account is created by claiming the box from its IP address (see [install.md](install.md)) |
 | Sign-in | YouEye ID (OIDC) signs users in to the dashboard, the Control Panel and apps |
 | CP embed routes | the CP's `/api/ui-bridge/*` routes serve its `/embed/*` pages only; they need an admin CP session and an `X-CSRF-Token` for every change |

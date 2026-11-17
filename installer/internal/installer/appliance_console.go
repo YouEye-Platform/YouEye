@@ -40,6 +40,12 @@ type applianceConsoleSnapshot struct {
 	OverlayArtifact  string
 	OverlayCommit    string
 	Complete         bool
+	// LocalName is the mDNS name Avahi publishes now (youeye.local, or
+	// youeye-2.local … when another box has the name).
+	LocalName string
+	// CAFingerprint is the box CA root's SHA-256, to compare with what the
+	// setup page offers for download.
+	CAFingerprint string
 }
 
 type applianceConsoleModel struct {
@@ -143,30 +149,62 @@ func applianceConsoleSUCommand(rootCommand string, uid, gid uint32) *exec.Cmd {
 
 func (model applianceConsoleModel) View() string {
 	snapshot := model.snapshot
-	status, statusStyle := "Starting appliance services", theme.Title
+	status, statusStyle := "Installing YouEye…", theme.Title
 	if snapshot.Stage == "needs_attention" || snapshot.NetworkPhase == "needs_attention" {
 		status, statusStyle = "Needs attention", theme.Danger
 	} else if snapshot.Complete {
 		status, statusStyle = "Ready", theme.Selected
-	} else if snapshot.Detail != "" {
-		status = snapshot.Detail
 	}
 	address := snapshot.IPv4Address
 	if address == "" {
 		address = "waiting for wired IPv4"
 	}
-	rows := []string{
-		theme.Title.Render(" __   __          _____"),
-		theme.Title.Render(" \\ \\ / /__  _   _| ____|_   _  ___"),
-		theme.Title.Render("  \\ V / _ \\| | | |  _| | | | |/ _ \\"),
-		theme.Title.Render("   | | (_) | |_| | |___| |_| |  __/"),
-		theme.Title.Render("   |_|\\___/ \\__, |_____|\\__, |\\___|"),
-		theme.Title.Render("             |___/       |___/"), "",
-		statusStyle.Render(status), "",
-		fmt.Sprintf("Setup       https://%s", address),
+	localName := valueOr(snapshot.LocalName, "youeye.local")
+	setupRows := []string{}
+	switch {
+	case snapshot.IPv4Address == "":
+		setupRows = append(setupRows, "Setup       waiting for wired IPv4")
+	case !snapshot.Complete:
+		setupRows = append(setupRows, fmt.Sprintf("Watch at    http://%s or http://%s", localName, snapshot.IPv4Address))
+	case snapshot.ConsoleUnclaimed:
+		setupRows = append(setupRows, fmt.Sprintf("Set up at   http://%s or http://%s", localName, snapshot.IPv4Address))
+	default:
+		setupRows = append(setupRows, fmt.Sprintf("Setup       https://%s", address))
+	}
+	if snapshot.CAFingerprint != "" && (!snapshot.Complete || snapshot.ConsoleUnclaimed) && len(snapshot.CAFingerprint) == 95 {
+		setupRows = append(setupRows,
+			"Box CA      SHA-256 "+snapshot.CAFingerprint[:47],
+			"                    "+snapshot.CAFingerprint[48:])
+	}
+	if snapshot.IPv4Address != "" && (!snapshot.Complete || snapshot.ConsoleUnclaimed) {
+		// The IP always works on phones (.local often doesn't on Android).
+		if code := consoleQRCode("http://" + snapshot.IPv4Address); code != "" {
+			setupRows = append(setupRows, "", code, "")
+		}
+	}
+	rows := []string{}
+	if len(setupRows) == 1 {
+		// The QR code takes the logo's place on small consoles.
+		rows = append(rows,
+			theme.Title.Render(" __   __          _____"),
+			theme.Title.Render(" \\ \\ / /__  _   _| ____|_   _  ___"),
+			theme.Title.Render("  \\ V / _ \\| | | |  _| | | | |/ _ \\"),
+			theme.Title.Render("   | | (_) | |_| | |___| |_| |  __/"),
+			theme.Title.Render("   |_|\\___/ \\__, |_____|\\__, |\\___|"),
+			theme.Title.Render("             |___/       |___/"), "")
+	} else {
+		rows = append(rows, theme.Title.Render("YouEye"), "")
+	}
+	rows = append(rows, statusStyle.Render(status))
+	if !snapshot.Complete && snapshot.Detail != "" && snapshot.Stage != "needs_attention" {
+		rows = append(rows, snapshot.Detail)
+	}
+	rows = append(rows, "")
+	rows = append(rows, setupRows...)
+	rows = append(rows,
 		fmt.Sprintf("System      slot %s · image %s", valueOr(snapshot.Slot, "?"), valueOr(snapshot.ImageVersion, "unknown")),
 		fmt.Sprintf("Network     %s", valueOr(snapshot.NetworkPhase, "starting")),
-	}
+	)
 	if snapshot.OverlayArtifact != "" {
 		commit := snapshot.OverlayCommit
 		if len(commit) > 12 {
@@ -307,6 +345,8 @@ func readApplianceConsoleSnapshot() applianceConsoleSnapshot {
 	if interfaces, err := netInterfaces(); err == nil {
 		snapshot.IPv4Address = interfaces
 	}
+	snapshot.LocalName = consoleLocalName(time.Now())
+	snapshot.CAFingerprint = consoleCAFingerprint(filepath.Join(root, "tls/root.crt"))
 	return snapshot
 }
 

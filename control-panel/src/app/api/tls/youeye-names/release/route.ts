@@ -11,6 +11,7 @@ import {
   updateNamesLifecycleState,
 } from '@/lib/youeye-names/state';
 import { settingsService } from '@/lib/settings';
+import { spineClient } from '@/lib/spine/client';
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -26,7 +27,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'YouEye Names is not active.' }, { status: 409 });
   }
   const settings = await settingsService.getRaw();
-  if (settings.domain === state.fqdn) {
+  // During setup the owner may release a claimed name to choose another; the
+  // saved domain is rewritten when provisioning runs again.
+  const duringSetup = settings.setup_completed !== true;
+  if (!duringSetup && settings.domain === state.fqdn) {
     return NextResponse.json(
       { error: 'Change the server URL away from this YouEye Name before releasing it.' },
       { status: 409 },
@@ -54,10 +58,14 @@ export async function POST(request: NextRequest) {
     await updateNamesLifecycleState((current) => ({
       ...current,
       status: 'released',
+      // A released name keeps no resumable key or CSR.
+      provisioning: null,
       nextCheckAt: null,
       lastBrokerContactAt: new Date().toISOString(),
       lastError: null,
     }));
+    // Provisioning reruns every step for the next name (domain, routes, SSO).
+    if (duringSetup) await spineClient.patchConfig({ setup_steps: {}, setup_step_errors: null, setup_step_times: null });
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: namesErrorMessage(error) }, { status: 503 });

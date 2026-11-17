@@ -13,6 +13,10 @@ sealed_release=${YOUEYE_FIRST_DEPLOY_SEALED_RELEASE:-/usr/lib/youeye/appliance-r
 youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
 incus=${INCUS_BIN:-incus}
 curl_bin=${CURL_BIN:-curl}
+systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
+# The Preparing page (youeye boot setup-page) answers on ports 80/443 through
+# the setup gate's redirect until setup opens.
+setup_page_unit=youeye-setup-page.service
 control_secret=${YOUEYE_CONTROL_SECRET:-/var/lib/youeye/control/.deploy_secret}
 max_attempts=${YOUEYE_FIRST_DEPLOY_MAX_ATTEMPTS:-8}
 
@@ -101,6 +105,7 @@ fi
 # deployment from that Spine, so its boot orchestration is the one that runs.
 if [ -z "${YOUEYE_FIRST_DEPLOY_ADOPTED:-}" ]; then
     current_stage=adopting_spine
+    write_progress adopting_spine "Starting the system service of the installed release" 8
     adopted="$("$youeye" spine adopt)"
     printf '%s\n' "$adopted"
     case "$adopted" in
@@ -110,7 +115,16 @@ if [ -z "${YOUEYE_FIRST_DEPLOY_ADOPTED:-}" ]; then
     esac
 fi
 
+# Running from the newly adopted Spine: the image's seed closed the setup gate
+# and started the Preparing page at boot. Use this Spine's gate rules and page
+# server, so fixes to them ship as Spine releases.
+if [ -n "${YOUEYE_FIRST_DEPLOY_ADOPTED:-}" ]; then
+    $setup_gate close || true
+    $systemctl_bin try-restart --no-block "$setup_page_unit" 2>/dev/null || true
+fi
+
 current_stage=core_convergence
+write_progress core_convergence "Checking the installed System release" 12
 core_convergence="$state_dir/core-convergence.json"
 "$youeye" update core first-boot --policy "$release_policy" --resume-only > "${core_convergence}.tmp"
 chmod 0600 "${core_convergence}.tmp"
@@ -193,12 +207,20 @@ if [ "$core_initialized" != true ]; then
 fi
 
 write_progress setup "Opening first setup after all health gates passed" 98
+# Stopping the page server closes its connections, so browsers reconnect
+# and reach the claim page once the gate is open.
+$systemctl_bin stop "$setup_page_unit" 2>/dev/null || true
+restore_setup_page() {
+    $setup_gate close || true
+    $systemctl_bin start --no-block "$setup_page_unit" 2>/dev/null || true
+}
 if ! $setup_gate open; then
+    restore_setup_page
     exit 1
 fi
 current_stage=https
 if ! "$curl_bin" --fail --silent --show-error --insecure --max-time 30 --output /dev/null https://127.0.0.1/; then
-    $setup_gate close || true
+    restore_setup_page
     exit 1
 fi
 install -m 0600 /dev/null "$complete"

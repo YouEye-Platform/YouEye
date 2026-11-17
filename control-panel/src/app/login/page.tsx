@@ -2,7 +2,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { LoginForm } from '@/components/auth/login-form';
 import { ApplianceClaim } from '@/components/auth/appliance-claim';
-import { getAuthModeForHost, isApplianceSetupHost } from '@/lib/auth/mode';
+import { getAuthModeForHost, isLocalSetupHost } from '@/lib/auth/mode';
 
 interface LoginPageProps {
   searchParams: Promise<{ error?: string; redirect?: string }>;
@@ -18,7 +18,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const host = headerStore.get('host') || '';
   const params = await searchParams;
 
-  if (isApplianceSetupHost(host)) {
+  if (isLocalSetupHost(host)) {
     return <ApplianceClaim />;
   }
 

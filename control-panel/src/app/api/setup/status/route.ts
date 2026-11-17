@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { getApplianceClaimStatus } from '@/lib/identity/store';
 import { spineClient } from '@/lib/spine/client';
-import { hasRetainedSetupOperation } from '@/lib/setup/lifecycle';
+import { hasRetainedSetupOperation, setupRunActive } from '@/lib/setup/lifecycle';
 import { setupProgressStatus } from '@/lib/setup/progress.mjs';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +16,8 @@ export async function GET() {
     // Completion evidence must include fresh retained steps, which the typed
     // settings cache does not preserve when reconstructing a raw response.
     const [config, claim] = await Promise.all([spineClient.getConfig(), getApplianceClaimStatus()]);
-    return NextResponse.json(setupProgressStatus(config, claim, hasRetainedSetupOperation()), {
+    // `running`: a setup run is executing in this process now (a browser reopening setup follows it).
+    return NextResponse.json({ ...setupProgressStatus(config, claim, hasRetainedSetupOperation()), running: setupRunActive() }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch {

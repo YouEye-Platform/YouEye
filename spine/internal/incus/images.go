@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/spine/internal/progress"
 )
 
 const (
@@ -98,6 +100,7 @@ func EnsureSystemBaseImage() error {
 		return nil
 	}
 
+	progress.Report("incus", "Downloading the Debian container image", 44)
 	fmt.Printf("Base image %s not found locally; copying %s...\n", SystemBaseImageAlias, SystemBaseImageSource)
 	if err := copyBaseImageWithRetry(SystemBaseImageSource, SystemBaseImageAlias, 3); err != nil {
 		fmt.Printf("Official Incus image copy failed; trying verified public mirror fallback...\n")

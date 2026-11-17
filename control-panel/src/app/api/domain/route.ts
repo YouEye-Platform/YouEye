@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { isReservedSetupDomain, RESERVED_SETUP_DOMAIN_ERROR } from '@/lib/auth/setup-names';
 import { checkHealth, ensurePointerInferenceRoutes, getConfiguredDomain, setDomain } from '@/lib/caddy/client';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { settingsService } from '@/lib/settings';
@@ -108,6 +109,9 @@ export async function POST(request: NextRequest) {
         { error: 'Invalid domain format' },
         { status: 400 }
       );
+    }
+    if (isReservedSetupDomain(domain)) {
+      return NextResponse.json({ error: RESERVED_SETUP_DOMAIN_ERROR }, { status: 400 });
     }
 
     const providerConfig = await getByoDnsProviderConfig();

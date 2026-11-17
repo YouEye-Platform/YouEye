@@ -76,6 +76,10 @@ export interface DeploymentEvent {
   deploymentId?: string;
   sequence?: number;
   terminal?: boolean;
+  /** When this step started: set on `running`, carried on its result. */
+  startedAt?: string;
+  /** When this step finished: set on success, error or skipped. */
+  finishedAt?: string;
 }
 
 export type DeploymentJobKind = 'deploy' | 'reconcile';

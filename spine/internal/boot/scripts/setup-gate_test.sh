@@ -36,8 +36,14 @@ export FAKE_NFT_RULES="$tmp/rules"
 
 "$script" close
 test -e "$FAKE_NFT_STATE"
-grep -Fq 'iifname "lo" accept' "$FAKE_NFT_RULES"
-grep -Fq 'tcp dport { 80, 443 } drop' "$FAKE_NFT_RULES"
+grep -Fq 'type nat hook prerouting priority -100; policy accept;' "$FAKE_NFT_RULES"
+grep -Fq 'fib daddr type local tcp dport 80 redirect to :47080' "$FAKE_NFT_RULES"
+grep -Fq 'fib daddr type local tcp dport 443 redirect to :47443' "$FAKE_NFT_RULES"
+# Forwarded traffic (containers to the internet) must never be redirected.
+! grep -Eq '^\s*tcp dport' "$FAKE_NFT_RULES"
+grep -Fq 'type nat hook output priority -100; policy accept;' "$FAKE_NFT_RULES"
+grep -Fq 'ip daddr != 127.0.0.0/8 fib daddr type local tcp dport 443 redirect to :47443' "$FAKE_NFT_RULES"
+! grep -Fq ' drop' "$FAKE_NFT_RULES"
 
 "$script" open
 test ! -e "$FAKE_NFT_STATE"

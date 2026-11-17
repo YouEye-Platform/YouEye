@@ -43,16 +43,24 @@ are the official ones. `GET /v1/readiness` tells setup whether a new name can be
    chosen name (`/v1/human-verification/challenges`). The broker's page opens in an iframe
    (`/enroll/embedded`). Its signed context binds the broker, the box's fingerprint, the chosen name, the box's
    private IP (from Spine), the browser's parent origin and a random session ID, and expires within 5 minutes. The
-   parent origin is checked against the request's actual `Host` (`setup-request.ts`). The result is kept only in
+   parent origin is checked against the request's actual `Host` (`setup-request.ts`). Over plain HTTP the broker
+   (since YouEye-Names 1.10.6) and the box admit only `localhost`, a private IP, or exactly `http://youeye.local` /
+   `http://youeye-<N>.local` on port 80. The box allows 60 s of clock skew on the challenge's expiry. The result is kept only in
    memory. If the iframe cannot load, a standalone page (`/enroll/setup`) is offered, and its short code can be
    pasted back.
    - If the service does not advertise `verified-setup-v1`, setup uses a popup instead (`popup.ts`): one check to
      register the box, then a separate proof for the claim.
-4. **Register and claim.** The CP registers the box with the verified session (`/v1/installs/register`) and claims
-   the exact name and IP with the same session (`/v1/leases/claim`). The human check is never reused for a second
-   name.
-5. **Certificate.** The CP writes the lifecycle record, makes a TLS key and CSR locally (mode `0600`), requests the
-   certificate and waits up to 10 minutes for it. A retry or restart reuses the same key, CSR and request.
+4. **Names job starts right after the check** (`POST /api/setup/names/start`, `lib/youeye-names/provision.ts`). The
+   Turnstile token lives 300 s and is single-use, so the claim happens at once: the wizard asks for the address and
+   the human check *before* the title, and the certificate is issued while the owner designs the title. The job
+   accepts the terms, registers the box with the verified session (`/v1/installs/register`), claims the exact name
+   and IP with the same session (`/v1/leases/claim`), makes the TLS key and CSR locally (mode `0600`), requests the
+   certificate and returns; it keeps waiting in the background (one job per CP process). The human check is never
+   reused for a second name. `GET /api/setup/names/status` returns `{name, fqdn, stage, running, error}`; the title
+   and confirm steps show it.
+5. **Provisioning only activates.** Setup's `names` step awaits or resumes the job for the chosen name; it never
+   claims or requests again. A retry or restart reuses the same key, CSR and request (the job asks the broker for
+   an existing certificate before requesting).
 6. **Activate.** The certificate's names, key, broker fingerprint, provider and dates are checked before Caddy loads
    it. A first heartbeat is sent at once.
 7. **Check from the browser.** The setup-complete page opens the new name from the owner's browser to prove that
@@ -60,11 +68,25 @@ are the official ones. `GET /v1/readiness` tells setup whether a new name can be
 
 No private install key, TLS key or human-check token ever reaches browser code.
 
+### Leaving, coming back, restarting
+
+| Situation | What happens |
+|---|---|
+| The owner closes the browser after the check | The job keeps running in the CP; the certificate is stored (`lifecycle.json` `healthy`) and Caddy loads it. The box stays "not set up". |
+| The owner comes back (any browser, IP or `youeye.local`) | `GET /api/tls/youeye-names/reuse` reports this box's lease while setup is open; the address step offers **Continue with <name>** (no preview, no new check) or **Choose a different name**. |
+| A different name | Confirm, then the signed `POST /api/tls/youeye-names/release` frees the old lease (the broker keeps its 30-day erasure horizon) and resets the setup steps; then the normal preview, check and claim. Going back from the title to the address step is the same path: the name is locked once claimed. |
+| Restart while the job runs | On CP start, with setup open and the lease `provisioning`, the job resumes at once (`resumeNamesJobAtStart`). |
+| Restart during provisioning | The wizard reopens at provisioning and reruns only unfinished steps ([setup-readiness.md](setup-readiness.md)). |
+| Box wiped before setup finished | The name stays held at the broker (no automatic reclaim), as with any reinstall without a saved Names bundle. |
+
+Timing: the CP logs `[youeye-names] certificate for <name> issued in N s` (`journalctl -u youeye-control` in
+`youeye-control`); `setup_step_times.names` in `youeye.yaml` shows how long provisioning waited.
+
 ## Maintenance
 
 `maintenance.ts` runs in the Control Panel 90–150 seconds after start, then every 6 hours:
 
-- resume an interrupted setup from its recorded stage;
+- resume an interrupted setup from its recorded stage (the setup-time job resumes at once, above);
 - check that the certificate Caddy serves matches `lifecycle.json`;
 - heartbeat (`/v1/leases/<name>/heartbeat`) with the box's primary IP, certificate fingerprint and expiry, version
   and Caddy health;

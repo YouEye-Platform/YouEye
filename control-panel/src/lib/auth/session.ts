@@ -12,6 +12,7 @@ import { randomBytes } from 'crypto';
 import { getUserByUsername, isIdentitySessionActiveForUser, isUserTokenInvalidated } from '@/lib/identity/store';
 import { identitySessionFromCookie, SESSION_COOKIE as ID_SESSION_COOKIE } from '@/lib/identity/tokens';
 import { hasAppServiceAuthHeaders } from '../../../../shared/app-service-credential';
+import { secureCookieFor } from './mode';
 
 // Configuration
 const SESSION_COOKIE = 'ye-session';
@@ -199,30 +200,15 @@ export async function getSession(): Promise<SessionPayload | null> {
 }
 
 /**
- * Set session cookies
+ * Set session cookies. `Secure` follows `secureCookieFor`: always on named hosts, by scheme on a local setup host.
  */
-function shouldUseSecureCookies(request?: Request): boolean {
-  if (process.env.SECURE_COOKIES === 'false') return false;
-  if (!request) return true;
-
-  const forwardedProto = request.headers.get('x-forwarded-proto');
-  if (forwardedProto) return forwardedProto === 'https';
-
-  try {
-    const url = new URL(request.url);
-    return url.protocol === 'https:';
-  } catch {
-    return true;
-  }
-}
-
 export async function setSessionCookies(
   token: string,
   csrfToken: string,
   options: { request?: Request; maxAge?: number } = {}
 ): Promise<void> {
   const cookieStore = await cookies();
-  const secure = shouldUseSecureCookies(options.request);
+  const secure = secureCookieFor(options.request);
   const sameSite = secure ? 'none' : 'lax';
   const sessionAge = options.maxAge ?? SSO_SESSION_DURATION;
   

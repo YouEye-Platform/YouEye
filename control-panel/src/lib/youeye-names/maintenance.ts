@@ -4,6 +4,7 @@ import { withIndependentCopyExclusion } from '@/lib/market/update-admission';
 import { tlsStorage } from '@/lib/acme/storage';
 import * as caddy from '@/lib/caddy/client';
 import { spineClient } from '@/lib/spine/client';
+import { settingsService } from '@/lib/settings';
 import {
   getCertificateTerms,
   getCurrentCertificate,
@@ -17,31 +18,13 @@ import {
   readNamesLifecycleState,
   updateNamesLifecycleState,
   writeNamesLifecycleState,
-  type NamesLifecycleState,
 } from './state';
-import { discoverNamesService, validateManagedName } from './service';
+import { followNamesJob, markNamesFailure } from './provision';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const RENEW_BEFORE_MS = 30 * 24 * 60 * 60 * 1000;
 let loopStarted = false;
 let checkInFlight: Promise<void> | null = null;
-
-async function markFailure(error: unknown): Promise<void> {
-  const brokerError = error instanceof NamesBrokerError ? error : null;
-  await updateNamesLifecycleState((state) => ({
-    ...state,
-    status: state.provisioning ? 'provisioning' : 'attention',
-    nextCheckAt: new Date(
-      Date.now() + Math.max(15 * 60_000, (brokerError?.retryAfterSeconds || 0) * 1000),
-    ).toISOString(),
-    lastError: {
-      code: brokerError?.code || (error instanceof Error ? error.message : 'maintenance_failed'),
-      requestId: brokerError?.requestId || null,
-      retryAfterSeconds: brokerError?.retryAfterSeconds || null,
-      at: new Date().toISOString(),
-    },
-  }));
-}
 
 async function waitForCertificate(name: string) {
   const deadline = Date.now() + 10 * 60_000;
@@ -55,64 +38,6 @@ async function waitForCertificate(name: string) {
   throw new Error('certificate_not_ready_before_renewal_deadline');
 }
 
-async function resumeProvisioning(state: NamesLifecycleState): Promise<void> {
-  const provisioning = state.provisioning;
-  if (!provisioning?.privateKeyPem || !provisioning.csrPem || !state.termsVersion) {
-    throw new Error('youeye_names_provisioning_material_missing');
-  }
-  const service = await discoverNamesService();
-  if (
-    service.id !== state.service.id ||
-    service.canonicalOrigin !== state.service.canonicalOrigin ||
-    service.managedZone !== state.service.managedZone
-  ) throw new Error('youeye_names_provisioning_service_mismatch');
-  validateManagedName(service, state.name, state.fqdn, `*.${state.fqdn}`);
-  await requestCertificate(state.name, provisioning.csrPem, state.termsVersion, true);
-  await updateNamesLifecycleState((current) => ({
-    ...current,
-    provisioning: current.provisioning ? {
-      ...current.provisioning,
-      stage: 'certificate_waiting',
-      lastAttemptAt: new Date().toISOString(),
-    } : current.provisioning,
-  }));
-  const issued = await waitForCertificate(state.name);
-  const validated = validateCertificateMaterial({
-    certificateChain: issued.certificateChain,
-    privateKeyPem: provisioning.privateKeyPem,
-    fqdn: state.fqdn,
-  });
-  if (
-    validated.brokerFingerprint !== issued.fingerprint ||
-    !sameCertificateInstant(validated.expiresAt, issued.expiresAt)
-  ) throw new Error('youeye_names_certificate_metadata_mismatch');
-  await caddy.loadExternalCert(validated.certificateChain, provisioning.privateKeyPem, [...validated.domains]);
-  await tlsStorage.storeCert({
-    mode: 'manual',
-    certPem: validated.certificateChain,
-    keyPem: provisioning.privateKeyPem,
-    issuer: 'YouEye Names',
-    domains: [...validated.domains],
-    expiresAt: validated.expiresAt,
-    issuedAt: validated.issuedAt,
-  });
-  const completedAt = new Date().toISOString();
-  await writeNamesLifecycleState({
-    ...state,
-    status: 'healthy',
-    provisioning: null,
-    certificate: {
-      fingerprint: validated.fingerprint,
-      provider: issued.provider,
-      issuedAt: validated.issuedAt,
-      expiresAt: validated.expiresAt,
-    },
-    lastBrokerContactAt: completedAt,
-    nextCheckAt: new Date(Date.now() + CHECK_INTERVAL_MS).toISOString(),
-    lastError: null,
-  });
-}
-
 /** Run one lease heartbeat and, when due, an atomic certificate replacement. */
 export async function runNamesMaintenance(): Promise<void> {
   if (checkInFlight) return checkInFlight;
@@ -122,7 +47,7 @@ export async function runNamesMaintenance(): Promise<void> {
 
     try {
       if (state.status === 'provisioning') {
-        await resumeProvisioning(state);
+        await followNamesJob();
         return;
       }
       if (!state.certificate) throw new Error('youeye_names_certificate_state_missing');
@@ -224,7 +149,7 @@ export async function runNamesMaintenance(): Promise<void> {
         lastError: null,
       }));
     } catch (error) {
-      await markFailure(error);
+      await markNamesFailure(error);
       throw error;
     }
   });
@@ -235,9 +160,24 @@ export async function runNamesMaintenance(): Promise<void> {
   }
 }
 
+/**
+ * A Names job interrupted by a restart during setup resumes at once (same key,
+ * CSR and request) instead of after the first maintenance delay.
+ */
+export async function resumeNamesJobAtStart(): Promise<boolean> {
+  const state = await readNamesLifecycleState();
+  if (state?.status !== 'provisioning') return false;
+  if ((await settingsService.getRaw()).setup_completed === true) return false;
+  await followNamesJob();
+  return true;
+}
+
 export function startNamesMaintenanceLoop(): void {
   if (loopStarted || process.env.YOUEYE_NAMES_MAINTENANCE_ENABLED === 'false') return;
   loopStarted = true;
+  void resumeNamesJobAtStart().catch((error) => {
+    console.error('[youeye-names/maintenance] resuming the setup certificate failed:', error instanceof Error ? error.message : 'unknown');
+  });
   const initialDelay = 90_000 + Math.floor(Math.random() * 60_000);
   setTimeout(() => {
     void runNamesMaintenance().catch((error) => {

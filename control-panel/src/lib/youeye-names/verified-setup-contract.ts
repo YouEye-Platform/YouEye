@@ -10,6 +10,8 @@ export type VerifiedSetupResult = {
   setupSession: string; expiresAt: string;
   binding: { installFingerprint: string; name: string; currentIp: string };
 };
+/** The broker sets expiresAt from its own clock (+300 s); a box clock running a little slow must not reject it. */
+export const VERIFIED_SETUP_CLOCK_SKEW_MS = 60_000;
 export function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   const actual=Object.keys(value).sort(), expected=[...keys].sort();
   return actual.length===expected.length && actual.every((key,index)=>key===expected[index]);
@@ -27,7 +29,7 @@ export function validVerifiedSetupChallenge(value: VerifiedSetupChallenge, paren
       /^[A-Za-z0-9_-]{43}$/.test(value.publicKey) && /^[A-Za-z0-9_-]{43}$/.test(value.installFingerprint) &&
       /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value.name) && typeof value.currentIp==='string' && value.currentIp.length<=64 &&
       typeof value.context==='string' && value.context.length>=20 && value.context.length<=4096 && /^[A-Za-z0-9_-]{1,64}$/.test(value.cdata) &&
-      Number.isFinite(expiry) && expiry>Date.now() && expiry<=Date.now()+300000;
+      Number.isFinite(expiry) && expiry>Date.now() && expiry<=Date.now()+300000+VERIFIED_SETUP_CLOCK_SKEW_MS;
   } catch { return false; }
 }
 export function parseVerifiedSetupResult(value: unknown, challenge: VerifiedSetupChallenge): VerifiedSetupResult | null {

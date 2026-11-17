@@ -102,8 +102,18 @@ function queuePersist(runtime: RuntimeJob): void {
 
 function appendEvent(runtime: RuntimeJob, event: DeploymentEvent): void {
   const sequence = (runtime.state.events.at(-1)?.sequence ?? 0) + 1;
+  const at = new Date().toISOString();
+  // Step timing: a step starts at its first `running` event and finishes at its result.
+  const startedAt = runtime.state.events.find((earlier) =>
+    !earlier.terminal && earlier.step === event.step && earlier.status === 'running')?.startedAt;
+  const timing = event.terminal
+    ? { finishedAt: at }
+    : event.status === 'running'
+      ? { startedAt: startedAt ?? at }
+      : { startedAt, finishedAt: at };
   runtime.state.events.push({
     ...event,
+    ...timing,
     detail: event.detail ? sanitizeDeploymentDetail(event.detail) : undefined,
     deploymentId: runtime.state.id,
     sequence,

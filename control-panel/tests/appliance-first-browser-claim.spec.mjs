@@ -52,12 +52,12 @@ test('claim and resume are local, origin-bound, CSRF protected, and rate limited
   const route = read('src/app/api/appliance/claim/route.ts');
   const mode = read('src/lib/auth/mode.ts');
 
-  assert.match(route, /isApplianceSetupHost/);
+  assert.match(route, /isLocalSetupHost/);
   assert.match(route, /origin === `\$\{protocol\}:\/\/\$\{host\}`/);
   assert.match(route, /timingSafeEqual/);
   assert.match(route, /checkRateLimit/);
   assert.match(route, /verifyApplianceOwner/);
-  assert.match(mode, /port !== '3000'/);
+  assert.match(mode, /port === '3000'\) return false/);
 });
 
 test('setup session is scoped and setup mutations use a durable single-writer lease', () => {
@@ -129,7 +129,8 @@ test('managed onboarding uses automatic readiness and retains protected backup r
 
   assert.match(setup, /SetupReadiness/);
   assert.doesNotMatch(setup, /SetupApplianceUpdate/);
-  assert.match(setup, /handleReady = useCallback\(\(\) => goToStep\(-1\)/);
+  // After readiness: new or restore, unless a restart interrupted provisioning.
+  assert.match(setup, /handleReady = useCallback\(\(\) => goToStep\(resumeProvisioning\.current \? 4 : -1\)/);
   assert.match(setup, /SetupRestore/);
   // Setup never selects or stages a host System; that source is host-owned.
   assert.equal(existsSync(join(root, 'src/components/setup/SetupApplianceUpdate.tsx')), false);

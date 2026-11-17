@@ -22,6 +22,25 @@ function readMarker(file: string): Marker | null {
   } finally { closeSync(fd); }
 }
 
+/**
+ * Setup runs executing in this Control Panel process right now. The retained marker also survives a crash, so it
+ * cannot tell a running setup from an interrupted one; a browser that reopens setup follows a running one and
+ * resubmits an interrupted one.
+ */
+const runs = globalThis as typeof globalThis & { __youeyeSetupRunsActive?: number };
+export function beginSetupRun(): () => void {
+  runs.__youeyeSetupRunsActive = (runs.__youeyeSetupRunsActive ?? 0) + 1;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    runs.__youeyeSetupRunsActive = Math.max(0, (runs.__youeyeSetupRunsActive ?? 1) - 1);
+  };
+}
+export function setupRunActive(): boolean {
+  return (runs.__youeyeSetupRunsActive ?? 0) > 0;
+}
+
 /** Read-only completion evidence; an unsafe or unfinished marker never settles. */
 export function hasRetainedSetupOperation(directory = process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR ?? DEFAULT_DIRECTORY): boolean {
   if (!path.isAbsolute(directory)) throw new Error('Unsafe retained setup operation directory');

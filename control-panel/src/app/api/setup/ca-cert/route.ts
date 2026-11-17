@@ -5,23 +5,19 @@
  * Returns the PEM file for browser/OS trust store installation.
  */
 
-import { execShell } from '@/lib/incus/server';
+import { readCaddyRootCertificate } from '@/lib/caddy/root-ca';
 
 export async function GET() {
   try {
-    const result = await execShell(
-      'youeye-caddy',
-      'cat /data/caddy/pki/authorities/local/root.crt',
-      { timeout: 10000 }
-    );
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
+    const certificate = await readCaddyRootCertificate();
+    if (!certificate) {
       return new Response('CA certificate not available', { status: 404 });
     }
 
-    return new Response(result.stdout, {
+    return new Response(certificate, {
       headers: {
-        'Content-Type': 'application/x-pem-file',
+        // The CA MIME type makes iOS and Android offer to install it; the body stays PEM.
+        'Content-Type': 'application/x-x509-ca-cert',
         'Content-Disposition': 'attachment; filename="youeye-ca.crt"',
         'Cache-Control': 'no-cache',
       },

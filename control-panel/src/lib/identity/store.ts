@@ -430,6 +430,20 @@ export async function verifyApplianceOwner(username: string, password: string): 
   return rows[0] ? user : null;
 }
 
+/**
+ * Whether a setup session still belongs to this box's owner. After a reset
+ * (snapshot rollback, reinstall at the same address) an old setup cookie can
+ * outlive the claim it was issued for; that browser must claim or sign in again.
+ */
+export async function setupOwnerIsCurrent(ownerId: string): Promise<boolean> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ current: boolean }>(`
+    SELECT true AS current FROM identity_appliance_claim
+    WHERE singleton = true AND owner_user_id = ${sql(ownerId)}
+  `);
+  return Boolean(rows[0]?.current);
+}
+
 export async function acquireSetupOperation(ownerId: string, sessionId: string): Promise<boolean> {
   await ensureIdentitySchema();
   const rows = await queryRows<{ acquired: boolean }>(`

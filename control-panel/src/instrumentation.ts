@@ -60,6 +60,11 @@ export async function register() {
       console.error("[instrumentation] app-network bootstrap could not be proved; reconciliation will fail closed");
     }
   
+    // Port 80 on the live Caddy: the setup server (and no Caddy redirects) or Caddy's own
+    // redirects, never neither. Non-fatal; retries while Caddy is not up.
+    const { startSetupHttpServerConvergence } = await import("@/lib/caddy/setup-http-startup");
+    void startSetupHttpServerConvergence();
+
     // Durable update recovery must precede watchdog, queue and install reconciliation.
     try {
       const { reconcileAppUpdateOperations } = await import("@/lib/market/update-operations");

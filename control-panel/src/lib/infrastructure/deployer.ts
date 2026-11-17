@@ -22,10 +22,10 @@ import { spineClient } from '../spine/client';
 import { deployOCIContainer, containerExists } from './oci-deployer';
 import { getSystemStaticIP } from '../incus/static-ips';
 import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer } from './lxd-deployer';
-import { installPointerRelease } from '../pointer/initial-install';
-import { readPointerReleaseState, savePointerReleaseState } from '../pointer/release-metadata';
+import { activateBuiltPointerRelease, buildPointerRelease, installPointerRelease, promoteBuiltPointerRelease } from '../pointer/initial-install';
+import { builtPointerRelease, pointerRelease, readPointerReleaseState, savePointerReleaseState } from '../pointer/release-metadata';
 import { resolveNativeProduct, stageVerifiedProductArtifact } from '../market/native-artifact';
-import { publishProductProjection, verifyProductProjection } from '../releases/product-projection';
+import { productRuntimeIdentity, publishProductProjection, verifyProductProjection } from '../releases/product-projection';
 import {
   repairThenVerify,
   waitForPostgres,
@@ -40,8 +40,10 @@ import {
   ensureHeaderStrippingRoute,
   ensurePingRoute,
   ensurePointerInferenceRoutes,
+  ensureSetupHttpServer,
   setDefaultRoute,
 } from '../caddy/client';
+import { controlPanelCaddyfile } from '../caddy/caddyfile';
 import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
@@ -222,6 +224,57 @@ async function deployPointerContainerFromConfiguredSource(replaceExisting = fals
   });
 }
 
+/**
+ * First boot: deploy the channel's verified Pointer with its service disabled
+ * and record the stage `built`, so setup only configures and starts it. A
+ * runtime with a matching built or installed record is kept; any other
+ * existing runtime (an interrupted build) is replaced.
+ */
+export async function buildPointerForSetup(): Promise<'built' | 'kept'> {
+  let replaceExisting = false;
+  if (await containerExists('youeye-pointer')) {
+    const state = await readPointerReleaseState();
+    const record = (builtPointerRelease(state) && state.built) || (pointerRelease(state) && state.installed) || null;
+    if (record && await productRuntimeIdentity('youeye-pointer') === record.runtimeUUID) {
+      await deferPointerServiceUntilSetup();
+      return 'kept';
+    }
+    replaceExisting = true;
+  }
+  let stagingDirectory: string | undefined;
+  await buildPointerRelease({
+    read: readPointerReleaseState,
+    resolve: () => resolveNativeProduct('pointer'),
+    stage: async selected => {
+      stagingDirectory = await mkdtemp(join(tmpdir(), 'youeye-pointer-install-'));
+      return stageVerifiedProductArtifact(stagingDirectory, 'youeye-pointer', selected);
+    },
+    deploy: async artifact => {
+      await preparePointerStorage();
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), { exposeHostPort: false }, artifact, replaceExisting);
+      if (!installed) throw new Error('Pointer runtime appeared during installation');
+    },
+    defer: () => deferPointerServiceUntilSetup(),
+    identity: () => productRuntimeIdentity('youeye-pointer'),
+    save: savePointerReleaseState,
+    cleanup: async () => { if (stagingDirectory) await rm(stagingDirectory, {recursive:true,force:true}); },
+  });
+  return 'built';
+}
+
+/** Configure the runtime built at first boot; false when there is none to use. */
+async function activateBuiltPointer(): Promise<boolean> {
+  return activateBuiltPointerRelease({
+    read: readPointerReleaseState,
+    identity: () => productRuntimeIdentity('youeye-pointer'),
+    configure: () => configurePointerService(),
+    healthy: () => waitForPointer(),
+    publish: receipt => publishProductProjection('youeye-pointer', receipt),
+    verify: (receipt, runtimeUUID) => verifyProductProjection('youeye-pointer', receipt, runtimeUUID),
+    save: savePointerReleaseState,
+  });
+}
+
 async function ensurePointerApexRoute(): Promise<void> {
   const settings = await settingsService.getRaw();
   if (!settings.domain) throw new Error('YouEye domain is unavailable for the AI API route');
@@ -256,14 +309,24 @@ export async function configurePointerForPlatform(
 
   const exists = await containerExists('youeye-pointer');
   const provenance = exists ? await getCoreProvenance('app:pointer') : null;
-  if (exists && !provenance) {
-    // A pre-fix bootstrap may have created the container, then failed before
-    // managed configuration and provenance committed. Recreate only that
-    // unproven runtime from the exact pinned channel; its database and secrets
-    // remain in persistent platform storage.
+  if (exists && !provenance && await activateBuiltPointer()) {
+    // Built at first boot: configured, health-checked and published above.
+  } else if (exists && !provenance) {
+    // No built or installed record for this runtime: an interrupted first-boot
+    // build or an older bootstrap. Recreate only that unproven runtime from the
+    // exact pinned channel; its database and secrets remain in persistent
+    // platform storage.
     await deployPointerContainerFromConfiguredSource(true);
   } else if (exists) {
     await configurePointerService(oldIssuer);
+    // A runtime still recorded `built` (activation stopped after publishing) becomes `installed` here.
+    await promoteBuiltPointerRelease({
+      read: readPointerReleaseState,
+      identity: () => productRuntimeIdentity('youeye-pointer'),
+      healthy: () => waitForPointer(),
+      verify: (receipt, runtimeUUID) => verifyProductProjection('youeye-pointer', receipt, runtimeUUID),
+      save: savePointerReleaseState,
+    });
   } else {
     await deployPointerContainerFromConfiguredSource();
   }
@@ -340,26 +403,7 @@ async function _deployInfrastructureInner(
     // per-app bridge dnsmasq first and miss system-container names.
     const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
     const adminAddress = await caddyAdminAddress();
-    const caddyfile = [
-      '{',
-      `    admin ${adminAddress} {`,
-      // Off loopback, Caddy accepts only Hosts listed here; `*` matches nothing (every request got 403).
-      `        origins ${adminAddress}`,
-      '    }',
-      '    on_demand_tls {',
-      `        ask http://${controlIP}:3000/api/setup/config`,
-      '    }',
-      '}',
-      '',
-      ':443 {',
-      '    tls {',
-      '        on_demand',
-      '        issuer internal',
-      '    }',
-      `    reverse_proxy ${controlIP}:3000`,
-      '}',
-      '',
-    ].join('\n');
+    const caddyfile = controlPanelCaddyfile(adminAddress, controlIP);
     const b64 = Buffer.from(caddyfile).toString('base64');
     const reload = await execShell('youeye-caddy',
       `echo '${b64}' | base64 -d > /etc/caddy/Caddyfile && caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
@@ -418,13 +462,25 @@ async function _deployInfrastructureInner(
   }
 
   // ─── Step 5: Pointer AI service ──────────────────────────
+  const settings = await settingsService.getRaw().catch((err) => failDeployment(onEvent, 5, 'AI service deployment failed', err));
+  if (!hasPointerIdentitySettings(settings)) {
+    // First boot: build Pointer now so setup only configures and starts it.
+    // A failed build never fails first deployment: setup builds it instead
+    // (configurePointerForPlatform), exactly as before first-boot builds.
+    emit(onEvent, 5, 'running', 'Building the YouEye AI service...');
+    try {
+      const result = await buildPointerForSetup();
+      emit(onEvent, 5, 'success', result === 'built'
+        ? 'YouEye AI service built; it starts when setup configures the platform domain'
+        : 'YouEye AI service already built; it starts when setup configures the platform domain');
+    } catch (err) {
+      console.error('[deploy] YouEye AI service build deferred to setup:', sanitizeDeploymentDetail(err));
+      emit(onEvent, 5, 'skipped', 'YouEye AI service build deferred until setup configures the platform domain', String(err instanceof Error ? err.message : err));
+    }
+    return;
+  }
   emit(onEvent, 5, 'running', 'Deploying YouEye AI service...');
   try {
-    const settings = await settingsService.getRaw();
-    if (!hasPointerIdentitySettings(settings)) {
-      emit(onEvent, 5, 'success', 'YouEye AI service deferred until setup configures the platform domain');
-      return;
-    }
     const result = await repairThenVerify(
       'YouEye AI service',
       (stage) => waitForPointer(stage === 'initial' ? 10_000 : 120_000),
@@ -577,26 +633,7 @@ export async function reconcileInfrastructure(
 
       const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
       const adminAddress = await caddyAdminAddress();
-      const caddyfile = [
-        '{',
-        `    admin ${adminAddress} {`,
-        // Off loopback, Caddy accepts only Hosts listed here; `*` matches nothing (every request got 403).
-        `        origins ${adminAddress}`,
-        '    }',
-        '    on_demand_tls {',
-        `        ask http://${controlIP}:3000/api/setup/config`,
-        '    }',
-        '}',
-        '',
-        ':443 {',
-        '    tls {',
-        '        on_demand',
-        '        issuer internal',
-        '    }',
-        `    reverse_proxy ${controlIP}:3000`,
-        '}',
-        '',
-      ].join('\n');
+      const caddyfile = controlPanelCaddyfile(adminAddress, controlIP);
       const b64 = Buffer.from(caddyfile).toString('base64');
       const reload = await execShell('youeye-caddy',
         `echo '${b64}' | base64 -d > /etc/caddy/Caddyfile && caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
@@ -618,6 +655,7 @@ export async function reconcileInfrastructure(
       if (await ensureAdminListenerPinned()) console.log('[Caddy] Admin API moved to its static incusbr0 address');
       await ensurePingRoute('youeye-control', 3000);
       await ensureHeaderStrippingRoute();
+      await ensureSetupHttpServer('youeye-control', 3000);
       remit(3, 'skipped', 'Caddy already running and required routes are verified');
     } catch (err) {
       failReconcile(3, 'Caddy is running but required routes could not be verified', err);

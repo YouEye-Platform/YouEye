@@ -31,6 +31,16 @@ import { incusDownloadFile } from '@/lib/incus/server';
 import { waitForIncusReady } from '@/lib/incus/readiness';
 import { isUsableIPv4 } from '@/lib/incus/ipv4';
 import { containerExists } from '@/lib/infrastructure/oci-deployer';
+import {
+  applySetupHttpServer,
+  canonicalJSON,
+  internalIssuer,
+  mainServer,
+  mainServerName,
+  routeServers,
+  SETUP_HTTP_SERVER,
+  STRIPPED_REQUEST_HEADERS,
+} from './servers';
 
 /**
  * Default Caddy admin API URL
@@ -579,8 +589,7 @@ export async function getRoutes(): Promise<ProxyRoute[]> {
   const config = await getConfig();
   const routes: ProxyRoute[] = [];
 
-  const servers = config.apps?.http?.servers || {};
-  for (const server of Object.values(servers)) {
+  for (const server of routeServers(config)) {
     for (const route of server.routes || []) {
       const proxyRoute = routeToProxyRoute(route);
       if (proxyRoute) {
@@ -635,23 +644,25 @@ function findDuplicateRoute(routes: CaddyRoute[], hostname?: string, path?: stri
 }
 
 /**
- * Ensure server has proper HTTPS configuration
- * Fixes servers that were created with only HTTP listener
- * Also enables HTTP→HTTPS redirect via automatic_https
+ * Ensure the main server has proper HTTPS configuration.
+ * Fixes servers that were created with only an HTTP listener. When the config has
+ * the :80 setup server (`servers.ts`), it owns port 80 and redirects named hosts
+ * to HTTPS itself, so Caddy's automatic redirects are off. Without it (a box set
+ * up before the setup server existed, until `ensureSetupHttpServer` runs), Caddy's
+ * own redirects stay on, so `http://<name>` still reaches HTTPS.
  */
-function ensureHTTPSConfig(server: HTTPServer): void {
+function ensureHTTPSConfig(config: CaddyConfig, server: HTTPServer): void {
   // Ensure listen array exists before checking
   if (!server.listen) server.listen = [];
 
-  // Only listen on :443 — Caddy auto-creates a redirect server on :80
-  // If we explicitly listen on :80, Caddy serves routes there instead of redirecting
+  // Only listen on :443; :80 is the setup server's (or Caddy's redirect server's).
   const has443 = server.listen.some(l => l === ':443' || l.endsWith(':443'));
   
   if (!has443) {
     server.listen.unshift(':443');
   }
   
-  // Remove :80 from listen array if present (breaks automatic HTTP→HTTPS redirect)
+  // Remove :80 from listen array if present
   server.listen = server.listen.filter(l => l !== ':80' && !l.endsWith(':80'));
   
   // Ensure tls_connection_policies exists (required for Caddy to enable HTTPS)
@@ -659,11 +670,13 @@ function ensureHTTPSConfig(server: HTTPServer): void {
     server.tls_connection_policies = [{}];
   }
   
-  // Enable HTTP→HTTPS redirect (Caddy auto-creates redirect server on port 80)
-  if (!server.automatic_https) {
-    server.automatic_https = {};
+  if (config.apps?.http?.servers?.[SETUP_HTTP_SERVER]) {
+    if (!server.automatic_https) server.automatic_https = {};
+    server.automatic_https.disable_redirects = true;
+  } else if (server.automatic_https?.disable_redirects) {
+    delete server.automatic_https.disable_redirects;
+    if (Object.keys(server.automatic_https).length === 0) delete server.automatic_https;
   }
-  server.automatic_https.disable_redirects = false;
 }
 
 /**
@@ -756,7 +769,7 @@ function ensureTLSSubject(config: CaddyConfig, hostname: string): void {
   if (!internalPolicy) {
     internalPolicy = {
       subjects: [],
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     };
     config.apps.tls.automation.policies.push(internalPolicy);
   }
@@ -824,17 +837,11 @@ export async function addRoute(data: RouteFormData): Promise<{ route: ProxyRoute
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
   
-  if (!config.apps.http.servers.srv0) {
-    console.log('[Caddy] Creating new server srv0');
-    config.apps.http.servers.srv0 = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
-  }
-  
+  const serverName = mainServerName(config);
+  const server = mainServer(config);
+
   // Ensure server has HTTPS properly configured (fix existing servers)
-  ensureHTTPSConfig(config.apps.http.servers.srv0);
+  ensureHTTPSConfig(config, server);
   
   // If hostname provided, ensure TLS automation includes it
   if (data.hostname) {
@@ -842,7 +849,7 @@ export async function addRoute(data: RouteFormData): Promise<{ route: ProxyRoute
   }
 
   // Filter out default file_server routes that would catch all requests
-  const existingRoutes = filterDefaultRoutes(config.apps.http.servers.srv0.routes || []);
+  const existingRoutes = filterDefaultRoutes(server.routes || []);
   
   // Check for duplicate route (same hostname + path)
   const { normalized: normalizedPath } = normalizePathPattern(data.path);
@@ -859,16 +866,16 @@ export async function addRoute(data: RouteFormData): Promise<{ route: ProxyRoute
   
   // Add new route and sort all routes by specificity
   const allRoutes = [route, ...existingRoutes];
-  config.apps.http.servers.srv0.routes = sortRoutes(allRoutes);
+  server.routes = sortRoutes(allRoutes);
   
-  console.log(`[Caddy] Total routes after add: ${config.apps.http.servers.srv0.routes.length}`);
+  console.log(`[Caddy] Total routes after add: ${server.routes.length}`);
 
   // Apply configuration atomically via /load endpoint
   await setConfig(config);
   
   // Verify the route was applied
   const verifyConfig = await getConfig();
-  const appliedRoutes = verifyConfig.apps?.http?.servers?.srv0?.routes || [];
+  const appliedRoutes = verifyConfig.apps?.http?.servers?.[serverName]?.routes || [];
   const routeApplied = appliedRoutes.some(r => r['@id'] === route['@id']);
   
   if (!routeApplied) {
@@ -886,8 +893,7 @@ export async function addRoute(data: RouteFormData): Promise<{ route: ProxyRoute
 export async function removeRoute(id: string): Promise<void> {
   const config = await getConfig();
 
-  const servers = config.apps?.http?.servers || {};
-  for (const server of Object.values(servers)) {
+  for (const server of routeServers(config)) {
     server.routes = (server.routes || []).filter(r => r['@id'] !== id);
   }
 
@@ -905,7 +911,7 @@ export async function updateRoute(id: string, data: RouteFormData): Promise<{ ro
 /**
  * Generate initial configuration with internal TLS (self-signed certificates)
  * This creates a minimal working Caddy config ready for proxy routes.
- * Only listens on :443 — Caddy auto-creates HTTP→HTTPS redirect on :80.
+ * Only listens on :443; `setDefaultRoute` adds the :80 setup server.
  */
 export function generateInitialConfig(hosts: string[]): CaddyConfig {
   // Filter out invalid hosts (IPs and local domains get self-signed anyway)
@@ -920,9 +926,9 @@ export function generateInitialConfig(hosts: string[]): CaddyConfig {
             listen: [':443'],
             routes: [],
             tls_connection_policies: [{}],
-            // Automatic HTTPS settings
+            // The :80 setup server redirects named hosts to HTTPS.
             automatic_https: {
-              disable_redirects: false, // Enable HTTP->HTTPS redirects
+              disable_redirects: true,
             },
           },
         },
@@ -935,7 +941,7 @@ export function generateInitialConfig(hosts: string[]): CaddyConfig {
           policies: validHosts.length > 0 ? [
             {
               subjects: validHosts,
-              issuers: [{ module: 'internal' }],
+              issuers: [internalIssuer()],
             },
           ] : [],
         },
@@ -957,7 +963,7 @@ export async function updateTLS(hosts: string[]): Promise<void> {
   config.apps.tls.automation.policies = [
     {
       subjects: hosts,
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     },
   ];
   setAutomatedTLSSubjects(config, hosts);
@@ -1086,7 +1092,7 @@ async function addRouteWithoutStripping(
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
 
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
 
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = {
@@ -1097,7 +1103,7 @@ async function addRouteWithoutStripping(
   }
 
   // Ensure HTTPS is properly configured
-  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
 
   const routes = config.apps.http.servers[serverName].routes || [];
 
@@ -1178,22 +1184,9 @@ export async function getConfiguredDomain(): Promise<string | undefined> {
 export async function setDefaultRoute(containerName: string, port: number): Promise<void> {
   console.log(`[Caddy] Setting default catch-all route -> ${containerName}:${port}`);
   const config = await getConfig();
+  const server = mainServer(config);
 
-  if (!config.apps) config.apps = {};
-  if (!config.apps.http) config.apps.http = {};
-  if (!config.apps.http.servers) config.apps.http.servers = {};
-
-  if (!config.apps.http.servers.srv0) {
-    config.apps.http.servers.srv0 = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
-  }
-
-  ensureHTTPSConfig(config.apps.http.servers.srv0);
-
-  const routes = config.apps.http.servers.srv0.routes || [];
+  const routes = server.routes || [];
   const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
 
   // Remove any existing default (host-less) catch-all routes
@@ -1220,13 +1213,19 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
 
   // Append at end (lowest priority)
   filtered.push(defaultRoute);
-  config.apps.http.servers.srv0.routes = sortRoutes(filtered);
+  server.routes = sortRoutes(filtered);
+
+  // Port 80: the box IP and youeye.local reach the same Control Panel over HTTP.
+  // The setup server first: it decides whether Caddy's own redirects stay off.
+  applySetupHttpServer(config, upstreamDial);
+  ensureHTTPSConfig(config, server);
 
   // Ensure TLS automation has on-demand internal CA policy.
   // This allows Caddy to serve a self-signed cert for IP addresses
   // (on_demand issues certs dynamically for any incoming TLS connection).
   // Explicitly check for on_demand policy instead of just checking array length,
   // since other policies (with subjects) may exist from ensureTLSSubject/setDomain.
+  if (!config.apps) config.apps = {};
   if (!config.apps.tls) config.apps.tls = {};
   if (!config.apps.tls.automation) config.apps.tls.automation = {};
   if (!config.apps.tls.automation.policies) {
@@ -1240,7 +1239,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
     console.log('[Caddy] Adding on_demand TLS fallback policy');
     config.apps.tls.automation.policies.push({
       on_demand: true,
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     });
   }
 
@@ -1257,6 +1256,24 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
 
   await setConfig(config);
   console.log(`[Caddy] Default catch-all route set -> ${containerName}.${CONTAINER_DOMAIN}:${port}`);
+}
+
+/**
+ * Converge the :80 setup server (`servers.ts`) on a running Caddy: the box IP and
+ * `youeye.local` reach the Control Panel over plain HTTP, every other host is
+ * redirected to HTTPS. Writes only when something changed. Runs at every Control
+ * Panel start (`setup-http-startup.ts`), so a box set up before the setup server
+ * existed gets it with its first start on this version.
+ */
+export async function ensureSetupHttpServer(containerName: string = 'youeye-control', port: number = 3000): Promise<void> {
+  const config = await getConfig();
+  const before = canonicalJSON(config);
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
+  applySetupHttpServer(config, upstreamDial);
+  ensureHTTPSConfig(config, mainServer(config));
+  if (canonicalJSON(config) === before) return;
+  await setConfig(config);
+  console.log('[Caddy] HTTP setup server ensured on :80');
 }
 
 /**
@@ -1278,7 +1295,7 @@ export async function ensureHeaderStrippingRoute(): Promise<void> {
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
 
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = {
       listen: [':443'],
@@ -1301,17 +1318,7 @@ export async function ensureHeaderStrippingRoute(): Promise<void> {
     handle: [{
       handler: 'headers',
       request: {
-        delete: [
-          'X-Youeye-App',
-          'X-Youeye-User',
-          'X-Youeye-Username',
-          'X-Youeye-Groups',
-          'X-Youeye-Email',
-          'X-Youeye-Name',
-          'X-Youeye-Uid',
-          'X-App-Slug',
-          'X-Ui-Bridge-Token',
-        ],
+        delete: [...STRIPPED_REQUEST_HEADERS],
       },
     }],
   };
@@ -1343,7 +1350,7 @@ export async function ensurePingRoute(containerName: string = 'youeye-control', 
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
 
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = {
       listen: [':443'],
@@ -1400,18 +1407,11 @@ export async function setDomain(domain: string): Promise<void> {
   if (!config.apps.tls) config.apps.tls = {};
   if (!config.apps.tls.automation) config.apps.tls.automation = {};
 
-  // Ensure srv0 exists and has proper HTTPS configuration.
+  // Ensure the main server exists and has proper HTTPS configuration.
   // If Caddy reverted to default Caddyfile (e.g., container restart without persistent /config),
-  // srv0 might only listen on :80. ensureHTTPSConfig fixes this by adding :443, removing :80,
+  // it might only listen on :80. ensureHTTPSConfig fixes this by adding :443, removing :80,
   // and adding tls_connection_policies.
-  if (!config.apps.http.servers.srv0) {
-    config.apps.http.servers.srv0 = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
-  }
-  ensureHTTPSConfig(config.apps.http.servers.srv0);
+  ensureHTTPSConfig(config, mainServer(config));
 
   // Build clean subject list: base domain + wildcard only
   // Individual subdomain subjects are redundant when wildcard exists
@@ -1437,11 +1437,11 @@ export async function setDomain(domain: string): Promise<void> {
   config.apps.tls.automation.policies = [
     {
       subjects: Array.from(cleanSubjects),
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     },
     {
       on_demand: true,
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     },
   ];
   setAutomatedTLSSubjects(config, Array.from(cleanSubjects));
@@ -1487,7 +1487,7 @@ function configureControlSettingsRoutes(config: CaddyConfig, domain: string, ups
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
 
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = {
       listen: [':443'],
@@ -1496,7 +1496,7 @@ function configureControlSettingsRoutes(config: CaddyConfig, domain: string, ups
     };
   }
 
-  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
 
   const routes = config.apps.http.servers[serverName].routes || [];
@@ -1602,11 +1602,11 @@ function configurePointerInferenceRoutes(config: CaddyConfig, domain: string, up
   if (!config.apps) config.apps = {};
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = { listen: [':443'], routes: [], tls_connection_policies: [{}] };
   }
-  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
   const routes = config.apps.http.servers[serverName].routes || [];
   const inferenceRoute: CaddyRoute = {
@@ -1788,7 +1788,7 @@ export async function ensureIdentityRoute(
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
 
-  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
     config.apps.http.servers[serverName] = {
       listen: [':443'],
@@ -1797,7 +1797,7 @@ export async function ensureIdentityRoute(
     };
   }
 
-  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
   ensureTLSSubject(config, hostname);
 
   const routes = (config.apps.http.servers[serverName].routes || [])
@@ -1879,7 +1879,7 @@ export async function loadExternalCert(
   if (!hasOnDemand) {
     otherPolicies.push({
       on_demand: true,
-      issuers: [{ module: 'internal' }],
+      issuers: [internalIssuer()],
     });
   }
 
@@ -1901,7 +1901,7 @@ export async function loadExternalCert(
   if (subjects.length) {
     if (!config.apps.http) config.apps.http = {};
     if (!config.apps.http.servers) config.apps.http.servers = {};
-    const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+    const serverName = mainServerName(config);
     const server = config.apps.http.servers[serverName];
     if (server) {
       const kept = (server.tls_connection_policies ?? []).filter(
@@ -1950,7 +1950,7 @@ export async function removeExternalCert(): Promise<void> {
     if (!hasOnDemand) {
       config.apps.tls.automation.policies.push({
         on_demand: true,
-        issuers: [{ module: 'internal' }],
+        issuers: [internalIssuer()],
       });
     }
 
@@ -1959,7 +1959,7 @@ export async function removeExternalCert(): Promise<void> {
         (policy) => policy.issuers?.some((issuer) => issuer.module === 'internal') && !policy.on_demand,
       );
       if (!internalPolicy) {
-        internalPolicy = { subjects: [], issuers: [{ module: 'internal' }] };
+        internalPolicy = { subjects: [], issuers: [internalIssuer()] };
         config.apps.tls.automation.policies.unshift(internalPolicy);
       }
       internalPolicy.subjects = Array.from(new Set([
@@ -1976,7 +1976,7 @@ export async function removeExternalCert(): Promise<void> {
   // Strip our cert-selection connection policy — otherwise it would force
   // selecting a now-missing external cert and break the handshake.
   if (config.apps.http?.servers) {
-    const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+    const serverName = mainServerName(config);
     const server = config.apps.http.servers[serverName];
     if (server?.tls_connection_policies) {
       server.tls_connection_policies = server.tls_connection_policies.filter(
@@ -2005,7 +2005,7 @@ export async function addForwardAuthToRoute(
   if (!config?.apps?.http?.servers) return;
 
   let modified = false;
-  for (const server of Object.values(config.apps.http.servers)) {
+  for (const server of routeServers(config)) {
     for (const route of server.routes || []) {
       if (scopedGrantHandlers(route)) continue;
       const hosts = (route as any).match?.[0]?.host || [];
@@ -2036,7 +2036,7 @@ export async function removeForwardAuthFromRoute(hostname: string): Promise<void
   if (!config?.apps?.http?.servers) return;
 
   let modified = false;
-  for (const server of Object.values(config.apps.http.servers)) {
+  for (const server of routeServers(config)) {
     for (const route of server.routes || []) {
       if (scopedGrantHandlers(route)) continue;
       const hosts = (route as any).match?.[0]?.host || [];
@@ -2108,7 +2108,7 @@ export async function ensureScopedAppGrantDenyRoute(): Promise<void> {
   if (!cfg?.apps?.http?.servers) return;
 
   let modified = false;
-  for (const server of Object.values(cfg.apps.http.servers)) {
+  for (const server of routeServers(cfg)) {
     const before = JSON.stringify(server.routes || []);
     server.routes = upsertScopedAppGrantDenyRoute(server.routes || []);
     if (JSON.stringify(server.routes) !== before) modified = true;
@@ -2134,8 +2134,7 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
     throw new Error('Caddy has no HTTP server for the scoped app grant');
   }
 
-  const serverName = Object.keys(cfg.apps.http.servers)[0];
-  const server = cfg.apps.http.servers[serverName];
+  const server = mainServer(cfg);
   server.routes = server.routes || [];
 
   server.routes = server.routes.filter((candidate) => candidate['@id'] !== route.id);
@@ -2181,7 +2180,7 @@ export async function removeScopedAppGrantRoute(id: string): Promise<void> {
   if (!cfg?.apps?.http?.servers) return;
 
   let modified = false;
-  for (const server of Object.values(cfg.apps.http.servers)) {
+  for (const server of routeServers(cfg)) {
     const before = server.routes?.length ?? 0;
     server.routes = (server.routes || []).filter((candidate) => candidate['@id'] !== id);
     if ((server.routes?.length ?? 0) !== before) modified = true;

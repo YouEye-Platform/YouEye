@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import type { TlsChoice } from '@/components/setup/SetupServerName';
+import { copyText } from '@/lib/copy-text';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -163,9 +164,9 @@ function DnsStep({ serverIp, platform, t }: {
 
   const current = commands[activeTab];
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!current.steps) return;
-    navigator.clipboard.writeText(current.steps);
+    if (!(await copyText(current.steps))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -238,8 +239,8 @@ function CertStep({ serverIp, platform, t }: {
     linux: `curl -k -o youeye-ca.crt https://${serverIp}/api/setup/ca-cert\nsudo cp youeye-ca.crt /usr/local/share/ca-certificates/\nsudo update-ca-certificates`,
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = async (text: string) => {
+    if (!(await copyText(text))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -321,6 +322,28 @@ function CertStep({ serverIp, platform, t }: {
   );
 }
 
+/**
+ * The box's LAN address for the DNS and certificate steps: the page's own host when it is an IP, else (on
+ * `youeye.local`) the address the box reports.
+ */
+function useServerIp(): string {
+  const [ip, setIp] = useState('your-server-ip');
+  useEffect(() => {
+    const hostname = window.location.hostname;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+      setIp(hostname);
+      return;
+    }
+    let active = true;
+    fetch('/api/setup/server-address', { cache: 'no-store' })
+      .then(response => (response.ok ? response.json() : null))
+      .then((body: { ip?: string | null } | null) => { if (active) setIp(body?.ip || hostname); })
+      .catch(() => { if (active) setIp(hostname); });
+    return () => { active = false; };
+  }, []);
+  return ip;
+}
+
 // ─── Main component ──────────────────────────────────────────
 
 export default function SetupDnsExplainer({
@@ -347,7 +370,7 @@ export default function SetupDnsExplainer({
     setPlatform(detectPlatform());
   }, []);
 
-  const serverIp = typeof window !== 'undefined' ? window.location.hostname : 'your-server-ip';
+  const serverIp = useServerIp();
 
   return (
     <div className={`w-full ${standalone ? 'max-w-xl' : 'max-w-lg'} mx-auto space-y-5`}>

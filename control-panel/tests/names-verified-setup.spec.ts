@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
 import { bindVerifiedSetupChannel } from '../src/lib/youeye-names/verified-setup-channel';
-import { parseVerifiedSetupResult, validVerifiedSetupChallenge, verifiedSetupProtocol, type VerifiedSetupChallenge } from '../src/lib/youeye-names/verified-setup-contract';
+import { parseVerifiedSetupResult, validVerifiedSetupChallenge, VERIFIED_SETUP_CLOCK_SKEW_MS, verifiedSetupProtocol, type VerifiedSetupChallenge } from '../src/lib/youeye-names/verified-setup-contract';
 import { privateNamesAddress, verifiedSetupParentOrigin } from '../src/lib/youeye-names/setup-request';
 
 function fixture() {
@@ -83,6 +83,22 @@ test('the server derives an exact admitted browser origin from actual Host, neve
   for(const bad of ['null','https://other-install.ui.bingo','https://192.168.1.50/','https://user@192.168.1.50','https://192.168.1.50?parent=evil'])assert.throws(()=>verifiedSetupParentOrigin(request(bad)));
   assert.throws(()=>verifiedSetupParentOrigin(request('http://public.example','public.example')));
   assert.equal(verifiedSetupParentOrigin(request('http://192.168.1.50')),'http://192.168.1.50');
+  // The box's mDNS setup names, HTTP on port 80 only, exactly as the broker admits them.
+  for(const host of ['youeye.local','youeye-2.local','youeye-1234.local'])assert.equal(verifiedSetupParentOrigin(request(`http://${host}`,host)),`http://${host}`);
+  for(const host of ['youeye.local:8080','other.local','youeye-12345.local','youeye-.local','a.youeye.local','youeye.local.example','youeyex.local','YouEye.local'])assert.throws(()=>verifiedSetupParentOrigin(request(`http://${host}`,host)),host);
+  assert.equal(verifiedSetupParentOrigin(request('https://youeye.local','youeye.local')),'https://youeye.local');
   for(const ip of ['10.0.0.2','172.16.0.2','192.168.1.50','100.64.0.1','fd00::1'])assert.equal(privateNamesAddress(ip),true);
   for(const ip of ['127.0.0.1','169.254.1.1','8.8.8.8','fe80::1','::1'])assert.equal(privateNamesAddress(ip),false);
+});
+
+test('a challenge from a broker whose clock runs ahead of the box is accepted within the skew bound',()=>{
+  const f=fixture();
+  try{
+    const at=(ms:number)=>({...f.challenge,expiresAt:new Date(Date.now()+ms).toISOString()});
+    // The broker floors its time and adds 300 s; a box clock 1.5 s slow sees just over 300 s.
+    assert.equal(validVerifiedSetupChallenge(at(301_500),f.challenge.parentOrigin,f.challenge.sessionId),true);
+    assert.equal(validVerifiedSetupChallenge(at(300_000+VERIFIED_SETUP_CLOCK_SKEW_MS-1_000),f.challenge.parentOrigin,f.challenge.sessionId),true);
+    assert.equal(validVerifiedSetupChallenge(at(300_000+VERIFIED_SETUP_CLOCK_SKEW_MS+5_000),f.challenge.parentOrigin,f.challenge.sessionId),false);
+    assert.equal(validVerifiedSetupChallenge(at(-1_000),f.challenge.parentOrigin,f.challenge.sessionId),false);
+  }finally{f.restore();}
 });

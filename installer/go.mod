@@ -38,6 +38,9 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 )
 
-require github.com/youeye-platform/YouEye/releasecache v0.0.0
+require (
+	github.com/youeye-platform/YouEye/releasecache v0.0.0
+	rsc.io/qr v0.2.0
+)
 
 replace github.com/youeye-platform/YouEye/releasecache => ../releasecache

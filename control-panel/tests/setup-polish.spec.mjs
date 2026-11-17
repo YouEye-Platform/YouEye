@@ -54,14 +54,15 @@ test('setup defers the Control Panel restart until the durable transaction is co
 
 test('fallback favicon is the transparent blue Y used during initial setup', () => {
   const favicon = read('src/app/api/branding/favicon/route.ts');
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/lib/auth/setup-host-paths.ts');
   const staticFavicon = readFileSync(join(root, 'src/app/favicon.ico'));
 
   assert.match(favicon, /fill="#2563eb"/);
   assert.doesNotMatch(favicon, /fill="#111827"/);
   assert.doesNotMatch(favicon, /<rect[^>]+fill="#111827"/);
-  assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/branding\/favicon'/);
-  assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/dns-providers\/cloudflare\/validate'/);
+  assert.match(middleware, /BEFORE_SETUP[\s\S]*'\/api\/branding\/favicon'/);
+  assert.match(middleware, /AFTER_SETUP_READ[\s\S]*'\/api\/branding\/favicon'/);
+  assert.match(middleware, /BEFORE_SETUP[\s\S]*'\/api\/dns-providers\/cloudflare\/validate'/);
   assert.ok(staticFavicon.length > 1000);
 });
 

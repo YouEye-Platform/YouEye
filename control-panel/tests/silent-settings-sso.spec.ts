@@ -27,7 +27,7 @@ test('Control login shares the server-side SSO auth mode helper', () => {
   assert.match(loginPage, /getAuthModeForHost\(host\) === 'sso'/);
   assert.match(loginPage, /redirect\(`\/api\/auth\/sso\?redirect=\$\{encodeURIComponent\(returnTo\)\}`\)/);
   assert.match(authModeRoute, /getAuthModeForHost\(host\)/);
-  assert.match(authModeHelper, /isIPAccessHost/);
+  assert.match(authModeHelper, /isPasswordSignInHost\(host\)/);
   assert.match(authModeHelper, /isSSOConfigured\(\)/);
 });
 

@@ -14,7 +14,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { namesErrorMessage, previewName, previewNames, previewFreshSetupNames } from '@/lib/youeye-names/client';
+import { namesErrorMessage, namesLogReason, previewName, previewNames, previewFreshSetupNames } from '@/lib/youeye-names/client';
 import { discoverNamesService } from '@/lib/youeye-names/service';
 import { privateNamesAddress, verifiedSetupParentOrigin } from '@/lib/youeye-names/setup-request';
 import { spineClient } from '@/lib/spine/client';
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ previews });
     });
   } catch (error) {
-    console.error('[TLS/YouEyeNames] preview failed');
+    console.error('[TLS/YouEyeNames] preview failed:', namesLogReason(error));
     return NextResponse.json(
       {
         error:

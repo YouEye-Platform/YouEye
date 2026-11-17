@@ -1,0 +1,134 @@
+/* YouEye installer: plain CSS, no external assets. Mint #13B38A, ink #1B1B2F. */
+:root {
+  --mint: #13B38A;
+  --mint-dark: #0E8C6C;
+  --mint-soft: #E3F6F0;
+  --ink: #1B1B2F;
+  --muted: #5B6170;
+  --line: #D9DEE3;
+  --bg: #F3F6F5;
+  --card: #FFFFFF;
+  --danger: #C0392B;
+  --danger-soft: #FCEDEB;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  font-size: clamp(15px, 2.1vh, 22px);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "DejaVu Sans", "Verdana", sans-serif;
+  line-height: 1.45;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  user-select: none;
+}
+
+/* No mouse: no pointer. installer.js removes the class when a mouse moves. */
+html.no-pointer, html.no-pointer * { cursor: none !important; }
+@media (hover: none), (pointer: none) {
+  html, html * { cursor: none !important; }
+}
+
+.brand {
+  width: min(52rem, 94vw);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.4rem 0 0.8rem;
+}
+.brand img { width: 2.4rem; height: 2.4rem; }
+.brand-name { font-size: 1.5rem; font-weight: bold; letter-spacing: 0.01em; }
+.brand-sub { font-size: 1.1rem; color: var(--muted); }
+
+main { width: min(52rem, 94vw); flex: 1; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.6rem 1.8rem;
+  box-shadow: 0 0.2rem 1.2rem rgba(27, 27, 47, 0.06);
+}
+
+.step { color: var(--mint-dark); font-size: 0.85rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.2rem; }
+h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+h2 { font-size: 1rem; margin: 1.2rem 0 0.5rem; }
+p { margin: 0 0 0.8rem; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+
+.options { display: flex; flex-direction: column; gap: 0.5rem; margin: 0 0 0.6rem; }
+.option {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.9rem;
+  border: 2px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--card);
+}
+.option input { margin: 0.25rem 0 0; width: 1.1rem; height: 1.1rem; accent-color: var(--mint); flex: none; }
+.option:has(input:checked) { border-color: var(--mint); background: var(--mint-soft); }
+.option:focus-within { outline: 3px solid var(--mint); outline-offset: 2px; }
+.option.disabled { opacity: 0.6; }
+.option-body { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.option-title { font-weight: bold; overflow-wrap: anywhere; }
+.option-detail { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+.option-warn { color: var(--danger); font-size: 0.9rem; overflow-wrap: anywhere; }
+
+.fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.6rem 1rem; align-items: center; margin: 0.6rem 0 0.6rem 2rem; }
+.fields label { color: var(--muted); }
+input[type="text"], input[type="password"] {
+  font: inherit;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 0.5rem;
+  background: #FFFFFF;
+  color: var(--ink);
+}
+input[type="text"]:focus, input[type="password"]:focus { border-color: var(--mint); outline: none; }
+
+.review { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.2rem; margin: 0 0 1rem; }
+.review dt { color: var(--muted); }
+.review dd { margin: 0; overflow-wrap: anywhere; }
+
+.notice { padding: 0.7rem 0.9rem; border-radius: 0.6rem; background: var(--danger-soft); color: var(--danger); margin: 0.8rem 0; }
+.notice.calm { background: var(--mint-soft); color: var(--ink); }
+.error { color: var(--danger); font-weight: bold; margin: 0.8rem 0 0; min-height: 1.4em; overflow-wrap: anywhere; }
+
+.actions { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1.2rem; }
+.actions .right { display: flex; gap: 0.8rem; margin-left: auto; }
+button {
+  font: inherit;
+  font-weight: bold;
+  padding: 0.6rem 1.4rem;
+  border-radius: 0.6rem;
+  border: 2px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+}
+button.primary { background: var(--mint); border-color: var(--mint); color: #FFFFFF; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #FFFFFF; }
+button:focus-visible, button:focus { outline: 3px solid var(--ink); outline-offset: 3px; }
+button:disabled { opacity: 0.5; }
+
+.bar { height: 1rem; border-radius: 0.5rem; background: var(--line); overflow: hidden; margin: 1rem 0 0.4rem; }
+.bar-fill { height: 100%; width: 0; background: var(--mint); transition: width 0.4s ease; }
+.percent { font-weight: bold; }
+
+.big { font-size: 1.25rem; font-weight: bold; }
+
+.hints { width: min(52rem, 94vw); color: var(--muted); font-size: 0.85rem; padding: 0.8rem 0 1.2rem; text-align: center; }
+kbd { font: inherit; font-weight: bold; color: var(--ink); }
+
+.overlay { position: fixed; inset: 0; background: rgba(27, 27, 47, 0.45); display: flex; align-items: center; justify-content: center; }
+.overlay .card { width: min(34rem, 90vw); }

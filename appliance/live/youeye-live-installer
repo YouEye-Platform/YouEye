@@ -1,0 +1,177 @@
+#!/bin/bash
+# YouEye live installer: youeye-installer.service runs this on tty1 of the installer ISO.
+#
+# - An answer disk (label YOUEYE_ANSWER): silent install. Its NDJSON progress is copied to the serial console,
+#   where Proxmox mode reads it.
+# - Otherwise, with a DRM device and no youeye.text=1 on the kernel command line: the graphical installer,
+#   `youeye-installer serve` on 127.0.0.1 plus the cog browser in the cage kiosk compositor on tty1. (cog's own DRM
+#   platform segfaulted on a GPU-less VM; cage + cog worked.) serve prints plain progress text to the serial console.
+# - If cog ends within the grace period before an installation was confirmed, if serve does not start, or with no
+#   DRM device or text mode: the text installer on tty1.
+# The machine turns off when the installer ends.
+set -eu
+
+installer=${YOUEYE_LIVE_INSTALLER:-/usr/local/bin/youeye-installer}
+cmdline=${YOUEYE_LIVE_CMDLINE:-/proc/cmdline}
+dri_dir=${YOUEYE_LIVE_DRI_DIR:-/dev/dri}
+serial=${YOUEYE_LIVE_SERIAL:-/dev/ttyS0}
+tty=${YOUEYE_LIVE_TTY:-/dev/tty1}
+run_dir=${YOUEYE_LIVE_RUN_DIR:-/run/youeye-appliance}
+medium=${YOUEYE_LIVE_MEDIUM:-/run/live/medium/appliance}
+grace=${YOUEYE_LIVE_KIOSK_GRACE_SECONDS:-20}
+ready_seconds=${YOUEYE_LIVE_SERVE_READY_SECONDS:-15}
+# The page must report that it painted (POST /api/ui-ready) within this time,
+# else the text installer takes over (a WebKit renderer that crashes on this
+# machine's graphics leaves cog running on a black screen).
+ui_seconds=${YOUEYE_LIVE_UI_READY_SECONDS:-45}
+listen=127.0.0.1:8090
+url="http://$listen/"
+# Both installers write this answer when the owner confirms the installation.
+interactive_answer="$run_dir/interactive-answer.json"
+
+log() {
+    printf 'youeye-live-installer: %s\n' "$*" >&2
+}
+
+clear_console() {
+    printf '\033c' > "$tty" 2>/dev/null || true
+}
+
+stop() {
+    kill "$1" 2>/dev/null || true
+    wait "$1" 2>/dev/null || true
+}
+
+# graphics_wanted: a DRM device exists and the GRUB text-mode entry was not chosen. Trixie's kernel has no simpledrm,
+# so without a GPU driver (or with nomodeset) there is no DRM device and the text installer runs.
+graphics_wanted() {
+    case " $(cat "$cmdline" 2>/dev/null || true) " in
+        *" youeye.text=1 "*) return 1 ;;
+    esac
+    compgen -G "$dri_dir/card[0-9]*" >/dev/null
+}
+
+serve_ready() {
+    local deadline=$((SECONDS + ready_seconds))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        kill -0 "$serve_pid" 2>/dev/null || return 1
+        if curl -fsS -o /dev/null --max-time 2 "${url}api/state" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+# graphical_installer returns 0 when the session ended (the owner turned the machine off, or an installation ran) and
+# 1 when the text installer should take over.
+graphical_installer() {
+    local started status finished
+    install -d -m 0700 "$run_dir/kiosk"
+    local ui_ready="$run_dir/kiosk/ui-ready"
+    rm -f "$ui_ready"
+    # Plain progress text for the serial console; a missing UART must not stop the installer.
+    { exec 3>"$serial"; } 2>/dev/null || exec 3>/dev/null
+    YOUEYE_KIOSK_READY_FILE="$ui_ready" "$installer" serve --listen "$listen" >&3 &
+    serve_pid=$!
+    if ! serve_ready; then
+        log "the graphical installer did not start; using the text installer"
+        stop "$serve_pid"
+        return 1
+    fi
+    while :; do
+        started=$SECONDS
+        # cage/cog messages also go to the serial console, where they can be read
+        # when the screen stays dark. Without a GPU render node (a VM's bochs,
+        # nomodeset-like drivers) wlroots must render in software.
+        renderer=""
+        compgen -G "$dri_dir/renderD[0-9]*" >/dev/null || renderer=pixman
+        XDG_RUNTIME_DIR="$run_dir/kiosk" WLR_RENDERER="${renderer:-auto}" cage -s -- cog -P wl "$url" <"$tty" > >(tee -a /dev/fd/3 >&2) 2>&1 &
+        cog_pid=$!
+        status=0
+        finished=""
+        while :; do
+            if ! kill -0 "$serve_pid" 2>/dev/null; then
+                finished=$serve_pid
+                wait "$serve_pid" || status=$?
+                break
+            fi
+            if ! kill -0 "$cog_pid" 2>/dev/null; then
+                finished=$cog_pid
+                wait "$cog_pid" || status=$?
+                break
+            fi
+            if [ ! -e "$ui_ready" ] && [ ! -e "$interactive_answer" ] && [ $((SECONDS - started)) -ge "$ui_seconds" ]; then
+                log "the installer page did not appear within ${ui_seconds}s; using the text installer"
+                stop "$cog_pid"
+                stop "$serve_pid"
+                return 1
+            fi
+            sleep 0.5
+        done
+        if [ "$finished" = "$serve_pid" ]; then
+            stop "$cog_pid"
+            if [ "$status" -eq 0 ] || [ -e "$interactive_answer" ]; then
+                return 0
+            fi
+            log "the graphical installer stopped (status $status); using the text installer"
+            return 1
+        fi
+        if [ -e "$interactive_answer" ]; then
+            # An installation is running: never start a second installer, show its progress again.
+            log "cog ended (status $status) during the installation; starting it again"
+        elif [ $((SECONDS - started)) -lt "$grace" ]; then
+            log "cog ended within ${grace}s (status $status); using the text installer"
+            stop "$serve_pid"
+            return 1
+        else
+            log "cog ended (status $status); starting it again"
+        fi
+        sleep 1
+    done
+}
+
+main() {
+    chvt 1 2>/dev/null || true
+    clear_console
+    install -d -m 0755 "$run_dir"
+    ln -sfn "$medium" "$run_dir/artifacts"
+
+    local answer="" answer_device status
+    answer_device="$(findfs LABEL=YOUEYE_ANSWER 2>/dev/null || true)"
+    if [ -n "$answer_device" ]; then
+        install -d -m 0700 "$run_dir/answer"
+        mount -o ro,nodev,nosuid,noexec "$answer_device" "$run_dir/answer"
+        answer="$(find "$run_dir/answer" -maxdepth 1 -type f -iname 'appliance-answer.json*' -print -quit)"
+    fi
+
+    if [ -n "$answer" ]; then
+        set +e
+        if [ -c "$serial" ]; then
+            "$installer" install --silent --yes --answer "$answer" 2>&1 | tee "$serial"
+            status=${PIPESTATUS[0]}
+        else
+            "$installer" install --silent --yes --answer "$answer"
+            status=$?
+        fi
+        set -e
+        if [ "$status" -eq 0 ]; then
+            sync
+            sleep 2
+            systemctl poweroff
+        fi
+        exit "$status"
+    fi
+
+    if graphics_wanted && graphical_installer; then
+        :
+    else
+        clear_console
+        # The text installer returns when the owner leaves its last screen (or quits).
+        "$installer" install || true
+    fi
+    # Nothing else runs on this console: turn the machine off instead of leaving a blank screen.
+    systemctl poweroff
+}
+
+main "$@"

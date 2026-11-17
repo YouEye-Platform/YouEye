@@ -7,7 +7,7 @@ import {
   resetRateLimit,
   setSessionCookies,
 } from '@/lib/auth';
-import { isApplianceSetupHost } from '@/lib/auth/mode';
+import { isLocalSetupHost, secureCookieFor } from '@/lib/auth/mode';
 import {
   claimApplianceOwner,
   getApplianceClaimStatus,
@@ -29,7 +29,7 @@ function requestIP(request: NextRequest): string {
 
 function requestIsLocalAppliance(request: NextRequest): boolean {
   const host = request.headers.get('host') || '';
-  if (!isApplianceSetupHost(host)) return false;
+  if (!isLocalSetupHost(host)) return false;
   const origin = request.headers.get('origin');
   if (!origin) return request.method === 'GET';
   const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.json({ ...status, csrfToken });
     response.cookies.set(CLAIM_CSRF_COOKIE, csrfToken, {
       httpOnly: true,
-      secure: request.headers.get('x-forwarded-proto') !== 'http',
+      secure: secureCookieFor(request),
       sameSite: 'strict',
       maxAge: 600,
       path: '/api/appliance/claim',

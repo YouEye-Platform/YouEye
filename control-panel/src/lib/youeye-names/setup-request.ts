@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import type { NextRequest } from 'next/server';
+import { isMdnsSetupName } from '@/lib/auth/setup-names';
 
 export function privateNamesAddress(value: string): boolean {
   if (isIP(value)===6) return /^(?:fc|fd)[0-9a-f]{2}:/i.test(value);
@@ -16,6 +17,13 @@ export function verifiedSetupParentOrigin(request: NextRequest): string {
   const origin=new URL(value);
   const host=request.headers.get('host') || request.nextUrl.host;
   if (origin.origin!==value || origin.host.toLowerCase()!==host.toLowerCase() || origin.username || origin.password || origin.hostname.includes('*') || origin.pathname!=='/' || origin.search || origin.hash || !['http:','https:'].includes(origin.protocol)) throw new Error('verified_setup_origin_invalid');
-  if (origin.protocol==='http:' && origin.hostname!=='localhost' && !privateNamesAddress(origin.hostname.replace(/^\[|\]$/g,''))) throw new Error('verified_setup_origin_invalid');
+  // Plain HTTP only for the local setup surface, mirroring the broker: localhost,
+  // a private/VPN address, or the box's mDNS name (youeye.local, youeye-<N>.local
+  // after a conflict) on port 80.
+  if (origin.protocol==='http:' && origin.hostname!=='localhost') {
+    if (isMdnsSetupName(origin.hostname)) {
+      if (origin.port!=='') throw new Error('verified_setup_origin_invalid');
+    } else if (!privateNamesAddress(origin.hostname.replace(/^\[|\]$/g,''))) throw new Error('verified_setup_origin_invalid');
+  }
   return origin.origin;
 }

@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { IDENTITY_PASSWORD_MAX_LENGTH, IDENTITY_PASSWORD_MIN_LENGTH } from '@/lib/identity/password-policy';
+import SetupSecureConnection from '@/components/setup/SetupSecureConnection';
 
 type ClaimState = {
   claimed: boolean;
@@ -81,7 +82,7 @@ export function ApplianceClaim() {
   }
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center px-6 py-10">
+    <main className="flex min-h-screen w-full flex-col items-center justify-center gap-4 px-6 py-10">
     <form onSubmit={submit} className="w-full max-w-[420px] space-y-5 rounded-lg border bg-card p-6 shadow-sm">
       <div className="space-y-2 text-center">
         <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -169,6 +170,7 @@ export function ApplianceClaim() {
         <p className="text-center text-xs text-muted-foreground">{translateInterface("m1b3650fe2b8f")}</p>
       )}
     </form>
+    <SetupSecureConnection />
     </main>
   );
 }

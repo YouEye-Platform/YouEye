@@ -16,6 +16,7 @@ import { getContainerName, leftoverAppPaths } from '../src/lib/market/engine-hel
 import { caddyTrustAppDirectory, removeCaddyTrustBundle } from '../src/lib/market/caddy-ca';
 import { catalogIconPath, resolveAppIcon } from '../src/lib/market/app-icon';
 import type { InstallMetadata } from '../src/lib/market/types';
+import { routeServers } from '../src/lib/caddy/servers';
 
 const require = createRequire(import.meta.url);
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
@@ -492,6 +493,7 @@ test('the update ingress fence covers only routes to containers the install reco
       getConfig: async () => structuredClone(config),
       setConfig: async (next: unknown) => { config = structuredClone(next); },
     },
+    '@/lib/caddy/servers': { routeServers },
     './update-workspace': {
       AppUpdateWorkspace: class { get() { return Buffer.from(JSON.stringify(plan)); } },
       updateDigest: () => 'digest',

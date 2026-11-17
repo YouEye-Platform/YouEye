@@ -12,8 +12,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { TLD_OPTIONS } from '@/lib/wordart-presets';
+import { isReservedSetupDomain } from '@/lib/auth/setup-names';
 import { useTranslations } from 'next-intl';
 import { acceptRegistrationProof, runNamesEnrollment } from '@/lib/youeye-names/popup';
+import { copyText as copyToClipboard } from '@/lib/copy-text';
 import { useRef as useInterfaceTranslationRef } from "react";
 
 export type TlsChoice = 'youeye-names' | 'byo-provider' | 'letsencrypt' | 'selfsigned' | 'upload';
@@ -103,6 +105,8 @@ interface Props {
   yenCtAccepted: boolean;
   setYenCtAccepted: (v: boolean) => void;
   setYenReusing?: (v: boolean) => void;
+  /** A name this server already claimed during setup: continue without a new check. */
+  setYenLeaseHeld?: (v: boolean) => void;
   setYenVerifiedSetup?: (v: boolean) => void;
   byoDomain: string;
   setByoDomain: (v: string) => void;
@@ -157,6 +161,7 @@ export default function SetupServerName({
   yenTermsVersion, setYenTermsVersion,
   yenCtAccepted, setYenCtAccepted,
   setYenReusing,
+  setYenLeaseHeld,
   setYenVerifiedSetup,
   byoDomain, setByoDomain,
   byoProviderToken, setByoProviderToken,
@@ -188,7 +193,6 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
 
   const t = useTranslations('setup');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [identityEdited, setIdentityEdited] = useState(false);
   const [slugEdited, setSlugEdited] = useState(false);
   const isCustomTld = tld === '__custom__';
 
@@ -207,6 +211,11 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   useEffect(() => { if (tlsChoice !== 'youeye-names') {enrollment.current?.abort();previewRequest.current?.abort();setYenLoading(false);} }, [tlsChoice]);
   // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
   const [reusing, setReusing] = useState(false);
+  // A name already claimed during this setup: continue with it, or release it.
+  const [lease, setLease] = useState<{ name: string; fqdn: string } | null>(null);
+  const [confirmingRelease, setConfirmingRelease] = useState(false);
+  const [releasing, setReleasing] = useState(false);
+  const [releaseError, setReleaseError] = useState('');
 
   // ACME inline flow state (the "connect your own domain" path)
   const [acmePhase, setAcmePhase] = useState<AcmePhase>('choice');
@@ -222,17 +231,21 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   const [providerZone, setProviderZone] = useState('');
   const [domainReuse, setDomainReuse] = useState<DomainReuseSummary | null>(null);
 
-  // Auto-fill domain slug from site name (for the own-domain path)
+  // Auto-fill the own-domain slug. The title is designed after this step, so the suggestion is the YouEye Names
+  // name shown above (unique on the LAN) when there is one, else the default title. A saved address is kept.
+  const autoSlug = useRef<string | null>(null);
+  const suggestedName = currentYen?.name;
   useEffect(() => {
-    if (!slugEdited) setDomainSlug(slugify(siteName));
-  }, [siteName, slugEdited, setDomainSlug]);
+    if (slugEdited) return;
+    if (autoSlug.current === null && domainSlug) { setSlugEdited(true); return; }
+    const next = slugify(suggestedName || siteName) || 'youeye';
+    autoSlug.current = next;
+    setDomainSlug(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- domainSlug is read once, to keep a saved address
+  }, [suggestedName, siteName, slugEdited, setDomainSlug]);
 
-  // Auto-fill identity provider name.
-  useEffect(() => {
-    if (!identityEdited) {
-      setIdentityName(siteName ? `${siteName} ID` : interfaceTranslationRef.current("m69be2c96c261"));
-    }
-  }, [siteName, identityEdited, setIdentityName]);
+  // The identity provider name stays empty unless typed: setup names it
+  // after the title, which the owner designs after this step.
 
   const fetchPreviews = useCallback(async () => {
     previewRequest.current?.abort();
@@ -334,7 +347,14 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
     fetch('/api/tls/youeye-names/reuse')
       .then((r) => r.json())
       .then((d) => {
-        if (active && d?.reuse && d.name && d.fqdn) {
+        if (!active) return;
+        if (d?.lease?.name && d.lease.fqdn) {
+          setLease({ name: d.lease.name, fqdn: d.lease.fqdn });
+          setYenLeaseHeld?.(true);
+          setYenName(d.lease.name);
+          setYenFqdn(d.lease.fqdn);
+          setTlsChoice('youeye-names');
+        } else if (d?.reuse && d.name && d.fqdn) {
           setReusing(true);
           setYenReusing?.(true);
           setYenName(d.name);
@@ -343,7 +363,33 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
       })
       .catch(() => {})
     return () => { active = false; };
-  }, [setYenFqdn, setYenName, setYenReusing]);
+  }, [setYenFqdn, setYenName, setYenReusing, setYenLeaseHeld, setTlsChoice]);
+
+  // "Choose a different name": release the claimed name, then the normal preview, check and claim.
+  const releaseLease = async () => {
+    if (!lease) return;
+    setReleasing(true);
+    setReleaseError('');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+      const res = await fetch('/api/tls/youeye-names/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ confirmation: lease.fqdn }),
+      });
+      if (!res.ok) throw new Error(t('namesLease.releaseFailed'));
+      setLease(null);
+      setConfirmingRelease(false);
+      setYenLeaseHeld?.(false);
+      setYenName('');
+      setYenFqdn('');
+    } catch {
+      setReleaseError(t('namesLease.releaseFailed'));
+    } finally {
+      setReleasing(false);
+    }
+  };
 
   // Check once for a staged BYO domain bundle (installer --domain-bundle).
   useEffect(() => {
@@ -394,9 +440,12 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
     domainReuse.domain === providerDomain
   );
 
-  const canProceed = siteName.trim().length > 0 && (
+  // youeye.local / youeye-<N>.local is the box's setup address, never its domain.
+  const reservedDomain = tlsChoice === 'byo-provider' ? isReservedSetupDomain(providerDomain) : isReservedSetupDomain(ownDomain);
+
+  const canProceed = siteName.trim().length > 0 && (tlsChoice === 'youeye-names' || !reservedDomain) && (
     tlsChoice === 'youeye-names'
-      ? (reusing
+      ? (reusing || lease
           ? !!yenName && !!yenFqdn
           : !!currentYen && !!yenDisclosure && !!yenTermsVersion && yenCtAccepted &&
             yenReadiness?.readiness?.installation.canProceedNow === true)
@@ -453,8 +502,8 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
     setAcmeCertIssued(false);
   };
 
-  const copyText = (text: string, idx: number) => {
-    navigator.clipboard.writeText(text);
+  const copyText = async (text: string, idx: number) => {
+    if (!(await copyToClipboard(text))) return;
     setCopiedIndex(idx);
     setTimeout(() => setCopiedIndex(null), 2000);
   };
@@ -637,6 +686,34 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
             </div>
           )}
 
+          {lease ? (
+            <div className="space-y-3 rounded-xl border border-primary/40 bg-primary/[0.04] p-4 ring-1 ring-primary/20">
+              <p className="text-sm font-medium">{t('namesLease.title')}</p>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                  <ShieldCheck className="h-4 w-4 text-primary" />
+                </div>
+                <p className="font-mono text-base font-medium truncate" title={lease.fqdn}>{lease.fqdn}</p>
+              </div>
+              {confirmingRelease ? (
+                <div className="space-y-2">
+                  <p className="text-sm">{t('namesLease.changeConfirm', { fqdn: lease.fqdn })}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="destructive" size="sm" onClick={() => void releaseLease()} disabled={releasing} className="gap-2">
+                      {releasing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {t('namesLease.changeConfirmButton')}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRelease(false)} disabled={releasing}>{t('namesLease.cancel')}</Button>
+                  </div>
+                </div>
+              ) : (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRelease(true)} className="gap-2">
+                  <RotateCcw className="h-3.5 w-3.5" /> {t('namesLease.change')}
+                </Button>
+              )}
+              {releaseError && <p role="alert" className="text-sm text-destructive">{releaseError}</p>}
+            </div>
+          ) : (
           <div className="rounded-xl border border-primary/40 bg-primary/[0.04] ring-1 ring-primary/20 p-4">
             {reusing ? (
               <div className="flex items-center gap-3">
@@ -687,8 +764,9 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
               <span>{reusing ? t('yenReuseNote') : t('yenDesc')}</span>
             </p>
           </div>
+          )}
 
-          {!reusing && yenDisclosure && (
+          {!reusing && !lease && yenDisclosure && (
             <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">
               <label className="flex cursor-pointer items-start gap-3 text-sm text-foreground">
                 <input
@@ -714,8 +792,8 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
             </div>
           )}
 
-          {/* Secondary options — buttons underneath (hidden when reusing) */}
-          {!reusing && (
+          {/* Secondary options — buttons underneath (hidden when reusing or a name is held) */}
+          {!reusing && !lease && (
             <div className="pt-1">
               <p className="text-xs text-muted-foreground mb-2">{t('yenOtherOptions')}</p>
               <div className="grid gap-2">
@@ -888,6 +966,9 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
               <p className="text-xs text-muted-foreground">
                 {t('serverAddressPreview')}: <span className="font-mono font-medium">{ownDomain || '...'}</span>
               </p>
+              {reservedDomain && (
+                <p role="alert" className="text-xs text-red-700 dark:text-red-400">{t('reservedSetupDomain')}</p>
+              )}
               {isRealTld && (
                 <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
@@ -1047,7 +1128,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">{t('identityProviderName')}</Label>
-                <Input value={identityName} onChange={e => { setIdentityEdited(true); setIdentityName(e.target.value); }} placeholder={`${siteName || 'YouEye'} ID`} className="h-8 text-xs" />
+                <Input value={identityName} onChange={e => setIdentityName(e.target.value)} placeholder={`${siteName || 'YouEye'} ID`} className="h-8 text-xs" />
                 <p className="text-[10px] text-muted-foreground">{t('identityNameHelper')}</p>
               </div>
             </div>
@@ -1073,7 +1154,9 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
               ? t('acmeStartOrder')
               : tlsChoice === 'byo-provider' && !providerValid
                 ? translateInterface("m57b8350456ee")
-                : t('continue')}
+                : onYouEyeNames && lease
+                  ? t('namesLease.continue', { fqdn: lease.fqdn })
+                  : t('continue')}
             {!acmeLoading && (tlsChoice !== 'letsencrypt' || acmeCertIssued) && <ArrowRight className="h-4 w-4" />}
           </Button>
         </div>

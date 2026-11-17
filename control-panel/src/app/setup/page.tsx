@@ -21,6 +21,7 @@ import { designSchema } from '@youeye/branding';
 import { TitleStudio, initialDesign } from '@youeye/branding/studio';
 import { Brand } from '@youeye/branding/brand';
 import SetupNamesVerification from '@/components/setup/SetupNamesVerification';
+import SetupNamesStatus from '@/components/setup/SetupNamesStatus';
 import SetupProvisioning from '@/components/setup/SetupProvisioning';
 import SetupTls from '@/components/setup/SetupTls';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
@@ -53,13 +54,16 @@ const SETUP_RESTART_SETTLE_MS = 2_500;
 const SETUP_READY_POLL_MS = 1_000;
 const SETUP_READY_MIN_WAIT_MS = 8_000;
 const SETUP_READY_TIMEOUT_MS = 45_000;
+/** Following a run another page started: it may still wait for the YouEye Names certificate (up to 10 minutes). */
+const SETUP_FOLLOW_TIMEOUT_MS = 20 * 60_000;
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Steps: -3=automatic readiness, -2=language, -1=new/restore, 0=serverName(+LE inline), 1=wordart, 2=icon,
-//        4=provisioning, 5=tls(upload only), 6=dns
+// Order: -3=automatic readiness, -2=language, -1=new/restore, 0=address (name/TLS), 3=YouEye Names human
+// check (the Names job starts right after it), 1=title, 2=confirm, 4=provisioning, 5=tls (upload only),
+// 6=dns. The title comes after the check so the certificate is issued while the owner designs it.
 type WizardStep = -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
@@ -81,7 +85,8 @@ export default function SetupPage() {
   // Step 0: Server name
   const [siteName, setSiteName] = useState('YouEye');
   const [domainSlug, setDomainSlug] = useState('');
-  const [tld, setTld] = useState('.local');
+  // Not `.local`: that is mDNS, and youeye.local is the box's setup address.
+  const [tld, setTld] = useState('.home');
   const [subdomains, setSubdomains] = useState({
     control: 'control',
     identity: 'id',
@@ -95,11 +100,12 @@ export default function SetupPage() {
   const [yenFqdn, setYenFqdn] = useState('');
   const [yenTermsVersion, setYenTermsVersion] = useState('');
   const [yenCtAccepted, setYenCtAccepted] = useState(false);
-  const [yenClaimProof, setYenClaimProof] = useState('');
   const [yenVerifiedSetup,setYenVerifiedSetup]=useState(false);
-  const [yenSetupSession,setYenSetupSession]=useState('');
-  useEffect(()=>{setYenClaimProof('');setYenSetupSession('');},[yenName,tlsChoice]);
   const [yenReusing, setYenReusing] = useState(false);
+  // The name is claimed (the Names job started): locked until released on the address step.
+  const [yenLeaseHeld, setYenLeaseHeld] = useState(false);
+  const [namesClaiming, setNamesClaiming] = useState(false);
+  const [namesClaimError, setNamesClaimError] = useState('');
   const [byoDomain, setByoDomain] = useState('');
   const [byoProviderToken, setByoProviderToken] = useState('');
 
@@ -138,6 +144,38 @@ export default function SetupPage() {
     setLanguageChecked(true);
   }, []);
 
+  /**
+   * Provisioning interrupted by a restart (steps recorded, none failed) reopens
+   * at provisioning with the saved choices; it re-runs only unfinished steps.
+   * A run still executing (the browser was closed mid-run) is followed through
+   * its status instead of submitted again.
+   * After a failure the wizard starts over so the owner can change choices.
+   */
+  async function detectInterruptedProvisioning(config: SetupConfig) {
+    const choice = config.tls_choice || config.extra?.tls_choice;
+    if (!config.domain || !choice) return;
+    const response = await fetch('/api/setup/status', { cache: 'no-store' }).catch(() => null);
+    if (!response?.ok) return;
+    const progress = await response.json().catch(() => null) as { state?: string; steps?: Record<string, string>; running?: boolean } | null;
+    const steps = progress?.steps ?? {};
+    const running = progress?.state === 'pending' && progress.running === true;
+    if (!running) {
+      if (progress?.state !== 'pending' || steps.config !== 'done' || Object.values(steps).includes('error')) return;
+      // A provider token is needed again unless its step already finished.
+      if (choice === 'byo-provider' && steps.caddy !== 'done') return;
+    }
+    followRunningSetup.current = running;
+    setTlsChoice(choice);
+    if (choice === 'youeye-names') {
+      setYenName(config.domain.split('.')[0]);
+      setYenFqdn(config.domain);
+      setYenLeaseHeld(true);
+    } else if (choice === 'byo-provider') {
+      setByoDomain(config.domain);
+    }
+    resumeProvisioning.current = true;
+  }
+
   async function checkSetupStatus() {
     try {
       const [res, appearance] = await Promise.all([fetch('/api/setup/config', { cache: 'no-store' }), fetch('/api/setup/branding', { cache: 'no-store' })]);
@@ -175,6 +213,7 @@ export default function SetupPage() {
         if (config.subdomains) {
           setSubdomains(prev => ({ ...prev, ...config.subdomains }));
         }
+        await detectInterruptedProvisioning(config);
       }
     } catch {
       setConfigError(true);
@@ -202,7 +241,9 @@ export default function SetupPage() {
     }, reduced ? 0 : 200);
   }, []);
 
-  const handleReady = useCallback(() => goToStep(-1), [goToStep]);
+  const resumeProvisioning = useRef(false);
+  const followRunningSetup = useRef(false);
+  const handleReady = useCallback(() => goToStep(resumeProvisioning.current ? 4 : -1), [goToStep]);
 
   // Language selection
   const handleLanguageSelect = useCallback(async (code: string) => {
@@ -296,6 +337,8 @@ export default function SetupPage() {
   }), [t]);
 
   const recordSetupFailure = useCallback((error: unknown) => {
+    // A setup sign-in from before a reset (or an expired one): claim or sign in again.
+    if (error instanceof SetupProgressError && error.signIn) { window.location.assign('/login'); return; }
     setSetupComplete(false);
     setSetupStatusOnlyRetry(error instanceof SetupProgressError && error.readOnly);
     setSetupError(error instanceof Error ? error.message : interfaceTranslationRef.current("m54d466a16d84"));
@@ -321,6 +364,17 @@ export default function SetupPage() {
     }
   }, [setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
 
+  const initialSetupSteps = useCallback((): SetupStep[] => [
+    { id: 'config', label: t('savingConfig'), status: 'pending' },
+    { id: 'caddy', label: t('settingUpProxy'), status: 'pending' },
+    ...(tlsChoice === 'youeye-names' ? [{ id: 'names', label: t('securingAddress'), status: 'pending' as const }] : []),
+    { id: 'dns', label: t('configuringDns'), status: 'pending' },
+    { id: 'ai', label: t('configuringAi'), status: 'pending' },
+    { id: 'sso_control', label: t('configuringSsoControl'), status: 'pending' },
+    { id: 'sso_ui', label: t('enablingSsoUi'), status: 'pending' },
+    { id: 'finalize', label: t('finalizingSetup'), status: 'pending' },
+  ], [t, tlsChoice]);
+
   // Submit once. A lost response is reconciled through retained status reads.
   const handleRunSetup = useCallback(async () => {
     if (setupRequestInFlight.current) return;
@@ -328,16 +382,7 @@ export default function SetupPage() {
     setSetupError('');
     setSetupComplete(false);
     setSetupStatusOnlyRetry(false);
-    const steps: SetupStep[] = [
-      { id: 'config', label: t('savingConfig'), status: 'pending' },
-      { id: 'caddy', label: t('settingUpProxy'), status: 'pending' },
-      { id: 'dns', label: t('configuringDns'), status: 'pending' },
-      { id: 'ai', label: t('configuringAi'), status: 'pending' },
-      { id: 'sso_control', label: t('configuringSsoControl'), status: 'pending' },
-      { id: 'sso_ui', label: t('enablingSsoUi'), status: 'pending' },
-      { id: 'finalize', label: t('finalizingSetup'), status: 'pending' },
-    ];
-    setSetupSteps(steps);
+    setSetupSteps(initialSetupSteps());
     try {
       const csrfRes = await fetch('/api/auth/csrf');
       const { csrfToken } = await csrfRes.json();
@@ -358,10 +403,6 @@ export default function SetupPage() {
           language: selectedLanguage || 'en',
           tls_choice: tlsChoice,
           yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
-          yen_terms_version: tlsChoice === 'youeye-names' ? yenTermsVersion : undefined,
-          yen_ct_accepted: tlsChoice === 'youeye-names' ? yenCtAccepted : undefined,
-          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing && !yenVerifiedSetup ? yenClaimProof : undefined,
-          yen_verified_setup_session: tlsChoice === 'youeye-names' && !yenReusing && yenVerifiedSetup ? yenSetupSession : undefined,
           byo_dns_provider: tlsChoice === 'byo-provider'
             ? { provider: 'cloudflare', token: byoProviderToken }
             : undefined,
@@ -373,16 +414,74 @@ export default function SetupPage() {
     } finally {
       setupRequestInFlight.current = false;
     }
-  }, [siteName, domain, subdomains, nameStyle, brandingRevision, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenSetupSession, yenVerifiedSetup, yenReusing, byoProviderToken, t, setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
+  }, [siteName, domain, subdomains, nameStyle, brandingRevision, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, byoProviderToken, initialSetupSteps, setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
+
+  // A run that is still executing (started before this page loaded): follow its status, never submit it again.
+  // If it stops without finishing (the Control Panel restarted), submit it once to resume the unfinished steps.
+  const handleFollowRunningSetup = useCallback(async () => {
+    if (setupRequestInFlight.current) return;
+    setupRequestInFlight.current = true;
+    setSetupError('');
+    setSetupComplete(false);
+    setSetupStatusOnlyRetry(false);
+    setSetupSteps(initialSetupSteps());
+    let resubmit = false;
+    try {
+      const result = await readSetupProgress({ ...setupProgressOptions(), stopWhenIdle: true, timeoutMs: SETUP_FOLLOW_TIMEOUT_MS });
+      if (result === 'idle') resubmit = true;
+      else recordSetupCompletion();
+    } catch (error) {
+      recordSetupFailure(error);
+    } finally {
+      setupRequestInFlight.current = false;
+    }
+    if (resubmit) await handleRunSetup();
+  }, [initialSetupSteps, setupProgressOptions, recordSetupCompletion, recordSetupFailure, handleRunSetup]);
+
+  // Right after the human check (its token is single-use and short-lived):
+  // claim the name and request its certificate, then design the title.
+  const startNamesJob = useCallback(async (proof: string, kind?: 'verified_setup') => {
+    setNamesClaiming(true);
+    setNamesClaimError('');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+      const res = await fetch('/api/setup/names/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({
+          name: yenName,
+          fqdn: yenFqdn,
+          termsVersion: yenTermsVersion,
+          ctAccepted: yenCtAccepted,
+          ...(kind === 'verified_setup' ? { verifiedSetupSession: proof } : { humanVerificationProof: proof }),
+        }),
+      });
+      if (res.status === 401) { window.location.assign('/login'); return; }
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) throw new Error(data.error || t('namesStartFailed'));
+      setYenLeaseHeld(true);
+      goToStep(1);
+    } catch (error) {
+      setNamesClaimError(error instanceof Error ? error.message : t('namesStartFailed'));
+    } finally {
+      setNamesClaiming(false);
+    }
+  }, [yenName, yenFqdn, yenTermsVersion, yenCtAccepted, t, goToStep]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
   useEffect(() => {
     if (step === 4 && !provisioningStarted.current) {
       provisioningStarted.current = true;
-      handleRunSetup();
+      // Once per page: provisioningStarted guards re-entry, and a retry always submits.
+      if (followRunningSetup.current) {
+        void handleFollowRunningSetup();
+      } else {
+        handleRunSetup();
+      }
     }
-  }, [step, handleRunSetup]);
+  }, [step, handleRunSetup, handleFollowRunningSetup]);
 
   if (loading) {
     return (
@@ -418,7 +517,7 @@ export default function SetupPage() {
 
         {step === -1 && (
           <SetupChoice
-            onNewSetup={() => goToStep(1)}
+            onNewSetup={() => goToStep(0)}
             onRestore={() => goToStep('restore')}
           />
         )}
@@ -455,7 +554,7 @@ export default function SetupPage() {
             acmeCertIssued={acmeCertIssued}
             setAcmeCertIssued={setAcmeCertIssued}
             yenName={yenName}
-            setYenName={(value) => { setYenName(value); setYenClaimProof(''); }}
+            setYenName={setYenName}
             yenFqdn={yenFqdn}
             setYenFqdn={setYenFqdn}
             yenTermsVersion={yenTermsVersion}
@@ -463,23 +562,27 @@ export default function SetupPage() {
             yenCtAccepted={yenCtAccepted}
             setYenCtAccepted={setYenCtAccepted}
             setYenReusing={setYenReusing}
+            setYenLeaseHeld={setYenLeaseHeld}
             setYenVerifiedSetup={setYenVerifiedSetup}
             byoDomain={byoDomain}
             setByoDomain={setByoDomain}
             byoProviderToken={byoProviderToken}
             setByoProviderToken={setByoProviderToken}
-            onNext={() => goToStep(2)}
-            onBack={() => goToStep(1, 'back')}
+            onNext={() => { setNamesClaimError(''); goToStep(tlsChoice === 'youeye-names' && !yenReusing && !yenLeaseHeld ? 3 : 1); }}
+            onBack={() => goToStep(-1, 'back')}
           />
         )}
 
         {step === 1 && (
-          <TitleStudio
-            design={{ ...titleDesign, name: siteName }}
-            onChange={(design) => { setTitleDesign(design); setSiteName(design.name); }}
-            onContinue={() => goToStep(0)}
-            onBack={() => goToStep(-1, 'back')}
-          />
+          <div className="space-y-4">
+            {tlsChoice === 'youeye-names' && yenLeaseHeld && <SetupNamesStatus fqdn={yenFqdn} />}
+            <TitleStudio
+              design={{ ...titleDesign, name: siteName }}
+              onChange={(design) => { setTitleDesign(design); setSiteName(design.name); }}
+              onContinue={() => goToStep(2)}
+              onBack={() => goToStep(0, 'back')}
+            />
+          </div>
         )}
 
         {step === 2 && (
@@ -488,10 +591,11 @@ export default function SetupPage() {
             <h1 className="text-2xl font-semibold">{translateInterface("mba865ad5a8d4")}{siteName}?</h1>
             <Brand design={nameStyle.mytitle} />
             <p className="font-mono text-sm break-all">{domain}</p>
+            {tlsChoice === 'youeye-names' && yenLeaseHeld && <SetupNamesStatus fqdn={yenFqdn} />}
             <p className="text-sm text-muted-foreground">{translateInterface("mbbc34c1751ef")}</p>
             <div className="flex flex-wrap justify-between gap-3">
-              <button type="button" className="rounded-lg border px-4 py-3" onClick={() => goToStep(0, 'back')}>{translateInterface("m1a38fb5df490")}</button>
-              <button type="button" className="rounded-lg bg-primary px-4 py-3 text-primary-foreground" onClick={() => goToStep(tlsChoice === 'youeye-names' && !yenReusing ? 3 : 4)}>{translateInterface("m4da10f1fbb17")}{siteName}</button>
+              <button type="button" className="rounded-lg border px-4 py-3" onClick={() => goToStep(1, 'back')}>{translateInterface("m1a38fb5df490")}</button>
+              <button type="button" className="rounded-lg bg-primary px-4 py-3 text-primary-foreground" onClick={() => goToStep(4)}>{translateInterface("m4da10f1fbb17")}{siteName}</button>
             </div>
           </section>
         )}
@@ -501,8 +605,10 @@ export default function SetupPage() {
             name={yenName}
             fqdn={yenFqdn}
             useVerifiedSetup={yenVerifiedSetup}
-            onVerified={(proof,kind) => { if(kind==='verified_setup')setYenSetupSession(proof);else setYenClaimProof(proof); goToStep(4); }}
-            onBack={() => goToStep(2, 'back')}
+            claiming={namesClaiming}
+            claimError={namesClaimError}
+            onVerified={(proof, kind) => { void startNamesJob(proof, kind); }}
+            onBack={() => goToStep(0, 'back')}
           />
         )}
 

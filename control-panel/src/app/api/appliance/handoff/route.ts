@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { isApplianceSetupHost } from '@/lib/auth/mode';
+import { isLocalSetupHost } from '@/lib/auth/mode';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { createSetupHandoff, reconcileApplianceSetupComplete } from '@/lib/identity/store';
 import { settingsService } from '@/lib/settings';
 
 export async function POST(request: NextRequest) {
   const host = request.headers.get('host') || '';
-  if (!isApplianceSetupHost(host)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!isLocalSetupHost(host)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const session = await getSession();
   if (session?.authMethod !== 'setup' || !session.setupOwnerId) {

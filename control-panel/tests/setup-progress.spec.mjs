@@ -139,6 +139,7 @@ function statusRoute(state, realSettings = false) {
       if (state.claimFailure) throw new Error('synthetic-protected-claim-error');
       return state.claim;
     },
+    setupRunActive: () => state.running ?? false,
     hasRetainedSetupOperation: () => {
       calls.marker++;
       if (state.damaged) throw new Error('synthetic-protected-marker-error');
@@ -172,7 +173,7 @@ test('actual setup status preserves native errors across cold and warm typed set
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('Cache-Control'), 'no-store');
     const status = await response.json();
-    assert.deepEqual(status, { state: 'error', steps: state.config.setup_steps });
+    assert.deepEqual(status, { state: 'error', steps: state.config.setup_steps, running: false });
     assert.equal(JSON.stringify(status).includes('synthetic-protected-setting'), false);
   }
   assert.deepEqual(state, before, 'status must not mutate retained work');
@@ -187,7 +188,7 @@ test('actual setup status reads fresh native work after getAll warms the typed c
   state.config.setup_steps.ai = 'done';
   state.config.setup_steps.finalize = 'error';
   const response = await route.get();
-  assert.deepEqual(await response.json(), { state: 'error', steps: state.config.setup_steps });
+  assert.deepEqual(await response.json(), { state: 'error', steps: state.config.setup_steps, running: false });
   assert.equal(route.reads(), 2);
 });
 
@@ -213,6 +214,9 @@ test('actual setup status requires config, owner completion and settled retained
   assert.equal((await (await route.get()).json()).state, 'pending');
   state.retained = false;
   assert.equal((await (await route.get()).json()).state, 'complete');
+  assert.equal((await (await route.get()).json()).running, false);
+  state.running = true;
+  assert.equal((await (await route.get()).json()).running, true, 'a run executing in this process is reported');
 });
 
 test('actual setup status rejects damaged steps, claim and marker without leaking details', async () => {
@@ -291,4 +295,30 @@ test('post-completion readiness failure retries only the existing handoff, never
   assert.equal(state.readyCalls, 2);
   assert.equal(state.posts, 0);
   assert.equal(state.reads, 0);
+});
+
+test('following a running setup returns idle when the run stopped unfinished, and completes when it finishes', async () => {
+  const running = { state: 'pending', steps: { config: 'done', caddy: 'running' }, running: true };
+  const stopped = { state: 'pending', steps: { config: 'done', caddy: 'running' }, running: false };
+  const idle = fixture([running, stopped]);
+  assert.equal(await readSetupProgress({ ...idle.options, timeoutMs: 50, stopWhenIdle: true }), 'idle');
+  assert.equal(idle.state.reads, 2);
+  const done = fixture([running, { ...complete, running: false }]);
+  assert.equal(await readSetupProgress({ ...done.options, timeoutMs: 50, stopWhenIdle: true }), undefined);
+  // Without stopWhenIdle (a lost stream of this page's own submission) idle status is never a reason to stop.
+  const plain = fixture([stopped]);
+  await assert.rejects(readSetupProgress(plain.options), error => error instanceof SetupProgressError && error.readOnly);
+});
+
+test('the wizard follows a setup run that is still executing instead of submitting it again', () => {
+  const source = readFileSync(new URL('../src/app/setup/page.tsx', import.meta.url), 'utf8');
+  const detect = source.split('async function detectInterruptedProvisioning')[1].split('async function checkSetupStatus')[0];
+  assert.match(detect, /progress\.running === true/);
+  assert.match(detect, /followRunningSetup\.current = running/);
+  const follow = source.split('const handleFollowRunningSetup = useCallback(async () => {')[1].split('}, [')[0];
+  assert.match(follow, /readSetupProgress\(\{ \.\.\.setupProgressOptions\(\), stopWhenIdle: true/);
+  assert.doesNotMatch(follow, /\/api\/setup\/run/);
+  assert.match(follow, /if \(resubmit\) await handleRunSetup\(\)/);
+  const start = source.split('if (step === 4 && !provisioningStarted.current) {')[1].split('}, [step')[0];
+  assert.match(start, /followRunningSetup\.current\)[\s\S]*handleFollowRunningSetup\(\)[\s\S]*handleRunSetup\(\)/);
 });
