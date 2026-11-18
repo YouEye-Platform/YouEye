@@ -66,7 +66,15 @@ STUB
 echo "cage $* WLR_RENDERER=$WLR_RENDERER" >> "$T/log"
 while [ "$1" != "--" ]; do shift; done
 shift
-exec "$@"
+# Like the real cage: cog runs as its child, and on SIGTERM cage still waits for cog to end.
+"$@" &
+child=$!
+trap 'echo "cage got TERM" >> "$T/log"' TERM
+while :; do
+    wait "$child"; status=$?
+    kill -0 "$child" 2>/dev/null || break
+done
+exit "$status"
 STUB
     cat > "$T/bin/cog" <<'STUB'
 #!/bin/bash
