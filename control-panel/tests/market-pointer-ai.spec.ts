@@ -57,7 +57,7 @@ test('app AI controls require an administrator, CSRF, explicit takeover, and ide
   assert.match(provider, /await deleteIdentityUser\(id, async current =>[\s\S]*setPointerManagedActorState\(current\.id, 'disabled'\)/);
   const deletion = identityStore.slice(identityStore.indexOf('export async function deleteIdentityUser('),
     identityStore.indexOf('async function deleteIdentityUserUnderLifecycle('));
-  assert.match(deletion, /return withIdentityAppLifecycle/);
+  assert.match(deletion, /return withIdentityLifecycle/);
   assert.match(deletion, /await assertIdentityDisposition\(id, 'delete'\)/);
   assert.match(deletion, /await beforeDelete\(current\)/);
   assert.match(provider, /input\.is_active === true[\s\S]*setPointerManagedActorState\(id, 'active'\)/);

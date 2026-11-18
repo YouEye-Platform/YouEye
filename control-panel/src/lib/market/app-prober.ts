@@ -72,14 +72,26 @@ export async function probeInstalledApp(appId: string, persistedState?: ProbeSta
   try {
     // The check also applies to reentrant verification calls inside an updater.
     if (isAppUpdateReserved(appId)) return await publishAppMaintenance(appId);
+    // An app its administrator turned off costs nothing: no lock (a flock process), no Incus call.
+    const meta = await readInstallMetadata(appId);
+    if (meta && shouldSuppressAppRecovery(meta)) return await publishIntentionallyStopped(appId);
     return await withAppLifecycle(appId, () => probeOneUnderLifecycle(appId, persistedState));
   } catch (error) {
-    if (error instanceof AppLifecycleAdmissionError
-      || (error instanceof Error && error.message.includes('executor lock is busy'))) {
-      return await publishAppMaintenance(appId);
+    if (error instanceof AppLifecycleAdmissionError) return await publishAppMaintenance(appId);
+    if (error instanceof Error && error.message.includes('executor lock is busy')) {
+      // Another operation (a backup, an install step, a start) holds the app: not maintenance, and not a new state.
+      return { appId, state: 'unknown', detail: 'Busy with another operation on this app' };
     }
     throw error;
   }
+}
+
+async function publishIntentionallyStopped(appId: string): Promise<AppProbeResult> {
+  const detail = 'Intentionally stopped by administrator';
+  states.delete(appId);
+  await updateHealthStatus(appId, 'unknown', { appHealthState: 'unknown', healthDetail: detail });
+  await resolveIssue(`app.${appId}.health`);
+  return { appId, state: 'unknown', detail };
 }
 
 async function publishAppMaintenance(appId: string): Promise<AppProbeResult> {

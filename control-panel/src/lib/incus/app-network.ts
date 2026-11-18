@@ -15,6 +15,7 @@
  * DNS: bridge dnsmasq → pihole (via raw.dnsmasq server= directive) → LAN DNS.
  */
 
+import { describeErrorChainForLog } from '@/lib/market/install-tracker';
 import { incusRequest as providerIncusRequest, execShell } from './server';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { sameIncusFields, sameIncusAcl } from './config-equality';
@@ -171,10 +172,19 @@ function assertIncusSuccess<T>(
   return response.metadata;
 }
 
+const STOPPED_APP_AUDIT_MS = 10 * 60 * 1000;
+
+/** When each stopped app's network was last audited clean (per process). */
+function stoppedNetworkAudits(): Map<string, number> {
+  const registry = globalThis as typeof globalThis & { __youeyeStoppedNetworkAudits?: Map<string, number> };
+  return registry.__youeyeStoppedNetworkAudits ??= new Map();
+}
+
 function safeNetworkFailure(error: unknown): string {
   if (error instanceof AppNetworkStateError || error instanceof AppNetworkOperationConflictError) {
     return error.message;
   }
+  console.error(`[app-network] Incus network operation or read-back failed: ${describeErrorChainForLog(error)}`);
   return 'Incus network operation or exact read-back failed';
 }
 
@@ -720,7 +730,7 @@ export async function createAppNetwork(
   appId: string,
   options: { nat?: boolean; operationId?: string; requiredAddresses?: number; installationId?: string } = {},
 ): Promise<{ bridgeName: string; subnet: number; subnetCIDR: string }> {
-  await assertNoCriticalIssues(`Install ${appId}`);
+  await assertNoCriticalIssues(`Install ${appId}`, appId);
   const observation = await observeAppNetworkState();
 
   // Use static IP for pihole DNS forwarding (deterministic, survives restarts)
@@ -834,7 +844,7 @@ export async function preflightAppNetwork(
   appId: string,
   options: { requiredAddresses: number },
 ): Promise<{ bridgeName: string; subnetCIDR: string; gateway: string }> {
-  await assertNoCriticalIssues(`Install ${appId}`);
+  await assertNoCriticalIssues(`Install ${appId}`, appId);
   const observation = await observeAppNetworkState();
   const existing = observation.state.leases.find((lease) => lease.appId === appId);
   if (existing) {
@@ -853,6 +863,13 @@ export async function preflightAppNetwork(
     excludedCIDRs: observation.externalCIDRs,
   });
   return { bridgeName: lease.bridgeName, subnetCIDR: lease.cidr, gateway: lease.gateway };
+}
+
+/** The app's lease as recorded in the IPAM store, without reconciling it against Incus. */
+async function readRecordedAppNetworkLease(appId: string): Promise<AppNetworkLease | null> {
+  const config = await loadAppNetworkConfig();
+  const state = await readIpamState({ config, allowInitialize: false });
+  return state.leases.find((lease) => lease.appId === appId) ?? null;
 }
 
 export async function getAppNetworkLease(appId: string): Promise<AppNetworkLease | null> {
@@ -883,7 +900,7 @@ export async function markAppNetworkCleanupPending(
   stage: string,
   error: unknown,
 ): Promise<AppNetworkLease | null> {
-  void error;
+  console.error(`[app-network] ${appId} network cleanup pending after ${stage}: ${describeErrorChainForLog(error)}`);
   const config = await loadAppNetworkConfig();
   const state = await readIpamState({ config, allowInitialize: false });
   const lease = state.leases.find((candidate) => candidate.appId === appId);
@@ -1611,7 +1628,9 @@ export async function appContainerAddress(
   iface = 'eth0',
   options: { allowStopped?: boolean } = {},
 ): Promise<string> {
-  const lease = await getAppNetworkLease(appId);
+  // The recorded lease is enough here: the NIC's network and address are checked against it below. Observing the
+  // whole Incus network inventory instead cost a read of every app network per connection, every reconcile pass.
+  const lease = await readRecordedAppNetworkLease(appId);
   if (!lease) throw new AppNetworkStateError(`${appId} has no app network`);
   const nic = await hostSideNICAddress(containerName, iface, options);
   if (!nic) throw new AppNetworkStateError(`${containerName} is not running or has no ${iface}`);
@@ -1624,7 +1643,7 @@ export async function appContainerAddress(
 
 // ─── Cross-App NIC Permissions ──────────────────────────────
 
-function integrationAclName(containerName: string, targetAppId: string): string {
+export function integrationAclName(containerName: string, targetAppId: string): string {
   const safe = `${containerName}-to-${targetAppId}`.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 42);
   return `ye-grant-${safe}`;
 }
@@ -2081,6 +2100,16 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
         const { readInstallMetadata } = await import('../market/metadata');
         const metadata = await readInstallMetadata(candidate.appId);
         if (!metadata || metadata.lifecycleState === 'installing') throw new Error('App lifecycle requires fresh repair admission');
+        // An app its administrator turned off can't be reached: audit its network every 10 minutes, not every pass.
+        // Turned on again, it is audited on every pass.
+        const { shouldSuppressAppRecovery } = await import('../market/app-prober');
+        const stopped = shouldSuppressAppRecovery(metadata);
+        const audited = stoppedNetworkAudits().get(candidate.appId);
+        if (stopped && audited !== undefined && Date.now() - audited < STOPPED_APP_AUDIT_MS) {
+          unchangedApps++;
+          continue;
+        }
+        if (!stopped) stoppedNetworkAudits().delete(candidate.appId);
         await readOnlyAudit.run(auditReads, async () => {
           const network = assertIncusSuccess(
             await incusRequest<IncusNetwork>('GET', `/1.0/networks/${candidate.bridgeName}`),
@@ -2089,6 +2118,7 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
           await reconcileActiveAppNetwork(candidate, network, metadata);
         });
         await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${candidate.appId}`);
+        if (stopped) stoppedNetworkAudits().set(candidate.appId, Date.now());
         unchangedApps++;
         continue;
       } catch {

@@ -190,29 +190,113 @@ export async function removeInstallMetadataRecordAtBaseForTest(
 }
 
 /**
- * List all installed apps by scanning /var/lib/youeye/app-* directories.
+ * Scan /var/lib/youeye/app-* directories. A record that can't be read is returned by app id in `damaged`.
  */
-async function listMetadata(filename: 'install.json' | 'retained.json'): Promise<InstallMetadata[]> {
-  const results: InstallMetadata[] = [];
-
+async function scanMetadata(filename: 'install.json' | 'retained.json', baseDir = BASE_DIR):
+  Promise<{ apps: InstallMetadata[]; damaged: string[] }> {
+  const apps: InstallMetadata[] = [];
+  const damaged: string[] = [];
+  let entries: string[];
   try {
-    const entries = await readdir(BASE_DIR);
-    for (const entry of entries) {
-      if (entry.startsWith('app-')) {
-        const appId = entry.slice(4); // Remove 'app-' prefix
-        const meta = await readInstallMetadataFromBase(appId, BASE_DIR, filename);
-        if (meta) results.push(meta);
+    entries = await readdir(baseDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { apps, damaged };
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith('app-')) continue;
+    const appId = entry.slice(4);
+    try {
+      const meta = await readInstallMetadataFromBase(appId, baseDir, filename);
+      if (meta) apps.push(meta);
+    } catch {
+      damaged.push(appId);
+    }
+  }
+  return { apps, damaged };
+}
+
+async function listMetadata(filename: 'install.json' | 'retained.json'): Promise<InstallMetadata[]> {
+  const { apps, damaged } = await scanMetadata(filename);
+  if (damaged.length) throw new DamagedInstallMetadataError(damaged);
+  return apps;
+}
+
+/** One or more install records can't be read; their apps' resources must be treated as owned. */
+export class DamagedInstallMetadataError extends Error {
+  constructor(readonly appIds: string[]) {
+    super(`Install metadata for ${appIds.join(', ')} is corrupt or insecure`);
+    this.name = 'DamagedInstallMetadataError';
+  }
+}
+
+/**
+ * Every install record, or a refusal naming the damaged ones. For ownership and destructive consumers (orphan
+ * detection, container lifecycle, route removal, backup and restore): skipping a damaged record would make its app's
+ * containers, volumes and routes look like nobody's.
+ */
+export async function listInstalledApps(): Promise<InstallMetadata[]> {
+  return listMetadata('install.json');
+}
+
+/** Ownership consumers that can work around a damaged record: the readable apps plus the damaged app ids. */
+export async function scanInstalledApps(): Promise<{ apps: InstallMetadata[]; damaged: string[] }> {
+  const result = await scanMetadata('install.json');
+  await reportDamagedInstallMetadata(result.damaged);
+  return result;
+}
+
+/**
+ * Read-only consumers (health probes, update checks, app lists): the readable apps. A damaged record is skipped and
+ * raised as a health issue naming the app, so one broken file doesn't hide every other app.
+ */
+export async function listReadableInstalledApps(): Promise<InstallMetadata[]> {
+  return (await scanInstalledApps()).apps;
+}
+
+export async function scanInstalledAppsAtBaseForTest(baseDir: string) {
+  return scanMetadata('install.json', baseDir);
+}
+
+const damagedKey = Symbol.for('youeye.damaged-install-metadata');
+const damagedGlobal = globalThis as typeof globalThis & { [damagedKey]?: Map<string, number> };
+const reportedDamage = damagedGlobal[damagedKey] ??= new Map<string, number>();
+const DAMAGE_REPORT_INTERVAL_MS = 10 * 60 * 1000;
+let lastPersistedCheck = 0;
+
+async function reportDamagedInstallMetadata(damaged: string[]): Promise<void> {
+  try {
+    const { observeIssue, resolveIssue } = await import('@/lib/health/issues');
+    const now = Date.now();
+    for (const appId of damaged) {
+      if (now - (reportedDamage.get(appId) ?? 0) < DAMAGE_REPORT_INTERVAL_MS) continue;
+      reportedDamage.set(appId, now);
+      console.error(`[metadata] install record of ${appId} is corrupt or insecure (${path.join(metadataDir(appId), 'install.json')})`);
+      await observeIssue({
+        id: `app.${appId}.install-record`, severity: 'critical', source: 'market',
+        title: `${appId}: install record is damaged`,
+        body: `${path.join(metadataDir(appId), 'install.json')} can't be read (corrupt, or wrong owner or mode). Other apps keep working; ${appId}'s containers, storage and routes are left alone, and changes that need to know who owns them are refused until the record is fixed. If only its owner or mode changed, set them back (root, 0600); otherwise restore the app from a backup.`,
+        fixable: false, debounce: 1,
+      });
+    }
+    for (const appId of [...reportedDamage.keys()]) {
+      if (damaged.includes(appId)) continue;
+      reportedDamage.delete(appId);
+      await resolveIssue(`app.${appId}.install-record`);
+    }
+    // An issue raised before a restart is not in this process's map: close it from the issue store once its record
+    // reads again (or the app is gone). At most once a minute.
+    if (now - lastPersistedCheck >= 60_000) {
+      lastPersistedCheck = now;
+      const { listIssues } = await import('@/lib/health/issues');
+      for (const issue of await listIssues()) {
+        const match = /^app\.([a-z0-9][a-z0-9-]*)\.install-record$/.exec(issue.id);
+        if (match && !damaged.includes(match[1])) await resolveIssue(issue.id);
       }
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    console.error('[metadata] could not report damaged install records:', error);
   }
-
-  return results;
-}
-
-export async function listInstalledApps(): Promise<InstallMetadata[]> {
-  return listMetadata('install.json');
 }
 
 export async function listRetainedApps(): Promise<InstallMetadata[]> {

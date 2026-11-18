@@ -19,7 +19,8 @@ function compile(file: string) {
   }}).outputText;
 }
 function fixture(t: TestContext, options: {
-  busy?: boolean;
+  /** Hold this app's lifecycle lock (as an update, probe or backup would). */
+  busy?: 'notes' | 'identity';
   commitFails?: boolean;
   owner?: boolean;
   beforeCommit?: () => Promise<void>;
@@ -27,7 +28,7 @@ function fixture(t: TestContext, options: {
   const directory = mkdtempSync(path.join(tmpdir(), 'identity-mutation-'));
   new journal.AppUpdateJournalStore(directory);
   const busyLock = options.busy
-    ? AppUpdateExecutorLock.acquire(path.join(directory, 'executors', 'app-notes.lock'))
+    ? AppUpdateExecutorLock.acquire(path.join(directory, 'executors', `app-${options.busy}.lock`))
     : undefined;
   t.after(() => {
     busyLock?.release();
@@ -49,14 +50,18 @@ function fixture(t: TestContext, options: {
   const events: string[] = [];
   let held = false;
   const user = {id:'principal',username:'ordinary',name:'User',first_name:'User',last_name:'',email:'',groups:['youeye-users'],is_admin:false,is_active:true};
-  const gate = {async withAppLifecycles(apps: string[], work: () => Promise<unknown>) {
-    assert.deepEqual(Array.from(apps), ['identity', 'notes']);
-    events.push('admission');
-    return admission.withAppLifecycles(apps, async () => {
-      assert.equal(held, false, 'provider/store must not recursively acquire admission');
-      held=true;try {return await work();} finally {held=false;events.push('release');}
-    });
-  }};
+  // User and password writes take the identity gate only (Plan 9 item 15), never every app's lock.
+  const gate = {
+    async withAppLifecycle(app: string, work: () => Promise<unknown>) {
+      assert.equal(app, 'identity');
+      events.push('admission');
+      return admission.withAppLifecycle(app, async () => {
+        assert.equal(held, false, 'provider/store must not recursively acquire admission');
+        held=true;try {return await work();} finally {held=false;events.push('release');}
+      });
+    },
+    withUserOperationLockWait: (work: () => Promise<unknown>) => work(),
+  };
   const transport = {async execShell(_container: string, command: string) {
     let rows: unknown[] = [];
     if (command.includes('CREATE TABLE')) {
@@ -114,10 +119,13 @@ test('real provider and store update membership without recursively acquiring ad
   const f=fixture(t);await f.api.updateUser('principal',{groups:['household-a']});
   assert.deepEqual(f.events,['admission','commit','release']);
 });
-test('direct store callers retain admission and busy gates prevent the callback and write', async t => {
+test('direct store callers retain admission; only the identity gate blocks, never an app lock', async t => {
   const f=fixture(t);await f.store.updateIdentityUser('principal',{groups:['household-a']});
   assert.deepEqual(f.events,['admission','commit','release']);
-  const blocked=fixture(t,{busy:true});await assert.rejects(blocked.api.updateUser('principal',{is_active:false}),/lock is busy/);
+  // An app busy with an update, probe or backup no longer blocks user management.
+  const appBusy=fixture(t,{busy:'notes'});await appBusy.api.updateUser('principal',{is_active:false});
+  assert.deepEqual(appBusy.events,['admission','pointer:disabled','commit','release']);
+  const blocked=fixture(t,{busy:'identity'});await assert.rejects(blocked.api.updateUser('principal',{is_active:false}),/lock is busy/);
   assert.deepEqual(blocked.events,['admission']);
   let callbackCalls = 0;
   await assert.rejects(blocked.store.updateIdentityUser('principal', async () => {
@@ -126,9 +134,6 @@ test('direct store callers retain admission and busy gates prevent the callback 
   }, async () => { callbackCalls++; }), /lock is busy/);
   assert.equal(callbackCalls, 0);
   assert.deepEqual(blocked.events, ['admission', 'admission']);
-  // Contention on the later Notes gate must release the earlier Identity gate.
-  const identityLock = AppUpdateExecutorLock.acquire(path.join(blocked.directory, 'executors', 'app-identity.lock'));
-  identityLock.release();
 });
 test('real transaction keeps Pointer activation after commit and suppresses it on commit failure', async t => {
   const f=fixture(t);await f.api.updateUser('principal',{is_active:true});

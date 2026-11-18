@@ -59,7 +59,7 @@ func (p NativeCoreCheckpoint) InspectCopyResources(ctx context.Context, supporte
 	if err = validateCopyNetworks(raw, networks); err != nil {
 		return result, err
 	}
-	containers, err := coreCheckpointContainers(raw, owned, "")
+	containers, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "")
 	if err != nil {
 		return result, err
 	}

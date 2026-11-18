@@ -83,6 +83,16 @@ export async function readFrozenUpdateManifest(appId: string, installedVersion?:
     throw new AppUpdatePreflightError('frozen-digest-mismatch',
       `The install record of ${appId} has no manifest digest, so its installed copy cannot be checked.`);
   }
+  // The registration only changes together with the record's manifestDigest (install, update, restore), so a copy
+  // parsed and verified for this digest stays valid. Reading it on every reconcile pass cost two `psql` execs per
+  // installed app every 30 s.
+  const cached = frozenManifestCache().get(appId);
+  if (cached?.digest === meta.manifestDigest) {
+    if (installedVersion && cached.manifest.version !== installedVersion) {
+      throw new AppUpdatePreflightError('frozen-version-mismatch', 'Installed manifest and recorded runtime version disagree.');
+    }
+    return structuredClone(cached.manifest);
+  }
   const result = await execCommand('youeye-postgres', [
     'psql', '-U', 'youeye', '-d', 'youeye_ui', '-At', '-v', 'ON_ERROR_STOP=1', '-c',
     `SELECT manifest::text FROM apps WHERE id='${appId}'`,
@@ -91,5 +101,14 @@ export async function readFrozenUpdateManifest(appId: string, installedVersion?:
     throw new AppUpdatePreflightError('frozen-manifest-unavailable',
       'The installed app manifest could not be read.');
   }
-  return parseFrozenAppManifest(result.stdout, appId, installedVersion, meta.manifestDigest);
+  const manifest = parseFrozenAppManifest(result.stdout, appId, installedVersion, meta.manifestDigest);
+  frozenManifestCache().set(appId, { digest: meta.manifestDigest, manifest: structuredClone(manifest) });
+  return manifest;
+}
+
+/** Verified frozen manifests by app id, shared by every route bundle of this process. */
+function frozenManifestCache(): Map<string, { digest: string; manifest: AppManifest }> {
+  const registry = globalThis as typeof globalThis & { __youeyeFrozenManifests?: Map<string, { digest: string; manifest: AppManifest }> };
+  registry.__youeyeFrozenManifests ??= new Map();
+  return registry.__youeyeFrozenManifests;
 }

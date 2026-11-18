@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { getAllInstalledApps, getInstalledApp, removeInstalledApp, upsertInstalledApp } from './installed-apps';
 import {
   listInstalledApps,
+  scanInstalledApps,
   readInstallMetadata,
   removeInstallMetadata,
   removeInstallMetadataRecord,
@@ -24,6 +25,7 @@ import { pushConnectionsToUI, refreshConnectionGrants } from '../bridges/manager
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import { appContainerAddress, hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
 import {
+  describeErrorChainForLog,
   getAllActiveInstalls,
   getTrackedInstall,
   pruneCompletedInstallOperations,
@@ -34,12 +36,20 @@ import {
 export interface ReconcileResult {
   repaired: string[];
   unresolved: string[];
+  /** Apps whose lock was held (an install, update or user operation): not checked this pass. */
+  skipped?: string[];
 }
 
 const ISSUE_ID = 'market.reconcile.divergence';
 const UI_CONTAINER = 'youeye-ui';
 const POSTGRES_CONTAINER = 'youeye-postgres';
 const SAFE_FAILURE = 'operation-or-verification-failed';
+
+/** The public item stays a fixed code; the journal gets the cause chain. */
+function failed(item: string, error: unknown): string {
+  console.error(`[reconcile] ${item} failed: ${describeErrorChainForLog(error)}`);
+  return `${item}:${SAFE_FAILURE}`;
+}
 
 function admissionExcluded(error: unknown): boolean {
   return error instanceof AppLifecycleAdmissionError
@@ -49,6 +59,7 @@ function admissionExcluded(error: unknown): boolean {
 export async function reconcileApps(): Promise<ReconcileResult> {
   const repaired: string[] = [];
   const unresolved: string[] = [];
+  const skipped: string[] = [];
 
   // URL migration owns app metadata and routes until its restart recovers.
   // A background repair must not recreate an old hostname from a stale snapshot.
@@ -59,8 +70,8 @@ export async function reconcileApps(): Promise<ReconcileResult> {
     repaired.push(...recovered.map((appId) => `interrupted-operation:${appId}`));
     pruneCompletedInstallOperations();
     await resolveIssue('market.install-operation.state');
-  } catch {
-    const message = `install-operation-state:${SAFE_FAILURE}`;
+  } catch (error) {
+    const message = failed('install-operation-state', error);
     unresolved.push(message);
     await observeIssue({
       id: 'market.install-operation.state',
@@ -83,8 +94,8 @@ export async function reconcileApps(): Promise<ReconcileResult> {
   let appNetworks: Awaited<ReturnType<typeof listAppNetworks>>;
   try {
     appNetworks = networkResult.observedNetworks ?? await listAppNetworks();
-  } catch {
-    unresolved.push(`app-network-list:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`app-network-list`, error));
     return { repaired, unresolved };
   }
   const activeNetworkIds = new Set(
@@ -96,11 +107,15 @@ export async function reconcileApps(): Promise<ReconcileResult> {
     if (match) networkProblemIds.add(match[1]);
   }
 
-  const [metadata, installedApps, instances] = await Promise.all([
-    listInstalledApps(),
+  const [{ apps: metadata, damaged }, installedApps, instances] = await Promise.all([
+    scanInstalledApps(),
     getAllInstalledApps(),
     listInstances(),
   ]);
+  // A damaged record's app is left alone: its containers, routes and registration stay (route removal re-reads every
+  // record under the inventory lock and refuses while one is damaged).
+  for (const appId of damaged) unresolved.push(`install-record:${appId}`);
+  const damagedIds = new Set(damaged);
 
   const metadataById = new Map(metadata.map((m) => [m.appId, m]));
   const reconcilableMetadataById = new Map(
@@ -154,22 +169,46 @@ export async function reconcileApps(): Promise<ReconcileResult> {
         }
 
         if (!networkActive) {
+          // A fresh install that died before finishing (no live installer, checked above) holds no user data: clean it
+          // up completely (containers, routes, DNS, network, record), with backoff when cleanup itself fails.
+          const { isUnfinishedFreshInstall } = await import('@/lib/admission/lifecycle');
+          if (isUnfinishedFreshInstall(meta) && unfinishedCleanupDue(meta.appId)) {
+            try {
+              const cleaned = await cleanupAppByScan(meta.appId, { keepData: false });
+              repaired.push(...cleaned.repaired.map((item) => `failed-install-cleanup:${item}`));
+              unresolved.push(...cleaned.unresolved.map((item) => `failed-install-cleanup:${item}`));
+              unfinishedCleanupResult(meta.appId, cleaned.unresolved.length === 0);
+              if (cleaned.unresolved.length === 0) {
+                for (const id of [`market.install.rollback.${meta.appId}`, `market.app-network.${meta.appId}`]) {
+                  await resolveIssue(id).catch(() => undefined);
+                }
+              }
+            } catch (error) {
+              unfinishedCleanupResult(meta.appId, false);
+              console.error(`[reconcile] Cleanup of the failed install of ${meta.appId}: ${describeErrorChainForLog(error)}`);
+              unresolved.push(`failed-install-cleanup:${meta.appId}:${SAFE_FAILURE}`);
+            }
+            return;
+          }
           unresolved.push(`metadata-without-active-network:${meta.appId}`);
           for (const name of containers) {
             if (!instances.includes(name)) continue;
             try {
-              await stopInstance(name);
-              repaired.push(`stopped-unowned-app:${name}`);
-            } catch {
-              unresolved.push(`stop-unowned-app:${name}:${SAFE_FAILURE}`);
+              // Stopping a stopped container is not a repair.
+              if (await instanceRunning(name)) {
+                await stopInstance(name);
+                repaired.push(`stopped-unowned-app:${name}`);
+              }
+            } catch (error) {
+              unresolved.push(failed(`stop-unowned-app:${name}`, error));
             }
           }
           if (installedById.has(meta.appId)) {
             try {
               await removeInstalledApp(meta.appId);
               repaired.push(`hidden-incomplete-app:${meta.appId}`);
-            } catch {
-              unresolved.push(`hidden-incomplete-app:${meta.appId}:${SAFE_FAILURE}`);
+            } catch (error) {
+              unresolved.push(failed(`hidden-incomplete-app:${meta.appId}`, error));
             }
           }
           return;
@@ -201,26 +240,26 @@ export async function reconcileApps(): Promise<ReconcileResult> {
               sourceRepoUrl: meta.sourceRepoUrl,
             });
             repaired.push(`installed-apps:${meta.appId}`);
-          } catch {
-            unresolved.push(`installed-apps:${meta.appId}:${SAFE_FAILURE}`);
+          } catch (error) {
+            unresolved.push(failed(`installed-apps:${meta.appId}`, error));
           }
         }
 
         try {
           const repairedUi = await reconcileUIRegistration(meta, uiRegistrations);
           if (repairedUi) repaired.push(`ui-drawer:${meta.appId}`);
-        } catch {
-          unresolved.push(`ui-drawer:${meta.appId}:${SAFE_FAILURE}`);
+        } catch (error) {
+          unresolved.push(failed(`ui-drawer:${meta.appId}`, error));
         }
       });
     } catch (error) {
-      if (admissionExcluded(error)) continue;
-      unresolved.push(`app-admission:${meta.appId}:${SAFE_FAILURE}`);
+      if (admissionExcluded(error)) { skipped.push(meta.appId); continue; }
+      unresolved.push(failed(`app-admission:${meta.appId}`, error));
     }
   }
 
   for (const app of installedApps) {
-    if (!metadataById.has(app.appId)) {
+    if (!metadataById.has(app.appId) && !damagedIds.has(app.appId)) {
       const hasLive = appInstanceNames.has(`app-${app.appId}`) || appInstanceNames.has(`ye-app-${app.appId}`);
       if (!hasLive) {
         try {
@@ -232,8 +271,8 @@ export async function reconcileApps(): Promise<ReconcileResult> {
             repaired.push(`stale-installed-app:${app.appId}`);
           });
         } catch (error) {
-          if (admissionExcluded(error)) continue;
-          unresolved.push(`stale-installed-app:${app.appId}:${SAFE_FAILURE}`);
+          if (admissionExcluded(error)) { skipped.push(app.appId); continue; }
+          unresolved.push(failed(`stale-installed-app:${app.appId}`, error));
         }
       }
     }
@@ -262,6 +301,9 @@ export async function reconcileApps(): Promise<ReconcileResult> {
       learnMore: '/settings/system/health',
       debounce: 1,
     });
+  } else if (skipped.length > 0) {
+    // A busy app was not checked: an open divergence stays open until a pass covers every app.
+    console.log(`[reconcile] skipped busy apps: ${skipped.join(', ')}`);
   } else {
     await resolveIssue(ISSUE_ID);
     if (repaired.length > 0) {
@@ -274,7 +316,7 @@ export async function reconcileApps(): Promise<ReconcileResult> {
     }
   }
 
-  return { repaired, unresolved };
+  return { repaired, unresolved, skipped };
 }
 
 async function stopInstance(name: string): Promise<void> {
@@ -298,6 +340,29 @@ async function stopInstance(name: string): Promise<void> {
   }
 }
 
+/** Cleanup of failed installs retries with backoff (1, 5, 15 min, then hourly), not on every 30 s pass. */
+const failedInstallCleanup = globalThis as typeof globalThis & {
+  __youeyeFailedInstallCleanup?: Map<string, { failures: number; nextAt: number }>;
+};
+function unfinishedCleanupState() {
+  failedInstallCleanup.__youeyeFailedInstallCleanup ??= new Map();
+  return failedInstallCleanup.__youeyeFailedInstallCleanup;
+}
+function unfinishedCleanupDue(appId: string): boolean {
+  return (unfinishedCleanupState().get(appId)?.nextAt ?? 0) <= Date.now();
+}
+function unfinishedCleanupResult(appId: string, ok: boolean): void {
+  const state = unfinishedCleanupState();
+  if (ok) { state.delete(appId); return; }
+  const failures = (state.get(appId)?.failures ?? 0) + 1;
+  const minutes = [1, 5, 15][failures - 1] ?? 60;
+  state.set(appId, { failures, nextAt: Date.now() + minutes * 60_000 });
+}
+async function instanceRunning(name: string): Promise<boolean> {
+  const state = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${encodeURIComponent(name)}/state`);
+  return state.type !== 'error' && state.metadata?.status === 'Running';
+}
+
 /**
  * Clean up an app from its install.json alone: the exact recorded instances (only when tagged
  * with its installation id), routes by exact hostname or recorded upstream, and — with
@@ -306,14 +371,16 @@ async function stopInstance(name: string): Promise<void> {
  */
 export async function cleanupAppByScan(
   appId: string,
-  options: { keepData?: boolean } = {},
+  /** force: skip the data-ownership check (youeye app remove --force); resources are still matched by this app's id
+   * and recorded installation id, and volumes by their ownership tags. */
+  options: { keepData?: boolean; force?: boolean } = {},
 ): Promise<ReconcileResult> {
   return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
 }
 
 async function cleanupAppByScanUnderLifecycle(
   appId: string,
-  options: { keepData?: boolean },
+  options: { keepData?: boolean; force?: boolean },
 ): Promise<ReconcileResult> {
   if (!/^[a-z0-9-]+$/.test(appId)) {
     throw new Error(`Invalid app ID for cleanup: ${appId}`);
@@ -325,7 +392,15 @@ async function cleanupAppByScanUnderLifecycle(
     return { repaired: [], unresolved: [`ownership:${appId}:install metadata is required before cleanup`] };
   }
   const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
-  await verifyAdmissionCleanup(recoveryMetadata, options.keepData !== false);
+  if (options.force) {
+    try {
+      await verifyAdmissionCleanup(recoveryMetadata, options.keepData !== false);
+    } catch (error) {
+      console.warn(`[cleanup] Forced removal of ${appId} without the data-ownership check: ${describeErrorChainForLog(error)}`);
+    }
+  } else {
+    await verifyAdmissionCleanup(recoveryMetadata, options.keepData !== false);
+  }
   const interruptedInstall = recoveryMetadata?.lifecycleState === 'installing';
   const instances = await listInstances();
   const owner = recoveryMetadata.installationId
@@ -346,8 +421,8 @@ async function cleanupAppByScanUnderLifecycle(
     try {
       await deleteOwnedInstance(name, owner);
       repaired.push(`instance:${name}`);
-    } catch {
-      unresolved.push(`instance:${name}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`instance:${name}`, error));
     }
   }
 
@@ -362,8 +437,8 @@ async function cleanupAppByScanUnderLifecycle(
       }
     }
     repaired.push(`routes:${appId}`);
-  } catch {
-    unresolved.push(`routes:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`routes:${appId}`, error));
   }
 
   // Revoke every cross-app grant before attempting to remove the target's
@@ -376,8 +451,8 @@ async function cleanupAppByScanUnderLifecycle(
     }
     if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
     repaired.push(`bridges:${appId}`);
-  } catch {
-    unresolved.push(`bridges:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`bridges:${appId}`, error));
   }
 
   // Remove the Control-owned holders on the primary bridge. The IPAM lease is
@@ -387,8 +462,8 @@ async function cleanupAppByScanUnderLifecycle(
     await removeSystemProxyDevices(appId);
     await removeCaddyFromAppNetwork(appId);
     repaired.push(`network-attachments:${appId}`);
-  } catch {
-    unresolved.push(`network-attachments:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`network-attachments:${appId}`, error));
   }
 
   if (interruptedInstall && (recoveryMetadata.ssoClientId || recoveryMetadata.ssoSlug)) {
@@ -398,8 +473,8 @@ async function cleanupAppByScanUnderLifecycle(
       const { getClient } = await import('@/lib/identity/store');
       if (await getClient(clientId)) throw new Error('identity client remains');
       repaired.push(`identity-client:${appId}`);
-    } catch {
-      unresolved.push(`identity-client:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`identity-client:${appId}`, error));
     }
   }
 
@@ -407,8 +482,8 @@ async function cleanupAppByScanUnderLifecycle(
     try {
       await removeForwardAuth({ hostname: `${recoveryMetadata.subdomain}.${recoveryMetadata.domain}` });
       repaired.push(`forward-auth:${appId}`);
-    } catch {
-      unresolved.push(`forward-auth:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`forward-auth:${appId}`, error));
     }
   }
 
@@ -428,8 +503,8 @@ async function cleanupAppByScanUnderLifecycle(
         throw new Error('app DNS records remain');
       }
       repaired.push(`dns:${appId}`);
-    } catch {
-      unresolved.push(`dns:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`dns:${appId}`, error));
     }
   }
 
@@ -446,47 +521,48 @@ async function cleanupAppByScanUnderLifecycle(
         recoveryMetadata!.databaseUser || appId,
       );
       repaired.push(`database:${appId}`);
-    } catch {
-      unresolved.push(`database:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`database:${appId}`, error));
     }
   }
 
   if (options.keepData === false || (interruptedInstall && !recoveryMetadata.recoveryPreserveData)) {
     try {
-      if (recoveryMetadata?.storageVolumes?.length) {
-        await deleteAppStorage(recoveryMetadata.storageVolumes);
-      }
+      // Never a shared folder: a failed install never bound its ownership (that happens at finalize), and other apps
+      // may use it. The normal uninstaller decides shared folders; cleanup by scan leaves them.
+      const own = (recoveryMetadata?.storageVolumes ?? []).filter(volume => !volume.sharedGroup);
+      if (own.length) await deleteAppStorage(own);
       repaired.push(`storage:${appId}`);
-    } catch {
-      unresolved.push(`storage:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`storage:${appId}`, error));
     }
     try {
       await deleteAllAppSecrets(appId);
       repaired.push(`secrets:${appId}`);
-    } catch {
-      unresolved.push(`secrets:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`secrets:${appId}`, error));
     }
   }
 
   try {
     await removeCaddyTrustBundle(appId);
     repaired.push(`ca:${appId}`);
-  } catch {
-    unresolved.push(`ca:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`ca:${appId}`, error));
   }
 
   try {
     await removeInstalledApp(appId);
     repaired.push(`installed-apps:${appId}`);
-  } catch {
-    unresolved.push(`installed-apps:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`installed-apps:${appId}`, error));
   }
 
   try {
     await deregisterAppFromUI(appId);
     repaired.push(`ui-drawer:${appId}`);
-  } catch {
-    unresolved.push(`ui-drawer:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`ui-drawer:${appId}`, error));
   }
 
   // Prove every dependent resource absent before the network lease can be
@@ -505,8 +581,8 @@ async function cleanupAppByScanUnderLifecycle(
   if (await getInstalledApp(appId)) unresolved.push(`verify-installed-apps:${appId}`);
   try {
     if (await isAppRegisteredWithUI(appId)) unresolved.push(`verify-ui-drawer:${appId}`);
-  } catch {
-    unresolved.push(`verify-ui-drawer:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`verify-ui-drawer:${appId}`, error));
   }
 
   const { deleteAppNetwork, getAppNetworkLease, markAppNetworkCleanupPending } = await import('@/lib/incus/app-network');
@@ -514,14 +590,14 @@ async function cleanupAppByScanUnderLifecycle(
     try {
       await deleteAppNetwork(appId);
       repaired.push(`network:${appId}`);
-    } catch {
-      unresolved.push(`network:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`network:${appId}`, error));
     }
   } else {
     try {
       await markAppNetworkCleanupPending(appId, 'scan-cleanup', unresolved.join('; '));
-    } catch {
-      unresolved.push(`network-state:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`network-state:${appId}`, error));
     }
   }
 
@@ -538,8 +614,8 @@ async function cleanupAppByScanUnderLifecycle(
   if (await getInstalledApp(appId)) unresolved.push(`verify-installed-apps:${appId}`);
   try {
     if (await isAppRegisteredWithUI(appId)) unresolved.push(`verify-ui-drawer:${appId}`);
-  } catch {
-    unresolved.push(`verify-ui-drawer:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`verify-ui-drawer:${appId}`, error));
   }
 
   let leasePresent = true;
@@ -547,21 +623,24 @@ async function cleanupAppByScanUnderLifecycle(
     const lease = await getAppNetworkLease(appId);
     leasePresent = lease !== null;
     if (lease) unresolved.push(`verify-network:${appId}:${lease.bridgeName}:${lease.state}`);
-  } catch {
-    unresolved.push(`verify-network:${appId}:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`verify-network:${appId}`, error));
   }
 
   // Install metadata is the final recovery map. Remove it only after all
   // resources are verified absent and the lease is safely released.
   if (unresolved.length === 0 && !leasePresent) {
     try {
-      const preserveData = options.keepData !== false
-        || (interruptedInstall && recoveryMetadata.recoveryPreserveData);
+      // A fresh install that never finished holds no user data: its record and directory go whoever asked
+      // (the network reconcile cleans with keep-data by default).
+      const freshFailedInstall = interruptedInstall && !recoveryMetadata.recoveryPreserveData;
+      const preserveData = !freshFailedInstall && (options.keepData !== false
+        || (interruptedInstall && recoveryMetadata.recoveryPreserveData));
       if (preserveData) await removeInstallMetadataRecord(appId);
       else await removeInstallMetadata(appId);
       repaired.push(`metadata:${appId}`);
-    } catch {
-      unresolved.push(`metadata:${appId}:${SAFE_FAILURE}`);
+    } catch (error) {
+      unresolved.push(failed(`metadata:${appId}`, error));
     }
   }
   if (unresolved.length === 0 && await readInstallMetadata(appId)) {
@@ -579,8 +658,8 @@ async function reconcileRoutes(
   let routes: Awaited<ReturnType<typeof getRoutes>>;
   try {
     routes = await getRoutes();
-  } catch {
-    unresolved.push(`routes:list:${SAFE_FAILURE}`);
+  } catch (error) {
+    unresolved.push(failed(`routes:list`, error));
     return;
   }
 
@@ -601,7 +680,7 @@ async function reconcileRoutes(
       });
     } catch (error) {
       if (admissionExcluded(error)) continue;
-      unresolved.push(`stale-route:${route.id}:${SAFE_FAILURE}`);
+      unresolved.push(failed(`stale-route:${route.id}`, error));
     }
   }
 
@@ -626,7 +705,7 @@ async function reconcileRoutes(
       });
     } catch (error) {
       if (admissionExcluded(error)) continue;
-      unresolved.push(`caddy-route:${meta.appId}:${SAFE_FAILURE}`);
+      unresolved.push(failed(`caddy-route:${meta.appId}`, error));
     }
   }
 }

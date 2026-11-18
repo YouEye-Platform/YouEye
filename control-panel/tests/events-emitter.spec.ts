@@ -11,7 +11,7 @@ test('platform events go to the app\'s primary container, not its first (a sidec
   const done = new Promise<void>((resolve) => { delivered = resolve; });
   const exports: Record<string, any> = {};
   const mocks: Record<string, unknown> = {
-    '@/lib/market/metadata': { listInstalledApps: async () => [{ appId: 'notes', containers: [
+    '@/lib/market/metadata': { listReadableInstalledApps: async () => [{ appId: 'notes', containers: [
       { name: 'redis', containerName: 'app-notes-redis', type: 'oci' },
       { name: 'main', containerName: 'app-notes-main', type: 'lxd' },
     ] }] },

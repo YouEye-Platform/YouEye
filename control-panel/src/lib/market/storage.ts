@@ -224,11 +224,13 @@ async function ensureAppStorageLocked(
   if (locations.length === 0) throw new Error('No eligible app storage location is available');
   const locationIds = new Set(locations.map((location) => location.id));
   const planned: PlannedStorageVolume[] = [];
+  const runtimeNameOf = (container: string) => manifest.containers.length === 1
+    ? `app-${manifest.metadata.id}`
+    : `app-${manifest.metadata.id}-${container}`;
 
+  // Real volumes first, for every container: a sidecar's alias may point at main's, and main comes last.
   for (const container of manifest.containers) {
-    const runtimeName = manifest.containers.length === 1
-      ? `app-${manifest.metadata.id}`
-      : `app-${manifest.metadata.id}-${container.name}`;
+    const runtimeName = runtimeNameOf(container.name);
     for (const volume of container.volumes) {
       if (volume.type === 'cache') continue;
       if (volume.sourceVolume) continue;
@@ -286,13 +288,21 @@ async function ensureAppStorageLocked(
       assertOwnedVolume(readBack, expected);
       planned.push({ ...expected, pool, created: true });
     }
+  }
+  // Aliases: a subpath of a volume of the same container, or (sidecar `from: main`) a whole volume of main. The
+  // attachment belongs to the container that mounts it; the volume stays the source's (attachmentOnly).
+  for (const container of manifest.containers) {
+    const runtimeName = runtimeNameOf(container.name);
     for (const volume of container.volumes.filter((candidate) => candidate.sourceVolume)) {
-      const source = planned.find((candidate) =>
-        candidate.containerName === runtimeName && candidate.logicalName === volume.sourceVolume
-      );
-      if (!source || !volume.sourcePath) throw new Error('App storage subpath references an unknown volume');
+      const sourceRuntime = runtimeNameOf(volume.sourceContainer ?? container.name);
+      const source = planned.find((candidate) => !candidate.attachmentOnly
+        && candidate.containerName === sourceRuntime && candidate.logicalName === volume.sourceVolume);
+      if (!source || source.sharedGroup || (!volume.sourcePath && sourceRuntime === runtimeName)) {
+        throw new Error('App storage alias references an unknown volume');
+      }
       planned.push({
         ...source,
+        containerName: runtimeName,
         logicalName: volume.name,
         containerPath: volume.container,
         type: volume.type === 'cache' ? source.type : volume.type,
@@ -369,6 +379,17 @@ export async function verifyAppStorageOwnership(volumes: StorageVolumeMeta[]): P
     }
     const current = await customVolume(volume.pool, volume.name);
     if (current) assertOwnedVolume(current, volume);
+  }
+}
+
+/** Cleanup of an install that never finished: each app volume that exists carries this installation's id. */
+export async function verifyUnfinishedInstallStorage(volumes: StorageVolumeMeta[], installationId: string): Promise<void> {
+  for (const volume of volumes.filter(v => !v.attachmentOnly && !v.sharedGroup)) {
+    if (volume.installationId && volume.installationId !== installationId) {
+      throw new Error('Storage cleanup requires the matching installation identity');
+    }
+    const current = await customVolume(volume.pool, volume.name);
+    if (current) assertOwnedVolume(current, { ...volume, installationId, dataOwnerId: undefined });
   }
 }
 

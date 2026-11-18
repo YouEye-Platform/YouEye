@@ -8,7 +8,7 @@
 
 import { readFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { listInstalledApps } from '../market/metadata';
+import { listReadableInstalledApps } from '../market/metadata';
 import { readInstalledAppManifest } from '../market/frozen-manifest';
 import { sendNotificationToUI } from '../health/notification-bridge';
 import { loadBridges } from './store';
@@ -166,7 +166,7 @@ export async function generateSuggestionsForApp(
 ): Promise<Suggestion[]> {
   const existing = await readStore();
   const bridges = await loadBridges();
-  const installedMetas = await listInstalledApps();
+  const installedMetas = await listReadableInstalledApps();
 
   const newSuggestions: Suggestion[] = [];
   // Bridge suggestions whose target is installed and can therefore be approved right now —

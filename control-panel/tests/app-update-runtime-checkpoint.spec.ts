@@ -60,7 +60,7 @@ function fixture() {
   }, exports);
   const provider = new exports.IncusAppUpdateProvider();
   provider.load = () => ({ instances: [original], metadata, installed: {}, manifest: {} });
-  provider.ensureCurrentSecurity = provider.ingress = provider.bootFence = async () => {};
+  provider.ingress = provider.bootFence = async () => {};
   provider.postgres = async () => undefined;
   return { id, original, instances, effects, provider, record };
 }

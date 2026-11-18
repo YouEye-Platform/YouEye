@@ -75,7 +75,8 @@ function fixture() {
       },
     },
     '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
-    '@/lib/market/install-tracker': { logOperationFailure: () => {} },
+    '@/lib/market/install-tracker': { logOperationFailure: () => {}, describeErrorChainForLog: (error: unknown) => String(error) },
+    '@/lib/http/lifecycle-busy': { isLifecycleBusy: (error: unknown) => error instanceof Error && /executor lock is busy|AppLifecycleBusyError/.test(`${error.name} ${error.message}`) },
   };
   dependencies['@/lib/market/update-http'] = load('src/lib/market/update-http.ts', dependencies);
   Object.assign(dependencies, {
@@ -207,6 +208,7 @@ test('completed recovery clears only verified current health evidence without pr
   const records = [record];
   const resolved: string[] = [];
   const operations = load('src/lib/market/update-operations.ts', {
+    './install-tracker': { logOperationFailure: () => {} },
     './update-admission': { appUpdateJournalStore: () => ({ read: () => record, list: () => records }),
       withAppLifecycle: () => { throw new Error('Completed recovery must not acquire a provider executor'); } },
     './update-transaction': {}, './update-provider': {},
@@ -320,7 +322,7 @@ test('SSE never exposes provider output or reports intermediate steps as update 
   assert.doesNotMatch(text, /"stage":"completed"|hidden|secret|provider.log/);
   f.state.operation = null;
   f.state.update = async () => { throw Object.assign(new Error('/secret'), { code: 'unsupported-shared-resource' }); };
-  assert.match(await (await f.update(request())).text(), /shared storage.*writers/);
+  assert.match(await (await f.update(request())).text(), /storage or its database has writers outside this app/);
 });
 
 test('an unavailable status fails closed before update; missing installed apps return 404', async () => {

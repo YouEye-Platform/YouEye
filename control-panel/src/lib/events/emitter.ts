@@ -10,7 +10,7 @@
  * Delivery failures are logged but don't block the caller.
  */
 
-import { listInstalledApps } from '@/lib/market/metadata';
+import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 import { appContainerAddress } from '@/lib/incus/app-network';
 import { setupContainers } from '@/lib/market/setup-context';
@@ -37,7 +37,7 @@ export interface PlatformEvent {
 // ─── App Event Delivery ─────────────────────────────────────
 
 async function deliverToApps(event: PlatformEvent): Promise<void> {
-  const installedApps = await listInstalledApps();
+  const installedApps = await listReadableInstalledApps();
 
   for (const app of installedApps) {
     try {

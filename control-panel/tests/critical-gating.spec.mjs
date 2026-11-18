@@ -13,6 +13,6 @@ const guardedRoutes = [
 test('platform update, system operations, and app install all invoke the critical issue gate', () => {
   for (const relative of guardedRoutes) {
     const source = fs.readFileSync(path.join(root, relative), 'utf8');
-    assert.match(source, /assertNoCriticalIssues\(/, `${relative} must invoke the gate`);
+    assert.match(source, /assertNoCriticalIssues\(|hasOpenCriticalIssue\(/, `${relative} must invoke the gate`);
   }
 });

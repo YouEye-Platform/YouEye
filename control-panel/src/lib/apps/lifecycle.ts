@@ -1,5 +1,5 @@
 import { incusRequest } from '@/lib/incus/server';
-import { listInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
+import { listReadableInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import type { ContainerMeta, InstallMetadata } from '@/lib/market/types';
 import { setPointerManagedAppEnabled } from '@/lib/pointer/managed-apps';
 import { pushAppRuntimeStatusToUI } from '@/lib/ui/app-status';
@@ -174,7 +174,7 @@ async function resolveInstalledApp(appId: string): Promise<InstallMetadata | nul
   if (direct) return direct;
 
   const normalized = appId.toLowerCase();
-  const installed = await listInstalledApps();
+  const installed = await listReadableInstalledApps();
   return installed.find((meta) => meta.appId.toLowerCase() === normalized) ?? null;
 }
 

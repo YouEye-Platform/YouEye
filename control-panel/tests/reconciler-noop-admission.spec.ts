@@ -8,15 +8,15 @@ function fixture() {
   const metadata = Array.from({ length: 17 }, (_, i) => ({ appId: `example${i}`, lifecycleState: 'active', subdomain: `example${i}`, domain: 'fixture.test', containers: [{ name: 'main', containerName: `app-example${i}`, type: 'oci' }] }));
   const registrations = new Map(metadata.map(m => [m.appId, { unchanged: true }]));
   const operations = new Map<string, unknown>();
-  const admitted: string[] = []; const writes: string[] = []; const visible: string[] = [];
-  let locked = false; let denied = false; let audited = true; let drift = false;
+  const admitted: string[] = []; const writes: string[] = []; const visible: string[] = []; const resolved: string[] = [];
+  const damaged: string[] = []; let locked = false; let denied = false; let audited = true; let drift = false;
   class AdmissionError extends Error {}
   const mocks: Record<string, any> = {
     'fs/promises': { readFile: async () => 'fixture-token' },
     './installed-apps': { getAllInstalledApps: async () => metadata.map(m => ({ appId: m.appId })), upsertInstalledApp: async () => { assert.ok(locked); writes.push('install'); } },
-    './metadata': { listInstalledApps: async () => metadata, readInstallMetadata: async (id: string) => metadata.find(m => m.appId === id) },
+    './metadata': { listInstalledApps: async () => metadata, scanInstalledApps: async () => ({ apps: metadata, damaged }), readInstallMetadata: async (id: string) => metadata.find(m => m.appId === id) },
     '@/lib/reconfigure/journal': { readReconfigureJournal: async () => null },
-    '@/lib/health/issues': { resolveIssue: async () => {}, observeIssue: async () => {}, recordTimelineEvent: async () => {} },
+    '@/lib/health/issues': { resolveIssue: async (id: string) => { resolved.push(id); }, observeIssue: async () => {}, recordTimelineEvent: async () => {} },
     '@/lib/caddy/client': { getRoutes: async () => metadata.map(m => ({ hostname: `${m.subdomain}.${m.domain}`, upstream: `app-${m.appId}` })) },
     './install-tracker': {
       recoverInterruptedInstalls: () => [], pruneCompletedInstallOperations: () => {}, getAllActiveInstalls: () => [],
@@ -46,12 +46,13 @@ function fixture() {
   vm.runInNewContext(ts.transpileModule(readFileSync('src/lib/market/reconciler.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
     exports, console, process: { env: {} }, require: (name: string) => mocks[name] ?? {},
   });
-  return { reconcile: exports.reconcileApps, admitted, writes, visible, operations, drift() { drift = true; }, deny() { denied = true; }, invalidate() { audited = false; } };
+  return { reconcile: exports.reconcileApps, damaged, resolved, admitted, writes, visible, operations, drift() { drift = true; }, deny() { denied = true; }, invalidate() { audited = false; } };
 }
 
 test('17 unchanged registrations do not acquire mutation locks or repeat bridge reads', async () => {
   const f = fixture(); const result = await f.reconcile();
   assert.equal(result.unresolved.length, 0);
+  assert.ok(f.resolved.includes('market.reconcile.divergence'));
   assert.deepEqual(f.admitted, []); assert.deepEqual(f.visible, []); assert.deepEqual(f.writes, []);
 });
 
@@ -64,8 +65,11 @@ test('projection drift is repaired only after fresh lifecycle admission and visi
 });
 
 test('reserved projection drift cannot publish and unfinished operations cannot skip admission', async () => {
-  const f = fixture(); f.drift(); f.deny(); await f.reconcile();
+  const f = fixture(); f.drift(); f.deny(); const result = await f.reconcile();
   assert.deepEqual(f.admitted, ['example0']); assert.deepEqual(f.writes, []);
+  // The busy app was not checked: recorded as skipped, and "App state is out of sync" is not resolved.
+  assert.deepEqual([...result.skipped], ['example0']);
+  assert.ok(!f.resolved.includes('market.reconcile.divergence'));
   const operation = fixture(); operation.operations.set('example0', { done: true, error: 'interrupted finalization' });
   await operation.reconcile(); assert.deepEqual(operation.admitted, ['example0']);
   assert.deepEqual(operation.writes, ['operation:example0']);
@@ -74,4 +78,11 @@ test('reserved projection drift cannot publish and unfinished operations cannot 
 test('a changed network audit forces fresh under-lock visibility checks for every registration', async () => {
   const f = fixture(); f.invalidate(); const result = await f.reconcile();
   assert.equal(result.unresolved.length, 0); assert.equal(f.admitted.length, 17); assert.equal(f.visible.length, 17);
+});
+
+test('a damaged install record is reported by app and keeps the divergence issue open', async () => {
+  const f = fixture(); f.damaged.push('broken');
+  const result = await f.reconcile();
+  assert.deepEqual([...result.unresolved], ['install-record:broken']);
+  assert.ok(!f.resolved.includes('market.reconcile.divergence'));
 });

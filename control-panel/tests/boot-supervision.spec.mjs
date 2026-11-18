@@ -43,7 +43,6 @@ test('identity service mode skips platform background jobs', () => {
   for (const job of [
     'startHealthMonitor()',
     'startDnsProviderMaintenanceLoop()',
-    'startWorker()',
     'startVersionChecker()',
     'startHealthChecker()',
   ]) {
@@ -51,15 +50,6 @@ test('identity service mode skips platform background jobs', () => {
     assert.ok(at >= 0, `instrumentation must start ${job}`);
     assert.ok(gate < at, `${job} must come after the identity-service gate`);
   }
-});
-
-test('update queue worker starts only from instrumentation, not module import', () => {
-  const queue = read('src/lib/updates/queue.ts');
-  assert.match(queue, /export function startWorker/);
-  assert.doesNotMatch(queue, /\/\/ Auto-start in production/);
-  assert.doesNotMatch(queue, /NODE_ENV !== 'test'/);
-  const instrumentation = read('src/instrumentation.ts');
-  assert.match(instrumentation, /@\/lib\/updates\/queue/);
 });
 
 test('version-checker and health-checker start only from instrumentation, not module import', () => {

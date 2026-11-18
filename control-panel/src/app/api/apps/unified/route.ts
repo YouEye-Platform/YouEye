@@ -24,8 +24,8 @@ import {
   checkLxdAppUpdate,
   type LxdUpdateResult,
 } from '@/lib/apps/lxd-updates';
-import { listInstalledApps } from '@/lib/market/metadata';
-import { getAllInstalledApps } from '@/lib/market/installed-apps';
+import { listReadableInstalledApps } from '@/lib/market/metadata';
+import { getAllInstalledApps, latestHealthCheckedAt } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
 
@@ -129,7 +129,7 @@ export async function GET() {
     const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
-      listInstalledApps(),
+      listReadableInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
     ]);
@@ -288,7 +288,7 @@ export async function GET() {
         appHealthState: installedApp?.appHealthState,
         failingLevel: installedApp?.failingLevel,
         healthDetail: installedApp?.healthDetail ?? null,
-        healthCheckedAt: installedApp?.healthCheckedAt ?? null,
+        healthCheckedAt: installedApp ? latestHealthCheckedAt(installedApp.appId, installedApp.healthCheckedAt) : null,
       };
     });
 
@@ -388,7 +388,7 @@ export async function GET() {
         appHealthState: dbEntry?.appHealthState,
         failingLevel: dbEntry?.failingLevel,
         healthDetail: dbEntry?.healthDetail ?? null,
-        healthCheckedAt: dbEntry?.healthCheckedAt ?? null,
+        healthCheckedAt: dbEntry ? latestHealthCheckedAt(dbEntry.appId, dbEntry.healthCheckedAt) : null,
         autoRestart: meta.autoRestart !== false,
       };
     });

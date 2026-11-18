@@ -11,7 +11,7 @@
  */
 
 import { chmod, readFile, mkdir, rm, writeFile } from 'fs/promises';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { spineClient } from '@/lib/spine/client';
@@ -406,6 +406,15 @@ async function waitForRestoredPiholeAPI(): Promise<void> {
   throw new Error(`Pi-hole API did not become ready after restoring DNS: ${lastError ?? 'readiness did not stabilize'}`);
 }
 
+function readSkippedApps(backupPath: string): string[] {
+  try {
+    const record = JSON.parse(readFileSync(path.join(backupPath, 'backup-set.json'), 'utf8')) as { skippedApps?: Array<{ appId?: unknown }> };
+    return (record.skippedApps ?? []).map(item => item.appId).filter((appId): appId is string => typeof appId === 'string');
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Restore the full YouEye platform from a backup directory.
  *
@@ -421,6 +430,18 @@ export async function fullRestore(
   const archivedIds = config.appIds ?? (existsSync(appDirectory) ? readdirSync(appDirectory) : []);
   return withAppInventory(async () => {
     const current = await listInstalledApps();
+    // Refuse before anything changes, naming the app: a full restore replaces every app, so none may be mid-update,
+    // and a set that skipped an installed app would otherwise remove it.
+    const { isAppUpdateReserved } = await import('@/lib/market/update-admission');
+    const recovering = current.filter(app => isAppUpdateReserved(app.appId)).map(app => app.appId);
+    if (recovering.length) {
+      throw new Error(`Full restore refused: ${recovering.join(', ')} has an unfinished app update. Run youeye app recover first.`);
+    }
+    const skipped = readSkippedApps(config.backupPath).filter(appId => current.some(app => app.appId === appId));
+    if (skipped.length) {
+      throw new Error(`Full restore refused: this backup does not contain ${skipped.join(', ')}, which is installed here; `
+        + 'restoring it would remove them. Take a new backup, or restore apps individually.');
+    }
     return withAppLifecycles(['identity', 'pointer', ...current.map(app => app.appId), ...archivedIds],
       () => fullRestoreUnderLifecycle(config, onEvent));
   });

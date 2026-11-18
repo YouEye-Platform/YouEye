@@ -25,7 +25,7 @@ import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
 import { settingsService } from '@/lib/settings';
-import { assertNoCriticalIssues } from '@/lib/health/issues';
+import { hasOpenCriticalIssue } from '@/lib/health/issues';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
@@ -57,15 +57,6 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  try {
-    await assertNoCriticalIssues('App install');
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : 'App installs are blocked by a critical Health issue' }),
-      { status: 423, headers: { 'Content-Type': 'application/json' } },
-    );
-  }
-
   let config: InstallConfig;
   try {
     config = await request.json();
@@ -74,6 +65,18 @@ export async function POST(request: NextRequest) {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // Box-level critical issues, or one of this same app, block the install; another app's never does.
+  let blocking;
+  try {
+    blocking = await hasOpenCriticalIssue(typeof config?.appId === 'string' ? config.appId : undefined);
+  } catch (err) {
+    logOperationFailure('Reading health issues before an install', err);
+    return Response.json({ error: 'Health status is unavailable; try again shortly' }, { status: 503 });
+  }
+  if (blocking) {
+    return Response.json({ error: `App install blocked while critical health issue is open: ${blocking.title}` }, { status: 423 });
   }
   // Browser JSON cannot nominate an owner. Authenticated CLI/PAM installs
   // resolve the authoritative appliance claim, including after delete-data.

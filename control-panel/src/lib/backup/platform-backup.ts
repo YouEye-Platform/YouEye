@@ -24,6 +24,9 @@ export interface BackupSetRecord {
   status: 'creating' | 'completed' | 'failed';
 	appCount: number;
 	apps?: string[];
+	/** Installed apps this set does not contain, with the reason (an unfinished update). A full restore from this set
+	 * refuses while they are installed, so it never removes them. */
+	skippedApps?: Array<{ appId: string; reason: string }>;
 	mediaId?: string;
 	reason?: 'manual' | 'scheduled' | 'pre-restore';
   sizeBytes?: number;
@@ -188,9 +191,18 @@ export async function createPlatformBackup(input: unknown | CreatePlatformBackup
 		if (new Set(selectedIDs).size !== selectedIDs.length || selectedIDs.some(appID => !installedByID.has(appID))) {
 			throw new Error('Backup selection contains an app that is not installed.');
 		}
-		const apps = selectedIDs.map(appID => installedByID.get(appID)!);
+		// An app whose update is unfinished can't be backed up (its lock refuses until recovery); skip it, say so, and
+		// keep backing up the rest instead of failing the whole set.
+		const { isAppUpdateReserved } = await import('@/lib/market/update-admission');
+		const skipped = selectedIDs.filter(appID => isAppUpdateReserved(appID));
+		if (skipped.length) {
+			record.skippedApps = skipped.map(appId => ({ appId, reason: 'unfinished app update (run youeye app recover)' }));
+			emit({ step: 0, totalSteps: 1, status: 'progress', stage: 'core',
+				message: `Skipping ${skipped.join(', ')}: an app update is unfinished`, progress: 1 });
+		}
+		const apps = selectedIDs.filter(appID => !skipped.includes(appID)).map(appID => installedByID.get(appID)!);
 		record.appCount = apps.length;
-		record.apps = selectedIDs;
+		record.apps = apps.map(app => app.appId);
 		await writeRecord(root, record);
     for (let index = 0; index < apps.length; index++) {
       const app = apps[index];

@@ -517,8 +517,15 @@ async function refreshBridgeGrants(bridge: Bridge): Promise<void> {
  */
 export async function refreshConnectionGrants(appId?: string): Promise<string[]> {
   const failed: string[] = [];
+  // The periodic pass skips connections with a stopped side: nothing flows, and starting an app refreshes its own
+  // connections (apps/lifecycle.ts). One instance listing per pass; if it fails, every connection is checked.
+  const running = appId ? null : await runningInstances();
   for (const bridge of await loadBridges()) {
     if (appId && bridge.from !== appId && bridge.to !== appId) continue;
+    if (running && bridge.active && isNetworkConnection(bridge)) {
+      const [from, to] = await Promise.all([resolveContainerName(bridge.from), resolveContainerName(bridge.to)]);
+      if (!running.has(from) || !running.has(to)) continue;
+    }
     try {
       await refreshBridgeGrants(bridge);
     } catch (error) {
@@ -631,8 +638,12 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
-  await unwireBridge(bridgeId);
-  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-deactivate', null, () => deactivateBridgeLocked(bridgeId));
+  // Unwire under the same admission: a busy lock must leave the connection fully wired and recorded active, never
+  // unwired but still recorded active.
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-deactivate', null, async () => {
+    await unwireBridge(bridgeId);
+    return deactivateBridgeLocked(bridgeId);
+  });
 }
 
 async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
@@ -678,8 +689,10 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
  * Delete a bridge entirely.
  */
 export async function deleteBridge(bridgeId: string): Promise<boolean> {
-  await unwireBridge(bridgeId);
-  return withBridgeAdmission(bridgeId, 'bridge-delete', false, () => deleteBridgeLocked(bridgeId));
+  return withBridgeAdmission(bridgeId, 'bridge-delete', false, async () => {
+    await unwireBridge(bridgeId);
+    return deleteBridgeLocked(bridgeId);
+  });
 }
 
 async function deleteBridgeLocked(bridgeId: string): Promise<boolean> {
@@ -744,3 +757,13 @@ export async function activatePendingBridges(
 }
 
 export { getBridgesForApp, loadBridges };
+
+async function runningInstances(): Promise<Set<string> | null> {
+  try {
+    const listed = await incusRequest<Array<{ name: string; status: string }>>('GET', '/1.0/instances?recursion=1');
+    if (listed.type === 'error' || !Array.isArray(listed.metadata)) return null;
+    return new Set(listed.metadata.filter(instance => instance.status === 'Running').map(instance => instance.name));
+  } catch {
+    return null;
+  }
+}

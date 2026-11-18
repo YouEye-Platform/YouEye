@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
+import { listReadableInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   const type = request.nextUrl.searchParams.get('type');
 
   try {
-    const allMeta = await listInstalledApps();
+    const allMeta = await listReadableInstalledApps();
     const providers: ProviderInfo[] = [];
 
     for (const meta of allMeta) {

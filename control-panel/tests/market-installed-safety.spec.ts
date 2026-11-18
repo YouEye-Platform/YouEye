@@ -190,6 +190,7 @@ function uninstallFixture(options: { failStorage?: boolean; sharedDatabaseCreate
     './installed-apps': { removeInstalledApp: async () => {}, getInstalledApp: async () => null },
     '@/lib/identity/provider': { removeForwardAuth: async () => {}, removeOAuthClient: async () => {} },
     './reconciler': { isAppRegisteredWithUI: async () => false, cleanupAppByScan: async () => ({ repaired: [], unresolved: [] }) },
+    './install-tracker': { describeErrorChainForLog: (error: unknown) => String(error) },
     '../incus/app-network': {
       withAppNetworkOperationLock: async (_id: string, _op: string, fn: () => unknown) => fn(),
       removeSystemProxyDevices: async () => {}, removeCaddyFromAppNetwork: async () => {},
@@ -276,6 +277,11 @@ test('the generated CA directory is removed so a reinstall passes preflight', as
     assert.deepEqual(leftoverAppPaths('mealie', base), []);
     await removeCaddyTrustBundle('mealie', base); // absent is clean
     assert.throws(() => caddyTrustAppDirectory('../etc'), /Invalid app ID/);
+    // An empty app directory (left by a keep-data cleanup of a failed install) holds no data: no block.
+    await mkdir(path.join(base, 'app-wikiless'));
+    assert.deepEqual(leftoverAppPaths('wikiless', base), []);
+    await writeFile(path.join(base, 'app-wikiless', 'install.json'), '{}');
+    assert.deepEqual(leftoverAppPaths('wikiless', base), [path.join(base, 'app-wikiless')]);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -494,6 +500,7 @@ test('the update ingress fence covers only routes to containers the install reco
       setConfig: async (next: unknown) => { config = structuredClone(next); },
     },
     '@/lib/caddy/servers': { routeServers },
+    '@/lib/caddy/serial': { withCaddyMutation: (work: () => Promise<unknown>) => work() },
     './update-workspace': {
       AppUpdateWorkspace: class { get() { return Buffer.from(JSON.stringify(plan)); } },
       updateDigest: () => 'digest',

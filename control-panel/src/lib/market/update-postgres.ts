@@ -49,7 +49,6 @@ export interface AppUpdatePostgresScope {
 export interface AppUpdatePostgresRuntime {
   lifecycleExcluded: boolean;
   ingressBlocked: boolean;
-  securityRevision: string;
   engine: { name: string; state: 'Running' | 'Stopped'; ownerAppId?: string };
   credentialUses: Array<{
     engine: string; database: string; role: string; appId: string;
@@ -92,7 +91,6 @@ interface Catalog {
 export interface AppUpdatePostgresFence {
   schema: 'youeye.app-postgres-fence.v1';
   engine: string; database: string; ownerRole: string;
-  securityRevision: string;
   originalAllowConnections: boolean;
   originalConnectionLimit: number;
   originalAcl: Grant[];
@@ -112,7 +110,7 @@ export interface AppUpdatePostgresCheckpoint {
  */
 export interface AppUpdatePostgresSecurity {
   schema: 'youeye.app-postgres-security.v1';
-  engine: string; database: string; ownerRole: string; securityRevision: string;
+  engine: string; database: string; ownerRole: string;
   encoding: string; collate: string; ctype: string; version: number; acl: Grant[];
   bytes: Buffer; sha256: string;
 }
@@ -404,7 +402,7 @@ export function createAppUpdatePostgresProvider(scopeInput: AppUpdatePostgresSco
   async function runtime(stopped: boolean, requireIngress = true, requireClosure = true): Promise<AppUpdatePostgresRuntime> {
     let r: AppUpdatePostgresRuntime;
     try { r = await io.runtime(); } catch { return fail('runtime-observation-failed'); }
-    if (!r.lifecycleExcluded || (requireIngress && !r.ingressBlocked) || !r.securityRevision
+    if (!r.lifecycleExcluded || (requireIngress && !r.ingressBlocked)
       || r.engine.name !== scope.engine
       || (scope.mode === 'own' && r.engine.ownerAppId !== scope.appId)) fail('runtime-not-excluded');
     if (r.engine.state !== 'Running') fail('engine-stopped-start-after-journal');
@@ -482,10 +480,12 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=${literal(s
       return await body();
     } finally { await close(); }
   }
-  function checkFence(f: AppUpdatePostgresFence, r: AppUpdatePostgresRuntime) {
+  // The fence identifies the operation and the database. Whether the app's security state may change during the
+  // update is the provider's decision (update-provider.ts restore()), not the fence's.
+  function checkFence(f: AppUpdatePostgresFence) {
     if (f.schema !== 'youeye.app-postgres-fence.v1' || f.engine !== scope.engine
       || f.database !== scope.database || f.ownerRole !== scope.ownerRole || f.operationId !== scope.operationId
-      || f.securityRevision !== r.securityRevision || !Array.isArray(f.originalAcl)
+      || !Array.isArray(f.originalAcl)
       || typeof f.originalAllowConnections !== 'boolean'
       || !Number.isInteger(f.originalConnectionLimit) || f.originalConnectionLimit < -1) fail('fence-identity-or-security-changed');
   }
@@ -627,7 +627,7 @@ END $clear$;`;
       // connecting to or reopening the target. Also terminate leftover sessions.
       await close();
       await requireClosed();
-      checkFence(f, r);
+      checkFence(f);
       checkWriterClosure(r, true);
     },
 
@@ -647,7 +647,7 @@ END $clear$;`;
       // parser would be needed to safely permit psql's backslash interpretation.
       if (bytes.includes(92)) fail('sql-metacommands-unsupported');
       const r = await runtime(false);
-      checkFence(f, r);
+      checkFence(f);
       const state = await databaseState();
       if (!state?.allowConnections || state.connectionLimit !== f.originalConnectionLimit) fail('sql-requires-apply-phase');
       const c = await catalog(r, false);
@@ -719,7 +719,7 @@ END $clear$;`;
       grantSql(c.acl);
       const f: AppUpdatePostgresFence = { schema: 'youeye.app-postgres-fence.v1',
         engine: scope.engine, database: scope.database, ownerRole: scope.ownerRole,
-        operationId: scope.operationId, securityRevision: r.securityRevision, originalAllowConnections: c.allowConnections,
+        operationId: scope.operationId, originalAllowConnections: c.allowConnections,
         originalConnectionLimit: c.connectionLimit, originalAcl: c.acl };
       try { await persist(structuredClone(f)); } catch { fail('fence-persistence-failed'); }
       await close();
@@ -730,7 +730,7 @@ END $clear$;`;
     async dump(f: AppUpdatePostgresFence): Promise<AppUpdatePostgresCheckpoint> {
       requireOperation();
       const r = await runtime(true);
-      checkFence(f, r);
+      checkFence(f);
       return withMaintenance(async () => {
         const c = await catalog(r, true);
         return workspace(async dir => {
@@ -756,7 +756,7 @@ ${command(['pg_restore', '--exit-on-error', '--file=/dev/null', path])} >/dev/nu
     }): Promise<void> {
       requireOperation();
       const r = await runtime(true);
-      checkFence(f, r);
+      checkFence(f);
       if (checkpoint.schema !== 'youeye.app-postgres-checkpoint.v1' || checkpoint.engine !== scope.engine
         || checkpoint.database !== scope.database || checkpoint.ownerRole !== scope.ownerRole
         || !Buffer.isBuffer(checkpoint.bytes) || checkpoint.bytes.length !== checkpoint.byteSize
@@ -768,7 +768,7 @@ ${command(['pg_restore', '--exit-on-error', '--file=/dev/null', path])} >/dev/nu
       if (retained) {
         if (retained.schema !== 'youeye.app-postgres-security.v1' || retained.engine !== scope.engine
           || retained.database !== scope.database || retained.ownerRole !== scope.ownerRole
-          || retained.securityRevision !== r.securityRevision || !Buffer.isBuffer(retained.bytes)
+          || !Buffer.isBuffer(retained.bytes)
           || retained.bytes.length > scope.maxDumpBytes
           || createHash('sha256').update(retained.bytes).digest('hex') !== retained.sha256
           || !Number.isInteger(retained.version) || retained.version < 150000
@@ -806,7 +806,7 @@ ${command([...target, '--file', query])} >${shellArg(security)} 2>/dev/null`);
             try { bytes = await io.download(scope.engine, security); } catch { return fail('download-failed'); }
             if (!bytes.length || bytes.length > scope.maxDumpBytes) fail('security-checkpoint-invalid');
             retained = { schema: 'youeye.app-postgres-security.v1', engine: scope.engine,
-              database: scope.database, ownerRole: scope.ownerRole, securityRevision: r.securityRevision,
+              database: scope.database, ownerRole: scope.ownerRole,
               encoding: current.encoding, collate: current.collate, ctype: current.ctype, version: current.version,
               acl: current.acl, bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
             try { await options.persistSecurity(retained); } catch { fail('security-persistence-failed'); }
@@ -842,7 +842,7 @@ ALLOW_CONNECTIONS false CONNECTION LIMIT 0;`);
     async unfence(f: AppUpdatePostgresFence, phase: 'apply' | 'original'): Promise<void> {
       requireOperation();
       const r = await runtime(phase === 'original');
-      checkFence(f, r);
+      checkFence(f);
       if (!['apply', 'original'].includes(phase)) fail('invalid-unfence-phase');
       // Failures at any step explicitly return to the hard fence.
       try {
@@ -867,7 +867,7 @@ ALTER DATABASE ${db} ALLOW_CONNECTIONS ${phase === 'apply' ? 'true' : String(f.o
     async verify(expected: 'closed' | 'apply' | 'original', f: AppUpdatePostgresFence): Promise<void> {
       requireOperation();
       const r = await runtime(expected === 'closed');
-      checkFence(f, r);
+      checkFence(f);
       if (expected === 'closed') {
         await requireClosed();
         await withMaintenance(async () => { await catalog(r, true); });

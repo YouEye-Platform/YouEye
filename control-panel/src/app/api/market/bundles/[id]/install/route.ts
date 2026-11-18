@@ -7,6 +7,7 @@
  * BundleInstallResult in `detail`. Admin-gated by middleware (not in the public path list).
  */
 
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { NextRequest } from 'next/server';
 import { fetchBundle } from '@/lib/market/catalog';
 import { installBundle } from '@/lib/market/bundle-installer';
@@ -52,8 +53,10 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
         }
       };
       try {
-        const result = await installBundle(theBundle, (e) => send(e), abortController.signal);
-        send({ step: 0, totalSteps: 0, status: 'success', message: 'done', detail: JSON.stringify(result) });
+        // A user operation: members' lifecycle and network locks wait for a busy holder instead of failing.
+        const result = await withUserOperationLockWait(() => installBundle(theBundle, (e) => send(e), abortController.signal));
+        const failed = result.members.some((m) => m.status === 'failed') || result.connections.some((c) => c.status === 'failed');
+        send({ step: 0, totalSteps: 0, status: failed ? 'error' : 'success', message: failed ? 'done with failures' : 'done', detail: JSON.stringify(result) });
       } catch (err) {
         logOperationFailure(`Bundle ${theBundle.id} install`, err);
         send({ step: 0, totalSteps: 0, status: 'error', message: `Bundle install failed: ${sensitivitySafeInstallError(err)}` });

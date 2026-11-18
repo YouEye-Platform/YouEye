@@ -233,6 +233,7 @@ var appUpdateCmd = &cobra.Command{
 }
 
 var appRemoveKeepData bool
+var appRemoveForce bool
 
 var appRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
@@ -243,12 +244,21 @@ var appRemoveCmd = &cobra.Command{
 			return err
 		}
 		output.Info("Removing " + args[0] + "...")
-		result, err := controlClient.Post("/api/market/uninstall", map[string]interface{}{
-			"appId":    args[0],
-			"keepData": appRemoveKeepData,
-		})
+		payload := map[string]interface{}{"appId": args[0], "keepData": appRemoveKeepData}
+		if appRemoveForce {
+			payload["force"] = true
+		}
+		result, err := controlClient.Post("/api/market/uninstall", payload)
 		if err != nil {
+			if !appRemoveForce {
+				return fmt.Errorf("%w\nIf the app's install is broken (a container or record missing), 'youeye app remove %s --force' removes what carries its id", err, args[0])
+			}
 			return err
+		}
+		if removed, ok := result["removed"].([]interface{}); ok {
+			for _, item := range removed {
+				output.Info(fmt.Sprint("removed ", item))
+			}
 		}
 		message, err := appRemoveMessage(args[0], result)
 		if err != nil {
@@ -326,6 +336,52 @@ var appCredentialsCmd = &cobra.Command{
 	},
 }
 
+var appRecoverCmd = &cobra.Command{
+	Use:   "recover <name>",
+	Short: "Finish or roll back an app update that did not complete",
+	Long: `Retry recovery of the app's latest update: a committed update is reopened and its recovery points
+removed; an uncommitted one is rolled back to the previous version. Prints the cause when recovery cannot finish.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireCP(); err != nil {
+			return err
+		}
+		appID := args[0]
+		status, err := controlClient.Get("/api/market/update/status?appId=" + url.QueryEscape(appID))
+		if err != nil {
+			return err
+		}
+		operation, _ := status["operation"].(map[string]interface{})
+		if operation == nil {
+			output.Info(appID + " has no app update to recover")
+			return nil
+		}
+		if pending, _ := operation["pending"].(bool); !pending {
+			output.Success(appID + "'s latest update is already complete")
+			return nil
+		}
+		if _, err := controlClient.Post("/api/market/update/recovery", map[string]interface{}{
+			"appId": appID, "id": operation["id"],
+		}); err != nil {
+			return fmt.Errorf("recovery of %s did not finish: %w", appID, err)
+		}
+		after, err := controlClient.Get("/api/market/update/status?appId=" + url.QueryEscape(appID))
+		if err != nil {
+			return err
+		}
+		final, _ := after["operation"].(map[string]interface{})
+		switch {
+		case final == nil:
+			output.Success(appID + " recovered")
+		case final["committed"] == true:
+			output.Success(appID + " recovered: the new version is open and its recovery points are removed")
+		default:
+			output.Success(appID + " recovered: the update was rolled back to the previous version")
+		}
+		return nil
+	},
+}
+
 // appCredentialsPath is the Control Panel route for an app's default credentials (`?app=<id>`).
 func appCredentialsPath(appID string) string {
 	return "/api/market/credentials?app=" + url.QueryEscape(appID)
@@ -393,6 +449,7 @@ func init() {
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
 	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
 	appRemoveCmd.Flags().BoolVar(&appRemoveKeepData, "keep-data", false, "Preserve app data volumes")
+	appRemoveCmd.Flags().BoolVar(&appRemoveForce, "force", false, "remove what the normal removal refuses (a broken install record): everything that carries this app's id and installation id")
 
 	appCmd.AddCommand(appListCmd)
 	appCmd.AddCommand(appInfoCmd)
@@ -403,5 +460,6 @@ func init() {
 	appCmd.AddCommand(newAppControlCmd("stop"))
 	appCmd.AddCommand(newAppControlCmd("restart"))
 	appCmd.AddCommand(appCredentialsCmd)
+	appCmd.AddCommand(appRecoverCmd)
 	appCmd.AddCommand(appCheckUpdatesCmd)
 }

@@ -13,8 +13,10 @@ recovery) and `updater.ts`.
 - `POST /api/market/update/recovery` with `{ appId, id }` (the operation ID from status): runs recovery of that
   operation. Repeated requests are serialized; a finished operation is a no-op. Finished recovery also clears the
   app's retained health warning when no other operation is unfinished.
-- On Control Panel start, unfinished operations are reconciled before watchdogs, the update queue or install
-  reconciliation start (`reconcileAppUpdateOperations` in `update-operations.ts`).
+- On Control Panel start, unfinished operations are reconciled before watchdogs or install reconciliation start
+  (`reconcileAppUpdateOperations` in `update-operations.ts`). The same pass clears finished operations' recovery
+  labels and deletes finished receipts older than 30 days (with their `executors/<operation>.lock`), keeping each
+  app's latest receipt and any whose labels could not be cleared.
 
 ## Operation kinds
 
@@ -50,11 +52,19 @@ checks them again before any effect. The inventory:
 - checks declared attachments against the real Incus devices;
 - keeps the platform's read-only CA trust mount out of the recovery set (its source, path and options must match
   exactly; any other host path fails);
-- requires the old runtime to exist, a supported restore method, space for checkpoints and a cleanup reserve;
+- requires each container to have exactly one NIC on its own app network; further NICs must be connections
+  (`net-<app>`) with an active network connection to that app, its network and its scoped ACL; and every active
+  network connection must still have its NIC (`connection-interface-missing`);
+- requires the old runtime to exist, a supported restore method, and free space on the pools of the app's root and
+  own volumes: on ZFS and btrfs the root in full (a rebuild rewrites it) plus 10 % of its volumes plus 1 GiB, elsewhere
+  twice root and volumes plus 10 %; a Postgres dump's staging always counts in full. Only the root device's usage is
+  read from the instance state (Incus lists custom volumes there too); shared folders never count;
 - includes the app's dedicated database in the shared PostgreSQL, or its logical database in an app-owned
   PostgreSQL container (never platform or maintenance databases);
-- refuses writable shared storage and database writers outside the app (`unsupported-shared-resource`);
-- allows unchanged read-only shared inputs;
+- leaves **shared folders** (`shared:` groups such as `media`) out of the recovery set: they are never checkpointed,
+  restored, reserved or counted, whoever writes them; their definition must not change
+  (`shared-input-definition-changed`); the result names them;
+- refuses app storage and database writers outside the app (`unsupported-shared-resource`);
 - refuses container, storage or database topology changes; it does not create new resources.
 
 Database ownership must be proved: the actual owner, scoped logical recovery and every permitted writer. An empty
@@ -71,6 +81,10 @@ writers.
 - a record holds digests of the manifests and artifacts, resource identities, the containers' original running
   states, metadata digests, checkpoint references, completed steps, the recovery policy and the commit or rollback
   receipt;
+- records are `operations/<appId>_<operationId>.json` (receipts written before 0.6.9 keep `<operationId>.json`). A
+  record that can't be read blocks only the app its file name names: that app's admission, recovery and status
+  refuse, other apps go on, and the Control Panel raises a critical issue naming the file. A damaged record with no app
+  in its name blocks every app, and box-wide readers (copy, Spine's System-update barrier) refuse on any damage;
 - it never holds credentials, SQL, manifest or metadata bodies or exception text; errors are short public codes;
 - sensitive recovery data goes to an operation-scoped workspace encrypted with AES-256-GCM, with a persistent
   private key. A missing key for retained data is an error; a new key is never generated in its place.
@@ -104,9 +118,13 @@ Failure goes to `recovering`, then `rolled_back` or `recovery_required`.
 
 ## Locks
 
-- The journal reserves app, container, volume, database, metadata and capacity identities in a fixed order. An
-  unfinished record blocks other updates even if a lock is missing. Reservations never expire because a PID died
-  or time passed. Capacity reservations stop two updates from using the same free-space estimate.
+- The journal reserves the app's own app, container, volume, database and metadata identities in a fixed order. An
+  unfinished record blocks other updates of the same resources even if a lock is missing. Reservations never expire
+  because a PID died or time passed. Nothing is reserved that another app's update also needs (no shared capacity or
+  shared-folder reservations, since 0.6.9), so one stuck update never blocks other apps' updates. Instead the CP runs
+  one app update at a time (an in-process queue in `updater.ts`); free space is re-checked when the recovery plan is
+  initialized. The maintenance fence's Caddy write is serialized with the CP's other Caddy writers and retried on a
+  revision conflict.
 - `withAppLifecycle(appId, work)` holds an OS lock for the whole asynchronous mutation and checks unfinished
   reservations. Update, uninstall, restore, backup, storage changes and credential or admission changes all use
   it. Nested calls share the outer admission.
@@ -126,8 +144,9 @@ Failure goes to `recovering`, then `rolled_back` or `recovery_required`.
 4. Run hooks and migrations under a temporary idle init with services stopped. All code is replaced before any new
    code starts. Generated config, env and commands are applied under the checkpoint; existing credentials and
    settings are kept, not regenerated. Config in custom volumes is written through the volume API while stopped.
-5. Start the new version with ingress still fenced. Run first-start migrations and health checks. The whole
-   recovery set is kept until the installed version and migrations commit.
+5. Start the new version with ingress still fenced. Re-point the app's connection ACLs and check every connection
+   NIC is still there (`verify-connections`). Run first-start migrations and health checks. The whole recovery set
+   is kept until the installed version and migrations commit.
 6. Verify code identity, installed version, declared health and the original desired state.
 7. Reopen: restore the original running states and ingress. An app-owned PostgreSQL engine that was stopped is
    started to fix its grants, then stopped again. The shared platform engine is never started by recovery.
@@ -137,9 +156,23 @@ Failure goes to `recovering`, then `rolled_back` or `recovery_required`.
 On an uncommitted interruption, recovery restores the whole set instead of re-running hooks or SQL. A failed
 verification stops writers and fences the database again; `recovery_required` keeps reservations and checkpoints
 (`recovery-fence-unverified` when the fence itself could not be set). Only update-owned metadata fields are
-restored; newer credentials, grants, admission and deletion markers stay as they are. If security data (service
-credentials, admission policy, owners, secret files) changed since the plan, recovery stops instead of copying old
-secrets back.
+restored; newer credentials, grants, admission and deletion markers stay as they are.
+
+**Security state** (`securityParts` in `update-provider.ts`): the app's own security fields of install.json (owner,
+installation, sign-in, domain, database identity, shared folders, storage, credentials, AI connection, credential
+state; never fields the update writes, nor `updatedAt`), every file under its app directory (`secrets/` included,
+bounded; links and devices refused), its credential projection, its admission policy (revision and state, no
+timestamps; no box-wide user list: the policy revision moves whenever this app's admission changes) and its
+non-private admission resources. It is compared only in `restore()`, and only to log: a rollback never restores
+security state (the credential and install record can't change meanwhile: their writers need the app lock the update
+holds), and an unreadable state never blocks recovery. Reopening after a commit compares nothing, and the PostgreSQL fence checks only the
+operation and database identity. Operations stuck on builds before 0.6.9 therefore finish at the next Control Panel
+start.
+
+**A committed update whose reopen did not finish** returns `success: false` with `errorCode:
+'committed-reopen-pending'` (never "success" while the app is in maintenance); after a reopen, a later failure
+(cleanup, access reconciliation) is `committed-post-update-failed`. The status's `reopened` tells the two apart. Every
+failure, including recovery at Control Panel start, logs its cause.
 
 ## PostgreSQL rules
 
@@ -183,7 +216,8 @@ loses the lock when the callback returns.
 | `updateNeedsRecovery(record)` | true until `cleanupComplete` |
 | `updateResourceKey(resource)` | SHA-256 of `[kind, scope, name]` |
 
-Resource kinds: `app`, `container`, `volume` (scope: pool), `database` (scope: engine), `metadata`, `capacity`. Do
+Resource kinds: `app`, `container`, `volume` (scope: pool), `database` (scope: engine), `metadata`; `capacity` is
+still read in records written before 0.6.9 and no longer created. Do
 not add credentials, policy bodies or other fields to the journal record.
 
 The service credential store holds the same lock for its reads and writes
@@ -206,7 +240,8 @@ stops its writers for the dump and file capture, then restores its running state
 URL reconfiguration holds each app's lock across its env, config, restart, metadata and SSO work, re-reads the
 metadata after locking, and resumes an interrupted change only for the same requested URL. Watchdog starts use the
 same lock, re-check Incus state, autostart, intent, maintenance and storage, and hold the lock until the Incus
-operation ends. Dashboard manifest sync and AI status writes are serialized with these too.
+operation ends. A watchdog start is skipped while a user operation is waiting for that app's lock
+(`isUserOperationWaiting`), so the user never waits behind a minute-long background start. Dashboard manifest sync and AI status writes are serialized with these too.
 
 ## Tests
 

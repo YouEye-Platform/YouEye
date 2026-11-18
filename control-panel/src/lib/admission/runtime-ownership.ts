@@ -45,6 +45,21 @@ export async function bindRuntimeOwnership(binding: RuntimeIdentity) {
   }
   await verifyRuntimeOwnership(binding);
 }
+/**
+ * Cleanup of an install that never finished: the runtime, if it exists, carries this app's id and this installation's
+ * id. Its data-owner tag is written only at finalize, so it may be absent (or already set by a late finalize step).
+ */
+export async function verifyUnfinishedRuntime(appId: string, installationId: string, name: string): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name) || !isUuid(installationId)) throw new Error('Invalid runtime ownership');
+  const response = await incusRequest<Instance>('GET', `/1.0/instances/${encodeURIComponent(name)}`);
+  if (response.type === 'error' && response.error_code === 404) return;
+  if (response.type === 'error' || response.metadata?.name !== name) throw new Error('Runtime identity is missing or mismatched');
+  const config = response.metadata.config ?? {};
+  if (config['user.youeye.app_id'] !== appId || config['user.youeye.installation_id'] !== installationId) {
+    throw new Error('Runtime has unknown or foreign ownership');
+  }
+}
+
 export async function verifyRuntimeOwnership(binding: RuntimeIdentity, allowAbsent = false) {
   const current = await readInstance(binding, allowAbsent);
   if (!current) return;

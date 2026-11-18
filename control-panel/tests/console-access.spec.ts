@@ -213,7 +213,7 @@ test('every identity change path syncs console access after its commit', () => {
   const claim = store.slice(store.indexOf('export async function claimApplianceOwner'), store.indexOf('export async function getApplianceOwnerId'));
   assert.match(claim, /afterIdentityChange\(\{ userId: owner\.id, password: input\.password \}\)/);
   const ensure = store.slice(store.indexOf('export async function ensureUser'), store.indexOf('async function ensureUserUnderLifecycle'));
-  assert.match(ensure, /withIdentityAppLifecycle[\s\S]*afterIdentityChange\(\{ userId: user\.id, password: input\.password \}\)/);
+  assert.match(ensure, /withIdentityLifecycle[\s\S]*afterIdentityChange\(\{ userId: user\.id, password: input\.password \}\)/);
   const instrumentation = read('src/instrumentation.ts');
   assert.ok(instrumentation.indexOf('startConsoleAccessSync()') > instrumentation.indexOf('if (isIdentityService)'),
     'the sync loop runs in the Control Panel, not in the identity service');

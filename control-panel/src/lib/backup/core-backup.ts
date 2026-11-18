@@ -107,8 +107,13 @@ export async function backupCore(
 ): Promise<void> {
   return runWithBackupAdmission(
     () => withPairedPointerBackup(() => backupCoreUnderLifecycle(config, onEvent)),
-    work => withAppInventory(async () => withAppLifecycles(
-      ['identity', 'pointer', ...(await listInstalledApps()).map(app => app.appId)], work)),
+    // An app with an unfinished update is frozen by its record (every writer refuses it), so its state can't change
+    // under the backup; its lock would refuse, so it is left out of the gate instead of failing the backup.
+    work => withAppInventory(async () => {
+      const { isAppUpdateReserved } = await import('@/lib/market/update-admission');
+      const apps = (await listInstalledApps()).map(app => app.appId).filter(appId => !isAppUpdateReserved(appId));
+      return withAppLifecycles(['identity', 'pointer', ...apps], work);
+    }),
   );
 }
 

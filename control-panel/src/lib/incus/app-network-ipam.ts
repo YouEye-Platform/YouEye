@@ -88,6 +88,14 @@ export class AppNetworkOperationConflictError extends Error {
   }
 }
 
+/** The app's network operation lock is held by another operation (transient: retry later), not a permanent conflict. */
+export class AppNetworkLockBusyError extends AppNetworkOperationConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AppNetworkLockBusyError';
+  }
+}
+
 function assertPlainObject(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AppNetworkStateError(`${label} must be an object`);
@@ -767,7 +775,7 @@ async function acquireDirectoryLock(input: {
       if (Date.now() - started >= input.waitMs) {
         const owner = await readLockOwner(input.lockPath);
         const detail = owner ? ` by pid ${owner.pid} (${owner.operation})` : '';
-        throw new AppNetworkOperationConflictError(`App network operation is already in progress${detail}`);
+        throw new AppNetworkLockBusyError(`App network operation is already in progress${detail}`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -794,6 +802,13 @@ export async function mutateIpamState<T>(
   }
 }
 
+/** The wait budget of the current user operation (update-admission.ts withUserOperationLockWait), else 0. */
+function userOperationWaitMs(): number {
+  const context = (globalThis as Record<symbol, { getStore?: () => { timeoutMs?: number } | undefined } | undefined>)[
+    Symbol.for('youeye.lifecycle-lock-wait')];
+  return context?.getStore?.()?.timeoutMs ?? 0;
+}
+
 export async function withAppNetworkOperationLock<T>(
   appId: string,
   operation: string,
@@ -808,7 +823,8 @@ export async function withAppNetworkOperationLock<T>(
   const release = await acquireDirectoryLock({
     lockPath: path.join(directory, 'locks', `app-${appId}.lock`),
     operation,
-    waitMs: options.waitMs ?? 0,
+    // Inside a user-initiated operation (withUserOperationLockWait), wait for the lock like the lifecycle locks do.
+    waitMs: options.waitMs ?? userOperationWaitMs(),
   });
   try {
     return await work();

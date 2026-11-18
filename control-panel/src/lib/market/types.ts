@@ -49,7 +49,10 @@ export interface VolumeSpec {
   read_only: boolean;
   /** Shared folder group (`shared:` in the manifest). */
   storageGroup?: string;
+  /** An alias of another volume of this app: its logical name, and the container that declares it (default: this
+   * one). A sidecar's `data: [{path, from: main}]` mounts main's volume this way. */
   sourceVolume?: string;
+  sourceContainer?: string;
   sourcePath?: string;
 }
 

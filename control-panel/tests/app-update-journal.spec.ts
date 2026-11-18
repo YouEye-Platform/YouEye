@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -231,7 +231,7 @@ test('corrupt terminal receipts cannot hide unfinished mutations or missing chec
   lease.transition('verifying');
   lease.commit(hash);
   lease.transition('cleanup');
-  const file = path.join(directory, 'operations', `${lease.snapshot().id}.json`);
+  const file = path.join(directory, 'operations', `fixture_${lease.snapshot().id}.json`);
   const record = lease.snapshot();
   writeFileSync(file, JSON.stringify({ ...record, cleanupComplete: true, checkpoints: [] }));
   assert.throws(() => store.read(record.id), /corrupt or insecure/);
@@ -245,7 +245,7 @@ test('corrupt terminal receipts cannot hide unfinished mutations or missing chec
 test('a FIFO journal entry is rejected promptly rather than blocking the event loop', () => temporary(directory => {
   const store = new AppUpdateJournalStore(directory);
   const lease = store.create(input);
-  const file = path.join(directory, 'operations', `${lease.snapshot().id}.json`);
+  const file = path.join(directory, 'operations', `fixture_${lease.snapshot().id}.json`);
   rmSync(file);
   const fifo = spawnSync('mkfifo', ['-m', '600', file]);
   assert.equal(fifo.status, 0, fifo.stderr.toString());
@@ -263,7 +263,7 @@ test('a FIFO journal entry is rejected promptly rather than blocking the event l
 test('growth after stat cannot bypass the journal byte limit', () => temporary(directory => {
   const store = new AppUpdateJournalStore(directory);
   const lease = store.create(input);
-  const file = path.join(directory, 'operations', `${lease.snapshot().id}.json`);
+  const file = path.join(directory, 'operations', `fixture_${lease.snapshot().id}.json`);
   const modulePath = path.resolve('src/lib/market/update-journal.ts');
   const source = `
     const fs = require('node:fs');
@@ -320,7 +320,7 @@ test('interrupted reservation release remains pending and resumes without false 
 test('symlinked or public state and corrupt records fail closed', () => temporary(directory => {
   const store = new AppUpdateJournalStore(directory);
   const lease = store.create(input);
-  const file = path.join(directory, 'operations', `${lease.snapshot().id}.json`);
+  const file = path.join(directory, 'operations', `fixture_${lease.snapshot().id}.json`);
   const original = readFileSync(file);
   chmodSync(file, 0o644);
   assert.throws(() => store.read(lease.snapshot().id), /corrupt or insecure/);
@@ -513,4 +513,100 @@ test('SIGKILL inside final release allows exclusive recovery without losing comm
   assert.deepEqual(readdirSync(path.join(directory, 'locks')), []);
   assert.equal(lstatSync(path.join(directory, 'executors', `${id}.lock`)).ino, inode);
   assert.throws(() => successor.intent('escaped-effect'), /no longer permits/);
+}));
+
+test('prune removes only a cleaned-up receipt and its operation lock, never while its executor is busy', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'youeye-app-journal-'));
+  try {
+  const store = new AppUpdateJournalStore(directory);
+  const lease = prepared(store);
+  const id = lease.snapshot().id;
+  assert.equal(store.prune(id), false, 'an unfinished receipt stays');
+  lease.release();
+  const busy = store.resume(id);
+  assert.equal(store.prune(id), false, 'a busy executor keeps the receipt');
+  busy.transition('recovering');
+  busy.rolledBack();
+  busy.transition('cleanup');
+  busy.finishCleanup(); // releases the executor
+  const holder = spawn('/usr/bin/flock', ['--exclusive', path.join(directory, 'executors', `${id}.lock`), 'sleep', '5'], { detached: true });
+  const deadline = Date.now() + 3000;
+  while (spawnSync('/usr/bin/flock', ['--nonblock', path.join(directory, 'executors', `${id}.lock`), 'true']).status === 0
+    && Date.now() < deadline) spawnSync('sleep', ['0.05']);
+  try { assert.equal(store.prune(id), false, 'another executor holds the operation'); } finally { process.kill(-holder.pid!, 'SIGKILL'); }
+  await once(holder, 'exit');
+  writeFileSync(path.join(directory, 'executors', 'app-fixture.lock'), '', { mode: 0o600 });
+  assert.equal(store.prune(id), true);
+  assert.deepEqual(store.list(), []);
+  assert.deepEqual(readdirSync(path.join(directory, 'executors')), ['app-fixture.lock']);
+  assert.throws(() => store.resume(id), /ENOENT/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('start-up pruning keeps each app\'s latest receipt, recent ones and any whose labels were not cleared', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'youeye-app-journal-'));
+  const previous = process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR;
+  process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = directory;
+  try {
+    const store = new AppUpdateJournalStore(directory);
+    const finish = () => {
+      const lease = prepared(store);
+      lease.transition('recovering');
+      lease.rolledBack();
+      lease.transition('cleanup');
+      lease.finishCleanup();
+      lease.release();
+      return lease.snapshot();
+    };
+    const [old, kept, latest] = [finish(), finish(), finish()];
+    const { pruneFinishedOperations } = await import('../src/lib/market/update-operations');
+    const later = Date.now() + 31 * 24 * 60 * 60 * 1000;
+    const records = store.list();
+    const latestByApp = new Map([['fixture', store.read(latest.id)]]);
+    assert.equal(pruneFinishedOperations(records, latestByApp, new Set([old.id, latest.id]), later), 1);
+    assert.equal(pruneFinishedOperations(store.list(), latestByApp, new Set([kept.id]), Date.now()), 0, 'too recent');
+    assert.deepEqual(store.list().map(r => r.id).sort(), [kept.id, latest.id].sort());
+  } finally {
+    if (previous === undefined) delete process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR;
+    else process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('receipts carry their app in the file name, so a damaged one blocks only that app', () => temporary(directory => {
+  const store = new AppUpdateJournalStore(directory);
+  const lease = store.create(input);
+  const id = lease.snapshot().id;
+  lease.release();
+  assert.deepEqual(readdirSync(path.join(directory, 'operations')), [`fixture_${id}.json`]);
+  // Another app's receipt is unreadable: this app's listing and admission go on; that app's, and box-wide ones, refuse.
+  writeFileSync(path.join(directory, 'operations', `other_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}.json`), '{', { mode: 0o600 });
+  assert.deepEqual(store.list('fixture').map(r => r.id), [id]);
+  assert.throws(() => store.list('other'), /corrupt or insecure/);
+  assert.throws(() => store.list(), /corrupt or insecure/);
+  assert.deepEqual(store.scan().damaged.map(d => d.appId), ['other']);
+  const resumed = store.resume(id);
+  resumed.transition('recovering');
+  resumed.rolledBack();
+  resumed.transition('cleanup');
+  resumed.finishCleanup();
+  assert.equal(store.read(id).cleanupComplete, true);
+  // A damaged receipt that names no app (any pre-0.6.9 receipt) still refuses every app.
+  writeFileSync(path.join(directory, 'operations', `${'1'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}.json`), '{', { mode: 0o600 });
+  assert.throws(() => store.list('fixture'), /corrupt or insecure/);
+}));
+
+test('a pre-0.6.9 receipt keeps its name through later writes', () => temporary(directory => {
+  const store = new AppUpdateJournalStore(directory);
+  const lease = store.create(input);
+  const id = lease.snapshot().id;
+  lease.release();
+  const operations = path.join(directory, 'operations');
+  renameSync(path.join(operations, `fixture_${id}.json`), path.join(operations, `${id}.json`));
+  const resumed = store.resume(id);
+  resumed.transition('recovering');
+  resumed.rolledBack();
+  assert.deepEqual(readdirSync(operations), [`${id}.json`]);
+  assert.equal(store.list('fixture')[0].phase, 'rolled_back');
+  resumed.release();
 }));

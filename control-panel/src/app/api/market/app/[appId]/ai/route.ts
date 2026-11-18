@@ -1,4 +1,7 @@
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
 import { NextRequest, NextResponse } from 'next/server';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
@@ -56,10 +59,13 @@ export async function GET(
     }
     try {
       return NextResponse.json({
-        ...(await getManagedAIStatus(appId, auth.actor)),
+        ...(await withUserOperationLockWait(() => getManagedAIStatus(appId, auth.actor))),
         currentActorId: auth.actor.id,
       });
     } catch (error) {
+      const busy = lifecycleBusyResponse(error);
+      if (busy) return busy;
+      logOperationFailure(`Reading AI Settings of ${appId}`, error);
       return NextResponse.json(
         {
           supported: true,
@@ -91,15 +97,19 @@ export async function PUT(
   }
   const { appId } = await params;
   try {
-    const connection = parsed.data.action === 'enable'
-      ? await enableManagedAI(appId, auth.actor, parsed.data.groupId)
-      : parsed.data.action === 'disable'
-        ? await disableManagedAI(appId, auth.actor)
-        : parsed.data.action === 'change_group'
-          ? await changeManagedAIGroup(appId, auth.actor, parsed.data.groupId)
-          : await takeOverManagedAI(appId, auth.actor, parsed.data.groupId);
+    const action = parsed.data;
+    const connection = await withUserOperationLockWait(() => action.action === 'enable'
+      ? enableManagedAI(appId, auth.actor, action.groupId)
+      : action.action === 'disable'
+        ? disableManagedAI(appId, auth.actor)
+        : action.action === 'change_group'
+          ? changeManagedAIGroup(appId, auth.actor, action.groupId)
+          : takeOverManagedAI(appId, auth.actor, action.groupId));
     return NextResponse.json({ connection });
   } catch (error) {
+    const busy = lifecycleBusyResponse(error);
+    if (busy) return busy;
+    logOperationFailure(`AI Settings ${parsed.data.action} for ${appId}`, error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'AI Settings update failed' },
       { status: 409 },

@@ -11,7 +11,7 @@ import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { selectLoginReturnTo } from '@/lib/identity/login-return';
 import type { IdentityConfig } from '@/lib/identity/config';
 import { identitySearchParams } from '@/lib/identity/authorize-query';
-import { listInstalledApps } from '@/lib/market/metadata';
+import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { identityFaviconLinks } from '@/lib/identity/favicon';
 import { settingsService } from '@/lib/settings';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
@@ -437,7 +437,7 @@ async function safeReturnTo(formValue: string | null, queryValue: string | null,
   }
   // Caddy forward-auth can return to an installed app, but a caller cannot
   // introduce an arbitrary host by changing the login form or forwarded headers.
-  const apps = await listInstalledApps().catch(() => []);
+  const apps = await listReadableInstalledApps().catch(() => []);
   for (const app of apps) {
     if (app.forwardAuthEnabled && app.domain === domain
       && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(app.subdomain)) {

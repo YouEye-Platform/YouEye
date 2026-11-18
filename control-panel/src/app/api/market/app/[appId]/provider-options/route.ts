@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import { fetchManifest } from '@/lib/market/catalog';
 import { installedOrCatalogManifest, readInstalledAppManifest } from '@/lib/market/frozen-manifest';
-import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
+import { listReadableInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { getBridgesForApp } from '@/lib/bridges/manager';
 
 export const dynamic = 'force-dynamic';
@@ -57,7 +57,7 @@ export async function GET(
     }
 
     // 3. Get all installed apps with their provides info
-    const allMeta = await listInstalledApps();
+    const allMeta = await listReadableInstalledApps();
 
     // 4. Get active bridges for this app
     const bridges = await getBridgesForApp(appId);

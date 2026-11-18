@@ -174,6 +174,12 @@ export function parseSetup(text: string, options: ParseSetupOptions = {}): Setup
       }
     }
   }
+  for (const step of [...setup.steps, ...(setup.remove ?? [])]) {
+    if ('http' in step && typeof step.http.body === 'string' && step.http.body.includes('${')) {
+      // Raw interpolation into a text body breaks it when a value holds " or \ (a generated password can).
+      issues.push(`${what}: a text body must not use \${…}; use form: (form-encoded) or a structured body (JSON)`);
+    }
+  }
   if (issues.length > 0) throw new AppFormatError(what, issues);
   return setup;
 }

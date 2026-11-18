@@ -6,6 +6,7 @@
  * A failed deletion keeps install.json with `cleanupPending: true`; the next uninstall retries.
  */
 
+import { describeErrorChainForLog } from './install-tracker';
 import { execCommand } from '../incus/server';
 import { containerExists } from '../infrastructure/oci-deployer';
 import { getRoutes, removeRoute } from '../caddy/client';
@@ -49,6 +50,12 @@ const POSTGRES_CONTAINER = 'youeye-postgres';
  * 7. Remove install metadata (kept with cleanupPending when anything failed)
  * 8. Post-uninstall verification
  */
+/** A cleanup or verification step failed: the result keeps the fixed message, the journal gets the cause chain. */
+function cleanupFailure(appId: string, message: string, error: unknown): string {
+  console.error(`[Market] Uninstall of ${appId}: ${message}: ${describeErrorChainForLog(error)}`);
+  return message;
+}
+
 export async function uninstallApp(
   appId: string,
   options: {
@@ -83,7 +90,16 @@ async function uninstallAppLocked(
     assertRestoredManagedAI(appId, options.preserveManagedAI,
       await readPointerManagedApp(aiExternalInstallationId), await readAppSecret(appId, 'pointer_api_key'));
   }
+  const keepData = options.keepData ?? true;
+  // Delete-data removes the shared-Postgres database and role only when this installation
+  // created them (a database it found, or one another installation made, is never dropped).
+  const dropDb = !keepData && metadata?.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true;
   if (metadata) {
+    // Every check that can refuse runs before anything changes: a refused uninstall leaves the app running, enabled
+    // and with a valid credential.
+    const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
+    await verifyAdmissionCleanup(metadata, keepData, options.preserveAdmission === true);
+    if (keepData && dropDb) throw new Error('Keep-data uninstall cannot drop the app database');
     metadata.serviceCredentialState = 'pending';
     metadata.enabled = false;
     metadata.desiredState = 'stopped';
@@ -119,14 +135,7 @@ async function uninstallAppLocked(
   }
 
   const errors: string[] = [];
-  const keepData = options.keepData ?? true;
-  // Delete-data removes the shared-Postgres database and role only when this installation
-  // created them (a database it found, or one another installation made, is never dropped).
-  const dropDb = !keepData && metadata.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true;
-  const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
-  await verifyAdmissionCleanup(metadata, keepData, options.preserveAdmission === true);
   if (keepData) {
-    if (dropDb) throw new Error('Keep-data uninstall cannot drop the app database');
     const { retainAdmissionOnUninstall } = await import('@/lib/admission/lifecycle');
     const { retainAppRoots } = await import('@/lib/admission/retained-data');
     // Close authoritative admission before stopping/copying. The durable map
@@ -141,8 +150,8 @@ async function uninstallAppLocked(
       if (!archived.archived || !archived.credentialsRevoked) {
         throw new Error('Pointer did not confirm credential revocation');
       }
-    } catch {
-      errors.push('Pointer AI connection cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Pointer AI connection cleanup or verification failed', error));
     }
   }
 
@@ -162,22 +171,22 @@ async function uninstallAppLocked(
       await deleteBridge(bridge.id);
     }
     if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
-  } catch {
-    errors.push('Explicit integration cleanup or verification failed');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'Explicit integration cleanup or verification failed', error));
   }
   try {
     const { forgetSuggestionsForApp } = await import('../bridges/suggestions');
     await forgetSuggestionsForApp(appId);
-  } catch {
-    console.warn(`[Market] Connection suggestions for ${appId} could not be cleared`);
+  } catch (error) {
+    console.warn(`[Market] Connection suggestions for ${appId} could not be cleared: ${describeErrorChainForLog(error)}`);
   }
 
   // 1b. Stop and delete the recorded containers, only when tagged with this installation.
   for (const c of containers) {
     try {
       await deleteOwnedInstance(c.containerName, owner);
-    } catch {
-      errors.push(`Container ${c.containerName} cleanup or verification failed`);
+    } catch (error) {
+      errors.push(cleanupFailure(appId, `Container ${c.containerName} cleanup or verification failed`, error));
     }
   }
 
@@ -186,8 +195,8 @@ async function uninstallAppLocked(
   try {
     await removeSystemProxyDevices(appId);
     await removeCaddyFromAppNetwork(appId);
-  } catch {
-    errors.push('App network attachment cleanup or verification failed');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'App network attachment cleanup or verification failed', error));
   }
 
   // 2. Remove Caddy routes
@@ -220,8 +229,8 @@ async function uninstallAppLocked(
         || containers.some((container) => route.upstream === container.containerName))) {
         throw new Error('one or more app routes remain');
       }
-    } catch {
-      errors.push('Caddy route cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Caddy route cleanup or verification failed', error));
     }
   }
 
@@ -232,16 +241,16 @@ async function uninstallAppLocked(
       await removeOAuthClient(ssoClientId);
       const { getClient } = await import('@/lib/identity/store');
       if (await getClient(ssoClientId)) throw new Error('identity client remains');
-    } catch {
-      errors.push('Identity OAuth client cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Identity OAuth client cleanup or verification failed', error));
     }
   }
 
   if (metadata.forwardAuthEnabled && metadata.subdomain && metadata.domain) {
     try {
       await removeForwardAuth({ hostname: `${metadata.subdomain}.${metadata.domain}` });
-    } catch {
-      errors.push('Identity forward-auth cleanup failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Identity forward-auth cleanup failed', error));
     }
   }
 
@@ -249,8 +258,8 @@ async function uninstallAppLocked(
   if (metadata.subdomain && metadata.domain) {
     try {
       await removePiholeDNSForApp(metadata.subdomain, metadata.domain);
-    } catch {
-      errors.push('Pi-Hole DNS cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Pi-Hole DNS cleanup or verification failed', error));
     }
   }
 
@@ -258,8 +267,8 @@ async function uninstallAppLocked(
   // copy would block the next install's preflight.
   try {
     await removeCaddyTrustBundle(appId);
-  } catch {
-    errors.push('Generated CA directory cleanup failed');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'Generated CA directory cleanup failed', error));
   }
 
   // 5b. Drop the app's own shared database and role (delete-data only)
@@ -269,8 +278,8 @@ async function uninstallAppLocked(
         metadata.databaseName || appId,
         metadata.databaseUser || appId,
       );
-    } catch {
-      errors.push('Shared database cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'Shared database cleanup or verification failed', error));
     }
   }
 
@@ -278,13 +287,13 @@ async function uninstallAppLocked(
   if (!keepData) {
     try {
       await deleteAppStorage(metadata.storageVolumes ?? []);
-    } catch {
-      errors.push('App data cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'App data cleanup or verification failed', error));
     }
     try {
       await deleteAllAppSecrets(appId);
-    } catch {
-      errors.push('App secrets cleanup failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'App secrets cleanup failed', error));
     }
   }
 
@@ -294,16 +303,16 @@ async function uninstallAppLocked(
   try {
     await removeInstalledApp(appId);
     if (await getInstalledApp(appId)) throw new Error('installed-app record remains');
-  } catch {
-    errors.push('Installed-app state cleanup or verification failed');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'Installed-app state cleanup or verification failed', error));
   }
 
   // 7b. Deregister from YE-UI dashboard (remove from app drawer)
   try {
     await deregisterAppFromUI(appId, keepData || options.preserveAdmission === true);
     if (await isAppRegisteredWithUI(appId)) throw new Error('UI registration remains');
-  } catch {
-    errors.push('Dashboard registration cleanup or verification failed');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'Dashboard registration cleanup or verification failed', error));
   }
 
   // 8. Delete and release the primary network only after every dependency is
@@ -311,12 +320,12 @@ async function uninstallAppLocked(
   if (errors.length === 0) {
     try {
       await deleteAppNetwork(appId);
-    } catch {
-      errors.push('App network cleanup or verification failed');
+    } catch (error) {
+      errors.push(cleanupFailure(appId, 'App network cleanup or verification failed', error));
     }
   } else {
-    await markAppNetworkCleanupPending(appId, 'uninstall', errors.join('; ')).catch(() => {
-      errors.push('Failed to persist cleanup_pending lease');
+    await markAppNetworkCleanupPending(appId, 'uninstall', errors.join('; ')).catch((error) => {
+      errors.push(cleanupFailure(appId, 'Failed to persist cleanup_pending lease', error));
     });
   }
 
@@ -378,8 +387,8 @@ async function markCleanupPending(appId: string, errors: string[]): Promise<void
     if (!current || current.cleanupPending) return;
     current.cleanupPending = true;
     await saveInstallMetadata(current);
-  } catch {
-    errors.push('Failed to persist cleanup_pending on install metadata');
+  } catch (error) {
+    errors.push(cleanupFailure(appId, 'Failed to persist cleanup_pending on install metadata', error));
   }
 }
 
@@ -514,9 +523,9 @@ async function verifyUninstall(
         caddyRouteRemoved = false;
         warnings.push(`Caddy route for ${hostname} still exists`);
       }
-    } catch {
+    } catch (error) {
       caddyRouteRemoved = false;
-      warnings.push('Unable to verify Caddy route removal');
+      warnings.push(cleanupFailure(appId, 'Unable to verify Caddy route removal', error));
     }
   }
 
@@ -528,9 +537,9 @@ async function verifyUninstall(
       const { getClient } = await import('@/lib/identity/store');
       identityClientRemoved = await getClient(ssoClientId) === null;
       if (!identityClientRemoved) warnings.push(`Identity OAuth client ${ssoClientId} still exists`);
-    } catch {
+    } catch (error) {
       identityClientRemoved = false;
-      warnings.push('Unable to verify identity OAuth client removal');
+      warnings.push(cleanupFailure(appId, 'Unable to verify identity OAuth client removal', error));
     }
   }
 
@@ -543,9 +552,9 @@ async function verifyUninstall(
       dnsRemoved = !cnames.some((record) => record.domain === hostname)
         && !records.some((record) => record.domain === hostname);
       if (!dnsRemoved) warnings.push(`Pi-Hole records for ${hostname} still exist`);
-    } catch {
+    } catch (error) {
       dnsRemoved = false;
-      warnings.push('Unable to verify Pi-Hole cleanup');
+      warnings.push(cleanupFailure(appId, 'Unable to verify Pi-Hole cleanup', error));
     }
   }
 
@@ -562,9 +571,9 @@ async function verifyUninstall(
       );
       databaseDropped = result.exitCode === 0 && result.stdout.trim() !== '1';
       if (!databaseDropped) warnings.push(`Shared database for ${appId} still exists or could not be queried`);
-    } catch {
+    } catch (error) {
       databaseDropped = false;
-      warnings.push('Unable to verify shared database cleanup');
+      warnings.push(cleanupFailure(appId, 'Unable to verify shared database cleanup', error));
     }
   }
 
@@ -573,9 +582,9 @@ async function verifyUninstall(
     try {
       dataRemoved = await verifyAppStorageRemoval(storageVolumes);
       if (!dataRemoved) warnings.push(`One or more Incus app volumes still exist for ${appId}`);
-    } catch {
+    } catch (error) {
       dataRemoved = false;
-      warnings.push(`Unable to verify Incus app storage removal for ${appId}`);
+      warnings.push(cleanupFailure(appId, `Unable to verify Incus app storage removal for ${appId}`, error));
     }
   }
 
@@ -590,8 +599,8 @@ async function verifyUninstall(
     if (lease) {
       warnings.push(`App network ${lease.bridgeName} remains in ${lease.state} state`);
     }
-  } catch {
-    warnings.push('Unable to verify app network cleanup');
+  } catch (error) {
+    warnings.push(cleanupFailure(appId, 'Unable to verify app network cleanup', error));
   }
 
   return {

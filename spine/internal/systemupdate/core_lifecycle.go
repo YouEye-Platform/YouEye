@@ -344,8 +344,10 @@ func (b CoreLifecycleBarrier) checkQuiescent() error {
 	if err := b.checkNativeMaintenance(); err != nil {
 		return err
 	}
-	// No app process may be active now. Unfinished durable receipts still
-	// reserve their data, even after a crash released every OS lock.
+	// No app process may be active now. An app update whose data is still in flight (not committed, not a verified
+	// rollback) reserves its data, even after a crash released every OS lock. A committed or verified rolled-back
+	// update has settled data: only its reopen and cleanup remain, which the Control Panel finishes at its next start,
+	// so it must not block the System update that may be needed to finish it (a stuck reopen on 0.6.8 and earlier).
 	entries, err := os.ReadDir(filepath.Join(b.Root, "operations"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -370,7 +372,8 @@ func (b CoreLifecycleBarrier) checkQuiescent() error {
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return err
 		}
-		if record.Schema != "youeye.app-update.v1" || !record.CleanupComplete || record.Phase != "cleanup" || ((record.Commit == nil || record.Commit.VerifiedAt == "") && record.RollbackVerifiedAt == "") {
+		settled := (record.Commit != nil && record.Commit.VerifiedAt != "") || record.RollbackVerifiedAt != ""
+		if record.Schema != "youeye.app-update.v1" || !settled {
 			return fmt.Errorf("unfinished app update must complete recovery before System activation")
 		}
 	}

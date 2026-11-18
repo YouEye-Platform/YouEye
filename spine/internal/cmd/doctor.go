@@ -213,7 +213,7 @@ func doctorAppChecks() []doctorCheck {
 				c := doctorReportedAppCheck(app)
 				checks = append(checks, c)
 			}
-			return checks
+			return append(checks, doctorCriticalIssueChecks()...)
 		}
 	}
 	out, err := commandOutput("incus", "list", "app-", "--format", "csv", "-c", "ns")
@@ -221,6 +221,41 @@ func doctorAppChecks() []doctorCheck {
 		return []doctorCheck{{Section: "apps", Name: "app facts", Status: doctorUnknown, Summary: "Control Panel app facts unavailable and Incus app scan failed", Detail: err.Error()}}
 	}
 	return []doctorCheck{{Section: "apps", Name: "app facts", Status: doctorWarn, Summary: "Control Panel app facts unavailable; degraded to Incus app scan", Detail: out}}
+}
+
+// doctorCriticalIssueChecks lists open critical health issues with the command that resolves each: a stuck app
+// update (youeye app recover) or a failed install the background cleanup can't remove (youeye app remove --force).
+func doctorCriticalIssueChecks() []doctorCheck {
+	data, err := controlClient.Get("/api/health/issues")
+	if err != nil {
+		return []doctorCheck{{Section: "apps", Name: "health issues", Status: doctorUnknown, Summary: "health issues unavailable", Detail: err.Error()}}
+	}
+	items, _ := data["issues"].([]interface{})
+	var checks []doctorCheck
+	for _, raw := range items {
+		issue, _ := raw.(map[string]interface{})
+		if str(issue, "state") != "open" || str(issue, "severity") != "critical" {
+			continue
+		}
+		id, title := str(issue, "id"), str(issue, "title")
+		detail := str(issue, "body")
+		if app := doctorIssueApp(id, "app.", ".update-recovery"); app != "" {
+			detail = "run: youeye app recover " + app
+		} else if app := doctorIssueApp(id, "market.install.rollback.", ""); app != "" {
+			detail = "a failed install; cleanup retries automatically. If it stays: youeye app remove --force " + app
+		} else if app := doctorIssueApp(id, "market.app-network.", ""); app != "" && app != "state" {
+			detail = "app network of " + app + "; if it is a failed install: youeye app remove --force " + app
+		}
+		checks = append(checks, doctorCheck{Section: "apps", Name: "critical issue", Status: doctorWarn, Summary: title, Detail: detail})
+	}
+	return checks
+}
+
+func doctorIssueApp(id, prefix, suffix string) string {
+	if !strings.HasPrefix(id, prefix) || !strings.HasSuffix(id, suffix) {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(id, prefix), suffix)
 }
 
 func doctorReportedAppCheck(app map[string]interface{}) doctorCheck {

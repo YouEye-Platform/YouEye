@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { AppUpdateExecutorLock, withAppUpdateExecutorLock } from './update-executor-lock';
+import { AppUpdateExecutorLock, isAppUpdateExecutorLockBusy, withAppUpdateExecutorLock } from './update-executor-lock';
 
 export const APP_UPDATE_SCHEMA = 'youeye.app-update.v1';
 export const DEFAULT_DIRECTORY = '/var/lib/youeye/state/app-updates';
@@ -194,6 +194,10 @@ function validate(value: unknown): AppUpdateRecord {
   return r;
 }
 
+const receiptName = /^(?:([a-z0-9][a-z0-9-]{0,62})_)?([^_]+)\.json$/;
+
+export interface DamagedUpdateRecord { file: string; appId?: string }
+
 function validTime(value: unknown): boolean {
   return typeof value === 'string' && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
 }
@@ -215,11 +219,25 @@ export class AppUpdateJournalStore {
     syncDirectory(directory);
   }
 
+  /**
+   * Receipts are `<appId>_<operationId>.json` (`<operationId>.json` before 0.6.9, still read and written in place),
+   * so a receipt that can't be parsed still names the one app it blocks.
+   */
+  private recordFile(id: string): string {
+    const directory = path.join(this.directory, 'operations');
+    const name = readdirSync(directory).find(entry => entry === `${id}.json`
+      || (entry.endsWith(`_${id}.json`) && receiptName.exec(entry)?.[2] === id));
+    return path.join(directory, name ?? `${id}.json`);
+  }
+
   read(id: string): AppUpdateRecord {
     if (!operationId.test(id)) fail();
     privateDirectory(path.join(this.directory, 'operations'));
-    const fd = openSync(path.join(this.directory, 'operations', `${id}.json`),
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    return this.readFile(this.recordFile(id), id);
+  }
+
+  private readFile(file: string, id: string): AppUpdateRecord {
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = fstatSync(fd);
       if (!stat.isFile() || stat.uid !== process.geteuid?.()
@@ -238,17 +256,41 @@ export class AppUpdateJournalStore {
     } finally { closeSync(fd); }
   }
 
-  list(): AppUpdateRecord[] {
-    privateDirectory(path.join(this.directory, 'operations'));
-    return readdirSync(path.join(this.directory, 'operations'))
-      .filter(name => name.endsWith('.json'))
-      .sort().map(name => this.read(name.slice(0, -5)));
+  /** Every receipt, and the ones that can't be read: by app when the file name says which, else by file only. */
+  scan(): { records: AppUpdateRecord[]; damaged: DamagedUpdateRecord[] } {
+    const directory = path.join(this.directory, 'operations');
+    privateDirectory(directory);
+    const records: AppUpdateRecord[] = [];
+    const damaged: DamagedUpdateRecord[] = [];
+    for (const name of readdirSync(directory).filter(entry => entry.endsWith('.json')).sort()) {
+      const match = receiptName.exec(name);
+      if (!match || !operationId.test(match[2])) { damaged.push({ file: name }); continue; }
+      try {
+        const record = this.readFile(path.join(directory, name), match[2]);
+        if (match[1] && record.appId !== match[1]) damaged.push({ file: name });
+        else records.push(record);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; // pruned meanwhile
+        damaged.push({ file: name, appId: match[1] });
+      }
+    }
+    return { records, damaged };
+  }
+
+  /**
+   * Readable receipts. A damaged receipt refuses the listing when it names `forApp`, names no app, or no app is given
+   * (box-wide callers); a damaged receipt of another app is skipped, as that app's own admission refuses.
+   */
+  list(forApp?: string): AppUpdateRecord[] {
+    const { records, damaged } = this.scan();
+    if (damaged.some(d => forApp === undefined || !d.appId || d.appId === forApp)) fail();
+    return records;
   }
 
   isReserved(resource: UpdateResource): boolean {
     // Unreadable/partial state is deliberately an admission failure.
     try {
-      const records = this.list();
+      const records = this.list(resource.ownerAppId);
       if (records.some(r => updateNeedsRecovery(r)
         && r.resources.some(x => updateResourceKey(x) === updateResourceKey(resource)))) return true;
       try {
@@ -295,6 +337,31 @@ export class AppUpdateJournalStore {
     try { return await work(lease); } finally { lease.release(); }
   }
 
+  /**
+   * Delete a finished receipt and its operation lock file. Only cleaned-up receipts qualify, under admission and the
+   * operation's own executor lock (a busy executor keeps the receipt). The receipt goes first: a later recover() of
+   * this id finds no receipt and refuses, whatever lock inode it opens. Reservations (`locks/`) and the app and
+   * inventory locks are never touched.
+   */
+  prune(id: string): boolean {
+    if (!operationId.test(id)) fail();
+    return this.withAdmission(() => {
+      let executor: AppUpdateExecutorLock;
+      try { executor = this.acquireExecutor(id); } catch (error) {
+        if (isAppUpdateExecutorLockBusy(error)) return false;
+        throw error;
+      }
+      try {
+        if (!this.read(id).cleanupComplete) return false;
+        unlinkSync(this.recordFile(id));
+        syncDirectory(path.join(this.directory, 'operations'));
+        unlinkSync(path.join(this.directory, 'executors', `${id}.lock`));
+        syncDirectory(path.join(this.directory, 'executors'));
+        return true;
+      } finally { executor.release(); }
+    });
+  }
+
   private acquireExecutor(id: string): AppUpdateExecutorLock {
     privateDirectory(path.join(this.directory, 'executors'));
     return AppUpdateExecutorLock.acquire(path.join(this.directory, 'executors', `${id}.lock`));
@@ -314,7 +381,7 @@ export class AppUpdateJournalStore {
       checkpoints: [], steps: [], recoveryPolicy: 'restore-before-retry', cleanupComplete: false,
     });
     const keys = new Set(record.resources.map(updateResourceKey));
-    if (this.list().some(r => updateNeedsRecovery(r)
+    if (this.list(record.appId).some(r => updateNeedsRecovery(r)
       && r.resources.some(resource => keys.has(updateResourceKey(resource))))) {
       throw new Error('App update resources are reserved by an unfinished operation');
     }
@@ -360,11 +427,17 @@ export class AppUpdateJournalStore {
     if (Buffer.byteLength(raw) > MAX_RECORD_BYTES) fail();
     const directory = path.join(this.directory, 'operations');
     privateDirectory(directory);
+    const existing = this.recordFile(record.id);
+    let target = existing;
+    try { lstatSync(existing); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      target = path.join(directory, `${record.appId}_${record.id}.json`);
+    }
     const temporary = path.join(directory, `.${record.id}.${randomUUID()}.tmp`);
     try {
       const fd = openSync(temporary, 'wx', 0o600);
       try { writeFileSync(fd, raw); fsyncSync(fd); } finally { closeSync(fd); }
-      renameSync(temporary, path.join(directory, `${record.id}.json`));
+      renameSync(temporary, target);
       syncDirectory(directory);
     } finally {
       try { unlinkSync(temporary); } catch (e) {

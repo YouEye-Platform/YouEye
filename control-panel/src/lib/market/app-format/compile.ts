@@ -9,7 +9,7 @@ import type {
   SurfaceSpec, VolumeSpec,
 } from '../types';
 import { manifestDigest } from './digest';
-import { parseAppSource, readAppSource, type AppSource, type ParseOptions, type ParsedApp } from './parse';
+import { AppFormatError, parseAppSource, readAppSource, type AppSource, type ParseOptions, type ParsedApp } from './parse';
 import type { AppDocument } from './schema';
 import { variableReferences } from './variables';
 
@@ -54,6 +54,25 @@ function volumes(data: AppDocument['data'], shared?: AppDocument['shared']): Vol
   for (const item of data ?? []) {
     const spec = typeof item === 'string' ? { path: item, kind: undefined } : item;
     result.push({ name: volumeName(spec.path, taken), container: spec.path, type: spec.kind ?? 'data', read_only: false });
+  }
+  return result;
+}
+
+/** A sidecar's volumes: its own, plus aliases of main's data volumes (`from: main`). */
+function sidecarVolumes(sidecar: string, data: NonNullable<AppDocument['sidecars']>[number]['data'], main: VolumeSpec[]): VolumeSpec[] {
+  const own = (data ?? []).filter((item) => typeof item === 'string' || !('from' in item)) as AppDocument['data'];
+  const result = volumes(own);
+  const taken = new Set(result.map((volume) => volume.name));
+  for (const item of data ?? []) {
+    if (typeof item === 'string' || !('from' in item)) continue;
+    const mainPath = item.main_path ?? item.path;
+    const source = main.find((volume) => volume.container === mainPath);
+    const where = `sidecars.${sidecar}.data: ${item.path}`;
+    if (!source) throw new AppFormatError('youeye-app.yaml', [`${where}: main has no data volume at ${mainPath}`]);
+    if (source.type === 'cache') throw new AppFormatError('youeye-app.yaml', [`${where}: a kind: cache path is not a volume and cannot be shared`]);
+    if (source.storageGroup) throw new AppFormatError('youeye-app.yaml', [`${where}: ${mainPath} is a shared folder; only main's own data can be mounted from main`]);
+    result.push({ name: volumeName(item.path, taken), container: item.path, type: source.type, read_only: false,
+      sourceVolume: source.name, sourceContainer: 'main' });
   }
   return result;
 }
@@ -154,7 +173,7 @@ export function compileApp(parsed: ParsedApp): AppManifest {
     port: sidecar.port,
     command: sidecar.command ? quoteArgv(sidecar.command) : undefined,
     environment: env(sidecar.env),
-    volumes: volumes(sidecar.data),
+    volumes: sidecarVolumes(sidecar.name, sidecar.data, main.volumes),
     healthCheck: health(sidecar.health),
     network,
   })), main];

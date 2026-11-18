@@ -432,6 +432,14 @@ class Run {
 
   private body(step: HttpStep, scope: Data, headers: Record<string, string>): string | undefined {
     let value: unknown;
+    if (step.form) {
+      const form = new URLSearchParams();
+      for (const [name, item] of Object.entries(step.form)) form.append(name, interpolate(item, scope));
+      if (!Object.keys(headers).some((name) => name.toLowerCase() === 'content-type')) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
+      return form.toString();
+    }
     if (step.body_from || step.set) {
       let base: unknown = Object.create(null);
       if (step.body_from) {

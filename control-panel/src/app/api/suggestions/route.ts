@@ -13,6 +13,8 @@ import { readInstallMetadata } from '@/lib/market/metadata';
 import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { settingsService } from '@/lib/settings';
 import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
 import { logOperationFailure } from '@/lib/market/install-tracker';
 
 export async function GET() {
@@ -56,22 +58,26 @@ export async function POST(request: Request) {
     if (suggestion.type !== 'bridge' || !suggestion.targetAppId) {
       return NextResponse.json({ error: 'Only bridge suggestions can be approved' }, { status: 400 });
     }
+    const targetAppId = suggestion.targetAppId;
 
     try {
       const envMappings: { container: string; key: string; template: string }[] = [];
 
+      // A user operation: every lifecycle and network lock below waits (up to 30 s) for a busy holder (another
+      // app's install, a probe, a backup) instead of failing, and the whole approval runs as one operation.
+      return await withUserOperationLockWait(async () => {
       const bridge = await createBridge({
         from: suggestion.fromAppId,
-        to: suggestion.targetAppId,
+        to: targetAppId,
         envMappings,
         approvedBy: 'settings',
       });
 
       // If target is installed, resolve and activate
-      const targetMeta = await readInstallMetadata(suggestion.targetAppId);
+      const targetMeta = await readInstallMetadata(targetAppId);
       if (targetMeta) {
-        const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${suggestion.targetAppId}`;
-        const targetSub = targetMeta.subdomain || suggestion.targetAppId;
+        const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetAppId}`;
+        const targetSub = targetMeta.subdomain || targetAppId;
         const config = await settingsService.getRaw();
         if (!config.domain) {
           return NextResponse.json({ error: 'Domain not configured in settings' }, { status: 500 });
@@ -82,7 +88,7 @@ export async function POST(request: Request) {
         let targetPort = 8080;
         try {
           const manifest = await readFrozenUpdateManifest(suggestion.fromAppId);
-          const want = manifest.wants?.find((w) => w.appId === suggestion.targetAppId);
+          const want = manifest.wants?.find((w) => w.appId === targetAppId);
           if (want?.defaultPort) targetPort = want.defaultPort;
         } catch { /* use default */ }
 
@@ -95,9 +101,11 @@ export async function POST(request: Request) {
       // Remove the suggestion
       await removeSuggestion(sid);
       return NextResponse.json({ ok: true, bridgeId: bridge.id });
+      });
     } catch (err) {
       logOperationFailure(`Approving connection ${suggestion.fromAppId} → ${suggestion.targetAppId}`, err);
-      return NextResponse.json({ error: 'The connection could not be set up' }, { status: 500 });
+      return lifecycleBusyResponse(err)
+        ?? NextResponse.json({ error: 'The connection could not be set up; the cause is in the Control Panel journal' }, { status: 500 });
     }
   }
 

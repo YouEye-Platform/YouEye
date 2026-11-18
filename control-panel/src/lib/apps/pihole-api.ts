@@ -143,7 +143,7 @@ async function resyncPiholePassword(ip: string, password: string): Promise<void>
     `/1.0/instances/${CONTAINER_NAME}/exec`,
     {
       command: ['pihole', 'setpassword', password],
-      'record-output': true,
+      'record-output': false, // the result is not read; recorded output is never deleted by Incus
       'wait-for-websocket': false,
     }
   );

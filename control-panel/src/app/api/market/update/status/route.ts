@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
       cleanupComplete: operation.cleanupComplete,
       recoveryRequired: operation.recoveryRequired,
       pending: operation.pending,
+      reopened: operation.reopened,
       errorCode: operation.errorCode && /^[a-z0-9_-]{1,80}$/.test(operation.errorCode)
         ? operation.errorCode : null,
     } : null }, { headers: { 'Cache-Control': 'no-store' } });

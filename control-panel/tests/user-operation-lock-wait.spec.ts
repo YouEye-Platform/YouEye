@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { AppUpdateJournalStore } from '../src/lib/market/update-journal';
 import {
-  AppLifecycleBusyError, AppLifecycleWaitCancelledError, withAppInventory, withAppLifecycle, withUserOperationLockWait,
+  AppLifecycleBusyError, AppLifecycleWaitCancelledError, isUserOperationWaiting, withAppInventory, withAppLifecycle,
+  withUserOperationLockWait,
 } from '../src/lib/market/update-admission';
 import { AppUpdateExecutorLock } from '../src/lib/market/update-executor-lock';
 
@@ -88,4 +89,17 @@ test('the abort signal stops a lock wait', () =>
       );
       assert.ok(Date.now() - started < 2_000);
     } finally { lock.release(); }
+  }));
+
+test('a waiting user operation is visible to background holders until it gets the lock', () =>
+  temporary(async (directory, store) => {
+    const released = holdFor(path.join(directory, 'executors', 'app-fixture.lock'), 600);
+    assert.equal(isUserOperationWaiting('fixture'), false);
+    const user = withUserOperationLockWait(() => withAppLifecycle('fixture', () => isUserOperationWaiting('fixture'), { store }));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(isUserOperationWaiting('fixture'), true, 'the watchdog sees the waiting user');
+    assert.equal(isUserOperationWaiting('other'), false);
+    assert.equal(await user, false, 'no longer waiting once inside');
+    await released;
+    assert.equal(isUserOperationWaiting('fixture'), false);
   }));

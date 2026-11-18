@@ -128,6 +128,12 @@ sidecars:                        # extra containers of the same app
     env: {}
     command: [valkey-server, --save, "60", "1"]
     health: /health              # optional; or { postgres: <user> } (pg_isready as that user)
+  - name: worker                 # a worker that reads and writes main's files (YouEye 0.6.9+)
+    image: ghcr.io/…@sha256:…
+    data:
+      - { path: /app/media, from: main }                      # main's data volume mounted at /app/media
+      - { path: /data/users, from: main, main_path: /app/users }   # main mounts it at /app/users
+    env: { … }                   # sidecars never inherit main's env: repeat what the worker needs
 
 provides:                        # what other apps can connect to
   - { type: indexer, description: Indexer manager, port: 9696, scope: service }
@@ -150,6 +156,12 @@ api:                             # groundwork for the YouEye API/MCP server; opt
 
 x-notes: {}                      # reserved; kept, never read
 ```
+
+**`from: main`** mounts the same Incus volume in the sidecar: one volume, attached to two of the app's containers,
+backed up and checkpointed once. It must name one of main's `data:` paths (not `kind: cache`, which is not a volume,
+and not a `shared:` folder). With sidecars every container's runtime name is `app-<id>-<name>` (main becomes
+`app-<id>-main`), and an update refuses container or storage topology changes, so adding a worker to an installed app
+means removing and reinstalling it.
 
 ### Native apps
 A native app has `source:` instead of `image:` (exactly one of the two) and no sidecars. It can add dashboard
@@ -202,6 +214,11 @@ steps:
       set: { oauth.enabled: true, oauth.clientId: "${sso.client_id}" }
       if: { not_equals: ["${vars.config.oauth.clientId}", "${sso.client_id}"] }
                                          # also equals: [a, b], empty: "${vars.x}", not_empty: "${vars.x}"
+  - http:                                # a form post (Content-Type: application/x-www-form-urlencoded)
+      method: POST
+      path: /api/system/settings/general
+      form: { settings-sonarr-apikey: "${peer.api_key}", settings-general-use_sonarr: "true" }
+                                         # values are substituted, then encoded; form excludes body/body_from/set
   - http:                                # once per matching item of a list
       method: DELETE
       path: /api/v3/downloadclient/${item.id}
@@ -234,6 +251,9 @@ remove:                          # optional: undo steps, run when the feature is
 - Values saved with `save` and the `set` keys are merged into null-prototype objects; `__proto__`, `constructor` and
   `prototype` are refused anywhere in a key path, in saved responses, `for_each` items and `${vars.…}` lookups.
 - In an `if:` condition a value that was never saved is empty (`''`); elsewhere it fails the step.
+- A text `body:` (a YAML string) is sent as is and may not contain `${…}`: a substituted value holding `"` or `\`
+  (a generated password can) would break it. Use `form:` for form posts and an object body for JSON. Needs YouEye
+  0.6.9 (`requires: {youeye: ">=0.6.9"}` in `youeye-app.yaml`); installed copies are read leniently and keep working.
 - A failure names the file, the step and the path as the file wrote it (never the substituted values or a
   command's output, which may hold secrets). The full error chain goes to the CP log, redacted; the sign-in API,
   install and bundle progress show only generic messages.

@@ -79,6 +79,7 @@ for (const databaseMode of ['none', 'own', 'shared']) test(`restore teardown res
       deleteAppNetwork: async () => { lease = null; }, getAppNetworkLease: async () => lease },
     './storage': { deleteAppStorage: async () => {}, verifyAppStorageRemoval: async () => true },
     './update-admission': { withAppInventory: async (fn: () => unknown) => fn(), withAppLifecycle: pass },
+    './install-tracker': { describeErrorChainForLog: (error: unknown) => String(error) },
     '../apps/service-credential-bridge': { revokeAppCredential: async () => {} },
     '@/lib/admission/lifecycle': { verifyAdmissionCleanup: async (_meta: unknown, keep: boolean, restore: boolean) => {
       assert.equal(keep, false); assert.equal(restore, true); } },

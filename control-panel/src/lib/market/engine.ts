@@ -102,7 +102,7 @@ import {
 import { injectCaddyRootCA, removeCaddyTrustBundle, stageCaddyTrustBundle } from './caddy-ca';
 import { activatePendingBridges, pushConnectionsToUI } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
-import { logOperationFailure } from './install-tracker';
+import { describeErrorChainForLog, logOperationFailure } from './install-tracker';
 import { getUserById } from '@/lib/identity/store';
 import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import {
@@ -165,13 +165,12 @@ async function rollbackInstall(
   onEvent({ step: 0, totalSteps, status: 'running', message: 'Rolling back failed install...' });
   const errors: string[] = [];
 
-  const recordFailure = (resource: string, _error: unknown): void => {
-    void _error;
-    // Cleanup errors can embed dependency responses or generated credentials.
-    // Persist/log only the failed resource; Health owns sensitivity-safe detail.
+  const recordFailure = (resource: string, error: unknown): void => {
+    // Cleanup errors can embed dependency responses or generated credentials: the result names only the resource,
+    // and the journal gets the sanitised cause chain.
     const message = `${resource}: cleanup or verification failed`;
     errors.push(message);
-    console.error(`[engine] Rollback failed for ${message}`);
+    console.error(`[engine] Rollback failed for ${message}: ${describeErrorChainForLog(error)}`);
   };
 
   // Deny the installation generation before removing its runtime/registration.

@@ -14,7 +14,7 @@ export function retainIndependentSourceHistory(request:NativeRequest){
   const records=store.list();
   if(records.some(updateNeedsRecovery))throw Error('Source app recovery must settle before copying');
   const operations=join(store.directory,'operations');
-  if(readdirSync(operations).some(name=>!records.some(r=>name===r.id+'.json')))throw Error('Unknown source app update history requires reconciliation');
+  if(readdirSync(operations).some(name=>!records.some(r=>name===r.id+'.json'||name===`${r.appId}_${r.id}.json`)))throw Error('Unknown source app update history requires reconciliation');
   const parent=join(store.directory,'copy-source-history'),destination=join(parent,request.request_id);
   mkdirSync(parent,{recursive:true,mode:0o700});privateDirectory(parent);
   try{privateDirectory(destination);if(records.length!==0)throw Error('Destination app history changed during source archival');}

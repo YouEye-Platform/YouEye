@@ -5,13 +5,13 @@ import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 
-function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boolean; running?: boolean; storage?: boolean; disabledAutostart?: boolean; fail?: boolean } = {}) {
+function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boolean; running?: boolean; storage?: boolean; disabledAutostart?: boolean; fail?: boolean; userWaiting?: boolean } = {}) {
   let held = false;
   const events: string[] = [];
   const code = ts.transpileModule(readFileSync(path.join(process.env.CONTROL_PANEL_ROOT || process.cwd(), 'src/lib/health/watchdog-start.ts'), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
   const api: any = {};
   runInNewContext(code, {exports: api, encodeURIComponent, require(id: string) {
-    if (id.endsWith('update-admission')) return {async withContainerLifecycle(_name: string, work: () => Promise<unknown>) {
+    if (id.endsWith('update-admission')) return {isUserOperationWaiting: () => !!options.userWaiting, async withContainerLifecycle(_name: string, work: () => Promise<unknown>) {
       if (options.busy) throw Error('App update executor lock is busy');
       held = true; events.push('lock');
       try { return await work(); } finally { held = false; events.push('unlock'); }
@@ -36,8 +36,8 @@ test('watchdog holds shared lifecycle admission until terminal start operation',
 test('rename holding app admission prevents the watchdog from starting its stopped dependency', async () => {
   const f = fixture({busy:true}); await assert.rejects(f.api.startWatchdogContainer('app-searxng-redis'), /busy/); assert.deepEqual(f.events, []);
 });
-test('stale stopped observations cannot override current state, owner intent, maintenance or unavailable storage', async () => {
-  for (const options of [{running:true}, {stopped:true}, {maintenance:true}, {storage:false}, {disabledAutostart:true}]) {
+test('stale stopped observations cannot override current state, owner intent, maintenance, unavailable storage or a waiting user', async () => {
+  for (const options of [{running:true}, {stopped:true}, {maintenance:true}, {storage:false}, {disabledAutostart:true}, {userWaiting:true}]) {
     const f = fixture(options); assert.equal(await f.api.startWatchdogContainer('app-searxng-redis'), false); assert.ok(!f.events.includes('PUT')); assert.equal(f.events.at(-1),'unlock');
   }
 });

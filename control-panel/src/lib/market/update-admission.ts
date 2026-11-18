@@ -104,21 +104,42 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
  * the bound. `acquire` must take its locks before any effect and release what it
  * took when it throws, so repeating it is safe.
  */
-async function admitWaiting<T>(acquire: () => T): Promise<T> {
+async function admitWaiting<T>(acquire: () => T, appId?: string): Promise<T> {
   const policy = waitContext.getStore();
   if (!policy) return acquire();
   const deadline = Date.now() + policy.timeoutMs;
-  for (;;) {
-    try {
-      return acquire();
-    } catch (error) {
-      if (!isAppUpdateExecutorLockBusy(error)) throw error;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new AppLifecycleBusyError(error);
-      try { await pause(Math.min(policy.pollMs, remaining), policy.signal); }
-      catch { throw new AppLifecycleWaitCancelledError(error); }
+  let registered = false;
+  try {
+    for (;;) {
+      try {
+        return acquire();
+      } catch (error) {
+        if (!isAppUpdateExecutorLockBusy(error)) throw error;
+        if (appId && !registered) {
+          waitingUsers.set(appId, (waitingUsers.get(appId) ?? 0) + 1);
+          registered = true;
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new AppLifecycleBusyError(error);
+        try { await pause(Math.min(policy.pollMs, remaining), policy.signal); }
+        catch { throw new AppLifecycleWaitCancelledError(error); }
+      }
+    }
+  } finally {
+    if (registered) {
+      const left = (waitingUsers.get(appId!) ?? 1) - 1;
+      if (left > 0) waitingUsers.set(appId!, left); else waitingUsers.delete(appId!);
     }
   }
+}
+
+const waitingKey = Symbol.for('youeye.lifecycle-waiting-users');
+const waitingGlobal = globalThis as typeof globalThis & { [waitingKey]?: Map<string, number> };
+const waitingUsers = waitingGlobal[waitingKey] ??= new Map<string, number>();
+
+/** A user operation is queued behind this app's lock: background work holding it should let go, not start more. */
+export function isUserOperationWaiting(appId: string): boolean {
+  return (waitingUsers.get(appId) ?? 0) > 0;
 }
 
 interface IndependentCopyRequest {request_id:string;source_hardware:string;destination_hardware:string;source_receipt_sha256:string;manifest_sha256:string}
@@ -277,7 +298,7 @@ async function withAppLifecycleUnderCore<T>(
     held.lock.assertHeld();
     if (options.resources?.length) {
       store.withAdmission(() => {
-        const unfinished = store.list().filter(updateNeedsRecovery);
+        const unfinished = store.list(appId).filter(updateNeedsRecovery);
         for (const resource of options.resources!) {
           const resourceKey = updateResourceKey(resource);
           const owners = unfinished.filter(record => record.resources.some(candidate =>
@@ -305,15 +326,15 @@ async function withAppLifecycleUnderCore<T>(
         const record = store.read(options.recoveryOperationId);
         if (record.appId !== appId || !updateNeedsRecovery(record)) throw new AppLifecycleAdmissionError();
         const keys = new Set([...record.resources, ...resources].map(updateResourceKey));
-        if (store.list().some(other => other.id !== record.id && updateNeedsRecovery(other)
+        if (store.list(appId).some(other => other.id !== record.id && updateNeedsRecovery(other)
           && (other.appId === appId || other.resources.some(resource => keys.has(updateResourceKey(resource)))))) {
           throw new AppLifecycleAdmissionError();
         }
       } else if (resources.some(resource => store.isReserved(resource))
-        || store.list().some(record => record.appId === appId && updateNeedsRecovery(record))) {
+        || store.list(appId).some(record => record.appId === appId && updateNeedsRecovery(record))) {
         throw new AppLifecycleAdmissionError();
       }
-    }));
+    }), appId);
     const entry: HeldApp = { lock: lock!, active: true };
     const scope = new Map(inherited);
     scope.set(key, entry);
@@ -364,13 +385,16 @@ async function withContainerLifecycleUnderCore<T>(
     assertRecoveryCopyAdmission(name, observed.metadata?.config ?? {}, store);
     return await work();
   };
-  const { listInstalledApps } = await import('./metadata');
-  const owners = (await listInstalledApps()).filter(meta => meta.containers.some(container =>
+  const { scanInstalledApps } = await import('./metadata');
+  const { apps, damaged } = await scanInstalledApps();
+  const owners = apps.filter(meta => meta.containers.some(container =>
     (container.containerName) === name));
   if (owners.length > 1) throw new Error('Container lifecycle ownership is ambiguous');
   if (owners.length === 1) {
     return withAppLifecycle(owners[0].appId, guardedWork, { ...options, store, resources: [resource] });
   }
+  // Nobody readable owns it, but an app whose install record can't be read might: refuse rather than guess.
+  if (damaged.length) throw new Error(`Container ${name} may belong to ${damaged.join(', ')}, whose install record is damaged`);
   if (name.startsWith('app-')) throw new Error('App container lifecycle ownership is unavailable');
   // System/foreign container actions have no app lock. Retain admission through
   // their whole operation so an update cannot reserve this container mid-action.

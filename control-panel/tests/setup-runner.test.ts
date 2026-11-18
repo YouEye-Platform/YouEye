@@ -185,6 +185,17 @@ test('object and array bodies are JSON with Content-Type set automatically; stri
   assert.equal(fake.http[3].headers['Content-Type'], undefined);
 });
 
+test('form: sends interpolated fields form-encoded, so quotes and backslashes in values stay intact', async () => {
+  const { fake } = await run([
+    { http: { method: 'POST', path: '/api/system/settings/general', form: { sonarr_apikey: '${secret.admin_password}"\\&x=1', use_sonarr: 'true' } } },
+    { http: { method: 'POST', path: '/b', headers: { 'Content-Type': 'multipart/whatever' }, form: { a: 'b' } } },
+  ]);
+  assert.equal(fake.http[0].headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.equal(new URLSearchParams(fake.http[0].body!).get('sonarr_apikey'), 'pw-secret"\\&x=1');
+  assert.equal(new URLSearchParams(fake.http[0].body!).get('use_sonarr'), 'true');
+  assert.equal(fake.http[1].headers['Content-Type'], 'multipart/whatever');
+});
+
 test('body_from + set merges into a copy of a saved value', async () => {
   const { fake } = await run([
     { http: { path: '/config', save: { config: '$' } } },
