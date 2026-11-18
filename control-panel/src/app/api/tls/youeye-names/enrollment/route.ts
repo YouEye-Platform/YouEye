@@ -7,6 +7,7 @@ import {
   createVerifiedSetupChallenge,
   getNamesReadiness,
   namesErrorMessage,
+  namesLogReason,
   registerInstall,
 } from '@/lib/youeye-names/client';
 import { privateNamesAddress, verifiedSetupParentOrigin } from '@/lib/youeye-names/setup-request';
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, challenge }, { headers: { 'cache-control': 'no-store' } });
     });
   } catch (error) {
+    console.error('[TLS/YouEyeNames] enrollment failed:', namesLogReason(error));
     return NextResponse.json(
       { error: namesErrorMessage(error) },
       { status: 502, headers: { 'cache-control': 'no-store' } },

@@ -9,6 +9,7 @@ last_good=${YOUEYE_NETWORK_LAST_GOOD:-/var/lib/youeye-state/bootstrap/network-la
 last_good_profile=${YOUEYE_NETWORK_LAST_GOOD_PROFILE:-/var/lib/youeye-state/bootstrap/network-last-good-profile.json}
 ip_bin=${IP_BIN:-ip}
 networkctl_bin=${NETWORKCTL_BIN:-networkctl}
+systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
 getent_bin=${GETENT_BIN:-getent}
 curl_bin=${CURL_BIN:-curl}
 date_bin=${DATE_BIN:-date}
@@ -189,6 +190,8 @@ while [ "$attempt" -le "$max_attempts" ]; do
         mv -f "${last_good_profile}.tmp" "$last_good_profile"
         rm -f "$backup"
         write_status ready "" "" "$attempt" 100
+        # youeye.local follows the adapter that now holds the default route.
+        $systemctl_bin try-restart youeye-mdns.service >/dev/null 2>&1 || true
         exit 0
     fi
     rm -f "${source_index}.tmp"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE, verifyIdentityToken, identityTokenClaims, IDENTITY_SESSION_MAX_AGE_SECONDS } from './tokens';
 import type { IdentityUser } from './store';
+import { secureCookieFor } from '../auth/mode';
 
 export async function getIdentitySession(request: NextRequest): Promise<IdentityUser | null> {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
@@ -28,10 +29,10 @@ export function userinfo(user: IdentityUser) {
   };
 }
 
-export function setIdentityCookie(response: NextResponse, token: string, cookieDomain: string): void {
+export function setIdentityCookie(request: NextRequest, response: NextResponse, token: string, cookieDomain: string): void {
   response.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.SECURE_COOKIES !== 'false',
+    secure: secureCookieFor(request),
     sameSite: 'lax',
     maxAge: IDENTITY_SESSION_MAX_AGE_SECONDS,
     path: '/',

@@ -14,8 +14,13 @@ product of the channel, managed by the Control Panel (CP). The CP side lives in 
 | Database | `pointer` in the shared YouEye PostgreSQL |
 | State | host `/var/lib/youeye/pointer/runtime` (mode 0700) mounted at `/var/lib/pointer`; engine homes in `/var/lib/pointer/engine` |
 
-**Install.** Pointer needs the box's domain, so the CP deploys it when the setup wizard runs
-(`configurePointerForPlatform` in `src/lib/infrastructure/deployer.ts`, called from `/api/setup/run`). It resolves
+**Install.** Pointer is **built at first boot** and **configured in setup**. Infra step 5 without a domain
+(`buildPointerForSetup` in `src/lib/infrastructure/deployer.ts`) stages the verified release, deploys the container
+from `debian/12` with its service disabled (`deferPointerServiceUntilSetup`) and records release state `built`
+(`pointer/release-metadata.ts`). The Preparing page shows it as "Building the AI service". A failed build never
+fails first deployment: step 5 reports `skipped` and setup builds it later. Setup's `ai` step
+(`configurePointerForPlatform`, from `/api/setup/run`): `built` → configure → healthy → publish; a container with no
+record → recreate; already configured → reconfigure. It resolves
 product `pointer` from the box's channel index (`deployPointerContainerFromConfiguredSource`). The release has two assets:
 `standalone.tar` and `pointer-build-contract.json`, whose SHA-256 must equal the build's `contract_sha256`. The
 archive is checked like a native app's (`stageVerifiedProductArtifact` in `src/lib/market/native-artifact.ts`),

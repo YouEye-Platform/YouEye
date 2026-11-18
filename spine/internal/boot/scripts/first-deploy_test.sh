@@ -68,6 +68,10 @@ EOF
 #!/bin/sh
 exit 0
 EOF
+    cat > "$fixture/bin/systemctl" <<'EOF'
+#!/bin/sh
+printf 'systemctl %s\n' "$*" >> "$FAKE_COMMAND_LOG"
+EOF
     cat > "$fixture/bin/curl" <<'EOF'
 #!/bin/sh
 [ "${FAKE_HTTPS_FAIL:-0}" != 1 ]
@@ -90,6 +94,7 @@ run_fixture() {
         YOUEYE_SEED_MARKET="$fixture/bin/seed" \
         YOUEYE_BOOTSTRAP_NETWORK="$fixture/bin/network" \
         CURL_BIN="$fixture/bin/curl" \
+        SYSTEMCTL_BIN="$fixture/bin/systemctl" \
         YOUEYE_RELEASE_POLICY="$fixture/release-policy.json" \
         YOUEYE_FIRST_DEPLOY_SEALED_RELEASE="$fixture/sealed-release.json" \
         "$@" \
@@ -102,6 +107,9 @@ run_fixture "$partial" FAKE_CONTROL_COMPLETE=0
 grep -Fxq deploy "$partial/commands"
 grep -Fq '"stage": "complete"' "$partial/state/progress.json"
 jq -e '.schema == "youeye.installer.progress.v1" and .percent == 100 and .state == "complete"' "$partial/state/progress.json" >/dev/null
+# The page server stops before the gate opens, and stays stopped.
+grep -Fxq 'systemctl stop youeye-setup-page.service' "$partial/commands"
+! grep -Fq 'systemctl start' "$partial/commands"
 
 complete="$tmp/complete"
 make_fixture "$complete"
@@ -149,6 +157,8 @@ if run_fixture "$https_failure" FAKE_HTTPS_FAIL=1; then
 fi
 test ! -e "$https_failure/state/complete"
 jq -e '.state == "retrying" and .percent == 98' "$https_failure/state/progress.json" >/dev/null
+# A failed hand-over brings the Preparing page back.
+grep -Fxq 'systemctl start --no-block youeye-setup-page.service' "$https_failure/commands"
 
 core="$tmp/core"
 make_fixture "$core"
@@ -206,6 +216,8 @@ adopted="$tmp/adopted"
 make_fixture "$adopted"
 run_fixture "$adopted" FAKE_ADOPT=1 FAKE_CONTROL_COMPLETE=0
 grep -Fxq "boot first-deploy" "$adopted/commands"
+grep -Fxq 'systemctl try-restart --no-block youeye-setup-page.service' "$adopted/commands"
+! grep -Fq 'try-restart' "$partial/commands"
 grep -Fxq deploy "$adopted/commands"
 test -e "$adopted/state/complete"
 jq -e '.attempt == 1 and .state == "complete"' "$adopted/state/progress.json" >/dev/null

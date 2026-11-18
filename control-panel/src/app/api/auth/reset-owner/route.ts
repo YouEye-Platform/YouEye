@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/auth';
-import { isApplianceSetupHost } from '@/lib/auth/mode';
+import { isLocalSetupHost } from '@/lib/auth/mode';
 import { resetOwnerPassword } from '@/lib/console-access/owner-reset';
 import { setPassword } from '@/lib/identity/provider';
 import { getApplianceOwnerId, revokeAllIdentitySessions } from '@/lib/identity/store';
@@ -37,9 +37,9 @@ function sameOrigin(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  // Only on the box's own network address (like the claim): nobody on the
+  // Only on the box's own network address or youeye.local (like the claim): nobody on the
   // internet side of a name or tunnel can try codes, or slow the owner down.
-  if (!isApplianceSetupHost(request.headers.get('host') || '') || !sameOrigin(request)) {
+  if (!isLocalSetupHost(request.headers.get('host') || '') || !sameOrigin(request)) {
     return NextResponse.json({ error: 'The password could not be reset. Try again.', code: 'unavailable' }, { status: 403 });
   }
   const limit = checkRateLimit(`owner-reset:${requestIP(request)}`, MAX_ATTEMPTS, WINDOW_SECONDS);

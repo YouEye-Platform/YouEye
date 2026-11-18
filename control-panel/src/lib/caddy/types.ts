@@ -12,6 +12,8 @@ export interface RouteMatch {
   host?: string[];
   path?: string[];
   method?: string[];
+  header?: Record<string, string[]>;
+  header_regexp?: Record<string, { pattern: string; name?: string }>;
 }
 
 /**
@@ -107,6 +109,8 @@ export interface TLSAutomationPolicy {
   on_demand?: boolean;
   issuers?: Array<{
     module: string;
+    /** Leaf certificate lifetime (internal issuer), in nanoseconds or a duration string. */
+    lifetime?: number | string;
   }>;
 }
 

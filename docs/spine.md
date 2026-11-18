@@ -37,7 +37,8 @@ selected Spine.
 | `youeye spine adopt` | run the installed release's Spine (first deployment calls this) |
 | `youeye spine rollback` | make the slot's previous Spine current |
 | `youeye spine use-seed` | clear the slot's selection; the seed runs |
-| `youeye boot first-deploy\|bless\|setup-gate\|network` | the boot steps (systemd units call these) |
+| `youeye boot first-deploy\|bless\|setup-gate\|network\|setup-page` | the boot steps (systemd units call these; `setup-page` is Go, the others embedded scripts) |
+| `youeye mdns run` / `youeye mdns name` | run Avahi for the LAN adapter (`youeye-mdns.service`) / print the published name |
 
 `youeye version` shows the running Spine and the seed; the Spine API has `GET /api/spine/status`.
 

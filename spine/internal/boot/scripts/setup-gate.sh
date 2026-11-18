@@ -17,12 +17,25 @@ case "${1:-}" in
         if table_exists; then
             "$nft_bin" delete table inet "$table"
         fi
+        # Until first deployment opens setup, ports 80 and 443 go to the
+        # Preparing page (youeye boot setup-page on 47080/47443; Incus's API
+        # owns 8443). Only traffic addressed to the host itself: containers'
+        # internet traffic is forwarded through prerouting too. The nat
+        # redirect runs before the socket lookup, so it wins over Incus's
+        # proxy listeners on 0.0.0.0:80/443. The output chain does the same
+        # for the box's own requests to its LAN address; loopback still
+        # reaches Caddy (health checks and the final HTTPS probe).
         "$nft_bin" -f - <<'EOF'
 table inet youeye_setup_gate {
-    chain input {
-        type filter hook input priority -210; policy accept;
-        iifname "lo" accept
-        tcp dport { 80, 443 } drop
+    chain pre {
+        type nat hook prerouting priority -100; policy accept;
+        fib daddr type local tcp dport 80 redirect to :47080
+        fib daddr type local tcp dport 443 redirect to :47443
+    }
+    chain out {
+        type nat hook output priority -100; policy accept;
+        ip daddr != 127.0.0.0/8 fib daddr type local tcp dport 80 redirect to :47080
+        ip daddr != 127.0.0.0/8 fib daddr type local tcp dport 443 redirect to :47443
     }
 }
 EOF

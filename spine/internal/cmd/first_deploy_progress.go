@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/jsonkeep"
+	"github.com/youeye-platform/YouEye/spine/internal/progress"
 )
 
 const firstDeployProgressSchema = "youeye.installer.progress.v1"
@@ -27,6 +28,8 @@ type firstDeployProgressRecord struct {
 	Attempt   int    `json:"attempt"`
 	UpdatedAt string `json:"updated_at"`
 }
+
+func init() { progress.Reporter = emitFirstDeployProgress }
 
 func emitFirstDeployProgress(stage, detail string, percent int) {
 	path := strings.TrimSpace(os.Getenv("YOUEYE_FIRST_DEPLOY_PROGRESS_PATH"))
@@ -45,6 +48,7 @@ func writeFirstDeployProgress(path, stage, detail string, percent int) error {
 	allowedStages := map[string]bool{
 		"storage": true, "incus": true, "system_core": true, "server_interface": true,
 		"database": true, "web_gateway": true, "network_shield": true, "ui": true,
+		"ai": true, "finalizing": true,
 	}
 	if !allowedStages[stage] {
 		return fmt.Errorf("first-deploy progress stage %q is invalid", stage)

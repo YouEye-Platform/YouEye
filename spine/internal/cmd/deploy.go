@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/boxca"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
@@ -158,6 +159,7 @@ func runDeploy() error {
 
 	// Create base data directories (now on ZFS when dedicated-disk-backed).
 	createDataDirectories()
+	placeBoxCAForCaddy()
 
 	// Step 1: Install Incus
 	emitFirstDeployProgress("incus", "Starting the container runtime", 42)
@@ -201,7 +203,7 @@ func runDeploy() error {
 	}
 
 	// Step 3: Deploy Control Panel container
-	emitFirstDeployProgress("server_interface", "Installing the Server interface", 55)
+	emitFirstDeployProgress("server_interface", "Installing the Control Panel", 49)
 	fmt.Println("[3/4] Deploying Control Panel...")
 	if err := installControl(); err != nil {
 		return fmt.Errorf("Control Panel deployment failed: %w", err)
@@ -214,6 +216,7 @@ func runDeploy() error {
 	}
 
 	ip := util.GetPrimaryIP()
+	emitFirstDeployProgress("finalizing", "Finishing the platform deployment", 92)
 	if err := finalizeDeployment(ip); err != nil {
 		return fmt.Errorf("deployment finalisation incomplete: %w", err)
 	}
@@ -233,6 +236,7 @@ func runDeploy() error {
 
 func resumeExistingDeployment() error {
 	hostIP := util.GetPrimaryIP()
+	placeBoxCAForCaddy()
 	if err := requireContainerRunning("youeye-control"); err != nil {
 		return fmt.Errorf("cannot resume without the existing Control Panel: %w", err)
 	}
@@ -244,6 +248,7 @@ func resumeExistingDeployment() error {
 	if err := client.execute("reconcile", hostIP); err != nil {
 		return fmt.Errorf("infrastructure reconciliation failed: %w", err)
 	}
+	emitFirstDeployProgress("finalizing", "Finishing the platform deployment", 92)
 	if err := finalizeDeployment(hostIP); err != nil {
 		return fmt.Errorf("deployment finalisation incomplete: %w", err)
 	}
@@ -763,4 +768,17 @@ func fsTypeOf(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// placeBoxCAForCaddy gives Caddy the box CA root before Caddy first starts,
+// so the Preparing page and Caddy's setup certificates chain to one root
+// (GET /api/setup/ca-cert serves it).
+func placeBoxCAForCaddy() {
+	placed, err := boxca.PlaceForCaddy(boxca.DefaultDir, "/var/lib/youeye/caddy/data", time.Now())
+	switch {
+	case err != nil:
+		fmt.Printf("Warning: could not give Caddy the box CA: %v\n", err)
+	case placed:
+		fmt.Println("✓ Caddy uses the box CA")
+	}
 }

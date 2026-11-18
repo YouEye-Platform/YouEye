@@ -1,0 +1,19 @@
+[Unit]
+Description=YouEye Preparing page until first deployment opens setup
+Requires=youeye-appliance-state.service
+After=youeye-appliance-state.service youeye-setup-gate.service
+Before=youeye-first-deploy.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+ConditionPathExists=!/var/lib/youeye-state/first-deploy/complete
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Ports 80/443 reach it through the setup gate's redirect (47080/47443; Incus uses 8443).
+# First deployment stops it before opening setup.
+ExecStart=/usr/local/bin/youeye boot setup-page
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

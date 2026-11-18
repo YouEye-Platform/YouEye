@@ -100,13 +100,26 @@ is removed afterwards.
    ```
 
    Each release also has a `SHA256SUMS` file for people; nothing reads it.
-3. Write the ISO to a USB drive, boot it in UEFI mode.
+3. Write the ISO to a USB drive, boot it in UEFI mode. The GRUB menu has **Install YouEye** (default) and
+   **Install YouEye (text mode)**.
+   - **Graphical installer** (default, when the machine has a working graphics driver): the launcher
+     (`/usr/local/libexec/youeye-live-installer`, `appliance/live/`) starts `youeye-installer serve` on
+     `127.0.0.1:8090` and the cog browser in the cage kiosk compositor on the machine's own screen (WPE WebKit, Mesa,
+     and the Intel, AMD, misc and NVIDIA GPU firmware are on the ISO; without a GPU render node wlroots renders in
+     software). The page reports when it has painted (`/api/ui-ready`); if it doesn't within 45 s the text installer
+     takes over. cog's own DRM platform (no compositor) segfaulted on a GPU-less VM, so cage is used. The page never leaves `127.0.0.1`. Keyboard first
+     (Tab, arrows, Enter, Esc), mouse and touch also work. The serial console shows plain progress text.
+   - **Text installer:** with the text-mode entry (`youeye.text=1`), when there is no DRM device (the trixie kernel
+     has no simpledrm, so no GPU driver or `nomodeset` means no graphics), when the kiosk fails within 20 s, or when
+     `serve` does not start, or when the page never paints. Both build the same answer (`answerFor` in `appliance_wizard.go`).
+   - An answer disk (`YOUEYE_ANSWER`, Proxmox mode) still installs silently with NDJSON progress on the serial
+     console.
 4. In the installer: pick the installation drive (it shows the drive's identity and what is on it), set networking,
    optional SSH public keys and, under console access, an optional root password, and confirm erasure. The installer downloads the same release's
    `core-release.json` over HTTPS and refuses to continue unless the ISO's image manifest matches its `appliance`
    member.
-5. The completion screen says the written images and boot files passed read-back. Press Enter: the machine turns
-   off. Then remove the USB drive and turn the machine on. Do not remove the drive before pressing Enter: the
+5. The completion screen says the written images and boot files passed read-back ("Remove the USB stick after the
+   machine turns off" in the graphical installer). Press Enter: the machine turns off. Then remove the USB drive and turn the machine on. Do not remove the drive before pressing Enter: the
    installer runs from it, and without it the machine cannot finish turning off. (Leaving the installer any other
    way, such as Esc on the first page, also turns the machine off.)
 
@@ -141,7 +154,8 @@ SSH problems: [troubleshooting.md](troubleshooting.md#ssh-permission-denied-publ
 ## First boot and first deployment
 
 `youeye-first-deploy.service` runs `youeye boot first-deploy` (`spine/internal/boot/scripts/first-deploy.sh`). It
-writes its progress to `/var/lib/youeye-state/first-deploy/progress.json`, which the console shows. In order:
+writes its progress to `/var/lib/youeye-state/first-deploy/progress.json`, which the console and the Preparing page
+show. In order:
 
 1. **Network.** `youeye boot network` applies the saved wired profile and checks the network by fetching the
    channel index once (a 403 or 429 answer still proves the network works).
@@ -153,13 +167,53 @@ writes its progress to `/var/lib/youeye-state/first-deploy/progress.json`, which
    the Control Panel. The Control Panel then deploys PostgreSQL, Caddy, Pi-hole and the UI.
 5. **Check health.** `youeye appliance health --profile=operational --json` must pass (saved as `health.json`), and
    the release is recorded as installed (`youeye update core initialize` and `first-boot`).
-6. **Open setup.** `youeye boot setup-gate open` removes the nftables table that blocked ports 80 and 443, and the
-   script checks that `https://127.0.0.1/` answers. It then writes `first-deploy/complete`.
+6. **Open setup.** The script stops the Preparing page (below), `youeye boot setup-gate open` removes the nftables
+   redirect, and the script checks that `https://127.0.0.1/` answers. It then writes `first-deploy/complete`. If the
+   check fails, the gate closes again and the Preparing page comes back.
 
 A failed attempt is retried by systemd every 30 s, up to 8 attempts; then the stage is `needs_attention`
 ([troubleshooting.md](troubleshooting.md#first-deployment-stopped)). A fresh install takes about 10–15 minutes.
 
-The console shows the status and, once ready, `Setup https://<box IP>`.
+### The Preparing page
+
+From the first seconds of the first boot, `http://<box IP>`, `https://<box IP>` and `http://youeye.local` show a
+**Preparing YouEye** page instead of nothing:
+
+- `youeye-setup-page.service` runs `youeye boot setup-page` (`spine/internal/setuppage`) on ports 47080 (HTTP) and
+  47443 (HTTPS). Until first deployment completes, the setup gate redirects ports 80 and 443 to them.
+- The page polls `GET /api/preparing` every 2 s: `state` (`running`, `retrying`, `restarting`, `needs_attention`,
+  `complete`), stage, detail, percent, attempt, network (`online`, `dns`, problem), the box's addresses, and the last
+  30 lines of `journalctl -u youeye-first-deploy` with anything secret-looking hidden. Its log panel opens by itself
+  on errors. After `needs_attention` it offers **Try again** (`POST /api/preparing/retry`, at most once a minute),
+  which resets the attempt counter and restarts first deployment.
+- When first deployment opens setup it stops the page server, which closes every connection. The page then probes
+  `/api/ping` (only the Control Panel answers it) and reloads; the same address now shows the claim page. Over
+  HTTPS the Control Panel has a different certificate, so after 20 s the page reloads anyway and the browser asks
+  again (unless the box CA is trusted, below).
+- After a reboot during first deployment the page server starts again with the gate.
+
+### The console (tty1)
+
+While installing: "Installing YouEye…", the current step, `Watch at http://youeye.local or http://<box IP>` and a QR
+code of `http://<box IP>` (the IP always works on phones). Once ready and not yet claimed: `Set up at …` with the same
+QR code. After the claim it shows `Setup https://<box IP>` as before. The `.local` name is the one the box actually
+publishes (`youeye mdns name`): a second unclaimed box on the same LAN becomes `youeye-2.local`.
+
+### youeye.local and HTTP
+
+- `youeye-mdns.service` runs `youeye mdns run`: Spine writes `/run/youeye/avahi-daemon.conf` for the adapter that
+  holds the default route (never `incusbr0`, app bridges or veths; IPv4 only; no HINFO or workstation records) and
+  runs Avahi with it. systemd-resolved does no mDNS or LLMNR. On a name conflict Avahi publishes `youeye-2.local`,
+  `youeye-3.local` …
+- `youeye.local` mirrors `https://<box IP>` and nothing more: claim, setup, setup-complete and reset-owner. YouEye ID
+  sign-in, the dashboard and apps stay on the box's public HTTPS name.
+- Both the IP and `youeye.local` work over **HTTP** (Caddy's `:80` setup server proxies them to the Control Panel
+  without a redirect; every other host is redirected to HTTPS) and over **HTTPS**. HTTPS is the owner's choice:
+  the setup pages offer "Use a secure connection (HTTPS)" with the CA download.
+- **Box CA.** At first boot Spine makes one ECDSA P-256 root (10 years) on State,
+  `/var/lib/youeye-state/tls/root.{crt,key}` (0600). It signs the Preparing page's certificate, and Spine copies it
+  into Caddy's local CA before Caddy first starts, so Caddy's intermediate (30 days) and leaves (7 days) chain to the
+  same root. `GET /api/setup/ca-cert` serves it; an owner who trusts it sees no warning on the IP or `youeye.local`.
 
 ## Claiming the box
 
@@ -177,17 +231,19 @@ Open `https://<box IP>` (the certificate is self-signed at this point). On an IP
 
 After the claim the browser goes to the Control Panel's `/setup` page (`control-panel/src/app/setup/page.tsx`):
 
-1. **Language.**
-2. **Readiness.** Waits until the platform reports it is ready.
+1. **Readiness.** Waits until the platform reports it is ready.
+2. **Language.**
 3. **New or restore.** Restore reads a backup and returns to sign-in when done.
-4. **Title.** The box's name and its title design.
-5. **Address and certificate.** One of: a YouEye Name (the default), your own domain through a DNS provider token,
+4. **Address and certificate.** One of: a YouEye Name (the default), your own domain through a DNS provider token,
    Let's Encrypt, a self-signed certificate, or an uploaded certificate (`TlsChoice` in
-   `components/setup/SetupServerName.tsx`).
-6. **Confirm.** For a new YouEye Name, the name is verified first.
-7. **Provisioning.** Runs these steps and shows each one: save config, Caddy, DNS, AI (deploys Pointer), sign-in for
-   the Control Panel, sign-in for the dashboard, finalize.
-8. **Done.** Uploaded certificates get their upload step; every other choice waits for the Control Panel to restart
+   `components/setup/SetupServerName.tsx`). A box that already holds a name offers "Continue with <name>".
+5. **Human check** (YouEye Name). Right after it the certificate job starts in the background
+   ([youeye-names.md](youeye-names.md#setup-flow)).
+6. **Title.** The box's name and its title design (the certificate is issued meanwhile).
+7. **Confirm.**
+8. **Provisioning.** Save config and Caddy, then YouEye Names, DNS, AI (configures the Pointer built at first boot),
+   sign-in for the Control Panel and for the dashboard at the same time, then finalize.
+9. **Done.** Uploaded certificates get their upload step; every other choice waits for the Control Panel to restart
    with sign-in and opens `/setup-complete`, which explains DNS for the new address.
 
 The platform config is `/var/lib/youeye/config/youeye.yaml`; `setup_completed: true` marks the end of setup.

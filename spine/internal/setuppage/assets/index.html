@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Preparing YouEye</title>
+<link rel="icon" href="/_preparing/logo.svg">
+<link rel="stylesheet" href="/_preparing/preparing.css">
+<script src="/_preparing/preparing.js" defer></script>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <img class="logo" src="/_preparing/logo.svg" alt="" width="72" height="72">
+  <h1 id="title">Preparing YouEye</h1>
+  <p class="lead" id="lead">Your box is installing its services. This page moves on to setup by itself when it's ready.</p>
+  <div class="bar" role="progressbar" aria-labelledby="stage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><span id="fill"></span></div>
+  <p class="stage"><span id="stage">Starting</span> <span class="percent" id="percent"></span></p>
+  <div class="notice hidden" id="notice" role="status"></div>
+  <button type="button" class="hidden" id="retry">Try again</button>
+  <p class="hint" id="hint">The first start downloads the platform from the internet. It usually takes 3 to 15 minutes, depending on your connection.</p>
+  <p class="addresses hidden" id="addresses"></p>
+  <p class="fingerprint hidden" id="fingerprint"></p>
+  <details id="log"><summary>Details</summary><pre id="logtext">No details yet.</pre></details>
+</main>
+<noscript><p class="noscript">This page needs JavaScript to follow the progress. Reload it in a few minutes to reach setup.</p></noscript>
+</body>
+</html>

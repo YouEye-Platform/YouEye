@@ -38,7 +38,9 @@ bash -n \
 	"$root/appliance/scripts/youeye-recovery-apply" \
 	"$root/appliance/scripts/youeye-apply-development-overlay" \
     "$root/appliance/initramfs/youeye-state" \
-    "$root/appliance/initramfs/youeye-state-hook"
+    "$root/appliance/initramfs/youeye-state-hook" \
+    "$root/appliance/live/youeye-live-installer" \
+    "$root/appliance/live/youeye-live-installer_test.sh"
 
 for text in \
     'export HOME="$YOUEYE_WORK_DIR/home"' \
@@ -106,12 +108,40 @@ if ! grep -Fq $'lb clean || true\n        configure_live_build' "$build"; then
     fail 'live-build retry must restore its config-stage marker'
 fi
 
-live_installer="$(awk '/youeye-live-installer.*<</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build")"
-bash -n <<<"$live_installer"
-# The interactive installer must turn the machine off when it returns, not leave a blank console.
-[[ $live_installer == *$'\n/usr/local/bin/youeye-installer install || true\nsystemctl poweroff' ]] ||
+# The live ISO launcher (silent, graphical or text installer) is a tested script of its own.
+live_installer="$root/appliance/live/youeye-live-installer"
+require_text "$build" 'install -m 0755 "$source_dir/appliance/live/youeye-live-installer" config/includes.chroot/usr/local/libexec/youeye-live-installer'
+if grep -Fq "youeye-live-installer <<'EOF'" "$build"; then
+    fail 'the live installer launcher must come from appliance/live, not a second inline copy'
+fi
+# The installers must turn the machine off when they return, not leave a blank console.
+[[ "$(tail -n 4 "$live_installer")" == *$'    systemctl poweroff\n}\n\nmain "$@"' ]] ||
     fail 'live installer must power off after the interactive installer exits'
+for text in 'chvt 1' 'tee "$serial"' 'sleep 2' 'serve --listen "$listen"' 'cage -s -- cog -P wl "$url"' 'youeye.text=1' \
+    '"$installer" install || true' 'listen=127.0.0.1:8090'; do
+    require_text "$live_installer" "$text"
+done
+bash "$root/appliance/live/youeye-live-installer_test.sh"
+# GRUB on the installer ISO: graphical by default, text mode on request.
+grub_menu="$(awk '/grub-pc\/grub.cfg <</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build")"
+grep -Fq 'menuentry "Install YouEye" --hotkey=i {' <<<"$grub_menu" || fail 'GRUB lacks the Install YouEye entry'
+grep -Fq 'menuentry "Install YouEye (text mode)" --hotkey=t {' <<<"$grub_menu" || fail 'GRUB lacks the text-mode entry'
+grep -Fq '@APPEND_LIVE@ youeye.text=1' <<<"$grub_menu" || fail 'the text-mode entry must add youeye.text=1'
+grep -Fq 'source /boot/grub/config.cfg' <<<"$grub_menu" || fail 'GRUB must keep the gfxterm theme configuration'
+[[ "$(grep -m1 -o 'menuentry "[^"]*"' <<<"$grub_menu")" == 'menuentry "Install YouEye"' ]] ||
+    fail 'Install YouEye must be the default (first) GRUB entry'
+if grep -q 'LINUX_LIVE' <<<"$grub_menu"; then
+    fail 'live-build deletes LINUX_LIVE lines; the menu must not use them'
+fi
 live_packages="$(awk '/youeye.list.chroot.*<</ { capture=1; next } capture && /^EOF$/ { exit } capture' "$build")"
+# The graphical installer: cog on DRM with WPE and Mesa, plus GPU firmware (non-free-firmware), listed explicitly.
+# WebKit's renderer crash-loops without libGLESv2 (libgles2), leaving a black screen (Plan 8 live test).
+for package in cage cog libwpewebkit-2.0-1 libegl1 libgles2 libegl-mesa0 libgbm1 mesa-libgallium fonts-dejavu-core \
+    firmware-amd-graphics firmware-intel-graphics firmware-misc-nonfree firmware-nvidia-graphics; do
+    grep -qx "$package" <<<"$live_packages" || fail "live installer is missing $package"
+done
+require_text "$build" "--archive-areas 'main contrib non-free-firmware'"
+require_text "$build" '--firmware-chroot false'
 grep -qx 'systemd-boot-tools' <<<"$live_packages" || fail 'live installer is missing systemd-boot-tools'
 grep -qx 'systemd-boot-efi-amd64-signed' <<<"$live_packages" || fail 'live installer is missing the signed systemd-boot EFI binary'
 grep -qx 'parted' <<<"$live_packages" || fail 'live installer is missing partprobe from parted'
@@ -171,7 +201,6 @@ for text in \
     'set timeout=5' \
     'Restart=no' \
     'StandardError=journal' \
-    'chvt 1' \
     '--sort=name' \
     '-O ^orphan_file' \
     'hash_seed=$uuid' \
@@ -200,11 +229,8 @@ for text in \
     'for suffix in dev/pts dev/shm dev/mqueue dev/hugepages proc/sys/fs/binfmt_misc proc sys run dev' \
     'if mountpoint -q "$target"' \
     'umount -- "$target" || true' \
-    'tee /dev/ttyS0' \
-    'sleep 2' \
     'After=systemd-udev-settle.service getty@tty1.service serial-getty@ttyS0.service' \
-    'Conflicts=getty@tty1.service serial-getty@ttyS0.service' \
-    'systemctl poweroff'; do
+    'Conflicts=getty@tty1.service serial-getty@ttyS0.service'; do
     require_text "$build" "$text"
 done
 
@@ -245,7 +271,16 @@ require_text "$root/spine/internal/boot/scripts/network.sh" 'previous network co
 require_text "$root/spine/internal/boot/scripts/first-deploy.sh" '$setup_gate open'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'Before=incus.service incus-startup.service youeye.service youeye-first-deploy.service'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr/local/bin/youeye boot setup-gate close'
-require_text "$root/spine/internal/boot/scripts/setup-gate.sh" 'tcp dport { 80, 443 } drop'
+require_text "$root/spine/internal/boot/scripts/setup-gate.sh" 'fib daddr type local tcp dport 80 redirect to :47080'
+require_text "$root/spine/internal/boot/scripts/setup-gate.sh" 'fib daddr type local tcp dport 443 redirect to :47443'
+require_text "$root/appliance/systemd/youeye-setup-page.service" 'ExecStart=/usr/local/bin/youeye boot setup-page'
+require_text "$root/appliance/systemd/youeye-setup-page.service" 'ConditionPathExists=!/var/lib/youeye-state/first-deploy/complete'
+require_text "$root/appliance/systemd/youeye-mdns.service" 'ExecStart=/usr/local/bin/youeye mdns run'
+require_text "$root/appliance/systemd/resolved.conf.d/20-youeye-appliance.conf" 'MulticastDNS=no'
+require_text "$root/appliance/systemd/resolved.conf.d/20-youeye-appliance.conf" 'LLMNR=no'
+require_text "$build" 'qemu-guest-agent,avahi-daemon'
+require_text "$build" 'youeye-setup-page.service youeye-mdns.service youeye.service'
+require_text "$build" 'avahi-daemon.service avahi-daemon.socket'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/machine-id'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/hostid'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/ssh'

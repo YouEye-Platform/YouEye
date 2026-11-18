@@ -13,7 +13,7 @@ const good: CoreUpdateStatus = { schema: 'youeye.core-status.v1', managed: true,
   release: { version: '0.5.64', tag: 'youeye-v0.5.64', source: 'https://example.test/releases', branch: 'main', sequence: 1 },
 } };
 test('a successful single-step retry cannot complete other pending or failed setup steps', () => {
-  const done = Object.fromEntries(['config', 'caddy', 'dns', 'ai', 'sso_control', 'sso_ui'].map(step => [step, 'done']));
+  const done = Object.fromEntries(['config', 'caddy', 'names', 'dns', 'ai', 'sso_control', 'sso_ui'].map(step => [step, 'done']));
   assert.doesNotThrow(() => assertProvisioningStepsComplete(done));
   for (const step of Object.keys(done)) {
     for (const state of [undefined, 'pending', 'error', 'unknown']) {

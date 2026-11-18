@@ -75,6 +75,27 @@ Image references for PostgreSQL, Caddy and Pi-hole come from the Market's `syste
 `POST /api/deploy/infrastructure/reconcile` (used by `youeye deploy --resume`) creates only missing containers and
 re-checks the security posture; it never replaces running ones.
 
+## Setup hosts and cookies
+
+- **Setup hosts** (`isLocalSetupHost` in `lib/auth/mode.ts`): an IPv4 literal or exactly `youeye.local` /
+  `youeye-<N>.local` (the names Avahi publishes), on any port except 3000, and never the platform domain or a name
+  under it. `youeye(-N).local` is refused as a platform domain. Setup hosts serve only the onboarding surface: claim
+  and setup before setup is complete; afterwards only setup-complete, reset-owner and what those pages call
+  (`lib/auth/setup-host-paths.ts`). A password sign-in over plain HTTP on a setup host is refused. Every other host
+  is a named host (YouEye ID sign-in, dashboard, apps).
+- **HTTP on setup hosts:** Caddy's `:80` server `setup_http` (`lib/caddy/servers.ts`) proxies setup hosts to the
+  Control Panel and redirects every other host to HTTPS (308). Caddy's own redirects are off only while `setup_http`
+  exists; the CP adds it at every start (`lib/caddy/setup-http-startup.ts`), so updated boxes keep redirecting. Every writer of the live
+  Caddy config picks the `:443` server by its listen address and never puts routes on `setup_http`.
+- **Cookies** (`secureCookieFor`): on setup hosts (and loopback) `Secure` follows `X-Forwarded-Proto`, so a claim
+  over HTTP keeps its session; named hosts always get `Secure`. No HSTS is sent anywhere.
+- **Internal certificates:** 7-day leaves and a 30-day intermediate under the box CA (Spine places its root before
+  Caddy starts); `on_demand_tls` asks `/api/setup/config` (`permission http`). The Caddyfile is built in
+  `lib/caddy/caddyfile.ts`. `GET /api/setup/ca-fingerprint` (setup hosts only) gives the root's SHA-256, which the
+  "Use a secure connection" panel shows next to the download; tty1 and the Preparing page show the same value.
+- HTTP pages aren't a secure context: the setup pages avoid the Clipboard API (`lib/copy-text.ts` falls back to a
+  selected text field), `crypto.subtle`, service workers and WebAuthn.
+
 ## Settings
 
 The platform settings file is **`/var/lib/youeye/config/youeye.yaml`** on the host. Spine owns it. The CP reads it

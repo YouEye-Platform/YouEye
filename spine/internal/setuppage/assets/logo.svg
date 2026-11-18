@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>YouEye</title>
+  <!-- Frame: a mint rounded square, 200 wide, corner radius 52. -->
+  <rect x="28" y="28" width="200" height="200" rx="52" fill="#13B38A"/>
+  <!-- Window: white, inset by 32 (0.16 of the frame), corner radius 24. -->
+  <rect x="60" y="60" width="136" height="136" rx="24" fill="#FFFFFF"/>
+  <!-- Pupil: ink, glancing up and to the right. -->
+  <circle cx="140" cy="116" r="40" fill="#1B1B2F"/>
+  <!-- Catchlight. -->
+  <circle cx="154" cy="102" r="11" fill="#FFFFFF"/>
+</svg>

@@ -36,6 +36,8 @@ type deploymentJobState struct {
 	Status    string                `json:"status"`
 	Failure   *deploymentJobFailure `json:"failure,omitempty"`
 	UpdatedAt string                `json:"updatedAt"`
+	// Events lets the polling fallback report progress when the stream drops.
+	Events []deploymentEvent `json:"events,omitempty"`
 }
 
 type deploymentJobClient struct {
@@ -123,20 +125,7 @@ func (c *deploymentJobClient) startAndRead(ctx context.Context, kind, id, hostIP
 }
 
 func printDeploymentEvent(event deploymentEvent) {
-	stage, detail, percent := "", "", 0
-	switch event.Step {
-	case 1:
-		stage, detail, percent = "database", "Preparing the platform database", 62
-	case 2:
-		stage, detail, percent = "web_gateway", "Preparing the Web gateway", 70
-	case 3:
-		stage, detail, percent = "network_shield", "Preparing the Network shield", 78
-	case 4:
-		stage, detail, percent = "ui", "Installing the YouEye UI", 86
-	}
-	if stage != "" {
-		emitFirstDeployProgress(stage, detail, percent)
-	}
+	emitDeploymentStepProgress(event.Step)
 	icon := "⏳"
 	switch event.Status {
 	case "success":
@@ -149,6 +138,34 @@ func printDeploymentEvent(event deploymentEvent) {
 	fmt.Printf("  %s [%d/%d] %s\n", icon, event.Step, event.TotalSteps, event.Message)
 	if event.Detail != "" && event.Status == "error" {
 		fmt.Printf("    Detail: %s\n", event.Detail)
+	}
+}
+
+// lastProgressStep keeps polling from rewriting the same progress record.
+var lastProgressStep int
+
+// emitDeploymentStepProgress maps a Control Panel infrastructure step to
+// first-deploy progress (the Preparing page and the console).
+func emitDeploymentStepProgress(step int) {
+	if step == lastProgressStep {
+		return
+	}
+	lastProgressStep = step
+	stage, detail, percent := "", "", 0
+	switch step {
+	case 1:
+		stage, detail, percent = "database", "Preparing the platform database", 62
+	case 2:
+		stage, detail, percent = "web_gateway", "Preparing the Web gateway", 70
+	case 3:
+		stage, detail, percent = "network_shield", "Preparing the Network shield", 78
+	case 4:
+		stage, detail, percent = "ui", "Installing the YouEye UI", 84
+	case 5:
+		stage, detail, percent = "ai", "Building the YouEye AI service", 88
+	}
+	if stage != "" {
+		emitFirstDeployProgress(stage, detail, percent)
 	}
 }
 
@@ -221,6 +238,9 @@ func (c *deploymentJobClient) waitForTerminal(ctx context.Context, kind, id, hos
 				return c.executeWithIDContext(ctx, "reconcile", reconcileID, hostIP, false)
 			case "running":
 				// The mutation is alive independently of the progress connection.
+				if n := len(state.Events); n > 0 {
+					emitDeploymentStepProgress(state.Events[n-1].Step)
+				}
 			default:
 				return fmt.Errorf("%s job %s returned unknown status %q", kind, id, state.Status)
 			}

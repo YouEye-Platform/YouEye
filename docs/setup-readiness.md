@@ -35,8 +35,16 @@ Process loss releases the locks (they are kernel locks) but keeps the marker and
 
 ## Setup progress
 
-Setup streams its steps over Server-Sent Events. Steps that must be done: `config`, `caddy`, `dns`, `ai`,
-`sso_control`, `sso_ui`. Retrying one step cannot finish a setup whose other steps are unfinished.
+Setup streams its steps over Server-Sent Events. Steps that must be done: `config`, `caddy`, `names` (YouEye Names
+only; "not used" otherwise), `dns`, `ai`, `sso_control`, `sso_ui`. `config` runs first, then `caddy`; then `names`,
+`dns`, `ai`, `sso_control` and `sso_ui` run **at the same time** (`runSetupStepsTogether` in
+`lib/setup/provisioning-steps.ts`), each with its own record and error, and `finalize` waits for all. Caddy writes
+are serialized (`withCaddyMutation`), because Caddy refuses overlapping writes. Each step's start and finish are in
+`setup_step_times` in `youeye.yaml`. Retrying one step cannot finish a setup whose other steps are unfinished.
+
+A restart during provisioning (steps recorded, none failed) reopens the wizard at provisioning with the saved
+choices; only unfinished steps run again. A setup cookie whose owner is no longer this box's owner (the box was
+reset) is cleared and the browser goes back to claim/sign-in.
 
 If the stream breaks or ends without completion, the browser does not submit setup again. It reads
 `GET /api/setup/status` (admin session), which returns each step's state and `pending`, `error` or `complete`.

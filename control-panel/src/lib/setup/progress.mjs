@@ -1,9 +1,9 @@
 /** @typedef {'pending' | 'running' | 'done' | 'error'} StepStatus */
 /** @typedef {{step?: string, status?: StepStatus, message?: string, error?: string, complete?: boolean, hasErrors?: boolean}} SetupEvent */
 /** @typedef {{failed: string, unknown: string}} Messages */
-/** @typedef {{messages: Messages, onEvent?: (event: SetupEvent) => void, onChecking?: (checking: boolean) => void, fetchStatus?: (url: string, init?: RequestInit) => Promise<Response>, wait?: (ms: number) => Promise<void>, now?: () => number, timeoutMs?: number, pollMs?: number}} ProgressOptions */
+/** @typedef {{messages: Messages, onEvent?: (event: SetupEvent) => void, onChecking?: (checking: boolean) => void, fetchStatus?: (url: string, init?: RequestInit) => Promise<Response>, wait?: (ms: number) => Promise<void>, now?: () => number, timeoutMs?: number, pollMs?: number, stopWhenIdle?: boolean}} ProgressOptions */
 
-const stepIds = new Set(['config', 'caddy', 'dns', 'ai', 'sso_control', 'sso_ui', 'finalize']);
+const stepIds = new Set(['config', 'caddy', 'names', 'dns', 'ai', 'sso_control', 'sso_ui', 'finalize']);
 const stepStates = new Set(['pending', 'running', 'done', 'error']);
 
 /** Completion requires the existing durable operation to have settled too.
@@ -29,15 +29,19 @@ export function setupProgressStatus(config, claim, retainedOperation) {
 }
 
 export class SetupProgressError extends Error {
-  /** @param {string} message @param {boolean} readOnly */
-  constructor(message, readOnly) {
+  /** @param {string} message @param {boolean} readOnly @param {boolean} [signIn] the browser must claim or sign in again */
+  constructor(message, readOnly, signIn = false) {
     super(message);
     this.readOnly = readOnly;
+    this.signIn = signIn;
   }
 }
 
 /** Reconnect only to retained status. Never repeat the setup submission.
+ * With `stopWhenIdle` (following a run another page started), returns 'idle' once no run is executing and setup
+ * is still pending: the run was interrupted, and the caller resubmits it.
  * @param {ProgressOptions} options
+ * @returns {Promise<'idle' | undefined>}
  */
 export async function readSetupProgress(options) {
   const { messages, onEvent, onChecking } = options;
@@ -65,6 +69,7 @@ export async function readSetupProgress(options) {
             throw new SetupProgressError(messages.failed, false);
           }
           if (status.state === 'complete' && Object.values(status.steps).every(step => step === 'done')) return;
+          if (options.stopWhenIdle && status.state === 'pending' && status.running === false) return 'idle';
         }
       } catch (error) {
         if (error instanceof SetupProgressError) throw error;
@@ -90,7 +95,7 @@ export async function followSetupProgress(submit, options) {
     const text = await response.text().catch(() => '');
     let message = text || options.messages.failed;
     try { message = JSON.parse(text).error || message; } catch { /* Preserve the server response. */ }
-    throw new SetupProgressError(message, false);
+    throw new SetupProgressError(message, false, response.status === 401);
   }
   const reader = response.body?.getReader();
   if (!reader) return readSetupProgress(options);

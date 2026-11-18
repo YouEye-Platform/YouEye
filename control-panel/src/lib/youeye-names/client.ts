@@ -218,6 +218,12 @@ export function namesErrorMessage(error: unknown): string {
   return error.requestId ? `${message} Reference: ${error.requestId}` : message;
 }
 
+/** Log-safe reason: the broker code and request ID, or a local error's message. */
+export function namesLogReason(error: unknown): string {
+  if (error instanceof NamesBrokerError) return `${error.code}${error.requestId ? ` (request ${error.requestId})` : ''}`;
+  return error instanceof Error ? error.message.split('\n')[0].slice(0, 200) : 'unknown error';
+}
+
 type Proof = { token: string; nonce: string };
 
 function retryAfterFromHeader(value: string | null): number | undefined {

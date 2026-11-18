@@ -10,18 +10,24 @@
  * - Pi-Hole DNS has 3-retry parity with Caddy
  * - Failed steps produce visible errors, not silent skips
  * - Partial setup resumes from where it left off
+ * - After config and the Caddy domain, the YouEye Names activation, DNS, AI and
+ *   both SSO steps run side by side; finalize waits for all of them
+ * - The YouEye Names certificate was started after the human check
+ *   (/api/setup/names/start); this route only awaits and activates it
  */
 
 import { NextRequest } from 'next/server';
-import { withSetupMutation } from '@/lib/setup/lifecycle';
+import { beginSetupRun, withSetupMutation } from '@/lib/setup/lifecycle';
 import { assertProvisioningStepsComplete } from '@/lib/setup/readiness';
-import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { requireSetupSession } from '@/lib/setup/session';
 import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
 import { designSchema } from '@youeye/branding';
 import { syncSetupBranding } from '@/lib/ui/setup-branding';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import * as caddy from '@/lib/caddy/client';
+import { withCaddyMutation } from '@/lib/caddy/serial';
+import { isReservedSetupDomain, RESERVED_SETUP_DOMAIN_ERROR } from '@/lib/auth/setup-names';
 import { recordSetupRouteResult } from '@/lib/caddy/setup-result';
 import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
@@ -36,27 +42,12 @@ import {
   releaseSetupOperation,
 } from '@/lib/identity/store';
 import { tlsStorage } from '@/lib/acme/storage';
+import { NamesBrokerError, namesErrorMessage, namesLogReason } from '@/lib/youeye-names/client';
 import {
-  claimName,
-  registerVerifiedSetup,
-  getCertificateTerms,
-  getCurrentCertificate,
-  getLease,
-  heartbeat,
-  NamesBrokerError,
-  namesErrorMessage,
-  requestCertificate,
-  updateIp,
-} from '@/lib/youeye-names/client';
-import { generateCsr } from '@/lib/youeye-names/csr';
-import { getStagedBundle, consumeStagedBundle, applyBundleIdentity, bundleCertStillValid } from '@/lib/youeye-names/bundle';
-import {
-  sameCertificateInstant,
-  validateCertificateMaterial,
-} from '@/lib/youeye-names/certificate';
-import { validateStoredIdentity } from '@/lib/youeye-names/identity';
-import { readNamesLifecycleState, updateNamesLifecycleState, writeNamesLifecycleState } from '@/lib/youeye-names/state';
-import { discoverNamesService, namesServiceBinding, validateManagedName } from '@/lib/youeye-names/service';
+  activateNamesCertificate,
+  activateStagedNamesBundle,
+  awaitNamesCertificate,
+} from '@/lib/youeye-names/provision';
 import {
   byoDomainBundleCertStillValid,
   bundleToProviderConfig,
@@ -72,7 +63,14 @@ import { syncByoDomainDns } from '@/lib/dns-providers/sync';
 import { validateDnsProvider } from '@/lib/dns-providers/validation';
 import type { ByoDnsProviderConfig } from '@/lib/dns-providers/types';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
-import { nextSetupStepErrors, setupStepReason, type SetupStepErrors } from '@/lib/setup/step-reason';
+import { setupStepReason } from '@/lib/setup/step-reason';
+import {
+  runSetupStepsTogether,
+  setupStepStore,
+  StepFailure,
+  type SetupStepContext,
+  type StepState,
+} from '@/lib/setup/provisioning-steps';
 
 /** True for the private/VPN IPv4 ranges YouEye Names accepts. */
 function isPrivateIPv4(ip: string): boolean {
@@ -99,30 +97,21 @@ interface SetupRequest {
   identity_name?: string;
   /** TLS mode chosen during setup (youeye-names, letsencrypt, selfsigned, upload) */
   tls_choice?: string;
-  /** YouEye Names leased subdomain (when tls_choice === 'youeye-names') */
+  /** YouEye Names name claimed by /api/setup/names/start (when tls_choice === 'youeye-names') */
   yen_name?: string;
   /** BYO DNS provider connection submitted during setup. */
   byo_dns_provider?: {
     provider?: string;
     token?: string;
   };
-  /** Exact broker terms accepted before a first certificate request. */
-  yen_terms_version?: string;
-  /** Explicit acknowledgement that the public name appears in CT logs. */
-  yen_ct_accepted?: boolean;
-  /** One-use, memory-only proof bound to the exact selected name and server IP. */
-  yen_human_verification_proof?: string;
-  /** Short-lived human-verified setup session; never persisted in setup state. */
-  yen_verified_setup_session?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
 }
 
-type StepState = 'pending' | 'done' | 'error';
-
 interface SetupSteps {
   config?: StepState;
   caddy?: StepState;
+  names?: StepState;
   dns?: StepState;
   ai?: StepState;
   sso_control?: StepState;
@@ -180,36 +169,12 @@ async function getSetupSteps(): Promise<SetupSteps> {
   return (await getSetupConfig()).setup_steps as SetupSteps || {};
 }
 
-/**
- * Persist step completion to youeye.yaml. A failed step may carry a short,
- * sanitized reason (`setup_step_errors.<step>`); any other state clears it.
- */
-async function saveStepState(stepId: string, state: StepState, reason?: string): Promise<void> {
-  const raw = await getSetupConfig();
-  const updated = { ...(raw.setup_steps as SetupSteps || {}), [stepId]: state };
-  const currentErrors = raw.setup_step_errors as SetupStepErrors | undefined;
-  const errors = nextSetupStepErrors(currentErrors || {}, stepId, state, reason);
-  await spineClient.patchConfig({
-    setup_steps: updated,
-    ...(errors || currentErrors ? { setup_step_errors: errors } : {}),
-  });
-}
-
 export async function POST(request: NextRequest) {
-  const session = await getSession();
-  if (
-    !session?.isAdmin
-    || session.authMethod !== 'setup'
-    || !session.setupOwnerId
-    || !session.setupSessionId
-  ) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-
-  const csrfToken = request.headers.get('X-CSRF-Token');
-  if (!csrfToken || !(await verifyCSRFToken(csrfToken))) {
-    return new Response('Invalid CSRF token', { status: 403 });
-  }
+  // A setup cookie from before a reset is answered with 401 (claim or sign in
+  // again), never with "another browser is applying setup".
+  const auth = await requireSetupSession(request);
+  if (auth.response) return auth.response;
+  const session = auth.session;
 
   const body: SetupRequest = await request.json();
   if (body.site_name_style?.mytitle !== undefined) {
@@ -222,6 +187,7 @@ export async function POST(request: NextRequest) {
   // Trailing dots produce invalid service URLs like "https://control.potemk."
   if (body.domain) {
     body.domain = body.domain.replace(/\.+$/, '');
+    if (isReservedSetupDomain(body.domain)) return new Response(RESERVED_SETUP_DOMAIN_ERROR, { status: 400 });
   }
   const retryStep = body.retry_step;
   const leaseOwnerId = session.setupOwnerId;
@@ -251,6 +217,7 @@ export async function POST(request: NextRequest) {
         send({ step, status, message });
       }
 
+      const endRun = beginSetupRun();
       try {
       await withSetupMutation(leaseOwnerId, 'setup', `setup:${leaseOwnerId}`, async (settle) => {
       // Load persisted step state to know what's already done
@@ -283,12 +250,21 @@ export async function POST(request: NextRequest) {
       }
 
       let hasError = false;
+      const steps = setupStepStore({ read: getSetupConfig, patch: (patch) => spineClient.patchConfig(patch) });
+      const stepContext: SetupStepContext = {
+        store: steps,
+        shouldRun: shouldRunStep,
+        heartbeat: () => heartbeatSetupOperation(leaseOwnerId, leaseSessionId),
+        report: stepUpdate,
+        log: (stepId, err) => console.error(`[setup] step ${stepId} failed:`, err instanceof NamesBrokerError ? namesLogReason(err) : err),
+      };
 
       try {
         // ── Step 1: Save config ──────────────────────────────────────
         if (shouldRunStep('config')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('config', 'running');
+          await steps.started('config');
           const identityName = body.identity_name || `${body.site_name || 'YouEye'} ID`;
           await settingsService.setRaw({
             site_name: body.site_name || 'YouEye',
@@ -298,16 +274,21 @@ export async function POST(request: NextRequest) {
             tls_choice: body.tls_choice || 'selfsigned',
             setup_completed: false,
           });
-          await saveStepState('config', 'done');
+          await steps.save('config', 'done');
           stepUpdate('config', 'done', 'Configuration saved');
         } else {
           stepUpdate('config', 'done', 'Already completed');
         }
 
-        // ── Step 2: Caddy reverse proxy ──────────────────────────────
+        // ── Step 2: Caddy domain, BYO certificate and routes ─────────
+        // One Caddy writer at a time: the YouEye Names job may load its
+        // certificate while this step runs.
         if (shouldRunStep('caddy')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('caddy', 'running');
+          await steps.started('caddy');
+          hasError = await withCaddyMutation(async () => {
+          let hasError = false;
           const domain = body.domain;
           const subs = body.subdomains || {};
 
@@ -320,12 +301,12 @@ export async function POST(request: NextRequest) {
             );
           } catch {
             stepUpdate('caddy', 'error', 'Could not configure domain TLS — HTTPS may not work');
-            await saveStepState('caddy', 'error');
+            await steps.save('caddy', 'error');
             hasError = true;
           }
 
-          // If a cert was already issued/stored during setup (LE flow in step 0,
-          // or a prior YouEye Names run), restore it — setDomain() resets TLS
+          // If a cert was already issued/stored during setup (the YouEye Names
+          // job, or a prior run), restore it — setDomain() resets TLS
           // policies to self-signed.
           if (!hasError) {
             try {
@@ -456,306 +437,7 @@ export async function POST(request: NextRequest) {
                 }
               } catch (providerErr) {
                 stepUpdate('caddy', 'error', providerErr instanceof Error ? providerErr.message : 'DNS provider setup failed');
-                await saveStepState('caddy', 'error');
-                hasError = true;
-              }
-            }
-          }
-
-          // ── YouEye Names: claim the leased name + install a real certificate ──
-          // The broker runs ACME DNS-01 in its discovered managed zone and returns only the
-          // chain (the TLS key never leaves this server). Idempotent: if a prior
-          // run already stored a cert for this domain it was restored above, so we
-          // skip re-issuing.
-          if (!hasError && body.tls_choice === 'youeye-names' && body.yen_name) {
-            const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(domain);
-            if (!alreadyDone) {
-              try {
-                // The browser is not a trusted source of server addressing.
-                // Spine reports the appliance's selected primary LAN/VPN IP.
-                const ip = (await spineClient.getMetrics()).primary_ip.trim();
-                if (!isPrivateIPv4(ip)) {
-                  throw new Error('Could not determine this server’s private network address. Check its network connection and try again.');
-                }
-                const staged = await getStagedBundle();
-                if (staged && (staged.name !== body.yen_name || staged.fqdn !== domain)) {
-                  throw new Error(`The saved name is for ${staged.fqdn}, but setup selected ${domain}.`);
-                }
-                const domains = [domain, `*.${domain}`];
-                const importedIdentity = staged
-                  ? validateStoredIdentity(staged.identity).identity
-                  : undefined;
-
-                if (staged && bundleCertStillValid(staged)) {
-                  // ── Reuse: install the bundled cert, NO Let's Encrypt issuance ──
-                  stepUpdate('caddy', 'running', 'Reusing your YouEye Names certificate…');
-                  await caddy.loadExternalCert(staged.tls.certPem, staged.tls.keyPem, domains);
-                  await tlsStorage.storeCert({
-                    mode: 'manual', certPem: staged.tls.certPem, keyPem: staged.tls.keyPem,
-                    issuer: 'YouEye Names', domains,
-                    expiresAt: staged.certificate.expiresAt,
-                    issuedAt: staged.certificate.issuedAt,
-                  });
-                  // Resume the lease + repoint DNS at this box's current IP (DNS-only).
-                  try {
-                    await claimName(staged.name, ip, importedIdentity);
-                  } catch (claimErr) {
-                    if (
-                      !(claimErr instanceof NamesBrokerError) ||
-                      claimErr.code !== 'install_already_has_active_lease'
-                    ) {
-                      throw claimErr;
-                    }
-                    await getLease(staged.name, importedIdentity);
-                  }
-                  await updateIp(staged.name, ip, importedIdentity);
-                  await applyBundleIdentity(staged);
-                  const activatedAt = new Date().toISOString();
-                  await writeNamesLifecycleState({
-                    schemaVersion: 1,
-                    service: staged.service,
-                    name: staged.name,
-                    fqdn: domain,
-                    status: 'healthy',
-                    provisioning: null,
-                    termsVersion: staged.consent.termsVersion,
-                    certificateTransparencyAcceptedAt: staged.consent.certificateTransparencyAcceptedAt,
-                    certificate: {
-                      fingerprint: staged.certificate.fingerprint,
-                      provider: staged.certificate.provider,
-                      issuedAt: staged.certificate.issuedAt,
-                      expiresAt: staged.certificate.expiresAt,
-                    },
-                    lastBrokerContactAt: activatedAt,
-                    lastHeartbeatAt: null,
-                    nextCheckAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-                    lastError: null,
-                  });
-                  await consumeStagedBundle();
-                  try {
-                    await heartbeat(staged.name, {
-                      currentIp: ip,
-                      certificateFingerprint: validateCertificateMaterial({
-                        certificateChain: staged.tls.certPem,
-                        privateKeyPem: staged.tls.keyPem,
-                        fqdn: domain,
-                      }).brokerFingerprint,
-                      certificateExpiresAt: staged.certificate.expiresAt,
-                      caddyStatus: 'healthy',
-                    }, importedIdentity);
-                    await updateNamesLifecycleState((state) => ({ ...state, lastHeartbeatAt: new Date().toISOString() }));
-                  } catch (heartbeatError) {
-                    console.warn('[setup] Initial YouEye Names heartbeat will retry automatically:', heartbeatError instanceof Error ? heartbeatError.message : 'unknown error');
-                  }
-                  console.log('[setup] Reused YouEye Names certificate for', domain);
-                } else {
-                  // ── Fresh issuance (or expired bundle → re-issue under same name) ──
-                  stepUpdate('caddy', 'running', 'Securing your YouEye Names address…');
-                  const terms = await getCertificateTerms();
-                  const service = await discoverNamesService();
-                  validateManagedName(service, body.yen_name, domain, `*.${domain}`);
-                  if (
-                    body.yen_ct_accepted !== true ||
-                    !body.yen_terms_version ||
-                    body.yen_terms_version !== terms.version
-                  ) {
-                    throw new Error('Review and accept the current YouEye Names certificate notice before continuing.');
-                  }
-                  const setupSession=body.yen_verified_setup_session;
-                  if (setupSession !== undefined && (typeof setupSession!=='string' || setupSession.length<64 || setupSession.length>8192 || body.yen_human_verification_proof)) throw new Error('Invalid setup verification session.');
-                  if (!setupSession && (
-                    typeof body.yen_human_verification_proof !== 'string' ||
-                    body.yen_human_verification_proof.length < 20 ||
-                    body.yen_human_verification_proof.length > 512
-                  )) {
-                    throw new Error('Complete the final YouEye Names verification before starting setup.');
-                  }
-                  if (setupSession) await registerVerifiedSetup(setupSession);
-                  // Claim (tolerate a lease we already own from a prior attempt).
-                  try {
-                    await claimName(
-                      body.yen_name,
-                      ip,
-                      importedIdentity,
-                      body.yen_human_verification_proof,
-                      setupSession,
-                    );
-                  } catch (claimErr) {
-                    if (
-                      !(claimErr instanceof NamesBrokerError) ||
-                      claimErr.code !== 'install_already_has_active_lease'
-                    ) {
-                      throw claimErr;
-                    }
-                    await getLease(body.yen_name, importedIdentity);
-                  }
-                  const priorProvisioning = await readNamesLifecycleState().catch(() => null);
-                  const canResume = priorProvisioning?.status === 'provisioning' &&
-                    priorProvisioning.name === body.yen_name && priorProvisioning.fqdn === domain &&
-                    priorProvisioning.service.id === service.id &&
-                    priorProvisioning.service.canonicalOrigin === service.canonicalOrigin &&
-                    !!priorProvisioning.provisioning?.privateKeyPem && !!priorProvisioning.provisioning.csrPem;
-                  const provisioningStartedAt = canResume
-                    ? priorProvisioning.provisioning!.startedAt
-                    : new Date().toISOString();
-                  const priorPrivateKey = canResume ? priorProvisioning.provisioning!.privateKeyPem : null;
-                  const priorCsr = canResume ? priorProvisioning.provisioning!.csrPem : null;
-                  await writeNamesLifecycleState({
-                    schemaVersion: 1,
-                    service: namesServiceBinding(service),
-                    name: body.yen_name,
-                    fqdn: domain,
-                    status: 'provisioning',
-                    provisioning: {
-                      stage: 'lease_claimed',
-                      startedAt: provisioningStartedAt,
-                      lastAttemptAt: provisioningStartedAt,
-                      brokerRequestId: null,
-                      privateKeyPem: priorPrivateKey,
-                      csrPem: priorCsr,
-                    },
-                    termsVersion: terms.version,
-                    certificateTransparencyAcceptedAt: provisioningStartedAt,
-                    certificate: null,
-                    lastBrokerContactAt: provisioningStartedAt,
-                    lastHeartbeatAt: null,
-                    nextCheckAt: provisioningStartedAt,
-                    lastError: null,
-                  });
-                  const generated = priorPrivateKey && priorCsr
-                    ? { keyPem: priorPrivateKey, csrPem: priorCsr }
-                    : await generateCsr(domain);
-                  const { keyPem, csrPem } = generated;
-                  await updateNamesLifecycleState((state) => ({
-                    ...state,
-                    provisioning: state.provisioning ? {
-                      ...state.provisioning,
-                      stage: 'certificate_requested',
-                      lastAttemptAt: new Date().toISOString(),
-                      privateKeyPem: keyPem,
-                      csrPem,
-                    } : state.provisioning,
-                  }));
-                  await requestCertificate(
-                    body.yen_name,
-                    csrPem,
-                    terms.version,
-                    true,
-                    importedIdentity,
-                  );
-                  await updateNamesLifecycleState((state) => ({
-                    ...state,
-                    provisioning: state.provisioning ? {
-                      ...state.provisioning,
-                      stage: 'certificate_waiting',
-                      lastAttemptAt: new Date().toISOString(),
-                    } : state.provisioning,
-                  }));
-                  // The authoritative propagation policy can consume six minutes
-                  // before CA work starts, so keep the visible wait bounded at ten.
-                  let cert: Awaited<ReturnType<typeof getCurrentCertificate>> = null;
-                  const deadline = Date.now() + 10 * 60_000;
-                  let pollDelay = 2_000;
-                  while (Date.now() < deadline) {
-                    cert = await getCurrentCertificate(body.yen_name, importedIdentity);
-                    if (cert) break;
-                    await new Promise((resolve) => setTimeout(resolve, pollDelay));
-                    pollDelay = Math.min(8_000, Math.round(pollDelay * 1.5));
-                  }
-                  if (!cert) {
-                    throw new Error('Your YouEye Names certificate is taking longer than usual to issue. It may still arrive shortly — you can retry this step.');
-                  }
-                  await updateNamesLifecycleState((state) => ({
-                    ...state,
-                    provisioning: state.provisioning ? {
-                      ...state.provisioning,
-                      stage: 'certificate_received',
-                      lastAttemptAt: new Date().toISOString(),
-                    } : state.provisioning,
-                  }));
-                  const validatedCertificate = validateCertificateMaterial({
-                    certificateChain: cert.certificateChain,
-                    privateKeyPem: keyPem,
-                    fqdn: domain,
-                  });
-                  if (
-                    validatedCertificate.brokerFingerprint !== cert.fingerprint ||
-                    !sameCertificateInstant(validatedCertificate.expiresAt, cert.expiresAt)
-                  ) {
-                    throw new Error('YouEye Names returned inconsistent certificate metadata. Nothing was installed.');
-                  }
-                  await caddy.loadExternalCert(validatedCertificate.certificateChain, keyPem, domains);
-                  await updateNamesLifecycleState((state) => ({
-                    ...state,
-                    provisioning: state.provisioning ? {
-                      ...state.provisioning,
-                      stage: 'activating',
-                      lastAttemptAt: new Date().toISOString(),
-                    } : state.provisioning,
-                  }));
-                  await tlsStorage.storeCert({
-                    mode: 'manual', certPem: validatedCertificate.certificateChain, keyPem,
-                    issuer: 'YouEye Names', domains,
-                    expiresAt: validatedCertificate.expiresAt,
-                    issuedAt: validatedCertificate.issuedAt,
-                  });
-                  if (staged) {
-                    await applyBundleIdentity(staged);
-                    await consumeStagedBundle();
-                  }
-                  const activatedAt = new Date().toISOString();
-                  await writeNamesLifecycleState({
-                    schemaVersion: 1,
-                    service: namesServiceBinding(service),
-                    name: body.yen_name,
-                    fqdn: domain,
-                    status: 'healthy',
-                    provisioning: null,
-                    termsVersion: terms.version,
-                    certificateTransparencyAcceptedAt: activatedAt,
-                    certificate: {
-                      fingerprint: validatedCertificate.fingerprint,
-                      provider: cert.provider,
-                      issuedAt: validatedCertificate.issuedAt,
-                      expiresAt: validatedCertificate.expiresAt,
-                    },
-                    lastBrokerContactAt: activatedAt,
-                    lastHeartbeatAt: null,
-                    nextCheckAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-                    lastError: null,
-                  });
-                  try {
-                    await heartbeat(body.yen_name, {
-                      currentIp: ip,
-                      certificateFingerprint: validatedCertificate.brokerFingerprint,
-                      certificateExpiresAt: validatedCertificate.expiresAt,
-                      caddyStatus: 'healthy',
-                    }, importedIdentity);
-                    await updateNamesLifecycleState((state) => ({ ...state, lastHeartbeatAt: new Date().toISOString() }));
-                  } catch (heartbeatError) {
-                    console.warn('[setup] Initial YouEye Names heartbeat will retry automatically:', heartbeatError instanceof Error ? heartbeatError.message : 'unknown error');
-                  }
-                  console.log('[setup] Installed YouEye Names certificate for', domain);
-                }
-              } catch (yenErr) {
-                console.error(
-                  '[setup] YouEye Names certificate setup failed:',
-                  yenErr instanceof NamesBrokerError
-                    ? `${yenErr.code}${yenErr.requestId ? ` (request ${yenErr.requestId})` : ''}`
-                    : yenErr instanceof Error
-                      ? yenErr.message
-                      : 'unknown error',
-                );
-                stepUpdate(
-                  'caddy',
-                  'error',
-                  yenErr instanceof NamesBrokerError
-                    ? namesErrorMessage(yenErr)
-                    : yenErr instanceof Error
-                      ? yenErr.message
-                      : 'YouEye Names certificate failed',
-                );
-                await saveStepState('caddy', 'error');
+                await steps.save('caddy', 'error');
                 hasError = true;
               }
             }
@@ -854,20 +536,42 @@ export async function POST(request: NextRequest) {
               routeErrors,
               `Routes created for ${routeMap.length + (!uiSub ? 1 : 0)} services`,
               (state, message) => stepUpdate('caddy', state, message),
-              (state) => saveStepState('caddy', state),
+              (state) => steps.save('caddy', state),
             );
           }
+          return hasError;
+          });
         } else {
           stepUpdate('caddy', 'done', 'Already completed');
         }
 
-        // ── Step 2b: Pi-Hole DNS — with 3-retry parity ──────────────
-        if (shouldRunStep('dns')) {
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('dns', 'running');
-          const hostIP = process.env.HOST_IP;
-          const domain = body.domain;
-          if (hostIP && domain) {
+        // ── Steps 3–7 side by side; finalize waits for all ───────────
+        // None of them needs the public certificate: Pointer trusts Caddy's
+        // internal CA and its routes are probed with both CAs, and the SSO
+        // steps reach YouEye ID through its internal URL.
+        const allDone = await runSetupStepsTogether(stepContext, [
+          // YouEye Names: await the job started after the human check (never a
+          // new claim or certificate request), then activate its certificate.
+          ['names', async () => {
+            const name = body.yen_name;
+            if (body.tls_choice !== 'youeye-names' || !name) return 'Not used';
+            if (await activateStagedNamesBundle(name, body.domain)) return 'Reused your YouEye Names certificate';
+            stepUpdate('names', 'running', 'Waiting for your YouEye Names certificate…');
+            try {
+              await awaitNamesCertificate(name, body.domain);
+              await activateNamesCertificate(body.domain);
+            } catch (err) {
+              if (err instanceof NamesBrokerError) throw new StepFailure(namesErrorMessage(err), namesLogReason(err));
+              throw err;
+            }
+            return 'YouEye Names certificate installed';
+          }],
+
+          // Pi-Hole DNS — with 3-retry parity
+          ['dns', async () => {
+            const hostIP = process.env.HOST_IP;
+            const domain = body.domain;
+            if (!hostIP || !domain) return 'Skipped — HOST_IP not available';
             try {
               await withRetry(
                 async () => {
@@ -880,76 +584,50 @@ export async function POST(request: NextRequest) {
                 3, [0, 2000, 5000],
                 'Pi-Hole DNS'
               );
-              await saveStepState('dns', 'done');
-              stepUpdate('dns', 'done', `DNS rewrite added: *.${domain} → ${hostIP}`);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
-              await saveStepState('dns', 'error');
-              stepUpdate('dns', 'error', `DNS rewrites failed — local subdomain resolution may not work. Check Pi-Hole status and retry. (${msg})`);
-              hasError = true;
+              throw new StepFailure(`DNS rewrites failed — local subdomain resolution may not work. Check Pi-Hole status and retry. (${msg})`, setupStepReason(err));
             }
-          } else {
-            await saveStepState('dns', 'done');
-            stepUpdate('dns', 'done', 'Skipped — HOST_IP not available');
-          }
-        } else {
-          stepUpdate('dns', 'done', 'Already completed');
-        }
+            return `DNS rewrite added: *.${domain} → ${hostIP}`;
+          }],
 
-        // ── Step 3: Managed AI service ───────────────────────────────
-        // Pointer's issuer is the setup-selected identity URL. It must not be
-        // started during pre-Web bootstrap with a placeholder issuer because
-        // that would either crash-loop or retain an invalid trust boundary.
-        // Its apex inference routes (/v1/*) are added here, after it is ready;
-        // any failure is reported once, by this step.
-        if (shouldRunStep('ai')) {
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('ai', 'running');
-          let stage = 'setup';
-          try {
-            // Stable issuer settings were saved above; TLS and proxy routes precede this.
-            const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
-            stage = 'API route setup';
-            await caddy.reconcileManagedRoutes(body.domain, {}, { pointer: true });
-            await saveStepState('ai', 'done');
-            stepUpdate('ai', 'done', result === 'deployed'
-              ? 'YouEye AI service deployed and connected to YouEye ID'
-              : 'YouEye AI service identity configuration refreshed');
-          } catch (err) {
-            console.error(`[setup] YouEye AI service ${stage} failed:`, err);
-            const reason = setupStepReason(err);
-            await saveStepState('ai', 'error', reason);
-            stepUpdate('ai', 'error', `YouEye AI service ${stage} failed: ${reason}`);
-            hasError = true;
-          }
-        } else {
-          stepUpdate('ai', 'done', 'Already completed');
-        }
+          // Managed AI service. Pointer's issuer is the setup-selected identity
+          // URL, so it is configured only now (it was built at first boot). Its
+          // apex inference routes (/v1/*) are added after it is ready; any
+          // failure is reported once, by this step.
+          ['ai', async () => {
+            let stage = 'setup';
+            try {
+              // Stable issuer settings were saved above; proxy routes precede this.
+              const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
+              stage = 'API route setup';
+              await withCaddyMutation(() => caddy.reconcileManagedRoutes(body.domain, {}, { pointer: true }));
+              return result === 'deployed'
+                ? 'YouEye AI service deployed and connected to YouEye ID'
+                : 'YouEye AI service identity configuration refreshed';
+            } catch (err) {
+              console.error(`[setup] YouEye AI service ${stage} failed:`, err);
+              const reason = setupStepReason(err);
+              throw new StepFailure(`YouEye AI service ${stage} failed: ${reason}`, reason);
+            }
+          }],
 
-        // ── Step 4: SSO for Control Panel (idempotent) ───────────────
-        if (shouldRunStep('sso_control')) {
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('sso_control', 'running');
-          const domain = body.domain;
-          const subs = body.subdomains || {};
-          const controlHost = `${subs.control || 'control'}.${domain}`;
-          await configureControlPanelIdentitySSO({
-            controlExternalUrl: `https://${controlHost}`,
-            settingsExternalUrl: `https://${domain}/settings`,
-          });
-          await saveStepState('sso_control', 'done');
-          stepUpdate('sso_control', 'done', 'Identity provider configured for Control Panel');
-        } else {
-          stepUpdate('sso_control', 'done', 'Already completed');
-        }
+          // SSO for Control Panel (idempotent)
+          ['sso_control', async () => {
+            const subs = body.subdomains || {};
+            const controlHost = `${subs.control || 'control'}.${body.domain}`;
+            await configureControlPanelIdentitySSO({
+              controlExternalUrl: `https://${controlHost}`,
+              settingsExternalUrl: `https://${body.domain}/settings`,
+            });
+            return 'Identity provider configured for Control Panel';
+          }],
 
-        // ── Step 5: SSO for UI + enable (idempotent) ─────────────────
-        if (shouldRunStep('sso_ui')) {
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('sso_ui', 'running');
-          const domain = body.domain;
-          const subs = body.subdomains || {};
-          const uiSub = subs.ui || '';
+          // SSO for UI + enable (idempotent)
+          ['sso_ui', async () => {
+            const domain = body.domain;
+            const subs = body.subdomains || {};
+            const uiSub = subs.ui || '';
 
           let uiInstalled = false;
           try {
@@ -1029,27 +707,22 @@ export async function POST(request: NextRequest) {
                   console.error('Failed to write site_name to UI database:', e);
                 }
 
-                await saveStepState('sso_ui', 'done');
-                stepUpdate('sso_ui', 'done', 'UI enabled and identity provider configured');
+                return 'UI enabled and identity provider configured';
             } catch (err) {
               console.error('UI SSO setup failed:', err);
-              await saveStepState('sso_ui', 'error');
-              stepUpdate('sso_ui', 'error', `UI SSO failed: ${err instanceof Error ? err.message : String(err)}`);
-              hasError = true;
+              throw new StepFailure(`UI SSO failed: ${err instanceof Error ? err.message : String(err)}`, setupStepReason(err));
             }
-          } else {
-            await saveStepState('sso_ui', 'done');
-            stepUpdate('sso_ui', 'done', 'UI container not installed, skipped');
           }
-        } else {
-          stepUpdate('sso_ui', 'done', 'Already completed');
-        }
+          return 'UI container not installed, skipped';
+          }],
+        ]);
+        if (!allDone) hasError = true;
 
-        // ── Step 6: Finalize ─────────────────────────────────────────
+        // ── Step 8: Finalize ─────────────────────────────────────────
         // A retry of one failed step must not skip this completion gate.
         if (hasError) {
           const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
-          await saveStepState('finalize', 'error');
+          await steps.save('finalize', 'error');
           stepUpdate('finalize', 'error', message);
           send({ error: message, complete: false, hasErrors: true });
           await releaseSetupOperation(leaseOwnerId, leaseSessionId);
@@ -1060,14 +733,15 @@ export async function POST(request: NextRequest) {
         if (shouldRunStep('finalize')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('finalize', 'running');
+          await steps.started('finalize');
 
           await settingsService.setRaw({
             setup_completed: true,
             tls_choice: body.tls_choice || 'selfsigned',
           });
-          // Clear setup_steps on successful completion
+          // Clear setup_steps on successful completion (step times stay as a record)
           await spineClient.patchConfig({ setup_steps: {}, setup_step_errors: null });
-          await saveStepState('finalize', 'done');
+          await steps.save('finalize', 'done');
           stepUpdate('finalize', 'done', 'Setup marked as complete');
         } else {
           stepUpdate('finalize', 'done', 'Already completed');
@@ -1091,6 +765,8 @@ export async function POST(request: NextRequest) {
         await releaseSetupOperation(leaseOwnerId, leaseSessionId).catch(() => {});
         send({ error: 'Setup is blocked by retained lifecycle or System state. Reconcile the existing operation and retry.', complete: false, hasErrors: true });
         finish();
+      } finally {
+        endRun();
       }
     },
     cancel() { connected = false; },

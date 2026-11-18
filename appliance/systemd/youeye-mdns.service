@@ -1,0 +1,18 @@
+[Unit]
+Description=Publish the box as youeye.local on the LAN (mDNS, LAN adapter only)
+Requires=dbus.service
+Wants=network-online.target
+After=dbus.service network-online.target youeye-appliance-state.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Spine writes /run/youeye/avahi-daemon.conf for the adapter that holds the
+# default route, then runs avahi-daemon with it. It restarts until a default
+# route exists.
+ExecStart=/usr/local/bin/youeye mdns run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

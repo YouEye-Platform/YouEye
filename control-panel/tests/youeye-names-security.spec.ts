@@ -527,13 +527,15 @@ test('popup handoff source enforces exact window/origin/shape and keeps proofs m
 });
 
 test('setup persists resumable key/CSR state but never a verification proof', () => {
-  const setup = readFileSync(path.join(process.cwd(), 'src/app/api/setup/run/route.ts'), 'utf8');
+  const job = readFileSync(path.join(process.cwd(), 'src/lib/youeye-names/provision.ts'), 'utf8');
   const state = readFileSync(path.join(process.cwd(), 'src/lib/youeye-names/state.ts'), 'utf8');
   const maintenance = readFileSync(path.join(process.cwd(), 'src/lib/youeye-names/maintenance.ts'), 'utf8');
   const enrollment = readFileSync(path.join(process.cwd(), 'src/app/api/tls/youeye-names/enrollment/route.ts'), 'utf8');
-  assert.match(setup, /priorProvisioning[\s\S]*privateKeyPem[\s\S]*csrPem/);
-  assert.match(setup, /10 \* 60_000/);
-  assert.match(maintenance, /resumeProvisioning[\s\S]*requestCertificate[\s\S]*waitForCertificate/);
+  // The job saves the key and CSR before requesting, and resumes with them (names-provision.spec.ts).
+  assert.match(job, /privateKeyPem: generated\.keyPem,[\s\S]*csrPem: generated\.csrPem,[\s\S]*io\.requestCertificate/);
+  assert.match(job, /10 \* 60_000/);
+  assert.match(maintenance, /state\.status === 'provisioning'\) \{\s*await followNamesJob\(\);/);
+  assert.doesNotMatch(job, /humanVerificationProof:|verifiedSetupSession:/);
   assert.doesNotMatch(state, /humanVerificationProof|yen_human_verification_proof/);
   assert.match(enrollment, /session\?\.isAdmin/);
   assert.match(enrollment, /verifyCSRFToken/);

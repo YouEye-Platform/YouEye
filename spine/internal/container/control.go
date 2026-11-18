@@ -19,6 +19,8 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
+
+	"github.com/youeye-platform/YouEye/spine/internal/progress"
 )
 
 // DeployControlPanel deploys the Control Panel container with all dependencies.
@@ -43,6 +45,7 @@ func DeployControlPanel(cfg *config.Config) error {
 		if err := writeControlProvisionJournal(containerName, "creating-container"); err != nil {
 			return err
 		}
+		progress.Report("server_interface", "Creating the Control Panel container", 50)
 		if err := createContainer(containerName); err != nil {
 			return err
 		}
@@ -112,6 +115,7 @@ func DeployControlPanel(cfg *config.Config) error {
 	}
 
 	// Install Node.js
+	progress.Report("server_interface", "Installing system packages and Node.js for the Control Panel", 52)
 	if err := installNodeJS(containerName); err != nil {
 		return err
 	}
@@ -132,6 +136,7 @@ func DeployControlPanel(cfg *config.Config) error {
 	}
 
 	// Deploy application
+	progress.Report("server_interface", "Downloading and starting the Control Panel", 56)
 	if err := DeployControlPanelApp(cfg); err != nil {
 		util.LogError(fmt.Sprintf("Could not deploy Control Panel app: %v", err))
 		fmt.Println("You can deploy manually later using 'spine update control'")

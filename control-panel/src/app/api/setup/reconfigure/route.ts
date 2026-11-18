@@ -9,6 +9,7 @@
 
 import { NextRequest } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { isReservedSetupDomain, RESERVED_SETUP_DOMAIN_ERROR } from '@/lib/auth/setup-names';
 import { reconfigure } from '@/lib/reconfigure';
 import type { ReconfigureRequest, ReconfigureTlsTarget } from '@/lib/reconfigure';
 
@@ -52,6 +53,12 @@ export async function POST(request: NextRequest) {
     const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$/;
     if (!domainRegex.test(body.domain)) {
       return new Response(JSON.stringify({ error: 'Invalid domain format' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (isReservedSetupDomain(body.domain)) {
+      return new Response(JSON.stringify({ error: RESERVED_SETUP_DOMAIN_ERROR }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });

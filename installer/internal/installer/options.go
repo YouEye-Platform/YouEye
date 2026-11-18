@@ -26,6 +26,7 @@ const (
 	InstallerModeProxmox InstallerMode = "proxmox"
 	InstallerModeNetwork InstallerMode = "network"
 	InstallerModeConsole InstallerMode = "console"
+	InstallerModeServe   InstallerMode = "serve"
 )
 
 // CLIOptions covers the two supported installer surfaces: booted media
@@ -69,6 +70,7 @@ type CLIOptions struct {
 	ApplianceISOSHA256        string
 	ApplianceRepository       string
 	ConsoleKind               string
+	Listen                    string
 }
 
 func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, error) {
@@ -125,6 +127,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "optional ISO SHA-256 for exact selection")
 	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL (default: the official public repository)")
 	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
+	fs.StringVar(&opts.Listen, "listen", defaultServeListen, "serve: loopback address of the graphical installer")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, err
@@ -145,8 +148,10 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 			opts.Mode = "network"
 		case "console":
 			opts.Mode = "console"
+		case "serve":
+			opts.Mode = "serve"
 		default:
-			return opts, fmt.Errorf("unsupported installer command %q (use install, proxmox, network, or console)", commandArg)
+			return opts, fmt.Errorf("unsupported installer command %q (use install, serve, proxmox, network, or console)", commandArg)
 		}
 	}
 	opts.Mode = strings.ToLower(strings.TrimSpace(opts.Mode))
@@ -183,6 +188,8 @@ func SelectedInstallerMode(opts CLIOptions) (InstallerMode, error) {
 			return "", fmt.Errorf("unsupported console kind %q", opts.ConsoleKind)
 		}
 		return InstallerModeConsole, nil
+	case "serve":
+		return InstallerModeServe, nil
 	case "", "auto":
 		return "", fmt.Errorf("choose an installer target: youeye-installer install or youeye-installer proxmox")
 	case "host", "baremetal", "linux", "vm", "proxmox-vm":

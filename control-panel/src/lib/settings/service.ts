@@ -7,6 +7,7 @@
  */
 
 import { spineClient } from '../spine/client';
+import { isReservedSetupDomain, RESERVED_SETUP_DOMAIN_ERROR } from '../auth/setup-names';
 import { existsSync, readFileSync } from 'fs';
 import { parse } from 'yaml';
 
@@ -134,6 +135,9 @@ class SettingsService {
    * (e.g. setup wizard, reconfigure) to avoid double-conversion.
    */
   async setRaw(rawPatch: Record<string, unknown>): Promise<void> {
+    if (typeof rawPatch.domain === 'string' && isReservedSetupDomain(rawPatch.domain)) {
+      throw new Error(RESERVED_SETUP_DOMAIN_ERROR);
+    }
     await spineClient.patchConfig(rawPatch);
     this.cache = null;
   }

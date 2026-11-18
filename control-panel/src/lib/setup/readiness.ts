@@ -5,7 +5,7 @@ import { coreSchemaComponent } from '../updates/core-schema';
 
 /** A single-step retry cannot complete an otherwise unfinished operation. */
 export function assertProvisioningStepsComplete(steps: Record<string, unknown>): void {
-  const incomplete = ['config', 'caddy', 'dns', 'ai', 'sso_control', 'sso_ui'].filter(step => steps[step] !== 'done');
+  const incomplete = ['config', 'caddy', 'names', 'dns', 'ai', 'sso_control', 'sso_ui'].filter(step => steps[step] !== 'done');
   if (incomplete.length) throw new Error(`Setup steps still need attention: ${incomplete.join(', ')}. Resume the existing setup.`);
 }
 

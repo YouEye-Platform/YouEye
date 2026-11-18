@@ -1,6 +1,9 @@
-import { isApplianceSetupHost } from '../auth/mode';
+import { isLocalSetupHost } from '../auth/mode';
 
-/** Accept the identity origin itself or the direct HTTPS appliance setup surface. */
+/**
+ * Accept the identity origin itself or the box's local setup surface (`<ip>` or `youeye.local`), over HTTPS or
+ * HTTP: onboarding works over plain HTTP on the LAN, and the handoff code is single-use and short-lived.
+ */
 export function isTrustedHandoffBrowserOrigin(browserOrigin: string | null, expectedOrigin: string): boolean {
   if (!browserOrigin) return true;
 
@@ -13,5 +16,5 @@ export function isTrustedHandoffBrowserOrigin(browserOrigin: string | null, expe
 
   if (browserOrigin !== parsed.origin) return false;
   if (parsed.origin === expectedOrigin) return true;
-  return parsed.protocol === 'https:' && isApplianceSetupHost(parsed.host);
+  return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && isLocalSetupHost(parsed.host);
 }

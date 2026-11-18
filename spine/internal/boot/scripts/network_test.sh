@@ -59,7 +59,7 @@ run_network() {
         YOUEYE_NETWORK_LAST_GOOD_PROFILE="$temp/state/network-last-good-profile.json" \
         YOUEYE_NETWORK_CARRIER="$temp/sys/carrier" \
         YOUEYE_NETWORK_MAX_ATTEMPTS=1 YOUEYE_NETWORK_RETRY_SECONDS=0 \
-        IP_BIN="$temp/bin/ip" NETWORKCTL_BIN="$temp/bin/networkctl" \
+        IP_BIN="$temp/bin/ip" NETWORKCTL_BIN="$temp/bin/networkctl" SYSTEMCTL_BIN=true \
         GETENT_BIN="$temp/bin/getent" CURL_BIN="$temp/bin/curl" FAKE_CURL_LOG="$temp/curl.log" \
         "$@" "$script"
 }

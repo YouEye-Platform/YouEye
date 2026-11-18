@@ -52,7 +52,7 @@ test('Pointer waits for a real setup issuer and is refreshed on every domain cha
   assert.match(lifecycle, /systemctl', 'enable', 'youeye-pointer\.service'/);
   assert.match(lifecycle, /systemctl', 'restart', 'youeye-pointer\.service'/);
   assert.match(setup, /ai\?: StepState/);
-  assert.match(setup, /configurePointerForPlatform\(undefined, \{ deferRoutes: true \}\)[\s\S]*saveStepState\('ai', 'done'\)/);
+  assert.match(setup, /\['ai', async \(\) => \{[\s\S]*configurePointerForPlatform\(undefined, \{ deferRoutes: true \}\)/);
   assert.ok(setup.indexOf("await settingsService.setRaw({") < setup.indexOf('await configurePointerForPlatform('),
     'Pointer must use the persisted setup-selected identity');
   assert.match(setup, /reconcileManagedRoutes\(domain, \{\}, \{ pointer: false \}\)/,
@@ -61,7 +61,7 @@ test('Pointer waits for a real setup issuer and is refreshed on every domain cha
     'Pointer route verification must follow Pointer provisioning');
   assert.ok(setup.indexOf('reconcileManagedRoutes(domain, {}, { pointer: false })') < setup.indexOf('await configurePointerForPlatform('),
     'the AI step runs after Caddy setup');
-  assert.match(setup, /console\.error\(`\[setup\] YouEye AI service \$\{stage\} failed:`, err\)[\s\S]*saveStepState\('ai', 'error', reason\)/,
+  assert.match(setup, /console\.error\(`\[setup\] YouEye AI service \$\{stage\} failed:`, err\)[\s\S]*throw new StepFailure\(`YouEye AI service \$\{stage\} failed: \$\{reason\}`, reason\)/,
     'AI step failures are logged and their reason persisted');
   assert.match(setupPage, /id: 'ai', label: t\('configuringAi'\)/);
   assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(undefined, \{ deferRoutes: true \}\)[\s\S]*reconcileManagedRoutes\(activeConfig\.domain\)/);

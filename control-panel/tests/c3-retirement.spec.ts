@@ -50,13 +50,13 @@ test('middleware redirects shell routes to Settings (host-aware, precise)', () =
   assert.doesNotMatch(m, /SHELL_PREFIXES = \[[^\]]*'\/(settings|market|embed|api)'/);
 });
 
-test('IP setup handoff wins before Settings shell redirects', () => {
+test('Local setup handoff (IP or youeye.local) wins before Settings shell redirects', () => {
   const m = read('src/middleware.ts');
-  const ipBlock = m.indexOf('IP-via-Caddy setup flow');
+  const ipBlock = m.indexOf('Local setup surface (box IP or youeye.local');
   const shellBlock = m.indexOf('Send the control.<domain> / (dashboard) shell paths to Settings');
 
-  assert.ok(ipBlock >= 0, 'middleware should keep the IP setup flow block');
+  assert.ok(ipBlock >= 0, 'middleware should keep the local setup flow block');
   assert.ok(shellBlock >= 0, 'middleware should keep the shell redirect block');
-  assert.ok(ipBlock < shellBlock, 'IP setup flow must run before / -> /settings redirects');
+  assert.ok(ipBlock < shellBlock, 'Local setup flow must run before / -> /settings redirects');
   assert.match(m, /completed \? '\/setup-complete' : '\/login'/);
 });

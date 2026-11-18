@@ -15,16 +15,23 @@ export default function SetupNamesVerification({
   onVerified,
   onBack,
   useVerifiedSetup = false,
+  claiming = false,
+  claimError = '',
 }: {
   name: string;
   fqdn: string;
   onVerified: (proof: string, kind?: "verified_setup") => void;
   useVerifiedSetup?: boolean;
   onBack: () => void;
+  /** The verified name is being claimed (the YouEye Names job is starting). */
+  claiming?: boolean;
+  /** Claiming failed; the owner runs a new check. */
+  claimError?: string;
 }) {
   const translateInterface = useInterfaceTranslations("interface");
 
   const verifiedText = useInterfaceTranslations("setup.verifiedNames");
+  const setupText = useInterfaceTranslations("setup");
   const [challenge,setChallenge]=useState<VerifiedSetupChallenge|null>(null);
   const [channelState,setChannelState]=useState<"waiting"|"challenge"|"blocked"|"expired">("waiting");
   const [standalone,setStandalone]=useState(false);
@@ -112,12 +119,13 @@ export default function SetupNamesVerification({
         </div>}
       </div>}
 
-      {error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {claiming && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{setupText("namesStarting")}</p>}
+      {(error || claimError) && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error || claimError}</p>}
 
       <div className="flex items-center justify-between">
         <Button variant="ghost" onClick={()=>{verification.current?.abort();channel.current?.dispose();onBack();}} className="gap-2">
           <ArrowLeft className="h-4 w-4" /> {" "}{translateInterface("m76900f1bfd16")}</Button>
-        <Button onClick={() => void verify()} disabled={loading} className="gap-2">
+        <Button onClick={() => void verify()} disabled={loading || claiming} className="gap-2">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
           {loading ? translateInterface("m2b69f6c546fd") : challenge ? verifiedText("retry") : translateInterface("m637845e0d3dc")}
         </Button>

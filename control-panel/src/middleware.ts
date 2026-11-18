@@ -9,8 +9,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { getAuthModeForHost } from '@/lib/auth/mode';
+import { getAuthModeForHost, isLocalSetupHost, isPasswordSignInHost } from '@/lib/auth/mode';
 import { isSettingsPath } from '@/lib/settings-public-path';
+import { isPasswordSignInPath, requestIsPlainHttp, setupHostAllows } from '@/lib/auth/setup-host-paths';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -26,6 +27,8 @@ const PUBLIC_ROUTES = [
   '/api/appliance/handoff',
   '/api/setup/config',
   '/api/setup/ca-cert',
+  '/api/setup/ca-fingerprint',
+  '/api/setup/server-address',
   '/api/setup/check-dns',
   '/api/setup/profile',
   '/api/deploy/infrastructure',
@@ -141,22 +144,6 @@ function loginRedirectFor(request: NextRequest, pathname: string): URL {
   return new URL(settingsPath ? '/settings/login' : '/login', request.url);
 }
 
-/**
- * Check if request is coming via IP address through Caddy.
- * Raw port 3000 is localhost-only recovery and should not be used for LAN browsing.
- * Ports 80/443 via Caddy with IP host = setup flow.
- */
-function isIPViaCaddy(host: string): boolean {
-  const [hostname, portStr] = host.split(':');
-  const port = portStr ? parseInt(portStr, 10) : 443;
-
-  // Port 3000 is localhost-only recovery, not the Caddy setup/browser path.
-  if (port === 3000) return false;
-
-  // Check if hostname is an IP address
-  return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
-}
-
 /** Cache for setup_completed status (avoid hitting Spine on every request) */
 let setupCompletedCache: { value: boolean; ts: number } | null = null;
 const SETUP_CACHE_TTL = 10_000; // 10 seconds
@@ -186,7 +173,10 @@ async function isSetupCompleted(): Promise<boolean> {
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-  return setupCompletedCache?.value ?? false;
+  // Every setup-host request asks; retry a failed read after 2 s, not on each request.
+  const fallback = setupCompletedCache?.value ?? false;
+  setupCompletedCache = { value: fallback, ts: now - SETUP_CACHE_TTL + 2_000 };
+  return fallback;
 }
 
 /**
@@ -361,33 +351,27 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // --- IP-via-Caddy setup flow ---
-  // When accessed via IP through Caddy (ports 80/443), setup routing must win
-  // before the Control Panel shell redirects. After setup completes, the IP
-  // address is a DNS/trust handoff page, never the Settings surface.
-  if (isIPViaCaddy(host)) {
-    // Allow these paths through (needed for setup flow to work)
-    const setupAllowedPaths = [
-      '/setup', '/setup-complete', '/login',
-      '/reset-owner', '/settings/reset-owner', '/settings/api/auth/reset-owner',
-      '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
-      '/api/appliance/',
-      '/api/dns-providers/cloudflare/validate',
-      '/api/branding/favicon',
-    ];
-    const isSetupPath = setupAllowedPaths.some(p => pathname === p || pathname.startsWith(p));
+  // --- Local setup surface (box IP or youeye.local through Caddy, HTTP or HTTPS) ---
+  // Setup routing must win before the Control Panel shell redirects. Onboarding only
+  // (`setup-host-paths.ts`): claim and setup until setup completes, then just the
+  // DNS/trust hand-off page and the owner reset; never the Settings surface.
+  if (isLocalSetupHost(host)) {
+    // A password never crosses the LAN in cleartext.
+    if (isPasswordSignInPath(pathname) && requestIsPlainHttp(request.headers.get('x-forwarded-proto'), request.url)) {
+      return NextResponse.json({ error: 'Password sign-in needs HTTPS.' }, { status: 403 });
+    }
 
-    if (!isSetupPath) {
-      const completed = await isSetupCompleted();
+    const completed = await isSetupCompleted();
+    if (!setupHostAllows(pathname, request.method, completed)) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Not available on the setup address.' }, { status: 404 });
+      }
       return NextResponse.redirect(new URL(completed ? '/setup-complete' : '/login', request.url));
     }
 
     // For /setup-complete, if setup is NOT completed, redirect to login.
-    if (pathname === '/setup-complete') {
-      const completed = await isSetupCompleted();
-      if (!completed) {
-        return NextResponse.redirect(new URL('/login', request.url));
-      }
+    if (pathname === '/setup-complete' && !completed) {
+      return NextResponse.redirect(new URL('/login', request.url));
     }
 
     if (pathname === '/setup' && verifiedSession?.authMethod !== 'setup') {
@@ -423,13 +407,9 @@ export async function middleware(request: NextRequest) {
     PUBLIC_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/')) ||
     PUBLIC_ROUTES_EXACT.some(route => pathname === route)
   ) {
-    // Block PAM login on subdomain access when SSO is configured
+    // Password sign-in only on the local setup surface and loopback; named hosts use SSO
     if (pathname === '/api/auth/login') {
-      const host = request.headers.get('host') || '';
-      const hostname = host.split(':')[0];
-      const isIP = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
-        hostname === 'localhost' || hostname === '127.0.0.1';
-      if (!isIP) {
+      if (!isPasswordSignInHost(request.headers.get('host') || '')) {
         return NextResponse.json(
           { error: 'PAM login is not available on subdomain access. Use SSO.' },
           { status: 403 }

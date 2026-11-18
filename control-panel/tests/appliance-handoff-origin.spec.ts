@@ -4,18 +4,35 @@ import { isTrustedHandoffBrowserOrigin } from '../src/lib/identity/handoff-origi
 
 const identityOrigin = 'https://id.plan3appliance.test';
 
-test('identity handoff accepts its own origin and direct HTTPS appliance setup origins', () => {
+test('identity handoff accepts its own origin and the local setup surface over HTTPS or HTTP', () => {
   assert.equal(isTrustedHandoffBrowserOrigin(null, identityOrigin), true);
   assert.equal(isTrustedHandoffBrowserOrigin(identityOrigin, identityOrigin), true);
-  assert.equal(isTrustedHandoffBrowserOrigin('https://192.168.31.37', identityOrigin), true);
+  for (const origin of [
+    'https://192.168.31.37', 'http://192.168.31.37',
+    'https://youeye.local', 'http://youeye.local', 'http://youeye-2.local',
+  ]) {
+    assert.equal(isTrustedHandoffBrowserOrigin(origin, identityOrigin), true, origin);
+  }
 });
 
-test('identity handoff rejects arbitrary, insecure, raw-port, and malformed origins', () => {
-  assert.equal(isTrustedHandoffBrowserOrigin('https://attacker.example', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('http://192.168.31.37', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('https://192.168.31.37:443', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('https://192.168.31.37:3000', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('https://192.168.31.37/path', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('https://id.plan3appliance.test, https://attacker.example', identityOrigin), false);
-  assert.equal(isTrustedHandoffBrowserOrigin('not an origin', identityOrigin), false);
+test('identity handoff rejects arbitrary, raw-port, other .local names and malformed origins', () => {
+  for (const origin of [
+    'https://attacker.example',
+    'http://attacker.example',
+    'http://id.plan3appliance.test',
+    'https://192.168.31.37:443',
+    'http://192.168.31.37:80',
+    'https://192.168.31.37:3000',
+    'http://youeye.local:3000',
+    'http://a.b.local',
+    'http://foo.local',
+    'https://mybox.local',
+    'http://youeye-12345.local',
+    'ftp://192.168.31.37',
+    'https://192.168.31.37/path',
+    'https://id.plan3appliance.test, https://attacker.example',
+    'not an origin',
+  ]) {
+    assert.equal(isTrustedHandoffBrowserOrigin(origin, identityOrigin), false, origin);
+  }
 });

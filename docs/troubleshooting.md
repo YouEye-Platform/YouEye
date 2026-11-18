@@ -41,9 +41,23 @@ down. Sections:
 
 ## The setup page does not load
 
-Until first deployment finishes, the host drops ports 80 and 443 (nftables table `inet youeye_setup_gate`, from
-`youeye boot setup-gate close`). This is expected. Watch the console, or
-`cat /var/lib/youeye-state/first-deploy/progress.json`. Setup opens only after `first-deploy/complete` exists.
+Until first deployment finishes, ports 80 and 443 show the Preparing page (nftables table
+`inet youeye_setup_gate` redirects them to `youeye-setup-page.service` on 47080/47443). If nothing answers at all:
+`systemctl status youeye-setup-page youeye-setup-gate`, then `cat /var/lib/youeye-state/first-deploy/progress.json`.
+Setup opens only after `first-deploy/complete` exists.
+
+- **`youeye.local` is not found:** use the IP from the console. mDNS doesn't cross guest Wi-Fi, VPNs or routed
+  networks, and Windows doesn't answer `.local` on a network marked "Public". On the box: `youeye mdns name` and
+  `systemctl status youeye-mdns`.
+- **Firefox searches instead of opening it:** type `http://youeye.local` with the `http://`.
+- **Certificate warning on HTTPS:** expected until the box CA is trusted. Download it from
+  `http://<box IP>/api/setup/ca-cert` (the setup pages link it under "Use a secure connection") and add it to the
+  device's trusted roots; Firefox has its own store (Settings → Certificates → Import).
+
+## The installer screen stays black or garbled
+
+Choose **Install YouEye (text mode)** in the GRUB menu (or add `youeye.text=1` to the kernel line). The graphical
+installer also falls back to the text installer by itself when its browser fails within 20 s.
 
 ## First deployment stopped
 
@@ -55,8 +69,8 @@ The console shows "Needs attention" and `progress.json` has `"stage": "needs_att
   `address_unavailable`, `route_unavailable`, `dns_unavailable`, `clock_unusable`, `source_unavailable` or
   `no_adapter` (`spine/internal/boot/scripts/network.sh`). The network check fetches the channel index once.
 - Other stages: read `journalctl -u youeye-first-deploy` and `youeye appliance health --profile=operational`.
-- To retry after fixing the cause: the attempt counter lives in `progress.json`. Removing that file and running
-  `systemctl restart youeye-first-deploy` starts again at attempt 1. Each attempt resumes an interrupted deployment
+- To retry after fixing the cause: press **Try again** on the Preparing page, or remove `progress.json` and run
+  `systemctl restart youeye-first-deploy`; both start again at attempt 1. Each attempt resumes an interrupted deployment
   rather than starting over.
 
 ## SSH: Permission denied (publickey)

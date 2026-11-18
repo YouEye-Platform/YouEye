@@ -201,7 +201,7 @@ cat > "$work_dir/youeye-dkms.conf" <<'EOF'
 # the development image is reproducible; production signing has its own trust design.
 sign_file="/usr/lib/youeye/no-module-signing"
 EOF
-base_packages="systemd-sysv,systemd-boot,systemd-resolved,systemd-timesyncd,systemd-zram-generator,dbus,linux-image-amd64,linux-headers-amd64,initramfs-tools,zfsutils-linux,zfs-initramfs,openssh-server,login,sudo,ca-certificates,curl,jq,openssl,pamtester,apparmor,apparmor-utils,uidmap,nftables,iptables,dnsmasq-base,bridge-utils,iproute2,iputils-ping,ethtool,util-linux,gdisk,dosfstools,e2fsprogs,restic,zstd,bash,coreutils,findutils,grep,sed,gawk,tar,xz-utils,rsync,qemu-guest-agent"
+base_packages="systemd-sysv,systemd-boot,systemd-resolved,systemd-timesyncd,systemd-zram-generator,dbus,linux-image-amd64,linux-headers-amd64,initramfs-tools,zfsutils-linux,zfs-initramfs,openssh-server,login,sudo,ca-certificates,curl,jq,openssl,pamtester,apparmor,apparmor-utils,uidmap,nftables,iptables,dnsmasq-base,bridge-utils,iproute2,iputils-ping,ethtool,util-linux,gdisk,dosfstools,e2fsprogs,restic,zstd,bash,coreutils,findutils,grep,sed,gawk,tar,xz-utils,rsync,qemu-guest-agent,avahi-daemon"
 mmdebstrap \
     --variant=apt \
     --architectures=amd64 \
@@ -248,12 +248,13 @@ for unit in \
     youeye.service youeye-appliance-state.service youeye-appliance-storage.service \
     youeye-appliance-ssh-keys.service \
     youeye-appliance-incus-sockets.service \
-    youeye-setup-gate.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service \
+    youeye-setup-gate.service youeye-setup-page.service youeye-mdns.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service \
     youeye-console-status.service youeye-console-serial.service youeye-console-access.service youeye-development-overlay.service youeye-recovery-apply.service youeye-recovery.service youeye-recovery.target; do
     install -D -m 0644 "$source_dir/appliance/systemd/$unit" "$rootfs/usr/lib/systemd/system/$unit"
 done
 install -D -m 0644 "$source_dir/appliance/systemd/incus-startup.service.d/youeye-dependency.conf" "$rootfs/usr/lib/systemd/system/incus-startup.service.d/youeye-dependency.conf"
 install -D -m 0644 "$source_dir/appliance/systemd/incus.service.d/youeye-appliance.conf" "$rootfs/usr/lib/systemd/system/incus.service.d/youeye-appliance.conf"
+install -D -m 0644 "$source_dir/appliance/systemd/resolved.conf.d/20-youeye-appliance.conf" "$rootfs/usr/lib/systemd/resolved.conf.d/20-youeye-appliance.conf"
 install -D -m 0644 "$source_dir/appliance/systemd/journald.conf.d/20-youeye-appliance.conf" "$rootfs/usr/lib/systemd/journald.conf.d/20-youeye-appliance.conf"
 install -D -m 0644 "$source_dir/appliance/zram-generator.conf" "$rootfs/usr/lib/systemd/zram-generator.conf"
 
@@ -364,13 +365,14 @@ printf '%s\n' '# YouEye admins (console access) may use sudo with their own pass
     > "$rootfs/etc/sudoers.d/youeye-admins"
 chmod 0440 "$rootfs/etc/sudoers.d/youeye-admins"
 systemctl --root="$rootfs" enable systemd-networkd.service systemd-networkd-wait-online.service ssh.service qemu-guest-agent.service >/dev/null
-systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-console-access.service getty@tty2.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
+systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-console-access.service getty@tty2.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye-setup-page.service youeye-mdns.service youeye.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
 systemctl --root="$rootfs" disable incus.socket incus-user.socket >/dev/null 2>&1 || true
 systemctl --root="$rootfs" mask \
     systemd-bless-boot.service \
     apt-daily.service apt-daily-upgrade.service \
     apt-daily.timer apt-daily-upgrade.timer \
-    dpkg-db-backup.timer logrotate.timer e2scrub_all.timer >/dev/null
+    dpkg-db-backup.timer logrotate.timer e2scrub_all.timer \
+    avahi-daemon.service avahi-daemon.socket >/dev/null
 unit_graph_log="$work_dir/systemd-unit-graph.log"
 if ! systemd-analyze --root="$rootfs" verify multi-user.target >"$unit_graph_log" 2>&1; then
     cat "$unit_graph_log" >&2
@@ -590,6 +592,19 @@ kbd
 ca-certificates
 curl
 openssh-client
+cage
+cog
+libwpewebkit-2.0-1
+libegl1
+libgles2
+libegl-mesa0
+libgbm1
+mesa-libgallium
+fonts-dejavu-core
+firmware-amd-graphics
+firmware-intel-graphics
+firmware-misc-nonfree
+firmware-nvidia-graphics
 EOF
 cat > config/bootloaders/grub-pc/config.cfg <<'EOF'
 set default=0
@@ -619,6 +634,26 @@ insmod png
 source /boot/grub/theme.cfg
 terminal_output gfxterm
 EOF
+# The installer's own menu replaces live-build's "Live system" entries; live-build fills in the @...@ values.
+cat > config/bootloaders/grub-pc/grub.cfg <<'EOF'
+source /boot/grub/config.cfg
+
+menuentry "Install YouEye" --hotkey=i {
+	linux	@KERNEL_LIVE@ @APPEND_LIVE@
+	initrd	@INITRD_LIVE@
+}
+
+menuentry "Install YouEye (text mode)" --hotkey=t {
+	linux	@KERNEL_LIVE@ @APPEND_LIVE@ youeye.text=1
+	initrd	@INITRD_LIVE@
+}
+
+if [ "${grub_platform}" = "efi" ]; then
+	menuentry "UEFI Firmware Settings" --hotkey=f {
+		fwsetup
+	}
+fi
+EOF
 cat > config/includes.chroot/etc/apt/apt.conf.d/99youeye-no-binary-cache <<'EOF'
 Dir::Cache::pkgcache "";
 Dir::Cache::srcpkgcache "";
@@ -634,45 +669,8 @@ EOF
 chmod 0755 config/hooks/live/9999-youeye-reproducible-cache.hook.chroot
 install -m 0755 "$bin_dir/youeye-installer" config/includes.chroot/usr/local/bin/youeye-installer
 install -m 0444 "$rootfs/usr/share/youeye/core-selection-required" config/includes.chroot/usr/share/youeye/core-selection-required
-cat > config/includes.chroot/usr/local/libexec/youeye-live-installer <<'EOF'
-#!/bin/bash
-set -eu
-chvt 1 2>/dev/null || true
-printf '\033c' > /dev/tty1 2>/dev/null || true
-install -d -m 0755 /run/youeye-appliance
-ln -sfn /run/live/medium/appliance /run/youeye-appliance/artifacts
-
-answer=""
-answer_device="$(findfs LABEL=YOUEYE_ANSWER 2>/dev/null || true)"
-if [ -n "$answer_device" ]; then
-    install -d -m 0700 /run/youeye-appliance/answer
-    mount -o ro,nodev,nosuid,noexec "$answer_device" /run/youeye-appliance/answer
-    answer="$(find /run/youeye-appliance/answer -maxdepth 1 -type f -iname 'appliance-answer.json*' -print -quit)"
-fi
-
-if [ -n "$answer" ]; then
-    set +e
-    if [ -c /dev/ttyS0 ]; then
-        /usr/local/bin/youeye-installer install --silent --yes --answer "$answer" 2>&1 | tee /dev/ttyS0
-        status=${PIPESTATUS[0]}
-    else
-        /usr/local/bin/youeye-installer install --silent --yes --answer "$answer"
-        status=$?
-    fi
-    set -e
-    if [ "$status" -eq 0 ]; then
-        sync
-        sleep 2
-        systemctl poweroff
-    fi
-    exit "$status"
-fi
-# The interactive installer returns when the owner leaves its last screen (or quits). Nothing else runs on this
-# console, so turn the machine off instead of leaving a blank screen.
-/usr/local/bin/youeye-installer install || true
-systemctl poweroff
-EOF
-chmod 0755 config/includes.chroot/usr/local/libexec/youeye-live-installer
+# The launcher picks the silent (answer disk), graphical (serve + cog kiosk) or text installer.
+install -m 0755 "$source_dir/appliance/live/youeye-live-installer" config/includes.chroot/usr/local/libexec/youeye-live-installer
 cat > config/includes.chroot/usr/lib/systemd/system/youeye-installer.service <<'EOF'
 [Unit]
 Description=YouEye Installer

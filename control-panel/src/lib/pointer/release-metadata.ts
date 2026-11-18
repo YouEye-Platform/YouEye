@@ -13,21 +13,39 @@ import { runAppUpdateTransaction, type AppUpdateProvider } from '../market/updat
 
 const FILE = '/var/lib/youeye/state/pointer-release/installed.json';
 const CONTAINER = 'youeye-pointer';
+export type PointerRuntimeRecord = {receipt: InstalledProductReceipt; runtimeUUID: string; acceptedAt?: string};
 export type PointerReleaseState = {
   schema: 'youeye.installed-pointer.v1';
-  installed: {receipt: InstalledProductReceipt; runtimeUUID: string; acceptedAt?: string} | null;
+  installed: PointerRuntimeRecord | null;
+  /**
+   * Stage `built`: the verified release was deployed at first boot with its
+   * service disabled. Setup configures it, then it becomes `installed`.
+   * Only one of `built` and `installed` is ever set.
+   */
+  built?: {receipt: InstalledProductReceipt; runtimeUUID: string; builtAt: string} | null;
   floors: ProductSequenceFloors;
 };
-export function pointerRelease(state: PointerReleaseState): VerifiedProductRelease | null {
-  if (!state.installed) return null;
-  const selected = verifyInstalledProductReceipt(state.installed.receipt,{product:'pointer'});
-  if (selected.build.kind !== 'native' || !/^[a-f0-9-]{36}$/i.test(state.installed.runtimeUUID)) throw new Error('Invalid installed Pointer identity');
+function verifiedRuntime(record: {receipt: InstalledProductReceipt; runtimeUUID: string}, floors: ProductSequenceFloors): VerifiedProductRelease {
+  const selected = verifyInstalledProductReceipt(record.receipt,{product:'pointer'});
+  if (selected.build.kind !== 'native' || !/^[a-f0-9-]{36}$/i.test(record.runtimeUUID)) throw new Error('Invalid installed Pointer identity');
   // The floor is never below the installed build; at the same build it names the same contents.
-  const floor = state.floors.pointer;
+  const floor = floors.pointer;
   let consistent = false;
   try { consistent = validProductFloor(floor) && compareToProductFloor(floor, selected) <= 0; } catch { /* same version, other build */ }
   if (!consistent) throw new Error('Invalid Pointer release replay floor');
   return selected;
+}
+export function pointerRelease(state: PointerReleaseState): VerifiedProductRelease | null {
+  if (state.installed && state.built) throw new Error('Pointer is both built and installed');
+  if (!state.installed) return null;
+  return verifiedRuntime(state.installed, state.floors);
+}
+/** The release deployed at first boot and not yet configured, or null. */
+export function builtPointerRelease(state: PointerReleaseState): VerifiedProductRelease | null {
+  if (state.installed && state.built) throw new Error('Pointer is both built and installed');
+  if (!state.built) return null;
+  if (!Number.isFinite(Date.parse(state.built.builtAt))) throw new Error('Invalid built Pointer record');
+  return verifiedRuntime(state.built, state.floors);
 }
 export async function readPointerReleaseState(filePath = FILE): Promise<PointerReleaseState> {
   let file;
@@ -42,11 +60,13 @@ export async function readPointerReleaseState(filePath = FILE): Promise<PointerR
     const state = JSON.parse(await file.readFile('utf8')) as PointerReleaseState;
     if (state.schema !== 'youeye.installed-pointer.v1' || !state.floors || typeof state.floors !== 'object' || Array.isArray(state.floors)) throw new Error('Invalid Pointer release state');
     pointerRelease(state);
+    builtPointerRelease(state);
     return state;
   } finally { await file.close(); }
 }
 export async function savePointerReleaseState(state: PointerReleaseState, filePath = FILE): Promise<void> {
   pointerRelease(state);
+  builtPointerRelease(state);
   await writeJsonAtomically(filePath,state);
 }
 
