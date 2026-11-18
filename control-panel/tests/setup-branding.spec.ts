@@ -61,7 +61,7 @@ test('setup appearance preserves saved revisions and bridge failures without inv
 
 test('IP setup admits its protected branding read while keeping the general bridge restricted', async () => {
   let completionReads = 0;
-  const middleware = load('src/middleware.ts', {
+  const proxy = load('src/proxy.ts', {
     'next/server': { NextResponse },
     jose: { jwtVerify: async (token: string) => {
       if (token !== 'setup-owner') throw Error('Invalid session');
@@ -70,6 +70,7 @@ test('IP setup admits its protected branding read while keeping the general brid
     '@/lib/auth/mode': { getAuthModeForHost: () => 'pam', isLocalSetupHost, isPasswordSignInHost },
     '@/lib/auth/setup-host-paths': setupHostPaths,
     '@/lib/settings-public-path': { isSettingsPath: () => false },
+    '@/lib/auth/cli-token': { isValidCLIToken: (token: string) => token === 'valid-cli-token' },
   }, {
     URL, TextEncoder, AbortController, setTimeout, clearTimeout, console,
     process: { env: { JWT_SECRET: 'test-only-secret-with-at-least-32-characters' } },
@@ -81,21 +82,21 @@ test('IP setup admits its protected branding read while keeping the general brid
       }
       throw Error(`Unexpected fetch: ${input}`);
     },
-  }).middleware;
+  }).proxy;
   const request = (route: string, authenticated = true) => new NextRequest(`https://192.0.2.10${route}`, {
     headers: { host: '192.0.2.10', ...(authenticated ? { cookie: 'ye-session=setup-owner' } : {}) },
   });
-  const allowed = await middleware(request('/api/setup/branding'));
+  const allowed = await proxy(request('/api/setup/branding'));
   assert.equal(allowed.headers.get('x-middleware-next'), '1');
   assert.equal(allowed.headers.has('location'), false);
-  assert.equal((await middleware(request('/api/setup/branding', false))).status, 401);
+  assert.equal((await proxy(request('/api/setup/branding', false))).status, 401);
   for (const route of ['/api/ui/branding', '/api/ui/branding/other', '/api/users']) {
-    const blocked = await middleware(request(route));
+    const blocked = await proxy(request(route));
     assert.equal(blocked.headers.get('x-middleware-next'), null, route);
   }
   assert.equal(completionReads, 1);
   const configuredHost = new NextRequest('https://example.test/api/ui/branding', {
     headers: { host: 'example.test', cookie: 'ye-session=setup-owner' },
   });
-  assert.equal((await middleware(configuredHost)).status, 403);
+  assert.equal((await proxy(configuredHost)).status, 403);
 });

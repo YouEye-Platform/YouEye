@@ -13,10 +13,10 @@ import { NextResponse } from 'next/server';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 import { generateSuggestionsForApp } from '@/lib/bridges/suggestions';
-import { requireAdmin } from '@/lib/auth/rbac';
+import { requireAdminCsrf } from '@/lib/auth/rbac';
 
-export async function POST() {
-  const auth = await requireAdmin();
+export async function POST(request: Request) {
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const installed = await getAllInstalledApps();

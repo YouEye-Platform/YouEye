@@ -6,7 +6,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getSession, type SessionPayload } from './session';
+import { getSession, verifyCSRFToken, type SessionPayload } from './session';
 
 export type Role = 'admin' | 'user' | 'public';
 
@@ -60,6 +60,21 @@ export async function requireAdmin(): Promise<
     };
   }
 
+  return result;
+}
+
+/**
+ * Require an admin session and a valid CSRF token (for unsafe methods). The CLI token passes both.
+ */
+export async function requireAdminCsrf(request: Request): Promise<
+  | { session: SessionPayload; error?: never }
+  | { session?: never; error: NextResponse }
+> {
+  const result = await requireAdmin();
+  if (result.error) return result;
+  if (!await verifyCSRFToken(request.headers.get('X-CSRF-Token') || '')) {
+    return { error: NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 }) };
+  }
   return result;
 }
 

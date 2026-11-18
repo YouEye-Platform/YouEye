@@ -20,7 +20,7 @@ test('identity login uses the server name as the visible wordmark', () => {
 
 test('identity login renders the server WordArt style and font assets', () => {
   const route = read('src/app/identity/login/route.ts');
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/proxy.ts');
 
   assert.match(route, /api\/ui-bridge\/branding/);
   assert.match(route, /identityBranding/);

@@ -12,7 +12,7 @@ import { updateBridge } from '@/lib/bridges/store';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { settingsService } from '@/lib/settings';
-import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
 import { logOperationFailure } from '@/lib/market/install-tracker';
 
 export async function GET() {
@@ -24,7 +24,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const body = await request.json();

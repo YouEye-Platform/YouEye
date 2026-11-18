@@ -62,7 +62,7 @@ test('claim and resume are local, origin-bound, CSRF protected, and rate limited
 
 test('setup session is scoped and setup mutations use a durable single-writer lease', () => {
   const session = read('src/lib/auth/session.ts');
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/proxy.ts');
   const setup = read('src/app/api/setup/run/route.ts');
 
   assert.match(session, /authMethod: 'setup'/);

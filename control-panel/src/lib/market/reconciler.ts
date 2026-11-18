@@ -648,7 +648,7 @@ async function recreateRoutes(meta: InstallMetadata): Promise<void> {
   if (meta.usePerAppBridge) {
     upstream = await appContainerAddress(primary.containerName, meta.appId);
   }
-  await addRoute({ hostname, path: '/*', upstream, port: primary.port || 3000, forwardAuth });
+  await addRoute({ hostname, path: '/*', upstream, port: primary.port || 3000, forwardAuth, appId: meta.appId });
 }
 
 async function forwardAuthConfig(): Promise<{ upstreamDial: string; uri: string; copyHeaders: string[] }> {

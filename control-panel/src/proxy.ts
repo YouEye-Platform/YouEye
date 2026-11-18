@@ -1,14 +1,14 @@
 /**
- * Next.js Middleware for Server-Side Authentication
+ * Next.js Proxy (formerly Middleware) for server-side authentication.
  *
- * Verifies JWT tokens before rendering protected pages.
- * This runs in Edge runtime — telemetry is tracked via a fire-and-forget
- * fetch to /api/telemetry/record (Node.js) to avoid the Edge/Node.js split.
+ * Verifies the session JWT, or the CLI token, before any non-public page or API route runs. Runs on the Node.js
+ * runtime (Next 16's default for proxy.ts), so it can read the CLI token file itself.
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { isValidCLIToken } from '@/lib/auth/cli-token';
 import { getAuthModeForHost, isLocalSetupHost, isPasswordSignInHost } from '@/lib/auth/mode';
 import { isSettingsPath } from '@/lib/settings-public-path';
 import { isPasswordSignInPath, requestIsPlainHttp, setupHostAllows } from '@/lib/auth/setup-host-paths';
@@ -37,11 +37,6 @@ const PUBLIC_ROUTES = [
   '/api/ping',
   '/api/market/image',
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
-  '/api/ui',              // Embed client-side calls to UI bridge proxy (branding, etc.)
-  '/api/bridges',         // Internal: UI server-side fetches bridge data
-  '/api/internet-grants', // Internal: UI server-side fetches internet grant data
-  '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
-  '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
   '/identity/login',
   '/identity/handoff',
@@ -118,13 +113,12 @@ const STATIC_PATTERNS = [
 ];
 
 /**
- * Get JWT secret for middleware verification
- * In middleware, we need to handle the case where JWT_SECRET might not be set
+ * The JWT secret for verifying sessions, or null when it isn't configured (the proxy then fails closed).
  */
-function getMiddlewareJWTSecret(): Uint8Array | null {
+function getProxyJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;
   if (!secret || secret.length < 32) {
-    console.error('[Middleware] JWT_SECRET not properly configured');
+    console.error('[Proxy] JWT_SECRET not properly configured');
     return null;
   }
   return new TextEncoder().encode(secret);
@@ -166,10 +160,10 @@ async function isSetupCompleted(): Promise<boolean> {
       setupCompletedCache = { value: completed, ts: now };
       return completed;
     }
-    console.warn(`[Middleware] setup completion check returned HTTP ${res.status}; treating setup as incomplete`);
+    console.warn(`[Proxy] setup completion check returned HTTP ${res.status}; treating setup as incomplete`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[Middleware] setup completion check failed; treating setup as incomplete: ${message}`);
+    console.warn(`[Proxy] setup completion check failed; treating setup as incomplete: ${message}`);
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -299,7 +293,23 @@ function applySecurityHeaders(response: NextResponse, pathname: string, request?
   return response;
 }
 
-export async function middleware(request: NextRequest) {
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** True when a write comes from this request's own origin (scheme from Caddy's X-Forwarded-Proto, host as sent). */
+function sameOriginWrite(request: NextRequest): boolean {
+  const origin = request.headers.get('origin');
+  if (origin === null) {
+    const site = request.headers.get('sec-fetch-site');
+    return site === null || site === 'same-origin' || site === 'none';
+  }
+  const host = request.headers.get('host');
+  if (!host) return false;
+  const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
+    || request.nextUrl.protocol.replace(':', '');
+  return origin === `${protocol}://${host}`;
+}
+
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname === '/application/o/authorize' || pathname === '/identity/login'
@@ -341,7 +351,7 @@ export async function middleware(request: NextRequest) {
   const sessionCookie = request.cookies.get('ye-session');
   let verifiedSession: Record<string, unknown> | null = null;
   if (sessionCookie?.value) {
-    const secret = getMiddlewareJWTSecret();
+    const secret = getProxyJWTSecret();
     if (secret) {
       try {
         verifiedSession = (await jwtVerify(sessionCookie.value, secret)).payload;
@@ -408,7 +418,7 @@ export async function middleware(request: NextRequest) {
     PUBLIC_ROUTES_EXACT.some(route => pathname === route)
   ) {
     // Password sign-in only on the local setup surface and loopback; named hosts use SSO
-    if (pathname === '/api/auth/login') {
+    if (isPasswordSignInPath(pathname)) {
       if (!isPasswordSignInHost(request.headers.get('host') || '')) {
         return NextResponse.json(
           { error: 'PAM login is not available on subdomain access. Use SSO.' },
@@ -425,11 +435,20 @@ export async function middleware(request: NextRequest) {
     return applySecurityHeaders(NextResponse.next(), pathname, request);
   }
 
-  // CLI token authentication — if X-CLI-Token header is present on API routes,
-  // let the request through to the route handler where getSession() will validate
-  // the token value in Node.js runtime (middleware runs in Edge where fs is unavailable).
-  if (pathname.startsWith('/api/') && request.headers.get('x-cli-token')) {
-    return applySecurityHeaders(NextResponse.next(), pathname, request);
+  // CLI token authentication: an /api request that carries X-CLI-Token passes only with the valid token. The header
+  // alone never opens a route (it did before 0.6.8, which left routes without their own check open to the LAN).
+  const cliToken = request.headers.get('x-cli-token');
+  if (cliToken !== null && pathname.startsWith('/api/')) {
+    if (isValidCLIToken(cliToken)) return applySecurityHeaders(NextResponse.next(), pathname, request);
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Cookie-authenticated writes must come from this origin. The session cookie is SameSite=None on HTTPS names (the
+  // dashboard embeds Control Panel pages), so without this any site an admin visits could post to admin routes that
+  // don't check a CSRF token. Browsers always send Origin on cross-origin writes; a request without Origin (curl,
+  // Spine) carries no victim cookie.
+  if (UNSAFE_METHODS.has(request.method) && !sameOriginWrite(request)) {
+    return NextResponse.json({ error: 'Cross-site request refused' }, { status: 403 });
   }
 
   // Get session cookie
@@ -445,17 +464,20 @@ export async function middleware(request: NextRequest) {
   }
 
   // Verify JWT
-  const secret = getMiddlewareJWTSecret();
+  const secret = getProxyJWTSecret();
   if (!secret) {
-    console.error('[Middleware] Cannot verify JWT - JWT_SECRET not configured');
-    return applySecurityHeaders(NextResponse.next(), pathname, request);
+    // Fail closed: without the secret no session can be verified.
+    console.error('[Proxy] Cannot verify JWT - JWT_SECRET not configured');
+    return pathname.startsWith('/api/')
+      ? NextResponse.json({ error: 'Sign-in is unavailable' }, { status: 503 })
+      : new NextResponse('Sign-in is unavailable', { status: 503 });
   }
 
   try {
     if (!verifiedSession) await jwtVerify(sessionCookie.value, secret);
     return applySecurityHeaders(NextResponse.next(), pathname, request);
   } catch (error) {
-    console.log('[Middleware] Invalid JWT token, redirecting to login');
+    console.log('[Proxy] Invalid JWT token, redirecting to login');
 
     const response = pathname.startsWith('/api/')
       ? NextResponse.json({ error: 'Session expired' }, { status: 401 })

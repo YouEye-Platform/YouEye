@@ -99,6 +99,7 @@ export async function PUT(request: NextRequest) {
         path: existingRoute.path || '/*',
         upstream: existingRoute.upstream,
         port: existingRoute.port,
+        appId,
       });
       results.caddy = { success: true };
     } else {

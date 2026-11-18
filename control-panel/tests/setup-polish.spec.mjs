@@ -67,7 +67,7 @@ test('fallback favicon is the transparent blue Y used during initial setup', () 
 });
 
 test('IP setup-complete routing uses IPv4 loopback and completed login handoff', () => {
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/proxy.ts');
   const login = read('src/components/auth/login-form.tsx');
 
   assert.match(middleware, /http:\/\/127\.0\.0\.1:3000\/api\/setup\/config/);

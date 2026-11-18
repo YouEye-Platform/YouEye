@@ -276,7 +276,7 @@ test('a bad new password is refused before the code is spent', async () => {
 
 test('the reset page and route are public, rate-limited and same-origin', () => {
   const route = read('src/app/api/auth/reset-owner/route.ts');
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/proxy.ts');
   assert.match(route, /checkRateLimit\(`owner-reset:\$\{requestIP\(request\)\}`/);
   assert.match(route, /sameOrigin\(request\)/);
   assert.match(route, /useCode: code => spineClient\.useOwnerResetCode\(code\)/);

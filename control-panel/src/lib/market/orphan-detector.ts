@@ -7,10 +7,14 @@
 
 import { listInstalledApps, listRetainedApps } from './metadata';
 import { getRoutes, removeRoute } from '../caddy/client';
+import { appIdFromRouteId } from '../caddy/app-route-id';
+import type { ProxyRoute } from '../caddy/types';
 import type { InstallMetadata, OrphanResource } from './types';
 import { INSTALLATION_TAG, readInstanceConfig } from './instance-ownership';
 
 const DB_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+// Databases the platform owns: never offered, never dropped.
+const PLATFORM_DATABASES = new Set(['postgres', 'youeye', 'youeye_ui', 'pihole', 'pointer']);
 
 /** Exact names, installation ids and databases recorded by installed and retained apps. */
 async function recordedOwnership() {
@@ -22,6 +26,7 @@ async function recordedOwnership() {
     ])),
     installations: new Set(owned.map((m) => m.installationId).filter((id): id is string => Boolean(id))),
     databases: new Set(owned.flatMap((m) => [m.appId, ...(m.databaseName ? [m.databaseName] : [])])),
+    volumes: new Set(owned.flatMap((m) => (m.storageVolumes ?? []).map((volume) => `${volume.pool}/${volume.name}`))),
   };
 }
 
@@ -47,36 +52,23 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
   const installedContainers = new Set(owned.flatMap((m) =>
     m.containers.map((c: any) => c.containerName)
   ));
-  const installedSubdomains = new Set(
-    installed
-      .filter((m) => m.subdomain && m.domain)
-      .map((m) => `${m.subdomain}.${m.domain}`)
-  );
   for (const metadata of retained) {
     for (const root of metadata.retainedRoots?.roots ?? []) installedContainers.add(root.retainedName);
   }
+  // Every volume any install record names (aliases included) is owned: conservative on purpose.
   const installedVolumes = new Set(owned.flatMap((metadata) =>
-    (metadata.storageVolumes ?? [])
-      .filter((volume) => !volume.attachmentOnly)
-      .map((volume) => `${volume.pool}/${volume.name}`)
+    (metadata.storageVolumes ?? []).map((volume) => `${volume.pool}/${volume.name}`)
   ));
 
-  // 1. Orphaned Caddy routes
+  // 1. Orphaned Caddy routes: only app-shaped routes (see orphanAppRoutes) that no install record explains.
   try {
-    const routes = await getRoutes();
-    for (const route of routes) {
-      if (!route.hostname) continue;
-      // Skip infrastructure routes
-      if (isInfraRoute(route.hostname)) continue;
-      // If the hostname doesn't match any installed app subdomain
-      if (!installedSubdomains.has(route.hostname) && !isKnownHostname(route.hostname, installedAppIds)) {
-        orphans.push({
-          type: 'caddy-route',
-          identifier: route.hostname,
-          detail: `Route ID: ${route.id}, upstream: ${route.upstream}`,
-          action: 'can-remove',
-        });
-      }
+    for (const route of await orphanAppRoutes(owned)) {
+      orphans.push({
+        type: 'caddy-route',
+        identifier: route.hostname!,
+        detail: `Route ID: ${route.id}, upstream: ${route.upstream}`,
+        action: 'can-remove',
+      });
     }
   } catch {
     // Caddy may be unavailable
@@ -87,7 +79,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     const { execShell } = await import('../incus/server');
     const result = await execShell(
       'youeye-postgres',
-      `psql -U youeye -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'youeye')"`,
+      `psql -U youeye -tAc "SELECT datname FROM pg_database WHERE datistemplate = false"`,
       { timeout: 10_000 }
     );
 
@@ -97,7 +89,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
         const dbName = db.trim();
         if (!dbName) continue;
         // Check if this DB belongs to any installed app
-        if (!installedAppIds.has(dbName) && !isInfraDatabase(dbName)) {
+        if (!installedAppIds.has(dbName) && !PLATFORM_DATABASES.has(dbName)) {
           orphans.push({
             type: 'postgres-db',
             identifier: dbName,
@@ -175,18 +167,19 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
   try {
     switch (orphan.type) {
       case 'caddy-route': {
-        const routes = await getRoutes();
-        for (const route of routes) {
-          if (route.hostname === orphan.identifier) {
-            await removeRoute(route.id);
-          }
-        }
+        // Re-check at the write boundary: remove only routes that are still orphaned app routes for this name.
+        const owned = [...await listInstalledApps(), ...await listRetainedApps()];
+        const routes = (await orphanAppRoutes(owned)).filter((route) => route.hostname === orphan.identifier);
+        if (routes.length === 0) throw new Error('Route is not an orphaned app route');
+        for (const route of routes) await removeRoute(route.id);
+        const remaining = new Set((await getRoutes()).map((route) => route.id));
+        if (routes.some((route) => remaining.has(route.id))) throw new Error('Caddy kept the route');
         return { success: true };
       }
 
       case 'postgres-db': {
         const name = orphan.identifier;
-        if (!DB_IDENTIFIER.test(name) || isInfraDatabase(name) || ['postgres', 'youeye', 'youeye_ui'].includes(name)) {
+        if (!DB_IDENTIFIER.test(name) || PLATFORM_DATABASES.has(name)) {
           throw new Error('Not an app database identifier');
         }
         if ((await recordedOwnership()).databases.has(name)) throw new Error('Database belongs to an installed app');
@@ -232,25 +225,15 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
         }
         const kind = current.metadata?.config?.['user.youeye.kind'];
         if (kind !== 'app' && kind !== 'shared') throw new Error('Storage is not owned by YouEye');
+        if ((await recordedOwnership()).volumes.has(`${pool}/${volume}`)) {
+          throw new Error('Storage belongs to an installed app or to data kept after an uninstall');
+        }
         if ((current.metadata?.used_by?.length ?? 0) > 0) throw new Error('Storage is still attached to an instance');
         const deleted = await incReq('DELETE', `/1.0/storage-pools/${encodeURIComponent(pool)}/volumes/custom/${encodeURIComponent(volume)}`);
         if (deleted.type === 'error') throw new Error('Incus refused to delete app storage');
         if (deleted.type === 'async' && deleted.operation) {
           const waited = await incReq('GET', `${deleted.operation}/wait?timeout=60`, undefined, { timeout: 70_000 });
           if (waited.type === 'error') throw new Error('App storage deletion failed');
-        }
-        return { success: true };
-      }
-
-      case 'dns-entry': {
-        // DNS entries typically just the app subdomain CNAME
-        // Parse identifier as "subdomain.domain"
-        const { removeCNAMERecord, getDNSRecords, removeDNSRecord } = await import('../apps/pihole-api');
-        const dnsRecords = await getDNSRecords();
-        for (const record of dnsRecords) {
-          if (record.domain === orphan.identifier) {
-            await removeDNSRecord(record.ip, record.domain);
-          }
         }
         return { success: true };
       }
@@ -293,19 +276,16 @@ export async function cleanupAllOrphans(): Promise<{
 
 // ─── Helpers ──────────────────────────────────────────────
 
-function isInfraRoute(hostname: string): boolean {
-  // Infrastructure hostnames: auth.*, panel.*, cp.*, dns.*, etc.
-  const infraPrefixes = ['auth.', 'panel.', 'cp.', 'dns.', 'pihole.'];
-  return infraPrefixes.some((p) => hostname.startsWith(p));
-}
-
-function isKnownHostname(hostname: string, appIds: Set<string>): boolean {
-  // Check if the subdomain part matches any app ID
-  const subdomain = hostname.split('.')[0];
-  return appIds.has(subdomain);
-}
-
-function isInfraDatabase(name: string): boolean {
-  const infraDbs = new Set(['pihole', 'pointer']);
-  return infraDbs.has(name);
+/**
+ * App routes (id `app-route-<appId>-…`, see appRouteId) whose app has no install or retained-data record. Every
+ * other route is never offered: platform routes (fixed ids or generated `route-…` ids for the box name and its
+ * control, DNS and identity subdomains, whatever the owner named them), routes the owner added by hand, and app
+ * routes created before 0.6.8.
+ */
+async function orphanAppRoutes(owned: InstallMetadata[]): Promise<ProxyRoute[]> {
+  const apps = new Set(owned.map((metadata) => metadata.appId));
+  return (await getRoutes()).filter((route) => {
+    const appId = appIdFromRouteId(route.id);
+    return Boolean(route.hostname) && appId !== null && !apps.has(appId);
+  });
 }

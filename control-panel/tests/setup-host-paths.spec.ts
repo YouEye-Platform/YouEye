@@ -53,12 +53,12 @@ async function withMiddleware(setupCompleted: boolean, run: (call: (path: string
     return new Response(null, { status: 204 });
   }) as typeof fetch;
   // A fresh module per completion state: the middleware caches setup completion.
-  const { middleware } = await import(`../src/middleware.ts?completed=${setupCompleted}`);
+  const { proxy } = await import(`../src/proxy.ts?completed=${setupCompleted}`);
   try {
     await run(async (path, init = {}) => {
       const headers = new Headers({ host: init.host ?? 'youeye.local' });
       if (init.proto) headers.set('x-forwarded-proto', init.proto);
-      return middleware(new NextRequest(`http://${init.host ?? 'youeye.local'}${path}`, { method: init.method ?? 'GET', headers }));
+      return proxy(new NextRequest(`http://${init.host ?? 'youeye.local'}${path}`, { method: init.method ?? 'GET', headers }));
     });
   } finally {
     globalThis.fetch = previousFetch;

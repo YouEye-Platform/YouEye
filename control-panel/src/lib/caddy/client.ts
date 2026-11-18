@@ -29,6 +29,7 @@ import { getContainerIP } from '@/lib/incus/container-ip';
 import { getSystemStaticIP } from '@/lib/incus/static-ips';
 import { incusDownloadFile } from '@/lib/incus/server';
 import { waitForIncusReady } from '@/lib/incus/readiness';
+import { appRouteId } from './app-route-id';
 import { isUsableIPv4 } from '@/lib/incus/ipv4';
 import { containerExists } from '@/lib/infrastructure/oci-deployer';
 import {
@@ -241,6 +242,8 @@ export async function getStatus(): Promise<CaddyStatus> {
 function generateRouteId(): string {
   return `route-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
+
+export { appIdFromRouteId, appRouteId } from './app-route-id';
 
 /**
  * Check if a string looks like an IP address
@@ -512,7 +515,7 @@ export async function formDataToRoute(data: RouteFormData): Promise<{ route: Cad
   });
 
   const route: CaddyRoute = {
-    '@id': generateRouteId(),
+    '@id': data.appId ? appRouteId(data.appId) : generateRouteId(),
     handle: handlers,
   };
 

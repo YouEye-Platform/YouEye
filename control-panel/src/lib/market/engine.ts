@@ -1938,6 +1938,7 @@ async function installAppLocked(
       upstream: routeUpstream,
       port: primaryPort,
       forwardAuth: forwardAuthConfig,
+      appId,
     });
     emit(onEvent, step, totalSteps, 'success', `Route added: ${hostname}`);
     await migrateSystemUpstreamsToIPv4();

@@ -1,5 +1,5 @@
 /**
- * Orphan resource detection and cleanup API.
+ * Orphan resource detection and cleanup API (admins and the CLI only).
  *
  * GET  /api/admin/orphans — detect orphaned resources
  * POST /api/admin/orphans — clean up orphaned resources
@@ -9,10 +9,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { detectOrphans, cleanupOrphan, cleanupAllOrphans } from '@/lib/market/orphan-detector';
 import type { OrphanResource } from '@/lib/market/types';
+import { requireAdmin, requireAdminCsrf } from '@/lib/auth/rbac';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
   try {
     const orphans = await detectOrphans();
     return NextResponse.json({ orphans, count: orphans.length });
@@ -25,6 +28,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAdminCsrf(request);
+  if (auth.error) return auth.error;
   let body: { action: string; orphan?: OrphanResource };
   try {
     body = await request.json();

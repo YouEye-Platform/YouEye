@@ -1,7 +1,7 @@
 /**
  * The box's mDNS names: Avahi publishes `youeye.local`, and `youeye-<N>.local` when another box on the LAN
  * already has it. These (and the box IP) are the onboarding surface only, so they can never be a platform domain.
- * Dependency-free: shared by the Edge middleware, server routes and the setup wizard.
+ * Dependency-free: shared by the proxy, server routes and the setup wizard.
  */
 const MDNS_SETUP_NAME = /^youeye(?:-[0-9]{1,4})?\.local$/i;
 

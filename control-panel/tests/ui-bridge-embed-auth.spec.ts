@@ -48,7 +48,7 @@ test('every CP /api/ui-bridge route handler checks requireEmbedAdmin first, and 
       assert.match(firstLine, /requireEmbedAdmin\(request\)/, `${path.relative(root, route)} ${method}`);
     }
   }
-  const middleware = readFileSync(path.join(root, '../../../middleware.ts'), 'utf8');
+  const middleware = readFileSync(path.join(root, '../../../proxy.ts'), 'utf8');
   assert.doesNotMatch(middleware, /'\/api\/ui-bridge'/);
 });
 

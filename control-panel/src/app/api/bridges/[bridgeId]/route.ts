@@ -13,7 +13,7 @@ import {
   deleteBridge,
 } from '@/lib/bridges/manager';
 import { getBridge, updateBridge } from '@/lib/bridges/store';
-import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
 
 export async function GET(
   _request: Request,
@@ -34,7 +34,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ bridgeId: string }> },
 ) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const { bridgeId } = await params;
@@ -62,10 +62,10 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ bridgeId: string }> },
 ) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const { bridgeId } = await params;

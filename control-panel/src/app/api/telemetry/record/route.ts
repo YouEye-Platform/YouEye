@@ -1,9 +1,8 @@
 /**
  * Internal telemetry tracking endpoint (Node.js runtime).
  *
- * Receives route hits from the Edge middleware via fire-and-forget fetch.
- * This works around the Edge/Node.js globalThis split — middleware can't
- * use fs directly, so it POSTs here instead.
+ * Receives route hits from the proxy (src/proxy.ts) via fire-and-forget fetch, so counting never adds latency to
+ * the request being proxied.
  */
 
 import { NextResponse } from "next/server";
