@@ -68,6 +68,17 @@ groups are:
 Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi-hole
 (`spine/internal/cmd/hostipcheck.go`).
 
+## Host maintenance (API service)
+
+`youeye api serve` runs `internal/cmd/host_maintenance.go` at start and then daily, so it ships with Spine updates:
+
+- **ZFS ARC ceiling:** `zfs_arc_max` = 10 % of RAM, at least 512 MiB, at most 16 GiB (Proxmox VE's rule plus a floor).
+  Without it the ARC grows toward all RAM (about 6.9 GiB of 8 GB) and starves containers. Set only while the value
+  is ZFS's default 0, so an administrator's own `zfs_arc_max` is kept.
+- **Exec output sweep:** deletes `incus exec` output files older than a day (longer than any exec) under
+  `/var/lib/incus/containers/*/exec-output/` (running containers; a stopped one's dataset is unmounted). Incus keeps
+  them for ever; the Control Panel deletes what it reads since 0.6.9, the sweep removes what older versions left.
+
 ## Spine-only update (no reboot)
 
 1. The update downloads the release's Spine into the update cache and checks its SHA-256 against

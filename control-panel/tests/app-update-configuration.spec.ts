@@ -21,9 +21,10 @@ test('changed config resolves installed credentials without minting or replacing
   assert.deepEqual(next, { TOKEN: 'installed-token', SETTING: 'new', PLATFORM_CA: '/ca.pem' });
 });
 
-test('missing, inconsistent or empty new credential declarations fail safely', () => {
-  assert.throws(() => updateEnvironment({ TOKEN: '${youeye.app_token}' },
-    { TOKEN: '${youeye.app_token}' }, {}, {}), /missing/);
+test('an unchanged credential the install never set stays unset; inconsistent or empty new ones fail safely', () => {
+  // AI Settings off at install: the ai.* keys were never written. An update keeps them off and mints nothing.
+  assert.deepEqual(updateEnvironment({ TOKEN: '${youeye.app_token}', OPENAI_API_KEY: '${ai.api_key}' },
+    { TOKEN: '${youeye.app_token}', OPENAI_API_KEY: '${ai.api_key}', PLAIN: 'x' }, { TOKEN: 't' }, {}), { TOKEN: 't', PLAIN: 'x' });
   assert.throws(() => resolveUpdateTemplate('${database.password}', { database: { password: '' } } as never), /unavailable/);
   assert.throws(() => updateConfigurationContext({ ...old,
     containers: [{ name: 'a', environment: { OIDC_SECRET: '${sso.client_secret}' } },

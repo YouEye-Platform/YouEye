@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   readInstallMetadataAtBaseForTest,
+  scanInstalledAppsAtBaseForTest,
   removeInstallMetadataRecordAtBaseForTest,
 } from '../src/lib/market/metadata';
 
@@ -50,6 +51,22 @@ test('record-only cleanup preserves colocated secrets and volume data', async ()
     await assert.rejects(lstat(path.join(directory, 'install.json')), { code: 'ENOENT' });
     assert.equal((await lstat(secret)).isFile(), true);
     assert.equal((await lstat(data)).isFile(), true);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('one damaged install record is named, not fatal, for the scan', async () => {
+  const baseDir = await mkdtemp(path.join(tmpdir(), 'youeye-market-metadata-'));
+  try {
+    await writeMetadata(baseDir, 'good');
+    await writeMetadata(baseDir, 'loose', 0o644);
+    const broken = await writeMetadata(baseDir, 'broken');
+    await writeFile(path.join(broken, 'install.json'), '{', { mode: 0o600 });
+    await mkdir(path.join(baseDir, 'app-empty'), { mode: 0o700 }); // no record: not installed, not damaged
+    const { apps, damaged } = await scanInstalledAppsAtBaseForTest(baseDir);
+    assert.deepEqual(apps.map(a => a.appId), ['good']);
+    assert.deepEqual(damaged.sort(), ['broken', 'loose']);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

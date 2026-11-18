@@ -55,7 +55,9 @@ export function updateEnvironment(
   }
   for (const [key, template] of Object.entries(targetDeclarations)) {
     if (template === oldDeclarations[key] && /\$\{(?:database|sso|identity|youeye|ai)\./.test(template)) {
-      if (!Object.hasOwn(current, key)) throw new Error('Installed credential mapping is missing');
+      // Unchanged and not installed: the feature is off (AI Settings off at install, say). Keep it off; an update
+      // never mints a credential.
+      if (!Object.hasOwn(current, key)) { delete next[key]; continue; }
       next[key] = current[key];
     } else {
       next[key] = resolveUpdateTemplate(template, context);

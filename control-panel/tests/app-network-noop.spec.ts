@@ -9,7 +9,7 @@ import * as equality from '../src/lib/incus/config-equality';
 import * as caddy from '../src/lib/incus/app-network-caddy-nic';
 const require = createRequire(import.meta.url);
 
-function fixture(count = 1) {
+function fixture(count = 1, options: { stopped?: boolean } = {}) {
   const lease = { appId: 'example', bridgeId: 1, bridgeName: 'yeapp1', cidr: '10.76.0.0/27', gateway: '10.76.0.1', state: 'active', operationId: 'fixture-operation' };
   const network = { name: 'yeapp1', config: { 'ipv4.address': '10.76.0.1/27', 'raw.dnsmasq': 'server=192.0.2.14\naddress=/id.youeye/10.76.0.1\nlocal=/id.youeye/', 'user.youeye.kind': 'app-network', 'user.youeye.app_id': 'example', 'user.youeye.cidr': lease.cidr, 'user.youeye.operation_id': lease.operationId } };
   const instances: Record<string, any> = {
@@ -63,6 +63,7 @@ function fixture(count = 1) {
     } },
     '@/lib/health/issues': { resolveIssue: async () => {}, observeIssue: async () => {} },
     '../market/install-tracker': { getAllActiveInstalls: () => [] },
+    '../market/app-prober': { shouldSuppressAppRecovery: () => !!options.stopped },
     '../market/metadata': { readInstallMetadata: async (appId: string) => ({ appId, lifecycleState: 'installed', containers: [{ name: 'main', containerName: `app-${appId}`, type: 'oci' }], databaseMode: 'none', hasSSO: false }) },
   };
   const exports: Record<string, any> = {};
@@ -131,6 +132,17 @@ test('17 unchanged apps share one full audit and one system-device read per pass
   f.acl.description = 'external drift';
   await f.reconcile();
   assert.deepEqual(f.writes, ['PUT /1.0/network-acls/ye-app-example-egress']);
+});
+
+test('a stopped app\'s network is audited every 10 minutes, a running one every pass', async () => {
+  // The first pass converges; the second audits clean and records the time; the third skips the stopped app.
+  const f = fixture(1, { stopped: true }); await f.reconcile(); await f.reconcile(); f.reads.length = 0;
+  await f.reconcile();
+  assert.ok(!f.reads.includes('/1.0/network-acls/ye-app-example-egress'), 'skipped within 10 minutes');
+  assert.ok(!f.reads.includes('/1.0/instances/app-example'));
+  const running = fixture(1); await running.reconcile(); await running.reconcile(); running.reads.length = 0;
+  await running.reconcile();
+  assert.ok(running.reads.includes('/1.0/network-acls/ye-app-example-egress'), 'a running app is audited every pass');
 });
 
 test('a provider disconnect cannot authorize a cached repair and the next live read recovers', async () => {

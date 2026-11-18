@@ -41,7 +41,6 @@ function fixture(mode: 'own' | 'shared' = 'own', engineDesired = true, healthy =
   }, exports);
   const provider = new exports.IncusAppUpdateProvider();
   provider.load = () => plan;
-  provider.ensureCurrentSecurity = async () => {};
   provider.optionalFence = () => ({ operationId: 'fixture' });
   provider.postgres = async () => ({
     unfence: async (_fence: unknown, phase: string) => {

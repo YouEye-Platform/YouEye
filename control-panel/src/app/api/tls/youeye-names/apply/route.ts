@@ -14,6 +14,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { reconfigure } from '@/lib/reconfigure';
 import { applyBundleIdentity, parseNamesBundle, type NamesBundle } from '@/lib/youeye-names/bundle';
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
         const importedIdentity = validateStoredIdentity(appliedBundle.identity).identity;
         send({ step: 'identity_import', status: 'running', message: `Validating the saved identity for ${newDomain}...` });
 
-        const result = await reconfigure(
+        const result = await withUserOperationLockWait(() => reconfigure(
           {
             domain: newDomain,
             tls: 'names-bundle',
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
             },
           },
           (event) => send(event),
-        );
+        ));
 
         send({ complete: true, newUrl: result.newUrl });
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));

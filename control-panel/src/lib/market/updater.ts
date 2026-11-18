@@ -22,8 +22,9 @@ import { appUpdateJournalStore, withAppLifecycle } from './update-admission';
 import { prepareIncusAppUpdate } from './update-provider';
 import { runAppUpdateTransaction } from './update-transaction';
 import { updateDigest } from './update-workspace';
+import { logOperationFailure } from './install-tracker';
 import { freezeUpdateOCIImage } from './update-oci';
-import { execShell, incusUploadFile } from '@/lib/incus/server';
+import { execShell, incusRequest, incusUploadFile } from '@/lib/incus/server';
 import { readFile } from 'fs/promises';
 import {
   stopContainer,
@@ -54,6 +55,7 @@ import { refreshDirectMarketApp } from './direct-apps';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
+import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -73,8 +75,14 @@ export interface UpdateResult {
   previousVersion: string;
   newVersion: string;
   migrationsRun: number;
+  /** Shared folders the app mounts (e.g. `media`): updated in place and never rolled back. */
+  sharedFolders?: string[];
   error?: string;
+  /** `committed-reopen-pending`: the new version is installed, but the app is still in maintenance until recovery
+   * finishes reopening it (`youeye app recover <app>`). */
   errorCode?: string;
+  /** The journal operation this attempt created; absent when it was refused before one (preflight, busy). */
+  operationId?: string;
 }
 
 // ─── Emit Helper ──────────────────────────────────────────
@@ -411,6 +419,9 @@ async function updateMarketAppLocked(
         await waitForContainerExec(name);
       });
     }
+    // Connections to other apps survive the rebuild (Incus keeps devices): re-point their ACLs and prove each NIC is
+    // still in place before the app is reopened.
+    await transaction.mutate('verify-connections', () => verifyConnections(appId, containerNames));
     for (let i = 0; i < containerSpecs.length; i++) {
       const spec = containerSpecs[i];
       const name = containerNames[i];
@@ -515,7 +526,7 @@ async function updateMarketAppLocked(
     }
     return { value: {
       success: true, previousVersion: installedVersion, newVersion: targetVersion,
-      migrationsRun: 0,
+      migrationsRun: 0, sharedFolders: preflight.inventory.sharedFolders,
     }, metadataDigest: updateDigest(JSON.stringify(saved)) };
     }, id => { attemptedOperation = id; });
     // Current ownership is reconciled only after durable commit and cleanup.
@@ -526,26 +537,86 @@ async function updateMarketAppLocked(
     await reconcileAdmissionProjections();
     return result;
   } catch (error) {
+    logOperationFailure(`Update of ${appId} (operation ${attemptedOperation ?? 'not admitted'})`, error);
     const record = attemptedOperation ? appUpdateJournalStore().read(attemptedOperation) : undefined;
     const committed = !!record?.commit;
+    // Never "success" while the app is still behind the maintenance fence; never "in maintenance" once it reopened.
+    const reopened = !!record?.steps.some(s => s.id === 'reopen-compatible-app' && s.state === 'completed');
     const message = committed
-      ? 'Update committed; maintenance or checkpoint cleanup requires attention.'
+      ? reopened
+        ? `Version ${targetVersion} is installed and the app is open, but a step after the update failed `
+          + '(checkpoint cleanup or access reconciliation); the cause is in the Control Panel journal.'
+        : `Version ${targetVersion} is installed, but reopening the app did not finish; it stays in maintenance until `
+          + `recovery succeeds (youeye app recover ${appId}).`
       : record?.phase === 'recovery_required'
         ? 'Update recovery requires attention. Maintenance reservations and checkpoints are retained.'
         : error instanceof Error ? error.message : 'Application update failed.';
-    emit(onEvent, step, totalSteps, committed ? 'success' : 'error', message);
+    emit(onEvent, step, totalSteps, 'error', message);
     return {
-      success: committed, previousVersion: installedVersion,
+      success: false, previousVersion: installedVersion,
       newVersion: committed ? targetVersion : installedVersion,
-      migrationsRun: 0, error: message,
-      errorCode: !committed && error && typeof error === 'object' && 'code' in error
-        && typeof error.code === 'string' ? error.code : undefined,
+      migrationsRun: 0, error: message, operationId: attemptedOperation,
+      errorCode: committed ? (reopened ? 'committed-post-update-failed' : 'committed-reopen-pending')
+        : !attemptedOperation && isLifecycleBusy(error) ? 'operation_in_progress'
+        : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined,
     };
   } finally {
     await stagedNativeArtifacts.cleanup();
   }
 }
 
+/** Every active network connection of the app still has its NIC, and its ACL points at the peer's current address. */
+async function verifyConnections(appId: string, containerNames: string[]): Promise<void> {
+  const { refreshConnectionGrants } = await import('@/lib/bridges/manager');
+  const { loadBridges } = await import('@/lib/bridges/store');
+  // A refresh failure can come from the peer's side (its record or ACL): log it, never roll this app back for it.
+  // The 30 s reconcile pass retries. Only a missing NIC on this app fails the update.
+  const failed = await refreshConnectionGrants(appId);
+  if (failed.length) console.warn(`[Market] Update of ${appId}: connection ACLs not refreshed for ${failed.join(', ')}`);
+  for (const bridge of await loadBridges()) {
+    if (!bridge.active || bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') continue;
+    const peer = bridge.from === appId ? bridge.to : bridge.to === appId && bridge.direction === 'both-ways' ? bridge.from : null;
+    if (!peer) continue;
+    let found = false;
+    for (const name of containerNames) {
+      const instance = await incusRequest<{ expanded_devices?: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${encodeURIComponent(name)}`);
+      if (instance.type !== 'error' && instance.metadata?.expanded_devices?.[`net-${peer}`]?.type === 'nic') { found = true; break; }
+    }
+    if (!found) throw new Error(`The connection to ${peer} lost its network interface during the update`);
+  }
+}
+
+/**
+ * One app update at a time on the box. Updates no longer reserve shared resources (a stuck one must not block other
+ * apps), so this in-process queue keeps two from racing each other's Caddy fence writes and free-space checks.
+ */
+const updateQueue = globalThis as typeof globalThis & { __youeyeAppUpdateTail?: Promise<void> };
+async function oneUpdateAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const previous = updateQueue.__youeyeAppUpdateTail ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>(resolve => { release = resolve; });
+  updateQueue.__youeyeAppUpdateTail = previous.then(() => mine, () => mine);
+  // A user's update waits as long as any user operation (30 s) for the one before it, then answers busy; outside a
+  // user operation it waits its turn.
+  const budget = (globalThis as Record<symbol, { getStore?: () => { timeoutMs?: number } | undefined } | undefined>)[
+    Symbol.for('youeye.lifecycle-lock-wait')]?.getStore?.()?.timeoutMs;
+  if (budget !== undefined) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const turn = await Promise.race([
+      previous.then(() => true, () => true),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), budget); }),
+    ]);
+    clearTimeout(timer);
+    if (!turn) {
+      release();
+      throw Object.assign(new Error('Another app update is running; try again when it finishes'), { code: 'operation_in_progress' });
+    }
+  } else {
+    await previous.catch(() => undefined);
+  }
+  try { return await work(); } finally { release(); }
+}
+
 export async function updateMarketApp(config: UpdateConfig, onEvent: InstallEventCallback): Promise<UpdateResult> {
-  return withAppLifecycle(config.appId, () => updateMarketAppUnderLifecycle(config, onEvent));
+  return oneUpdateAtATime(() => withAppLifecycle(config.appId, () => updateMarketAppUnderLifecycle(config, onEvent)));
 }

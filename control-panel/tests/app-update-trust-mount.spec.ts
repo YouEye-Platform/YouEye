@@ -21,6 +21,8 @@ async function observe(mount: Record<string, string>) {
     if (name === './caddy-ca') return trust;
     if (name === './update-inventory') return inventory;
     if (name === '@/lib/incus/snapshot') return { containerState: async () => 'Running' };
+    if (name === '../bridges/store') return { getBridgesForApp: async () => [] };
+    if (name === '../incus/app-network') return { integrationAclName: () => 'unused' };
     if (name === '@/lib/incus/server') return { incusRequest: async (_method: string, url: string) => {
       const metadata = url === '/1.0/instances/app-fixture'
         ? { config: { 'volatile.uuid': 'runtime' }, expanded_devices: {

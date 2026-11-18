@@ -6,6 +6,7 @@
  * DELETE /api/bridges/:bridgeId — delete bridge
  */
 
+import { userOperationResponse } from '@/lib/http/lifecycle-busy';
 import { NextResponse } from 'next/server';
 import {
   activateBridge,
@@ -36,29 +37,31 @@ export async function PATCH(
 ) {
   const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
+  return userOperationResponse('Changing a connection', async () => {
 
-  const { bridgeId } = await params;
-  const body = await request.json();
+    const { bridgeId } = await params;
+    const body = await request.json();
 
-  if (body.action === 'activate') {
-    const bridge = await activateBridge(bridgeId);
-    if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
-    return NextResponse.json({ bridge });
-  }
+    if (body.action === 'activate') {
+      const bridge = await activateBridge(bridgeId);
+      if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
+      return NextResponse.json({ bridge });
+    }
 
-  if (body.action === 'deactivate') {
-    const bridge = await deactivateBridge(bridgeId);
-    if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
-    return NextResponse.json({ bridge });
-  }
+    if (body.action === 'deactivate') {
+      const bridge = await deactivateBridge(bridgeId);
+      if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
+      return NextResponse.json({ bridge });
+    }
 
-  if (body.direction) {
-    const bridge = await updateBridge(bridgeId, { direction: body.direction });
-    if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
-    return NextResponse.json({ bridge });
-  }
+    if (body.direction) {
+      const bridge = await updateBridge(bridgeId, { direction: body.direction });
+      if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
+      return NextResponse.json({ bridge });
+    }
 
-  return NextResponse.json({ error: 'invalid action' }, { status: 400 });
+    return NextResponse.json({ error: 'invalid action' }, { status: 400 });
+  });
 }
 
 export async function DELETE(
@@ -67,11 +70,13 @@ export async function DELETE(
 ) {
   const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
+  return userOperationResponse('Removing a connection', async () => {
 
-  const { bridgeId } = await params;
-  const deleted = await deleteBridge(bridgeId);
-  if (!deleted) {
-    return NextResponse.json({ error: 'not found' }, { status: 404 });
-  }
-  return NextResponse.json({ ok: true });
+    const { bridgeId } = await params;
+    const deleted = await deleteBridge(bridgeId);
+    if (!deleted) {
+      return NextResponse.json({ error: 'not found' }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true });
+  });
 }

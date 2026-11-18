@@ -577,6 +577,18 @@ export async function updateForwardAuthEnabled(appId: string, enabled: boolean):
 
 // ─── Health Status ───────────────────────────────────────────
 
+/** When each app was last checked, in memory: the store is written only when the result changes. */
+function healthCheckTimes(): Map<string, string> {
+  const registry = globalThis as typeof globalThis & { __youeyeHealthCheckedAt?: Map<string, string> };
+  registry.__youeyeHealthCheckedAt ??= new Map();
+  return registry.__youeyeHealthCheckedAt;
+}
+
+/** The latest health check time of an app: this process's last check, else the stored time of the last change. */
+export function latestHealthCheckedAt(appId: string, stored?: string | null): string | null {
+  return healthCheckTimes().get(appId) ?? stored ?? null;
+}
+
 export async function updateHealthStatus(
   appId: string,
   status: 'healthy' | 'unhealthy' | 'unknown',
@@ -586,6 +598,13 @@ export async function updateHealthStatus(
     healthDetail?: string | null;
   },
 ): Promise<void> {
+  healthCheckTimes().set(appId, new Date().toISOString());
+  // An unchanged result costs no write (the 46 KB store with two fsyncs and a lock, per app, every 30 s before).
+  const current = (await loadStore()).apps[appId];
+  if (!current || (current.healthStatus === status
+    && current.appHealthState === (probe?.appHealthState ?? 'unknown')
+    && current.failingLevel === probe?.failingLevel
+    && (current.healthDetail ?? null) === (probe?.healthDetail ?? null))) return;
   return mutateStore(s => {
     if (s.apps[appId]) {
       s.apps[appId].healthStatus = status;

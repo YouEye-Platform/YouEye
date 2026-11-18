@@ -83,6 +83,13 @@ export function isCustomSchemeUri(value: string): boolean {
 }
 const DataKind = z.enum(['data', 'config', 'media', 'cache']);
 const DataList = z.array(z.union([AbsPath, xobject({ path: AbsPath, kind: DataKind.optional() })]));
+/** A sidecar's data may also mount one of main's data volumes: `{ path, from: main }` (`main_path` when main mounts it
+ * elsewhere). */
+const SidecarDataList = z.array(z.union([
+  AbsPath,
+  xobject({ path: AbsPath, kind: DataKind.optional() }),
+  xobject({ path: AbsPath, from: z.literal('main'), main_path: AbsPath.optional() }),
+]));
 const Argv = z.array(z.string()).min(1);
 
 // ─── App manifest ─────────────────────────────────────────
@@ -142,7 +149,7 @@ const Sidecar = xobject({
   name: ContainerName.refine((name) => name !== 'main', '"main" is reserved for the app itself'),
   image: ImageRef,
   port: Port.optional(),
-  data: DataList.optional(),
+  data: SidecarDataList.optional(),
   env: EnvMap.optional(),
   command: Argv.optional(),
   health: SidecarHealth.optional(),
@@ -323,13 +330,17 @@ const HttpStep = xobject({
   body: z.unknown().optional(),
   body_from: KeyPath.optional(),
   set: z.record(KeyPath, z.unknown()).optional(),
+  /** Form fields, sent as `application/x-www-form-urlencoded` (values are interpolated, then encoded). */
+  form: z.record(z.string().regex(/^[A-Za-z0-9_.[\]-]{1,128}$/), z.string()).optional(),
   save: z.record(VarName, ResponsePath).optional(),
   ok: z.array(z.number().int().min(100).max(599)).min(1).optional(),
   allow_failure: z.boolean().optional(),
   if: Condition.optional(),
   for_each: xobject({ path: HttpPath, where: z.record(z.string(), z.unknown()).optional(), items: ResponsePath.optional() }).optional(),
 }).refine((value) => !(value.body !== undefined && value.body_from), 'a step has body or body_from, not both')
-  .refine((value) => !value.set || value.body_from || value.body === undefined, 'set merges into body_from');
+  .refine((value) => !value.set || value.body_from || value.body === undefined, 'set merges into body_from')
+  .refine((value) => !value.form || (value.body === undefined && !value.body_from && !value.set),
+    'a step has form or body/body_from/set, not both');
 
 const FileStep = xobject({
   container: StepContainer,

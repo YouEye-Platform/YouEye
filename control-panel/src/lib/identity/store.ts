@@ -568,7 +568,7 @@ export async function ensureUser(input: {
   groups: string[];
   isAdmin: boolean;
 }): Promise<IdentityUser> {
-  const user = await withIdentityAppLifecycle(() => ensureUserUnderLifecycle(input));
+  const user = await withIdentityLifecycle(() => ensureUserUnderLifecycle(input));
   await (await import('@/lib/console-access')).afterIdentityChange({ userId: user.id, password: input.password });
   return user;
 }
@@ -672,7 +672,7 @@ export async function createIdentityUser(input: {
   isAdmin?: boolean;
   isActive?: boolean;
 }): Promise<IdentityUser> {
-  return withIdentityAppLifecycle(() => createIdentityUserUnderLifecycle(input));
+  return withIdentityLifecycle(() => createIdentityUserUnderLifecycle(input));
 }
 
 async function createIdentityUserUnderLifecycle(input: {
@@ -721,7 +721,7 @@ export async function updateIdentityUser(
   patch: IdentityUserPatch | ((current: IdentityUser) => Promise<IdentityUserPatch>),
   afterCommit?: (updated: IdentityUser) => Promise<void>,
 ): Promise<IdentityUser> {
-  return withIdentityAppLifecycle(async () => {
+  return withIdentityLifecycle(async () => {
     let resolved: IdentityUserPatch;
     if (typeof patch === 'function') {
       const current = await getUserById(id);
@@ -782,7 +782,7 @@ async function updateIdentityUserUnderLifecycle(id: string, patch: {
 }
 
 export async function deleteIdentityUser(id: string, beforeDelete?: (current: IdentityUser) => Promise<void>): Promise<void> {
-  return withIdentityAppLifecycle(async () => {
+  return withIdentityLifecycle(async () => {
     await assertIdentityDisposition(id, 'delete');
     if (beforeDelete) {
       const current = await getUserById(id);
@@ -1228,8 +1228,20 @@ export async function rotateOAuthSigningKey(oldPem: string, newPem: string, oldK
 }
 
 
-// Membership and active identity change the authority of every app whose
-// current policy evaluates the principal. Retain all app gates through SQL.
+/**
+ * User, group and password writes take the identity gate only, and wait for it (up to 30 s) instead of failing at
+ * once. They need no app's lock: the admission triggers apply the change to every affected app in the same
+ * transaction (revision bump, grant revocation), and app updates no longer fingerprint the user list. Taking every
+ * app's lock made one stuck app update block all user management (Plan 9 item 15).
+ */
+export async function withIdentityLifecycle<T>(work: () => Promise<T>): Promise<T> {
+  await ensureIdentitySchema();
+  const { withAppLifecycle, withUserOperationLockWait } = await import('../market/update-admission');
+  return withUserOperationLockWait(() => withAppLifecycle('identity', work));
+}
+
+// Independent copies freeze identity and every app: membership and active identity change the authority of every
+// app whose current policy evaluates the principal. Retain all app gates through SQL.
 export async function withIdentityAppLifecycle<T>(work: () => Promise<T>): Promise<T> {
   await ensureIdentitySchema();
   const apps = await queryRows<{app_id: string}>(`SELECT app_id FROM admission_policies WHERE state <> 'deleted' ORDER BY app_id`);

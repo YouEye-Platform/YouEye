@@ -1,4 +1,7 @@
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { isLifecycleBusy, lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
 import { NextRequest, NextResponse } from 'next/server';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { getAdmissionPolicy, updateAdmissionPolicy } from '@/lib/admission/store';
@@ -28,16 +31,18 @@ export async function PUT(request: NextRequest, context: Context) {
   try {
     const body = await request.json();
     if (body.action === 'retain_quarantined') {
-      await quarantineAdmissionData({ appId, actorId, principalId: body.principalId, expectedRevision: body.expectedRevision });
+      await withUserOperationLockWait(() => quarantineAdmissionData({ appId, actorId, principalId: body.principalId, expectedRevision: body.expectedRevision }));
     } else {
       if (body.policy?.appId !== appId) return NextResponse.json({ error: 'Application mismatch' }, { status: 400 });
-      await updateAdmissionPolicy({ actorId, policy: body.policy, expectedRevision: body.expectedRevision });
+      await withUserOperationLockWait(() => updateAdmissionPolicy({ actorId, policy: body.policy, expectedRevision: body.expectedRevision }));
     }
-    await reconcileAdmissionProjections().catch(() => undefined);
+    await reconcileAdmissionProjections().catch(error => logOperationFailure(`Access projection after a change to ${appId}`, error));
     const reconciliation = await admissionReconciliationState(appId);
     return NextResponse.json({ policy: await getAdmissionPolicy(appId), reconciliation,
       ...await admissionManagementData(appId) }, { status: reconciliation === 'pending' ? 202 : 200 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Admission update failed' }, { status: 409 });
+    if (!isLifecycleBusy(error)) logOperationFailure(`Access change for ${appId}`, error);
+    return lifecycleBusyResponse(error)
+      ?? NextResponse.json({ error: error instanceof Error ? error.message : 'Admission update failed' }, { status: 409 });
   }
 }

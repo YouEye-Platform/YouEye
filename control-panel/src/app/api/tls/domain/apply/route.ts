@@ -15,6 +15,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { reconfigure } from '@/lib/reconfigure';
 import {
@@ -72,10 +73,10 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const result = await reconfigure(
+        const result = await withUserOperationLockWait(() => reconfigure(
           { domain: appliedBundle.domain, tls: 'byo-bundle', byoBundle: appliedBundle },
           (event) => send(event),
-        );
+        ));
 
         send({ complete: true, newUrl: result.newUrl });
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));

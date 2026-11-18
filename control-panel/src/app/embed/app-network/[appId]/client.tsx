@@ -155,10 +155,10 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   async function handleApproveSuggestion(suggestion: Suggestion) {
     setApproving(suggestion.id);
     try {
-      const res = await authenticatedFetch("/api/suggestions/approve", {
+      const res = await authenticatedFetch("/api/suggestions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestionId: suggestion.id }),
+        body: JSON.stringify({ action: "approve", suggestionId: suggestion.id }),
       });
       if (res.ok) {
         setSuggestions(suggestions.filter((s) => s.id !== suggestion.id));

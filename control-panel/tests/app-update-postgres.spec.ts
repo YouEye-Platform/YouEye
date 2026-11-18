@@ -20,7 +20,7 @@ function fixture(mode: 'shared' | 'own' = 'shared') {
     operationId: '11111111-2222-4333-8444-555555555555',
   };
   const runtime: AppUpdatePostgresRuntime = {
-    lifecycleExcluded: true, ingressBlocked: true, securityRevision: 'security-4',
+    lifecycleExcluded: true, ingressBlocked: true,
     engine: { name: scope.engine, state: 'Running', ownerAppId: 'fixture' },
     credentialUses: [{ appId: 'fixture', engine: scope.engine, database: 'fixture',
       role: 'fixture', container: 'app-fixture', state: 'Stopped', clientAddresses: ['10.1.1.5'] }],
@@ -452,15 +452,15 @@ test('an existing hard fence is never overwritten by a second prepare receipt', 
   assert.equal(f.catalog.allowConnections, false);
 });
 
-test('unfence failure returns to hard fence and changed security generation cannot regrant old permissions', async () => {
+test('unfence failure returns to hard fence, and a receipt of another operation is refused', async () => {
   const f = fixture();
   const receipt = await f.fence();
   f.state.failSql = s => s.includes('GRANT CONNECT');
   await assert.rejects(f.provider.unfence(receipt, 'apply'), error('unfence-failed'));
   assert.equal(f.catalog.allowConnections, false);
   f.state.failSql = undefined;
-  f.runtime.securityRevision = 'revoked-5';
-  await assert.rejects(f.provider.unfence(receipt, 'original'), error('fence-identity-or-security-changed'));
+  await assert.rejects(f.provider.unfence({ ...receipt, operationId: 'another-operation' }, 'original'),
+    error('fence-identity-or-security-changed'));
   assert.equal(f.catalog.allowConnections, false);
 });
 
@@ -597,7 +597,7 @@ test('wrong scope/fence and tampered retained-security snapshot fail before effe
   }), error('checkpoint-invalid'));
   const retained: AppUpdatePostgresSecurity = {
     schema: 'youeye.app-postgres-security.v1', engine: f.scope.engine, database: 'fixture', ownerRole: 'fixture',
-    securityRevision: 'security-4', encoding: 'UTF8', collate: 'C.UTF-8', ctype: 'C.UTF-8',
+    encoding: 'UTF8', collate: 'C.UTF-8', ctype: 'C.UTF-8',
     version: 170010, acl: [], bytes: f.securitySql, sha256: 'tampered',
   };
   await assert.rejects(f.provider.restore(receipt, cp, { security: retained, persistSecurity: async () => undefined }),
@@ -636,15 +636,14 @@ test('refence closes a failed verification apply state and kills lingering clien
   assert.ok(!f.sqlSteps.slice(before).some(s => /\b(GRANT|REVOKE|CREATE ROLE|ALTER ROLE|DROP ROLE)\b/.test(s)));
 });
 
-test('newer security blocks recovery but refence still closes the exact database and keeps current ACLs', async () => {
+test('after the owner credential rotated, refence refuses unproven writers but still closes the database and keeps current ACLs', async () => {
   const f = fixture();
   const receipt = await f.fence();
   await f.provider.unfence(receipt, 'apply');
-  f.runtime.securityRevision = 'security-revoked-5';
   // Old owner credentials may no longer have a recorded use.
   f.runtime.credentialUses[0].role = 'rotated_owner';
   const currentAcl = structuredClone(f.catalog.acl);
-  await assert.rejects(f.provider.refence(receipt), error('fence-identity-or-security-changed'));
+  await assert.rejects(f.provider.refence(receipt), error('writer-closure-unproven'));
   assert.equal(f.catalog.allowConnections, false);
   assert.equal(f.catalog.connectionLimit, 0);
   assert.deepEqual(f.catalog.acl, currentAcl);

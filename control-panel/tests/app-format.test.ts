@@ -112,6 +112,16 @@ test('setup http paths must be relative paths on the app itself', () => {
   assert.ok(parseSetup(setup({ steps: [{ http: { method: 'DELETE', path: '/api/v3/client/${item.id}', for_each: { path: '/api/v3/client' } } }] })));
 });
 
+test('form: is a field map, exclusive with body; a text body may not interpolate (frozen copies still load)', () => {
+  assert.ok(parseSetup(setup({ steps: [{ http: { method: 'POST', path: '/settings', form: { apikey: '${secret.admin_password}' } } }] })));
+  rejects(() => parseSetup(setup({ steps: [{ http: { method: 'POST', path: '/s', form: { a: 'b' }, body: { a: 1 } } }] })), /form or body/);
+  rejects(() => parseSetup(setup({ steps: [{ http: { method: 'POST', path: '/s', form: { a: 1 } } }] })), /form\.a/);
+  const text = setup({ steps: [{ http: { method: 'POST', path: '/s', body: 'key=${secret.admin_password}' } }] });
+  rejects(() => parseSetup(text), /text body must not use/);
+  assert.ok(parseSetup(text, { lenient: true }));
+  assert.ok(parseSetup(setup({ steps: [{ http: { method: 'POST', path: '/s', body: 'static=1' } }] })));
+});
+
 test('exec runs argv only and file steps write absolute paths', () => {
   rejects(() => parseSetup(setup({ steps: [{ exec: { run: 'rm -rf /' } }] })), /steps\.0\.exec\.run/);
   rejects(() => parseSetup(setup({ steps: [{ exec: { run: [] } }] })), /exec\.run/);
@@ -503,4 +513,23 @@ test('public_access: true compiles to publicAccess; false or absent leaves it un
   assert.equal(appFixture({ public_access: false }).publicAccess, undefined);
   assert.equal(appFixture({}).publicAccess, undefined);
   assert.throws(() => appFixture({ public_access: 'yes' }));
+});
+
+test('a sidecar mounts main\'s data volume with from: main (not a cache path or a shared folder)', () => {
+  const doc = (data: unknown[]) => stringify(appDocument({
+    data: ['/root/.gramps', { path: '/app/cache', kind: 'cache' }], shared: { media: '/app/media' },
+    sidecars: [{ name: 'worker', image: `redis${PIN}`, data }],
+  }));
+  const manifest = loadApp({ manifest: doc([{ path: '/root/.gramps', from: 'main' }, { path: '/w/users', from: 'main', main_path: '/root/.gramps' }, '/own']) });
+  const worker = manifest.containers.find(c => c.name === 'worker')!;
+  const main = manifest.containers.find(c => c.name === 'main')!;
+  const source = main.volumes.find(v => v.container === '/root/.gramps')!;
+  assert.deepEqual(worker.volumes.filter(v => v.sourceVolume).map(v => [v.container, v.sourceVolume, v.sourceContainer, v.sourcePath]),
+    [['/root/.gramps', source.name, 'main', undefined], ['/w/users', source.name, 'main', undefined]]);
+  assert.ok(worker.volumes.some(v => v.container === '/own' && !v.sourceVolume));
+  rejects(() => loadApp({ manifest: doc([{ path: '/nowhere', from: 'main' }]) }), /main has no data volume at \/nowhere/);
+  rejects(() => loadApp({ manifest: doc([{ path: '/app/cache', from: 'main' }]) }), /kind: cache/);
+  rejects(() => loadApp({ manifest: doc([{ path: '/app/media', from: 'main' }]) }), /shared folder/);
+  // from: is for sidecars only.
+  rejects(() => parseApp(stringify(appDocument({ data: [{ path: '/x', from: 'main' }] }))), /data/);
 });

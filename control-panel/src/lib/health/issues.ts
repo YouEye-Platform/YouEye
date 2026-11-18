@@ -104,16 +104,30 @@ export async function recordTimelineEvent(input: {
   return issue!;
 }
 
-export async function hasOpenCriticalIssue(): Promise<HealthIssue | null> {
+export async function hasOpenCriticalIssue(appId?: string): Promise<HealthIssue | null> {
   const issues = await listIssues(false);
-  return findOpenCriticalIssue(issues);
+  return findOpenCriticalIssue(issues, appId);
 }
 
-export async function assertNoCriticalIssues(operation: string): Promise<void> {
-  const issue = await hasOpenCriticalIssue();
+/**
+ * Refuse an operation while a critical issue that concerns it is open: any box-level issue, or (with appId) an issue
+ * of that same app. Another app's problem (a failed install, a stuck update) never blocks this one.
+ */
+export async function assertNoCriticalIssues(operation: string, appId?: string): Promise<void> {
+  const issue = await hasOpenCriticalIssue(appId);
   if (issue) {
     throw new Error(`${operation} blocked while critical health issue is open: ${issue.title}`);
   }
+}
+
+/** The app a per-app issue belongs to, from its id; null for a box-level issue (and for any unknown id format). */
+export function issueAppId(id: string): string | null {
+  const match = /^market\.app-network\.([a-z0-9][a-z0-9-]*)$/.exec(id)
+    ?? /^market\.install\.rollback\.([a-z0-9][a-z0-9-]*)$/.exec(id)
+    ?? /^app\.([a-z0-9][a-z0-9-]*)\.update-recovery$/.exec(id)
+    ?? /^app\.([a-z0-9][a-z0-9-]*)\.install-record$/.exec(id);
+  if (!match || match[1] === 'state') return null;
+  return match[1];
 }
 
 export async function runIssueRepair(id: string): Promise<{ ok: boolean; message: string }> {
@@ -150,10 +164,21 @@ export async function runIssueRepair(id: string): Promise<{ ok: boolean; message
     case 'reconcile-apps': {
       const { reconcileApps } = await import('@/lib/market/reconciler');
       const result = await reconcileApps();
-      if (result.unresolved.length === 0) {
+      const skipped = result.skipped ?? [];
+      if (result.unresolved.length === 0 && skipped.length === 0) {
         await resolveIssue(id);
       }
-      return { ok: result.unresolved.length === 0, message: `Reconcile repaired ${result.repaired.length} divergence(s)` };
+      // Say what was done and what wasn't: "repaired" never stands for "nothing failed".
+      const unresolved = result.unresolved.slice(0, 8).join('; ');
+      const repaired = result.repaired.length ? `Repaired: ${result.repaired.slice(0, 8).join('; ')}. ` : '';
+      return {
+        ok: result.unresolved.length === 0 && skipped.length === 0,
+        message: result.unresolved.length
+          ? `Could not repair: ${unresolved}${repaired ? `. ${repaired.trim()}` : ''}`
+          : skipped.length
+            ? `${repaired}Busy with another operation, not checked: ${skipped.join(', ')}. Try again in a moment.`
+            : (repaired.trim() || 'Nothing needed repair'),
+      };
     }
     case 'repair-empty-app-network': {
       const { repairEmptyAppNetworkBootstrap } = await import('@/lib/incus/app-network');
@@ -185,8 +210,12 @@ function severityRank(severity: IssueSeverity): number {
   }
 }
 
-export function findOpenCriticalIssue(issues: HealthIssue[]): HealthIssue | null {
-  return issues.find((issue) => issue.state === 'open' && issue.severity === 'critical') ?? null;
+export function findOpenCriticalIssue(issues: HealthIssue[], appId?: string): HealthIssue | null {
+  return issues.find((issue) => {
+    if (issue.state !== 'open' || issue.severity !== 'critical') return false;
+    const owner = issueAppId(issue.id);
+    return owner === null || owner === appId;
+  }) ?? null;
 }
 
 export function applyObservation(

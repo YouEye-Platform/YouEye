@@ -8,6 +8,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { isReservedSetupDomain, RESERVED_SETUP_DOMAIN_ERROR } from '@/lib/auth/setup-names';
 import { reconfigure } from '@/lib/reconfigure';
@@ -72,9 +73,9 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const result = await reconfigure(body, (event) => {
+        const result = await withUserOperationLockWait(() => reconfigure(body, (event) => {
           send(event);
-        });
+        }));
 
         send({ complete: true, newUrl: result.newUrl });
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));

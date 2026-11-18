@@ -24,7 +24,7 @@ import { readFileSync } from 'fs';
 import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
 import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
 import { startWatchdogContainer } from './watchdog-start';
-import { listInstalledApps } from '@/lib/market/metadata';
+import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
 import { syncStartupReconciliationIssue } from '@/lib/incus/startup-reconciliation';
 
@@ -228,12 +228,14 @@ async function checkContainerWatchdog(): Promise<void> {
     const recoverySuppressed = new Set<string>();
     let appIntentObservationComplete = false;
     try {
-      for (const app of await listInstalledApps()) {
+      for (const app of await listReadableInstalledApps()) {
         const stopIntent = app.enabled === false || app.desiredState === 'stopped'
           || (app.lifecycleOperation?.desiredState === 'stopped' && app.lifecycleOperation.state !== 'completed');
         let storageUnavailable = false;
         try {
-          storageUnavailable = !(await inspectAppStorage(app.storageVolumes)).available;
+          // A stopped-on-purpose app is never restarted, so its storage needn't be inspected (pool and volume reads
+          // for every stopped app, every minute, before).
+          storageUnavailable = !stopIntent && !(await inspectAppStorage(app.storageVolumes)).available;
         } catch (error) {
           // Reachability uncertainty is a fail-closed recovery boundary. The
           // app prober records the detailed issue; the watchdog must not race

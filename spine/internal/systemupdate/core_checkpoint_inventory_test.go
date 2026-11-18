@@ -25,7 +25,7 @@ func TestCoreCheckpointInventoryRefusesForeignOrUnsettledWriters(t *testing.T) {
 		rows = append(rows, map[string]any{"expanded_devices": map[string]map[string]string{"root": {"type": "disk", "path": "/", "pool": "default"}}, "name": name, "status": "Running", "config": map[string]string{"volatile.uuid": "fixture-" + name, "boot.autostart": "true", "environment.OWNER_SECRET": "private-fixture"}})
 	}
 	raw, _ := json.Marshal(rows)
-	actual, err := coreCheckpointContainers(raw, owned, "owned-snapshot")
+	actual, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot")
 	if err != nil || len(actual) != len(rows) {
 		t.Fatal(actual, err)
 	}
@@ -49,7 +49,7 @@ func TestCoreCheckpointInventoryRefusesForeignOrUnsettledWriters(t *testing.T) {
 		rows[0] = copy
 		mutation()
 		raw, _ := json.Marshal(rows)
-		if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err == nil {
+		if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err == nil {
 			t.Fatal("unsafe writer inventory admitted")
 		}
 		rows[0] = original
@@ -84,13 +84,13 @@ func TestCoreCheckpointAllowsMissingContainersOfCleanupPendingApps(t *testing.T)
 		rows = append(rows, map[string]any{"expanded_devices": map[string]map[string]string{"root": {"type": "disk", "path": "/", "pool": "default"}}, "name": name, "status": "Running", "config": map[string]string{"volatile.uuid": "fixture-" + name}})
 	}
 	raw, _ := json.Marshal(rows)
-	if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err != nil {
+	if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err != nil {
 		t.Fatalf("cleanup-pending app without containers blocked the checkpoint: %v", err)
 	}
 	// Still owned: if the container is there after all, it is checked like any other.
 	withSonarr := append(rows, map[string]any{"name": "app-sonarr", "status": "Running", "config": map[string]string{"volatile.uuid": "fixture-sonarr"}})
 	raw, _ = json.Marshal(withSonarr)
-	if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err != nil {
+	if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err != nil {
 		t.Fatalf("cleanup-pending app container treated as foreign: %v", err)
 	}
 	write("sonarr", "")
@@ -99,7 +99,7 @@ func TestCoreCheckpointAllowsMissingContainersOfCleanupPendingApps(t *testing.T)
 		t.Fatal(err)
 	}
 	raw, _ = json.Marshal(rows)
-	if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err == nil {
+	if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err == nil {
 		t.Fatal("installed app with a missing container admitted")
 	}
 }
@@ -133,11 +133,11 @@ func TestCoreCheckpointOwnsRetainedAppRoots(t *testing.T) {
 		rows = append(rows, map[string]any{"expanded_devices": map[string]map[string]string{"root": {"type": "disk", "path": "/", "pool": "default"}}, "name": name, "status": "Running", "config": map[string]string{"volatile.uuid": "fixture-" + name}})
 	}
 	raw, _ := json.Marshal(rows)
-	if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err != nil {
+	if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err != nil {
 		t.Fatalf("absent retained root blocked the checkpoint: %v", err)
 	}
 	raw, _ = json.Marshal(append(rows, map[string]any{"name": retained, "status": "Stopped", "config": map[string]string{"volatile.uuid": "fixture-retained", "boot.autostart": "false"}}))
-	containers, err := coreCheckpointContainers(raw, owned, "owned-snapshot")
+	containers, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot")
 	if err != nil {
 		t.Fatalf("retained root treated as foreign: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestCoreCheckpointOwnsRetainedAppRoots(t *testing.T) {
 	}
 	// An unrelated stopped instance is still foreign.
 	raw, _ = json.Marshal(append(rows, map[string]any{"name": "ye-retained-" + strings.Repeat("b", 32) + "-0", "status": "Stopped", "config": map[string]string{"volatile.uuid": "fixture-other"}}))
-	if _, err := coreCheckpointContainers(raw, owned, "owned-snapshot"); err == nil {
+	if _, err := coreCheckpointContainers(raw, owned, coreUpdateLabels{}, "owned-snapshot"); err == nil {
 		t.Fatal("unrecorded retained-looking instance admitted")
 	}
 	// The record is part of the application inventory digest.
@@ -218,5 +218,88 @@ func TestCoreCheckpointPreflightRefusalIsADefiniteFailure(t *testing.T) {
 	}
 	if !strings.Contains(observed.Evidence, "installed application container is missing") {
 		t.Fatal(observed.Evidence)
+	}
+}
+
+func TestCoreCheckpointHoldsASettledAppUpdatesRecoveryCopies(t *testing.T) {
+	root := t.TempDir()
+	p := NativeCoreCheckpoint{DataRoot: root}
+	operation := "bb889dda-7829-4075-916c-dbfbc1026994"
+	write := func(record string) {
+		t.Helper()
+		if err := atomicWrite(filepath.Join(root, "state", "app-updates", "operations", operation+".json"), []byte(record), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := func(name, status, op string) map[string]any {
+		return map[string]any{"name": name, "status": status, "config": map[string]string{"volatile.uuid": "uuid-" + name, "user.youeye.update_operation": op}}
+	}
+	inventory := func(rows ...map[string]any) error {
+		owned, _, err := p.installedOwners()
+		if err != nil {
+			return err
+		}
+		given := map[string]bool{}
+		for _, row := range rows {
+			given[row["name"].(string)] = true
+		}
+		platform := []map[string]any{}
+		for name, required := range owned {
+			if required && !given[name] {
+				platform = append(platform, map[string]any{"name": name, "status": "Running",
+					"expanded_devices": map[string]map[string]string{"root": {"type": "disk", "path": "/", "pool": "default"}},
+					"config":           map[string]string{"volatile.uuid": "uuid-" + name}})
+			}
+		}
+		copies, err := p.settledUpdateCopies(owned)
+		if err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(append(platform, rows...))
+		_, err = coreCheckpointContainers(raw, owned, copies, "snapshot")
+		return err
+	}
+	// A committed update stuck at reopen (0.6.8): its stopped copy is owned, held and never started.
+	write(`{"id":"` + operation + `","cleanupComplete":false,"originalRunning":{"app-actual-budget":true},"commit":{"verifiedAt":"t"}}`)
+	if err := inventory(row("ye-rollback-bb889dda7829-0", "Stopped", operation)); err != nil {
+		t.Fatal("settled update copy refused:", err)
+	}
+	for _, bad := range []map[string]any{
+		row("ye-rollback-bb889dda7829-0", "Running", operation),
+		row("ye-rollback-bb889dda7829-0", "Stopped", "another-operation"),
+		row("ye-rollback-bb889dda7829-2", "Stopped", operation), // beyond 2 x containers
+	} {
+		if err := inventory(bad); err == nil {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+	// A finished rollback (0.6.8) left its labels on the restored app container: accepted. Unknown operation: refused.
+	write(`{"id":"` + operation + `","cleanupComplete":true,"originalRunning":{"app-actual-budget":true},"rollbackVerifiedAt":"t"}`)
+	restored := func(op string) map[string]any {
+		return map[string]any{"name": "app-actual-budget", "status": "Running", "config": map[string]string{
+			"volatile.uuid": "uuid-app", "user.youeye.update_operation": op, "user.youeye.update_restored": op}}
+	}
+	withApp := func(rows ...map[string]any) error {
+		if err := atomicWrite(filepath.Join(root, "app-actual-budget", "install.json"), []byte(`{"appId":"actual-budget","containers":[{"containerName":"app-actual-budget"}]}`), 0600); err != nil {
+			return err
+		}
+		defer os.RemoveAll(filepath.Join(root, "app-actual-budget"))
+		return inventory(rows...)
+	}
+	if err := withApp(restored(operation)); err != nil {
+		t.Fatal("finished rollback labels refused:", err)
+	}
+	if err := withApp(restored("unknown-operation")); err == nil {
+		t.Fatal("labels of an unknown operation accepted")
+	}
+	// A verified rollback whose reopen or cleanup failed: the restored container still has the labels. Accepted.
+	write(`{"id":"` + operation + `","cleanupComplete":false,"originalRunning":{"app-actual-budget":true},"rollbackVerifiedAt":"t"}`)
+	if err := withApp(restored(operation)); err != nil {
+		t.Fatal("settled rollback labels refused:", err)
+	}
+	// Data still in flight: its copies are not owned (and checkQuiescent refuses the System update anyway).
+	write(`{"id":"` + operation + `","cleanupComplete":false,"originalRunning":{"app-actual-budget":true},"phase":"applying"}`)
+	if err := inventory(row("ye-rollback-bb889dda7829-0", "Stopped", operation)); err == nil {
+		t.Fatal("an in-flight update's copy was accepted")
 	}
 }

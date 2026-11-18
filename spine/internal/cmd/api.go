@@ -39,6 +39,7 @@ func init() {
 
 func startAPIServer() error {
 	fmt.Printf("Starting Spine API server %s...\n", Version)
+	startHostMaintenance()
 
 	// Get config
 	cfg := GetConfig()

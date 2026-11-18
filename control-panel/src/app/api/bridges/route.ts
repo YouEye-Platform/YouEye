@@ -5,6 +5,7 @@
  * POST /api/bridges — create a new bridge
  */
 
+import { userOperationResponse } from '@/lib/http/lifecycle-busy';
 import { NextResponse } from 'next/server';
 import {
   createBridge,
@@ -32,36 +33,38 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
+  return userOperationResponse('Creating a connection', async () => {
 
-  const body = await request.json();
-  const { from, to, direction, envMappings, approvedBy, activate } = body;
+    const body = await request.json();
+    const { from, to, direction, envMappings, approvedBy, activate } = body;
 
-  if (!from || !to) {
-    return NextResponse.json(
-      { error: 'from and to are required' },
-      { status: 400 },
-    );
-  }
+    if (!from || !to) {
+      return NextResponse.json(
+        { error: 'from and to are required' },
+        { status: 400 },
+      );
+    }
 
-  if (SYSTEM_APP_IDS.includes(to)) {
-    return NextResponse.json(
-      { error: 'Cannot create bridge to system containers' },
-      { status: 400 },
-    );
-  }
+    if (SYSTEM_APP_IDS.includes(to)) {
+      return NextResponse.json(
+        { error: 'Cannot create bridge to system containers' },
+        { status: 400 },
+      );
+    }
 
-  const bridge = await createBridge({
-    from,
-    to,
-    direction: direction || 'one-way',
-    envMappings: envMappings || [],
-    approvedBy: approvedBy || 'admin',
+    const bridge = await createBridge({
+      from,
+      to,
+      direction: direction || 'one-way',
+      envMappings: envMappings || [],
+      approvedBy: approvedBy || 'admin',
+    });
+
+    if (activate) {
+      const activated = await activateBridge(bridge.id);
+      return NextResponse.json({ bridge: activated });
+    }
+
+    return NextResponse.json({ bridge });
   });
-
-  if (activate) {
-    const activated = await activateBridge(bridge.id);
-    return NextResponse.json({ bridge: activated });
-  }
-
-  return NextResponse.json({ bridge });
 }

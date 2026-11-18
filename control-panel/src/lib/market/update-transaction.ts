@@ -1,3 +1,4 @@
+import { logOperationFailure } from './install-tracker';
 import {
   AppUpdateJournalStore, updateResourceKey, type AppUpdateJournalLease,
   type AppUpdateRecord, type NewAppUpdate, type UpdateCheckpoint, type UpdateResource,
@@ -87,7 +88,10 @@ export class AppUpdateTransaction {
       if (!this.record().rollbackVerifiedAt) {
         let errorCode = 'scoped-restore-unverified';
         try { await this.provider.fenceRecovery?.(this.record()); }
-        catch { errorCode = 'recovery-fence-unverified'; }
+        catch (fenceError) {
+          errorCode = 'recovery-fence-unverified';
+          logOperationFailure(`Recovery fence of the ${this.record().appId} update ${this.record().id}`, fenceError);
+        }
         this.lease.recoveryRequired(errorCode);
       }
       throw error;
@@ -111,7 +115,13 @@ export async function runAppUpdateTransaction<T>(
       return result.value;
     } catch (error) {
       // Committed data must never be rewound because reopening or cleanup failed.
-      if (!transaction.record().commit) await transaction.recover();
+      if (!transaction.record().commit) {
+        try { await transaction.recover(); } catch (recoveryError) {
+          // The apply error is the cause the user needs; the rollback's own failure is logged beside it.
+          logOperationFailure(`Update of ${input.appId}`, error);
+          logOperationFailure(`Rollback of the ${input.appId} update ${lease.snapshot().id}`, recoveryError);
+        }
+      }
       throw error;
     }
   });

@@ -196,6 +196,16 @@ namespaces of other known household principals. Tombstoned namespaces remain
 quarantined. Installation reconciles users created while the app was uninstalled,
 including when a later manifest omits an already-recorded declaration. Foreign
 runtime/volume ownership still requires disposition.
+A fresh install that failed before it became active (`lifecycleState:
+installing`, no prior retained or adopted data) is cleaned up as delete-data:
+its runtime may be missing or half-created and its volumes may be empty, so
+cleanup verifies only what the failed install itself created
+(`isUnfinishedFreshInstall`, `verifyUnfinishedRuntime`,
+`verifyUnfinishedInstallStorage`). The reconciler retries it with back-off;
+`youeye app remove <id>` does it at once. Identity writes (clients, grants,
+admission projections) take the identity gate and wait like other user
+operations (`withIdentityLifecycle` in `lib/identity/store.ts`).
+
 Reinstall copies the retained roots, so a failed install cannot delete the
 recovery originals. Native initialization commands are not replayed on adoption.
 After a complete data-deleting uninstall, that owner may reinstall only when

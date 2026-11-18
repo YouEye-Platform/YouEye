@@ -1,4 +1,4 @@
-import { withContainerLifecycle } from '../market/update-admission';
+import { isUserOperationWaiting, withContainerLifecycle } from '../market/update-admission';
 import { isContainerMaintenanceActive } from '../maintenance/container-maintenance';
 import { listInstalledApps } from '../market/metadata';
 import { inspectAppStorage } from '../market/storage';
@@ -14,6 +14,8 @@ export async function startWatchdogContainer(name: string): Promise<boolean> {
       (c.containerName) === name));
     if (owners.length > 1 || (name.startsWith('app-') && owners.length !== 1)) return false;
     for (const app of owners) {
+      // The start can hold the lock for up to a minute; a user waiting on this app goes first.
+      if (isUserOperationWaiting(app.appId)) return false;
       if (app.enabled === false || app.desiredState === 'stopped'
         || (app.lifecycleOperation?.desiredState === 'stopped' && app.lifecycleOperation.state !== 'completed')
         || !(await inspectAppStorage(app.storageVolumes)).available) return false;

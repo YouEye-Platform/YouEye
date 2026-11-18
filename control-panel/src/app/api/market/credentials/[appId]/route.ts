@@ -1,3 +1,6 @@
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { appServiceCredentials } from '@/lib/apps/service-credential-store';
@@ -11,9 +14,10 @@ export async function GET(_request: Request, { params }: Context) {
   if (auth.error) return auth.error;
   try {
     const { appId } = await params;
-    return Response.json({ credential: await appServiceCredentials.status(appId) });
-  } catch {
-    return Response.json({ error: 'App credential requires reconciliation' }, { status: 409 });
+    return Response.json({ credential: await withUserOperationLockWait(() => appServiceCredentials.status(appId)) });
+  } catch (error) {
+    logOperationFailure('Reading an app credential', error);
+    return lifecycleBusyResponse(error) ?? Response.json({ error: 'App credential requires reconciliation' }, { status: 409 });
   }
 }
 
@@ -41,8 +45,9 @@ export async function POST(request: Request, { params }: Context) {
   }
   try {
     const { appId } = await params;
-    return Response.json({ credential: await operateAppCredential(appId, operation) });
-  } catch {
-    return Response.json({ error: 'App service integration is pending; reconcile credentials' }, { status: 409 });
+    return Response.json({ credential: await withUserOperationLockWait(() => operateAppCredential(appId, operation)) });
+  } catch (error) {
+    logOperationFailure(`App credential action ${operation.action}`, error);
+    return lifecycleBusyResponse(error) ?? Response.json({ error: 'App service integration is pending; reconcile credentials' }, { status: 409 });
   }
 }

@@ -145,6 +145,10 @@ export async function installBundle(
     }
   }
 
-  onEvent({ step: totalSteps, totalSteps, status: 'success', message: `Bundle "${bundle.name}" install-and-wire complete`, phase: 'verify' });
+  const failed = [...result.members.filter((m) => m.status === 'failed').map((m) => m.appId),
+    ...result.connections.filter((c) => c.status === 'failed').map((c) => `${c.from} → ${c.to}`)];
+  onEvent(failed.length
+    ? { step: totalSteps, totalSteps, status: 'error', message: `Bundle "${bundle.name}" finished with failures: ${failed.join(', ')}`, phase: 'verify' }
+    : { step: totalSteps, totalSteps, status: 'success', message: `Bundle "${bundle.name}" install-and-wire complete`, phase: 'verify' });
   return result;
 }

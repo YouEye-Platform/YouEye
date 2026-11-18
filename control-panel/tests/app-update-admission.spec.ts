@@ -93,7 +93,7 @@ test('dead updater retains recovery_required evidence and watchdog exclusion wit
       }, { store }).catch(error => { console.error(error); process.exit(1); });
     `, directory);
     const record = store.list()[0];
-    const evidence = readFileSync(path.join(directory, 'operations', `${record.id}.json`), 'utf8');
+    const evidence = readFileSync(path.join(directory, 'operations', `${record.appId}_${record.id}.json`), 'utf8');
     // Missing locks must not turn durable unfinished intent into permission.
     for (const resource of resources) {
       rmSync(path.join(directory, 'locks', updateResourceKey(resource)), { recursive: true });
@@ -103,7 +103,7 @@ test('dead updater retains recovery_required evidence and watchdog exclusion wit
     assert.equal(isContainerMaintenanceActive('app-other', options), false);
     await assert.rejects(withAppLifecycle('fixture', () => assert.fail('mutation entered'), { store }),
       AppLifecycleAdmissionError);
-    assert.equal(readFileSync(path.join(directory, 'operations', `${record.id}.json`), 'utf8'), evidence);
+    assert.equal(readFileSync(path.join(directory, 'operations', `${record.appId}_${record.id}.json`), 'utf8'), evidence);
   }));
 
 test('orphan container reservations and orphan maintenance locks suppress watchdog restart', () =>
@@ -172,7 +172,7 @@ test('destructive lifecycle entry points refuse recovery_required without changi
     lease.recoveryRequired('migration-failed');
     lease.release();
     const id = lease.snapshot().id;
-    const evidence = readFileSync(path.join(directory, 'operations', `${id}.json`), 'utf8');
+    const evidence = readFileSync(path.join(directory, 'operations', `${input.appId}_${id}.json`), 'utf8');
     child(`
       const assert = require('node:assert/strict');
       process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = process.argv[1];
@@ -213,7 +213,7 @@ test('destructive lifecycle entry points refuse recovery_required without changi
         assert.match(probe.detail, /recovery is pending/);
       })().catch(error => { console.error(error); process.exit(1); });
     `, directory);
-    assert.equal(readFileSync(path.join(directory, 'operations', `${id}.json`), 'utf8'), evidence);
+    assert.equal(readFileSync(path.join(directory, 'operations', `${input.appId}_${id}.json`), 'utf8'), evidence);
     assert.equal(store.isReserved(resources[0]), true);
     assert.equal(store.isReserved(resources[2]), true);
   }));

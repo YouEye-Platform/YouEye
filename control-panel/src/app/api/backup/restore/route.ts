@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { fullRestore } from '@/lib/backup/full-restore';
 import {
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
 		  const rollback = await createPlatformBackup({ passphrase, reason: 'pre-restore' }, () => undefined);
 		  rollbackPath = backupSetPath(rollback.id);
 		}
-        await withRestoreLock(async () => {
+        await withUserOperationLockWait(() => withRestoreLock(async () => {
 		  const relay = (event: BackupEvent) => send({
             step: event.step,
             totalSteps: event.totalSteps,
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
             if (!archives[0]) throw new Error(`No archive found for ${appId}`);
             await restoreApp({ appId, archivePath: path.join(appDirectory, archives[0]), passphrase }, relay);
           }
-        });
+        }));
         const completedAt = new Date().toISOString();
         await writeRestoreStatus({
           ...restoreStatus,
@@ -143,7 +144,7 @@ export async function POST(request: NextRequest) {
 		if (restoreCore && rollbackPath) {
 		  send({ status: 'progress', stage: 'rollback', message: 'Restore failed; returning the server to its previous state', progress: 98 });
 		  try {
-			await withRestoreLock(() => fullRestore({ backupPath: rollbackPath, passphrase }, () => undefined));
+			await withUserOperationLockWait(() => withRestoreLock(() => fullRestore({ backupPath: rollbackPath, passphrase }, () => undefined)));
 			await rm(rollbackPath, { recursive: true, force: true }).catch(() => undefined);
 			message = `Restore failed and the previous server state was recovered: ${message}`;
 		  } catch (rollbackError) {

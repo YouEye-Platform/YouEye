@@ -40,7 +40,10 @@ export interface UpdateInventoryObservations {
 export interface AppUpdateInventory {
   resources: UpdateResource[];
   originalRunning: Record<string, boolean>;
+  /** The app's own volumes. Shared folders are listed in sharedFolders instead: they are never rolled back. */
   volumes: Array<{ pool: string; name: string; readOnly: boolean }>;
+  /** Shared-folder groups the app mounts (e.g. `media`): left out of checkpoints, restore, reservations and budget. */
+  sharedFolders: string[];
   databases: Array<{ engine: string; name: string; ownerRole: string; mode: 'shared' | 'own' }>;
 }
 
@@ -91,9 +94,9 @@ function databaseDeclaration(manifest: AppManifest, metadata: InstallMetadata) {
 }
 
 /**
- * Finite v1: all mutable resources must belong to this app, with every observed
- * writer in its container closure. A writable shared group is unsupported.
- * Read-only shared inputs are admitted only when their definition is unchanged.
+ * All mutable resources must belong to this app, with every observed writer in its container closure. Shared folders
+ * (`shared:` groups, e.g. the media library) are never rolled back, like YunoHost's big data, Cloudron volumes or Home
+ * Assistant's /share: they are not checkpointed, restored, reserved or budgeted, and their definition must not change.
  */
 export function planAppUpdateInventory(
   metadata: InstallMetadata,
@@ -162,8 +165,10 @@ export function planAppUpdateInventory(
       if (volume.type === 'cache' && !volume.sourceVolume) continue;
       const declarations = declaredVolumes.filter(v => v.containerName === runtime.containerName
         && v.logicalName === volume.name);
+      const sourceContainer = volume.sourceContainer
+        ? oldManifest.containers.find(c => c.name === volume.sourceContainer) : container;
       const sharedGroup = volume.storageGroup ?? (volume.sourceVolume
-        ? container.volumes.find(v => v.name === volume.sourceVolume)?.storageGroup : undefined);
+        ? sourceContainer?.volumes.find(v => v.name === volume.sourceVolume)?.storageGroup : undefined);
       if (declarations.length !== 1
         || declarations[0].containerPath !== volume.container
         || declarations[0].readOnly !== volume.read_only
@@ -206,7 +211,8 @@ export function planAppUpdateInventory(
     }
   }
 
-  for (const volume of volumes.values()) {
+  const sharedFolders = new Set<string>();
+  for (const volume of [...volumes.values()]) {
     const matches = observed.volumes.filter(v => volumeIdentity(v) === volumeIdentity(volume));
     if (matches.length !== 1 || matches[0].contentType !== 'filesystem') {
       reject('missing-or-ambiguous-volume', 'A recovery volume is missing or its identity is ambiguous.');
@@ -219,19 +225,17 @@ export function planAppUpdateInventory(
     if (sharedGroup ? actual.sharedGroup !== sharedGroup : actual.ownerAppId !== appId) {
       reject('foreign-volume', 'Incus ownership does not match the recorded storage volume.');
     }
-    if (!volume.readOnly && (sharedGroup || actual.users.some(user => !expectedNames.has(user)))) {
-      reject('unsupported-shared-resource',
-        'This app writes shared storage. Version 1 requires a recovery contract covering every writer before update.');
+    if (sharedGroup) {
+      // Its definition can't change: the storage-topology check above compares every volume, shared ones included.
+      sharedFolders.add(sharedGroup);
+      volumes.delete(volumeIdentity(volume));
+      continue;
+    }
+    if (!volume.readOnly && actual.users.some(user => !expectedNames.has(user))) {
+      reject('unsupported-shared-resource', 'This app storage has writers outside the app.');
     }
     if (!volume.readOnly && !actual.snapshotSupported) {
       reject('volume-recovery-unavailable', 'The app storage location does not support a verified restore point.');
-    }
-    if (volume.readOnly && sharedGroup) {
-      const definitions = (manifest: AppManifest) => JSON.stringify(byName(manifest).map(c =>
-        ({ name: c.name, volumes: c.volumes.filter(v => v.storageGroup === sharedGroup) })));
-      if (definitions(oldManifest) !== definitions(targetManifest)) {
-        reject('shared-input-definition-changed', 'A read-only shared input changes definition during this update.');
-      }
     }
     resources.push({ kind: 'volume', scope: volume.pool, name: volume.name,
       ownerAppId: appId, mutable: !volume.readOnly });
@@ -298,11 +302,9 @@ export function planAppUpdateInventory(
       || capacity.availableBytes < capacity.checkpointBytes + capacity.cleanupReserveBytes) {
       reject('insufficient-recovery-capacity', 'App storage lacks a verified checkpoint and cleanup reserve.');
     }
-    resources.push({ kind: 'capacity', scope: 'incus-pool', name: pool, ownerAppId: appId, mutable: false });
   }
-  // Finite v1 serializes the shared protected workspace budget. Concurrent
-  // updates must not each spend the same measured free capacity.
-  resources.push({ kind: 'capacity', scope: 'control-state', name: 'app-updates', ownerAppId: appId, mutable: false });
+  // No reservation is shared with another app's update (capacity, shared folders): a stuck update of one app must
+  // never block another's. Free space is re-checked when the recovery plan is initialized.
   return { resources: resources.sort((a, b) => updateResourceKey(a).localeCompare(updateResourceKey(b))),
-    originalRunning, volumes: [...volumes.values()], databases };
+    originalRunning, volumes: [...volumes.values()], sharedFolders: [...sharedFolders].sort(), databases };
 }

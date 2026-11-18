@@ -44,9 +44,9 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
   format: 'iso639' | 'full';
 }>> {
   try {
-    const { listInstalledApps } = await import('../market/metadata');
+    const { listReadableInstalledApps } = await import('../market/metadata');
     const { readInstalledAppManifest } = await import('../market/frozen-manifest');
-    const installed = await listInstalledApps();
+    const installed = await listReadableInstalledApps();
 
     const result: Array<{
       appId: string;

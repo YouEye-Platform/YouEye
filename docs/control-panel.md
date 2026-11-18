@@ -87,6 +87,13 @@ re-checks the security posture; it never replaces running ones.
 - **In the handler:** admin routes call `requireAdmin()`, and admin writes `requireAdminCsrf(request)`
   (`lib/auth/rbac.ts`; the CLI token passes both). `tests/route-auth.spec.ts` walks every `route.ts`: each handler
   calls an auth helper, or is listed there as public or signed-in-only with the reason.
+- **Waiting for a busy app:** user-facing lifecycle routes (install, remove, start/stop, update and recovery,
+  connections and suggestions, access, credentials, AI Settings, bundles, restore, URL and Names changes, Health's
+  Fix) run as user operations (`withUserOperationLockWait`, `lib/http/lifecycle-busy.ts`): every app, inventory and
+  app-network lock they take waits up to 30 s for its holder. Background passes never wait, skip a busy app, and a
+  watchdog start yields to a waiting user. Still busy after 30 s: `409 {"code": "operation_in_progress"}`, never a
+  500. Other failures are logged with their cause chain (`[Market] <operation> failed: …`) and answered with a fixed
+  message.
 - **Orphans** (`/api/admin/orphans`, `youeye orphans [clean]`): admin only. Only resources an install left behind are
   listed: installation-tagged containers no record names, Market app routes (id `app-route-<app>-…`, since 0.6.8) of
   apps with no install or kept-data record, app databases and YouEye app storage no record names. Platform routes,
@@ -148,7 +155,7 @@ and changes also need a CSRF token (`X-CSRF-Token`).
 |---|---|
 | `/var/lib/youeye/config/` | `youeye.yaml`, `tls/` (certificates), `cli-token`, `server-url-change.json` |
 | `/var/lib/youeye/control/` | deploy secret, UI bridge token, SMTP password, `deployments/` |
-| `/var/lib/youeye/state/` | `installed-apps.json`, `update-queue.json`, `update-status.json`, `app-updates/` (update journals), `app-service-credentials/`, `container-maintenance/`, `core-component-schemas/` |
+| `/var/lib/youeye/state/` | `installed-apps.json`, `update-status.json`, `app-updates/` (update journals), `app-service-credentials/`, `container-maintenance/`, `core-component-schemas/` |
 | `/var/lib/youeye/app-<id>/` | per app: `install.json`, `secrets/` (mode 0600), app volumes |
 | `/var/lib/youeye/<service>/` | secrets and data of `postgres`, `caddy`, `pihole`, `ui`, `ui-data`, `pointer` |
 | `/var/lib/youeye/networks/` | app network allocations (`ipam.json`, operations) |
@@ -165,7 +172,7 @@ YouEye ID and the admission tables are in PostgreSQL (`youeye` database); the da
 | Spine, CP, dashboard, image | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). `POST /api/updates/{spine,control,ui}` is refused (`409 system_release`). |
 | Release channel | `GET`/`PUT /api/releases/channel` (`dev`, `alpha`, `beta`, `stable`). The box never downgrades. |
 | PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image in the Market's `system/` manifest and rebuilds it (`lib/infrastructure/system-updater.ts`). |
-| Incus, host packages | `POST /api/updates/{incus,system}` asks Spine to update Incus or the host packages (`system` is refused while a critical health issue is open). A queue (`POST /api/apps/<name>/enqueue`, `lib/updates/queue.ts`, `update-queue.json`) runs such updates one at a time. The Settings pages call neither today. |
+| Incus, host packages | `POST /api/updates/{incus,system}` asks Spine to update Incus or the host packages (`system` is refused while a critical health issue is open). The Settings pages call neither today. |
 | Market apps | `POST /api/market/update`; a journaled, recoverable transaction. Status and recovery: `GET /api/market/update/status?appId=…`, `POST /api/market/update/recovery`. See [app-update-transactions.md](app-update-transactions.md). |
 
 All update routes need an admin session; changes also need a CSRF token.

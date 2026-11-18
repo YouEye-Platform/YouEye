@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { ignoreIssue, listIssues, runIssueRepair } from '@/lib/health/issues';
+import { userOperationResponse } from '@/lib/http/lifecycle-busy';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +38,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.action === 'fix') {
-    const result = await runIssueRepair(String(body.id));
-    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    // A user's Fix waits for busy app locks like any user operation; a failure is logged with its cause.
+    return userOperationResponse(`Repair of ${String(body.id).slice(0, 120)}`, async () => {
+      const result = await runIssueRepair(String(body.id));
+      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    });
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });

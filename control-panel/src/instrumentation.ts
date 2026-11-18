@@ -3,16 +3,15 @@
  *
  * Owns startup of ALL server-side background jobs. Modules must never
  * self-start via import side effects (that pattern put a second health
- * monitor and a second update-queue worker inside youeye-id.service).
+ * monitor inside youeye-id.service).
  *
  * Two runtime modes share this codebase:
  *  - Control Panel   (youeye-control.service, port 3000) — runs everything.
  *  - Identity service (youeye-id.service, port 3001, IDENTITY_SERVICE=true)
  *    — serves identity/OIDC only; platform jobs (health monitor / watchdog,
- *    DNS provider maintenance, update queue, market version/health checkers)
+ *    DNS provider maintenance, market version/health checkers)
  *    must NOT run there. Running them twice means two watchdogs restarting
- *    containers, two queue workers racing the same update store, and two
- *    version-checkers racing the installed-apps.json atomic rename.
+ *    containers and two version-checkers racing the installed-apps.json atomic rename.
  */
 
 export async function register() {
@@ -80,8 +79,6 @@ export async function register() {
     startNamesMaintenanceLoop();
     const { startHealthMonitor } = await import("@/lib/health/monitor");
     startHealthMonitor();
-    const { startWorker } = await import("@/lib/updates/queue");
-    startWorker();
     const { startVersionChecker } = await import("@/lib/market/version-checker");
     startVersionChecker();
     const { startHealthChecker } = await import("@/lib/market/health-checker");

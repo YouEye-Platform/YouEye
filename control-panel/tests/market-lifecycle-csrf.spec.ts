@@ -16,7 +16,7 @@ function fixture(route: string, administrator = true) {
       ? { session: { isAdmin: true } } : { error: Response.json({ error: 'Denied' }, { status: 403 }) } },
     '@/lib/auth/session': { verifyCSRFToken: async (token: string) => token === 'valid-fixture' },
     '@/lib/admission/management': { admissionAdministrator: async () => '11111111-1111-4111-8111-111111111111' },
-    '@/lib/health/issues': { assertNoCriticalIssues: async () => {} },
+    '@/lib/health/issues': { assertNoCriticalIssues: async () => {}, hasOpenCriticalIssue: async () => null },
     '@/lib/market/uninstaller': { uninstallApp: async (...args: unknown[]) => {
       effects.push(args); return { success: true }; } },
     '@/lib/events/emitter': { emitEvent: () => {} },

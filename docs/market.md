@@ -57,7 +57,13 @@ Every install is admin-only and CSRF-checked and streams progress as server-sent
   (`["youeye-id"]` turns YouEye ID sign-in on for an app with `setup/sso.yaml`; on by default), `aiSettings`,
   `allowInternet`, `publicAccess`, `adoptRetainedData`. The CP fills in the default source
   and the subdomain (the manifest's `subdomain:`, else the id). The domain is always the box's own; a client value
-  is ignored. Installs are refused (HTTP 423) while Health has a critical issue.
+  is ignored. An install is refused (HTTP 423) while Health has a critical issue about that app (or about the box,
+  such as the app-network or install-state issues); another app's critical issue doesn't block it. Each critical
+  issue names its cause and the command or Fix for it (`youeye doctor` lists them).
+- **A failed install** whose rollback couldn't finish is cleaned up by the reconciler (back-off between tries), or
+  by `youeye app remove <id>`. `youeye app remove <id> --force` is for a broken or unfinished install only (still
+  installing, cleanup pending, or a recorded container gone; an intact app is refused with 409): it skips the
+  data-ownership check, removes what carries the app's id and installation id, and never deletes a shared folder. `youeye app recover <id>` finishes an interrupted app update.
 - **`youeye app install <id> [--public-access[=false]]`** sends `{ appId }` (plus `publicAccess` when the flag is
   given) to the same endpoint. The CLI has no YouEye ID user, so AI Settings are off for CLI installs.
 - **`youeye app install --url <https-url> --i-trust-this-publisher [--allow-setup]`** calls

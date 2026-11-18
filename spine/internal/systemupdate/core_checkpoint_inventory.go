@@ -235,7 +235,76 @@ func (p NativeCoreCheckpoint) retainedOwners(dir string, owned map[string]bool, 
 	return nil
 }
 
-func coreCheckpointContainers(raw []byte, owned map[string]bool, snapshot string) ([]CoreCheckpointContainer, error) {
+// settledUpdateCopies adds the stopped recovery copies (`ye-rollback-<operation>-<n>`, see the Control Panel's
+// update-provider.ts runtimeReference) that a committed or verified rolled-back app update keeps until its cleanup
+// finishes. Such an update no longer blocks a System update (checkQuiescent), so its copies are owned app data, held
+// stopped like retained roots, never started. Returns copy name -> operation id, which each copy must carry.
+func (p NativeCoreCheckpoint) settledUpdateCopies(owned map[string]bool) (coreUpdateLabels, error) {
+	labels := coreUpdateLabels{Copies: map[string]string{}, Finished: map[string]bool{}}
+	copies := labels.Copies
+	dir := filepath.Join(p.DataRoot, "state", "app-updates", "operations")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return labels, nil
+	}
+	if err != nil {
+		return labels, err
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		raw, err := ReadCoreState(filepath.Join(dir, entry.Name()), 4<<20)
+		if err != nil {
+			return labels, err
+		}
+		var record struct {
+			ID              string          `json:"id"`
+			CleanupComplete bool            `json:"cleanupComplete"`
+			OriginalRunning map[string]bool `json:"originalRunning"`
+			Commit          *struct {
+				VerifiedAt string `json:"verifiedAt"`
+			} `json:"commit"`
+			RollbackVerifiedAt string `json:"rollbackVerifiedAt"`
+		}
+		if json.Unmarshal(raw, &record) != nil {
+			continue
+		}
+		if record.CleanupComplete {
+			labels.Finished[record.ID] = true
+			continue
+		}
+		if settled := (record.Commit != nil && record.Commit.VerifiedAt != "") || record.RollbackVerifiedAt != ""; !settled {
+			continue
+		}
+		// Settled data: the app container (restored by a rollback, or rebuilt by a commit) may carry this operation's
+		// labels until cleanup clears them, and only reopen and cleanup remain, which the Control Panel finishes.
+		labels.Finished[record.ID] = true
+		short := strings.ReplaceAll(record.ID, "-", "")
+		if len(short) < 12 || len(record.OriginalRunning) == 0 || len(record.OriginalRunning) > 32 {
+			return labels, fmt.Errorf("settled app update record is invalid")
+		}
+		for i := 0; i < 2*len(record.OriginalRunning); i++ {
+			name := fmt.Sprintf("ye-rollback-%s-%d", short[:12], i)
+			if _, taken := owned[name]; taken {
+				return labels, fmt.Errorf("app update recovery copy ownership is ambiguous")
+			}
+			owned[name] = false
+			copies[name] = record.ID
+		}
+	}
+	return labels, nil
+}
+
+// coreUpdateLabels: recovery copies of settled app updates (name -> operation id), and settled or finished operations,
+// whose labels an app container may still carry (until cleanup; builds before 0.6.9 left them after a rollback).
+type coreUpdateLabels struct {
+	Copies   map[string]string
+	Finished map[string]bool
+}
+
+func coreCheckpointContainers(raw []byte, owned map[string]bool, updates coreUpdateLabels, snapshot string) ([]CoreCheckpointContainer, error) {
+	updateCopies := updates.Copies
 	var observed []struct {
 		Name            string                       `json:"name"`
 		Status          string                       `json:"status"`
@@ -254,7 +323,13 @@ func coreCheckpointContainers(raw []byte, owned map[string]bool, snapshot string
 		if c.Status != "Running" && c.Status != "Stopped" {
 			return nil, fmt.Errorf("container state is not settled")
 		}
-		if c.Config["user.youeye.update_operation"] != "" || c.Config["user.youeye.core-request"] != "" {
+		if operation, isCopy := updateCopies[c.Name]; isCopy {
+			// A settled update's recovery copy: it must carry exactly that operation and stay stopped.
+			if c.Config["user.youeye.update_operation"] != operation || c.Status != "Stopped" || c.Config["user.youeye.core-request"] != "" {
+				return nil, fmt.Errorf("app update recovery copy has foreign ownership or is running")
+			}
+		} else if operation := c.Config["user.youeye.update_operation"]; (operation != "" && !updates.Finished[operation]) || c.Config["user.youeye.core-request"] != "" {
+			// A restored app container may keep the labels of its finished rollback; any other label is live work.
 			return nil, fmt.Errorf("container belongs to retained maintenance")
 		}
 		seen[c.Name] = true
@@ -321,12 +396,16 @@ func (p NativeCoreCheckpoint) Inspect(ctx context.Context, j CoreJournal) (CoreC
 	if err != nil {
 		return inventory, err
 	}
+	copies, err := p.settledUpdateCopies(owned)
+	if err != nil {
+		return inventory, err
+	}
 	raw, err := p.capture(ctx, "incus", "list", "--format=json")
 	if err != nil {
 		return inventory, err
 	}
 	snapshot := coreCheckpointSnapshot(j.RequestID)
-	containers, err := coreCheckpointContainers(raw, owned, snapshot)
+	containers, err := coreCheckpointContainers(raw, owned, copies, snapshot)
 	if err != nil {
 		return inventory, err
 	}

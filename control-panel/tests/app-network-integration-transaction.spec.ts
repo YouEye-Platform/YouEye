@@ -15,8 +15,9 @@ test('explicit integration lifecycle is locked, sensitivity-safe, and read-back 
   assert.match(manager, /withBridgeAppLocks\(bridge\.from, bridge\.to, \(\) => withBridgeLifecycleLock/);
   // Every activation runs the connect file; deactivation and deletion run its remove: steps first.
   assert.match(manager, /export async function activateBridge[\s\S]*?runConnectionWiring\(bridge\.from, bridge\.to\)/);
-  assert.match(manager, /export async function deactivateBridge\(bridgeId: string\)[^{]*\{\s*await unwireBridge\(bridgeId\);/);
-  assert.match(manager, /export async function deleteBridge\(bridgeId: string\)[^{]*\{\s*await unwireBridge\(bridgeId\);/);
+  // ...under the connection's admission, so a busy lock never leaves it unwired but recorded active.
+  assert.match(manager, /export async function deactivateBridge\(bridgeId: string\)[^{]*\{[\s\S]*?withBridgeAdmission[^\n]*'bridge-deactivate'[^\n]*async \(\) => \{\s*await unwireBridge\(bridgeId\);/);
+  assert.match(manager, /export async function deleteBridge\(bridgeId: string\)[^{]*\{\s*return withBridgeAdmission\(bridgeId, 'bridge-delete', false, async \(\) => \{\s*await unwireBridge\(bridgeId\);/);
   assert.match(manager, /runConnectionWiring\(bridge\.from, bridge\.to, undefined, \{ remove: true \}\)/);
   assert.match(manager, /withAppLifecycle\(appIds\[index\]/);
   assert.match(manager, /incusDownloadFile\(fromContainer/);

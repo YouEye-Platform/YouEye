@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { getAppUpdateOperation, recoverAppUpdateOperation } from '@/lib/market/update-operations';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,11 +31,16 @@ export async function POST(request: NextRequest) {
     // provider effects; the operation helper protects newer unfinished work.
     await recoverAppUpdateOperation(body.appId, body.id);
     return NextResponse.json({ success: true }, { headers: { 'Cache-Control': 'no-store' } });
-  } catch {
-    // Includes a live executor's busy lock; keep the operation and checkpoints.
-    return NextResponse.json({
-      error: 'Recovery could not complete. The operation may still be running. Refresh its status before retrying.',
-      code: 'recovery_pending',
+  } catch (error) {
+    // The operation and its checkpoints are kept either way. Say what happened: a live executor (busy lock) is not a
+    // failure; anything else is logged with its full cause (never serialized: provider errors can hold secrets).
+    logOperationFailure(`Recovery of the ${body.appId} update ${body.id}`, error);
+    const busy = error instanceof Error && /LockBusy|lock is busy/i.test(`${error.name} ${error.message}`);
+    return NextResponse.json(busy ? {
+      error: 'The update is still running. Try again in a moment.', code: 'operation_in_progress',
+    } : {
+      error: 'Recovery did not finish; the cause is in the Control Panel journal (journalctl in youeye-control).',
+      code: 'recovery_failed',
     }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
   }
 }

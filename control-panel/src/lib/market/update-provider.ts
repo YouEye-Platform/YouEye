@@ -1,4 +1,5 @@
 import { rm, readdir, lstat, readFile, statfs } from 'node:fs/promises';
+import { logOperationFailure } from './install-tracker';
 import { incusRequest, execCommand, incusDownloadFile, incusUploadFile } from '@/lib/incus/server';
 import {
   containerState, stopContainer, startContainer, waitForRunning, waitForContainerExec,
@@ -7,6 +8,7 @@ import {
 } from '@/lib/incus/snapshot';
 import { getConfig, setConfig } from '@/lib/caddy/client';
 import { routeServers } from '@/lib/caddy/servers';
+import { withCaddyMutation } from '@/lib/caddy/serial';
 import { readInstallMetadata, saveInstallMetadata, listInstalledApps } from './metadata';
 import { appServiceCredentials } from '../apps/service-credential-store';
 import { getAdmissionSnapshot } from '../admission/store';
@@ -14,6 +16,9 @@ import { identityRows, identitySql } from '../identity/store';
 import { getInstalledApp, restoreInstalledAppUpdateState, type InstalledAppUpdateState } from './installed-apps';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import { readFrozenUpdateManifest } from './frozen-manifest';
+import { describeErrorChainForLog } from './install-tracker';
+import { getBridgesForApp } from '../bridges/store';
+import { integrationAclName } from '../incus/app-network';
 export { readFrozenUpdateManifest } from './frozen-manifest';
 import type { AppManifest, InstallMetadata, VariableContext } from './types';
 import { writeAllConfigFiles } from './config-writer';
@@ -45,7 +50,8 @@ type RecoveryPlan = {
   metadata: InstallMetadata; installed: InstalledAppUpdateState; manifest: AppManifest;
   inventory: AppUpdateInventory; instances: Instance[];
   postgres?: AppUpdatePostgresScope;
-  securityRevision: string;
+  /** Absent in plans written before 0.6.9 (they held an overall revision made by an older function). */
+  securityParts?: SecurityParts;
   capacity: { pools: Array<{ name: string; requiredBytes: number }>; stateBytes: number };
   volumeDescriptions: Array<{ pool: string; name: string; description: string }>;
 };
@@ -85,39 +91,67 @@ function stateOf(app: NonNullable<Awaited<ReturnType<typeof getInstalledApp>>>):
   return { installedVersion, catalogVersion, updateAvailable, switchPending, installedTag, installedBranch,
     channelSource, candidateVersion, candidateBranch, candidateTag };
 }
-const updateOwnedFields = new Set(['installedVersion', 'catalogKey', 'itemKind', 'sourceId', 'sourceName',
-  'sourceRepoUrl', 'manifestSource', 'manifestPath', 'manifestRepo', 'manifestBranch', 'manifestDigest',
-  'nativeArtifacts', 'containers', 'productReleaseFloors']);
+/**
+ * The app's own security state that an update must never roll back across: who owns it and its data, how users
+ * reach it, its credentials and its secrets. Only this app's state: no timestamps, no box-wide user list. Fields the
+ * update itself writes (versions, manifest references, containers, release floors, updatedAt) are not here.
+ */
+const SECURITY_FIELDS = ['appId', 'installationId', 'admissionOwnerId', 'integration', 'enableSSO', 'hasSSO',
+  'ssoClientId', 'ssoSlug', 'forwardAuthEnabled', 'forwardAuthSlug', 'protectWithAccountLogin', 'perUserData',
+  'subdomain', 'domain', 'selectedIntegrations', 'usePerAppBridge', 'databaseMode', 'databaseName', 'databaseUser',
+  'databasePasswordFile', 'sharedFolders', 'storageVolumes', 'credentials', 'aiConnection',
+  'serviceCredentialState'] as const satisfies ReadonlyArray<keyof InstallMetadata>;
+const SECRET_FILE_LIMIT = { files: 256, fileBytes: 1024 * 1024, totalBytes: 16 * 1024 * 1024, depth: 4 };
+type SecurityParts = { metadata: string; files: string; credential: string; admission: string; resources: string };
 function stable(value: unknown): string {
   if (!value || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
     .map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`;
 }
-async function securityRevision(metadata: InstallMetadata): Promise<string> {
-  // Accepted release floors advance during this transaction. They remain
-  // monotonic through rollback; they are not credential/ownership revisions.
-  const policy = Object.fromEntries(Object.entries(metadata).filter(([key]) => !updateOwnedFields.has(key)));
+/** Every regular file under the app directory (secrets/ included), bounded; links and devices are refused. */
+async function securityFiles(dir: string): Promise<Array<[string, string]>> {
   const files: Array<[string, string]> = [];
-  const dir = `/var/lib/youeye/app-${metadata.appId}`;
-  for (const name of (await readdir(dir)).sort()) {
-    if (name === 'install.json' || name.startsWith('.install-')) continue;
-    const file = `${dir}/${name}`;
-    const stat = await lstat(file);
-    if (!stat.isFile() || stat.size > 1024 * 1024) {
-      code('unknown-security-state', 'App security files require bounded regular-file recovery metadata.');
+  let total = 0;
+  const walk = async (relative: string, depth: number): Promise<void> => {
+    for (const name of (await readdir(relative ? `${dir}/${relative}` : dir)).sort()) {
+      const path = relative ? `${relative}/${name}` : name;
+      if (!relative && (name === 'install.json' || name.startsWith('.install-'))) continue;
+      const stat = await lstat(`${dir}/${path}`);
+      if (stat.isDirectory() && depth < SECRET_FILE_LIMIT.depth) { await walk(path, depth + 1); continue; }
+      total += stat.size;
+      if (!stat.isFile() || stat.size > SECRET_FILE_LIMIT.fileBytes || files.length >= SECRET_FILE_LIMIT.files
+        || total > SECRET_FILE_LIMIT.totalBytes) {
+        code('unknown-security-state', `App security file ${path} is not a bounded regular file.`);
+      }
+      files.push([path, updateDigest(await readFile(`${dir}/${path}`))]);
     }
-    files.push([name, updateDigest(await readFile(file))]);
-  }
+  };
+  await walk('', 0);
+  return files;
+}
+async function securityParts(metadata: InstallMetadata): Promise<SecurityParts> {
+  const fields = Object.fromEntries(SECURITY_FIELDS.filter(key => Object.hasOwn(metadata, key))
+    .map(key => [key, metadata[key]]));
+  const files = await securityFiles(`/var/lib/youeye/app-${metadata.appId}`);
   const credential = await appServiceCredentials.projection(metadata.appId);
   const admission = await getAdmissionSnapshot(metadata.appId);
   if (!credential || !admission) code('unknown-security-state', 'App credential and ownership authority must be available.');
-  const resources = await identityRows(`SELECT r.resource_id, r.declaration, r.owner_id, r.private_user_id, r.state
+  const { installationId, generation, revision, status, verifierHash } = credential;
+  const { appId, ownerId, mode, userIds, groupIds, publicAccess, state } = admission.policy;
+  // The policy revision moves when anything that changes this app's admission changes (database triggers), so the
+  // box-wide principal list is not needed. Per-user private resources are left out for the same reason.
+  const resources = await identityRows(`SELECT r.resource_id, r.declaration, r.owner_id, r.state
     FROM admission_resources r JOIN admission_policies p USING (installation_id)
-    WHERE p.app_id = ${identitySql(metadata.appId)} ORDER BY r.resource_id`);
-  // Authority is outside container/volume checkpoints. Observe its complete
-  // generation and revocation state before any old application data can reopen.
-  return updateDigest(stable([policy, files, credential, admission.policy, [...admission.principals].sort((a, b) => a.id.localeCompare(b.id)), resources]));
+    WHERE p.app_id = ${identitySql(metadata.appId)} AND r.private_user_id IS NULL ORDER BY r.resource_id`);
+  return {
+    metadata: updateDigest(stable(fields)),
+    files: updateDigest(stable(files)),
+    credential: updateDigest(stable({ installationId, generation, revision, status, verifierHash })),
+    admission: updateDigest(stable({ appId, installationId: admission.policy.installationId, ownerId, mode, userIds,
+      groupIds, publicAccess, state, revision: admission.policy.revision })),
+    resources: updateDigest(stable(resources)),
+  };
 }
 function postgresScope(metadata: InstallMetadata, manifest: AppManifest): AppUpdatePostgresScope | undefined {
   if (!manifest.database || manifest.database.mode === 'none') return undefined;
@@ -146,29 +180,60 @@ async function postgresProvider(
     if (!current) throw new Error('App security metadata is unavailable');
     const credentialUses = [];
     for (const app of await listInstalledApps()) {
-      // Include the entire recorded credential closure, even stopped workloads.
+      // Include the entire recorded credential closure of this database's role, even stopped workloads. Another
+      // app's install in progress has no registration or containers yet, and can't hold this role (a role collision
+      // is refused at install), so it is skipped instead of failing the observation (and stranding this update).
       if (app.databaseMode === 'none') continue;
+      if (app.appId !== metadata.appId && app.lifecycleState === 'installing') continue;
       const manifest = await readFrozenUpdateManifest(app.appId, app.installedVersion);
       const declared = postgresScope(app, manifest);
       if (!declared) continue;
       const { engine, ownerRole: role, database } = declared;
+      // Only uses of this database's owner role matter to the writer closure and the session check.
+      if (app.appId !== metadata.appId && role !== scope.ownerRole) continue;
       for (const container of app.containers) {
         if (container.containerName === scope.engine) continue;
         const state = await read<{ status: 'Running' | 'Stopped'; network?: Record<string, { addresses: { family: string; address: string }[] }> }>(
           `/1.0/instances/${e(container.containerName)}/state`);
         credentialUses.push({ engine, database, role, appId: app.appId, container: container.containerName,
-          state: state.status, clientAddresses: Object.values(state.network ?? {}).flatMap(n =>
-            n.addresses.filter(a => a.family === 'inet' || a.family === 'inet6').map(a => a.address)) });
+          state: state.status, clientAddresses: [...Object.values(state.network ?? {}).flatMap(n =>
+            n.addresses.filter(a => a.family === 'inet' || a.family === 'inet6').map(a => a.address)),
+          // Apps on their own network reach the shared Postgres through the doorway proxy device, which connects
+          // from the host's address on the platform bridge: their sessions arrive from there. The session's role
+          // (one per app, with its own password) is what identifies the app on that path.
+          ...(engine === 'youeye-postgres' ? [await platformBridgeHostAddress()] : [])] });
       }
     }
     const state = await containerState(scope.engine);
     if (state !== 'Running' && state !== 'Stopped') throw new Error('PostgreSQL engine identity unavailable');
-    return { lifecycleExcluded: true, ingressBlocked, securityRevision: await securityRevision(current),
+    return { lifecycleExcluded: true, ingressBlocked,
       engine: { name: scope.engine, state, ownerAppId: scope.mode === 'own' ? scope.appId : undefined },
       credentialUses };
   });
   io.persistStaging = persistStaging;
   return createAppUpdatePostgresProvider(scope, io);
+}
+
+const GIB = 1024 * 1024 * 1024;
+
+/** The host's address on the platform bridge (incusbr0): the source of every doorway connection to platform services. */
+async function platformBridgeHostAddress(): Promise<string> {
+  const bridge = await read<{ config: Record<string, string> }>('/1.0/networks/incusbr0');
+  const address = bridge.config['ipv4.address']?.split('/')[0];
+  if (!address) throw new Error('Platform bridge address unavailable');
+  return address;
+}
+const COPY_ON_WRITE_DRIVERS = new Set(['zfs', 'btrfs']);
+
+/** Apps this app has an active network connection with (a NIC on either side, per direction). */
+async function activeConnectionPeers(appId: string): Promise<Set<string>> {
+  const peers = new Set<string>();
+  for (const bridge of await getBridgesForApp(appId)) {
+    if (!bridge.active || bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') continue;
+    if (bridge.from === appId) peers.add(bridge.to);
+    else if (bridge.direction === 'both-ways') peers.add(bridge.from);
+  }
+  return peers;
 }
 
 export async function observeUpdateInventory(metadata: InstallMetadata): Promise<{
@@ -177,14 +242,28 @@ export async function observeUpdateInventory(metadata: InstallMetadata): Promise
   const observations: UpdateInventoryObservations = { containers: [], volumes: [], databases: [], pools: [] };
   const instances: Instance[] = [];
   const pools = new Set<string>();
+  const connectedApps = await activeConnectionPeers(metadata.appId);
+  const seenConnections = new Set<string>();
   for (const container of metadata.containers) {
     const instance = await read<Instance>(`/1.0/instances/${e(container.containerName)}`);
-    // App-owned network metadata proves provider ownership even on native roots.
-    const nics = Object.values(instance.expanded_devices).filter(d => d.type === 'nic');
-    if (nics.length !== 1 || !nics[0].network) code('foreign-or-missing-container', 'An app container has an unknown network identity.');
-    const network = await read<{ config: Record<string, string>; used_by: string[] }>(`/1.0/networks/${e(nics[0].network)}`);
-    if (network.config['user.youeye.kind'] !== 'app-network' || network.config['user.youeye.app_id'] !== metadata.appId) {
-      code('foreign-or-missing-container', 'App container ownership cannot be proven.');
+    // App-owned network metadata proves provider ownership even on native roots: exactly one NIC on the app's own
+    // network. Further NICs are connections (net-<app>, plugged by grantBridgeAccess): each needs an active
+    // connection to that app, its network, and its scoped ACL.
+    let own = 0;
+    for (const [device, nic] of Object.entries(instance.expanded_devices).filter(([, d]) => d.type === 'nic')) {
+      if (!nic.network) code('foreign-or-missing-container', `App container NIC ${device} has no managed network.`);
+      const network = await read<{ config: Record<string, string> }>(`/1.0/networks/${e(nic.network)}`);
+      const networkApp = network.config['user.youeye.kind'] === 'app-network' ? network.config['user.youeye.app_id'] : undefined;
+      if (networkApp === metadata.appId) { own++; continue; }
+      const peer = /^net-([a-z0-9][a-z0-9-]*)$/.exec(device)?.[1];
+      if (!peer || networkApp !== peer || !connectedApps.has(peer)
+        || nic['security.acls'] !== integrationAclName(container.containerName, peer)) {
+        code('foreign-or-missing-container', `App container NIC ${device} is not an active connection of this app.`);
+      }
+    }
+    if (own !== 1) code('foreign-or-missing-container', 'App container ownership cannot be proven: it needs exactly one NIC on its own app network.');
+    for (const [device] of Object.entries(instance.expanded_devices).filter(([name, d]) => d.type === 'nic' && name.startsWith('net-'))) {
+      seenConnections.add(device.slice(4));
     }
     const root = Object.values(instance.expanded_devices).find(d => d.type === 'disk' && d.path === '/');
     if (!root?.pool || !instance.config['volatile.uuid']) code('old-runtime-unavailable', 'Installed runtime identity is incomplete.');
@@ -206,10 +285,18 @@ export async function observeUpdateInventory(metadata: InstallMetadata): Promise
       rootPool: root.pool, oldRuntimeAvailable: true, restoreSupported: true, volumes });
     instances.push(instance);
   }
+  // The reverse check: an active connection whose NIC is already gone would pass a rebuild and then fail
+  // verify-connections every time. Refuse it before any effect, naming the connection.
+  for (const peer of connectedApps) {
+    if (!seenConnections.has(peer)) {
+      code('connection-interface-missing', `The connection to ${peer} has no network interface; re-activate it before updating.`);
+    }
+  }
   for (const v of metadata.storageVolumes ?? []) {
     if (observations.volumes.some(x => x.pool === v.pool && x.name === v.name)) continue;
-    pools.add(v.pool);
     const volume = await read<Volume>(volumeURL(v.pool, v.name));
+    // Shared folders are never checkpointed: their pool needs no recovery space.
+    if (volume.config['user.youeye.kind'] !== 'shared') pools.add(v.pool);
     const users = volume.used_by.map(url => {
       const match = /^\/1.0\/instances\/([^/?]+)(?:\?project=default)?$/.exec(url);
       return match ? decodeURIComponent(match[1]) : 'unknown-attachment';
@@ -223,24 +310,40 @@ export async function observeUpdateInventory(metadata: InstallMetadata): Promise
     const info = await read<{ driver: string }>(`/1.0/storage-pools/${e(pool)}`);
     const capacity = await read<{ space: { total: number; used: number } }>(`/1.0/storage-pools/${e(pool)}/resources`);
     if (!['zfs', 'btrfs', 'lvm', 'dir'].includes(info.driver)) code('volume-recovery-unavailable', 'Storage driver recovery is unsupported.');
-    // Conservative full-copy budget includes each root's reported disk usage.
+    // The app's own data: each root's reported disk usage and its own volumes. Shared folders are never checkpointed
+    // (they are not rolled back), so they are not counted.
     let checkpointBytes = 0;
+    // Incus reports every pool-backed disk device of an instance in its state, custom volumes included: count only
+    // the root device here (volumes are counted once, below, without shared folders).
+    let rootBytes = 0;
     for (const c of observations.containers.filter(c => c.rootPool === pool)) {
+      const instance = instances[observations.containers.indexOf(c)];
+      const rootDevice = Object.entries(instance.expanded_devices).find(([, d]) => d.type === 'disk' && d.path === '/')?.[0];
       const state = await read<{ disk: Record<string, { usage: number }> }>(`/1.0/instances/${e(c.name)}/state`);
-      const usage = Object.values(state.disk ?? {}).reduce((sum, d) => sum + d.usage, 0);
-      if (!Number.isSafeInteger(usage) || usage <= 0) code('unknown-recovery-capacity', 'Runtime checkpoint size could not be measured.');
-      checkpointBytes += usage;
+      const usage = rootDevice ? state.disk?.[rootDevice]?.usage : undefined;
+      if (!Number.isSafeInteger(usage) || usage! <= 0) code('unknown-recovery-capacity', 'Runtime checkpoint size could not be measured.');
+      rootBytes += usage!;
     }
-    for (const v of observations.volumes.filter(v => v.pool === pool)) {
+    let volumeBytes = 0;
+    for (const v of observations.volumes.filter(v => v.pool === pool && !v.sharedGroup)) {
       const resources = await read<{ usage: { used: number } }>(`${volumeURL(pool, v.name)}/state`);
       if (!Number.isSafeInteger(resources.usage?.used)) code('unknown-recovery-capacity', 'Volume checkpoint size could not be measured.');
-      checkpointBytes += resources.usage.used;
+      volumeBytes += resources.usage.used;
     }
-    // Also reserve an independent restore working copy so interruption never
-    // forces consumption/deletion of the only verified runtime checkpoint.
-    observations.pools.push({ name: pool, availableBytes: capacity.space.total - capacity.space.used,
-      checkpointBytes: checkpointBytes * 2,
-      cleanupReserveBytes: Math.max(256 * 1024 * 1024, Math.ceil(checkpointBytes / 10)) });
+    checkpointBytes = rootBytes + volumeBytes;
+    const availableBytes = capacity.space.total - capacity.space.used;
+    if (COPY_ON_WRITE_DRIVERS.has(info.driver)) {
+      // Snapshots and instance copies share blocks: a rebuild rewrites the whole root (count it in full), data volumes
+      // churn (10 %), plus a fixed 1 GiB reserve. Not a second full copy, which made large apps impossible to update.
+      observations.pools.push({ name: pool, availableBytes,
+        checkpointBytes: rootBytes + Math.ceil(volumeBytes / 10), cleanupReserveBytes: GIB });
+    } else {
+      // Full copies: also reserve an independent restore working copy so interruption never forces
+      // consumption/deletion of the only verified runtime checkpoint.
+      observations.pools.push({ name: pool, availableBytes,
+        checkpointBytes: checkpointBytes * 2,
+        cleanupReserveBytes: Math.max(256 * 1024 * 1024, Math.ceil(checkpointBytes / 10)) });
+    }
   }
   return { observations, instances };
 }
@@ -374,11 +477,23 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       await effect('PUT', `/1.0/instances/${e(name)}`, { ...latest, config: restored });
     }
   }
-  private async ensureCurrentSecurity(record: AppUpdateRecord) {
+  /**
+   * Which parts of the app's security state changed since preflight (empty when none). A rollback never restores
+   * security state: it restores data and keeps the current policy and credentials, so a change is logged, not fatal.
+   * Plans written before 0.6.8 hold only an overall revision made by an older function; they report no parts.
+   */
+  private async securityChanges(record: AppUpdateRecord): Promise<string[]> {
     const plan = this.load(record);
-    const current = await readInstallMetadata(record.appId);
-    if (!current || await securityRevision(current) !== plan.securityRevision) {
-      throw new Error('Current app security changed; recovery must reconcile rather than restore old credentials');
+    if (!plan.securityParts) return [];
+    try {
+      const current = await readInstallMetadata(record.appId);
+      if (!current) return ['install record'];
+      const now = await securityParts(current);
+      return (Object.keys(now) as Array<keyof SecurityParts>).filter(key => now[key] !== plan.securityParts![key]);
+    } catch (error) {
+      // Advisory only: an unreadable identity database or secret must not block recovery.
+      console.warn(`[app-update] ${record.appId} ${record.id}: security state unreadable during recovery: ${describeErrorChainForLog(error)}`);
+      return ['unknown'];
     }
   }
   private async assertVolumeOwner(record: AppUpdateRecord, resource: UpdateResource) {
@@ -408,8 +523,8 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
   }
   async initialize(record: AppUpdateRecord): Promise<void> {
     if (!this.plan) throw new Error('Recovery plan unavailable');
-    // Admission now owns capacity reservations. Recheck observations under
-    // those reservations before quiescence/checkpoint or any app mutation.
+    // Free space may have changed since preflight (another app's update, downloads): check it again before
+    // quiescence/checkpoint or any app mutation.
     for (const pool of this.plan.capacity.pools) {
       const current = await read<{ space: { total: number; used: number } }>(`/1.0/storage-pools/${e(pool.name)}/resources`);
       if (current.space.total - current.space.used < pool.requiredBytes) {
@@ -445,6 +560,19 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     }
   }
   private async ingress(record: AppUpdateRecord, blocked: boolean) {
+    // Idempotent read-modify-write: serialized with the CP's other Caddy writers, and retried when a writer outside
+    // the queue moved the revision (HTTP 412). A lost write here would leave a committed app behind the 503.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await withCaddyMutation(() => this.ingressOnce(record, blocked));
+        return;
+      } catch (error) {
+        if (attempt >= 5 || !(error instanceof Error && error.message.startsWith('Caddy API error: 412'))) throw error;
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+      }
+    }
+  }
+  private async ingressOnce(record: AppUpdateRecord, blocked: boolean) {
     const plan = this.load(record);
     const config = await getConfig();
     const before = JSON.stringify(config);
@@ -616,7 +744,11 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       if (!this.plan) return;
     }
     const plan = this.load(record);
-    await this.ensureCurrentSecurity(record);
+    const securityChanged = await this.securityChanges(record);
+    if (securityChanged.length) {
+      console.warn(`[app-update] ${record.appId} ${record.id}: ${securityChanged.join(', ')} changed during the update; `
+        + 'restoring data and keeping the current policy and credentials');
+    }
     await this.ingress(record, true);
     await this.bootFence(record, true);
     for (const name of Object.keys(record.originalRunning)) {
@@ -741,7 +873,7 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
   async reopen(record: AppUpdateRecord): Promise<void> {
     if (this.noProviderEffects(record)) return;
     const plan = this.load(record);
-    await this.ensureCurrentSecurity(record);
+    // No security comparison here: after a commit nothing old is restored, and a rollback compared in restore().
     // Recheck frozen runtime identity before starting any fenced workload.
     await this.bootFence(record, true);
     const pg = await this.postgres(record);
@@ -824,7 +956,26 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       }
       await effect('DELETE', url);
     }
+    await clearRecoveryLabels(record.id, names);
     this.workspace(record).remove();
+  }
+}
+
+const RECOVERY_LABELS = ['user.youeye.update_operation', 'user.youeye.update_source', 'user.youeye.update_restored'];
+
+/**
+ * A rollback renames its restored copy to the app's container name, and the copy's recovery labels came with it. They
+ * prove identity during recovery only; once the operation is cleaned up they would make every later System update's
+ * checkpoint refuse the container as "retained maintenance". Remove the labels of this operation (never another's).
+ */
+export async function clearRecoveryLabels(operationId: string, containerNames: string[]): Promise<void> {
+  for (const name of containerNames) {
+    const instance = await optionalInstance(name);
+    if (!instance || !RECOVERY_LABELS.some(label => instance.config[label] === operationId)) continue;
+    const config = { ...instance.config };
+    for (const label of RECOVERY_LABELS) if (config[label] === operationId) delete config[label];
+    if (config['user.youeye.update_source'] && !config['user.youeye.update_operation']) delete config['user.youeye.update_source'];
+    await effect('PUT', `/1.0/instances/${e(name)}`, { ...instance, config });
   }
 }
 
@@ -844,6 +995,14 @@ export async function prepareIncusAppUpdate(metadata: InstallMetadata, target: A
   }
   if (postgres) {
     const pg = await postgresProvider(postgres, metadata, false);
+    if (postgres.mode === 'own') {
+      // The logical checkpoint needs a separate admin role, a non-superuser owner and no extensions. An app whose
+      // own server has one superuser login or extensions (Immich: vector search) can't be checkpointed that way yet.
+      try { await pg.observations(); } catch (error) {
+        logOperationFailure(`Own PostgreSQL observation for the ${metadata.appId} update`, error);
+        code('own-postgres-update-unsupported', 'This app runs its own PostgreSQL in a way in-place updates cannot checkpoint yet (a superuser app login or extensions).');
+      }
+    }
     const staging = await pg.stagingCapacity();
     stateBytes = staging.reservedBytes + 16 * 1024 * 1024;
     if (staging.availableBytes < staging.reservedBytes + 16 * 1024 * 1024) {
@@ -867,7 +1026,7 @@ export async function prepareIncusAppUpdate(metadata: InstallMetadata, target: A
   const installed = await getInstalledApp(metadata.appId);
   if (!installed) throw new Error('Installed app disappeared during preflight');
   const plan: RecoveryPlan = { metadata, installed: stateOf(installed), manifest: old, inventory, instances,
-    postgres, securityRevision: await securityRevision(metadata),
+    postgres, securityParts: await securityParts(metadata),
     capacity: { pools: observations.pools.map(p => ({ name: p.name, requiredBytes: p.checkpointBytes + p.cleanupReserveBytes })), stateBytes },
     volumeDescriptions };
   return { inventory, old, provider: new IncusAppUpdateProvider(plan),

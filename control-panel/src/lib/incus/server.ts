@@ -457,6 +457,19 @@ export async function deleteInstance(name: string) {
   return incusRequest('DELETE', `/1.0/instances/${encodeURIComponent(name)}`);
 }
 
+/** Delete recorded exec output files (best effort: a failure is logged and the daily Spine sweep removes them). */
+export async function deleteExecOutput(paths: Array<string | undefined>): Promise<void> {
+  for (const path of paths) {
+    if (!path || !/^\/1\.0\/instances\/[^/]+\/logs\/exec-output\/[A-Za-z0-9_.-]+$/.test(path)) continue;
+    try {
+      const result = await incusRequest('DELETE', path);
+      if (result.type === 'error') console.warn(`[incus] Exec output ${path} was not deleted: ${result.error ?? 'error'}`);
+    } catch (error) {
+      console.warn(`[incus] Exec output ${path} was not deleted: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 /**
  * Execute a command inside a container
  * Uses the exec endpoint with record-output for synchronous execution
@@ -536,35 +549,23 @@ export async function execCommand(
       if (opResponse.metadata) {
         const meta = opResponse.metadata;
         if (meta.status === 'Success' || meta.status === 'Failure') {
-          // The output fields contain log file paths, not content.
-          // We need to fetch the actual content from those paths.
-          let stdout = '';
-          let stderr = '';
-          
+          // The output fields hold paths of the recorded output files, not content. Read them, then delete them:
+          // Incus keeps them for ever otherwise (about 1.2 GB a day on a 36-app box, across reboots), and they can
+          // hold secrets. A result that can't be read is an error, never an empty success.
           const stdoutPath = meta.metadata?.output?.['1'];
           const stderrPath = meta.metadata?.output?.['2'];
-          
-          if (stdoutPath) {
-            try {
-              stdout = await incusRawGet(stdoutPath);
-            } catch {
-              stdout = '';
-            }
+          try {
+            const stdout = stdoutPath ? await incusRawGet(stdoutPath) : '';
+            const stderr = stderrPath ? await incusRawGet(stderrPath) : '';
+            const exitCode = meta.metadata?.return;
+            if (typeof exitCode !== 'number') throw new Error(`Incus exec in ${containerName} reported no exit code`);
+            return { exitCode, stdout, stderr };
+          } catch (error) {
+            if (error instanceof Error && error.message.startsWith('Incus exec in')) throw error;
+            throw new Error(`Incus exec output could not be read for ${containerName}`, { cause: error });
+          } finally {
+            await deleteExecOutput([stdoutPath, stderrPath]);
           }
-          
-          if (stderrPath) {
-            try {
-              stderr = await incusRawGet(stderrPath);
-            } catch {
-              stderr = '';
-            }
-          }
-          
-          return {
-            exitCode: meta.metadata?.return || 0,
-            stdout,
-            stderr,
-          };
         }
       }
       
@@ -576,8 +577,10 @@ export async function execCommand(
   
   // Synchronous response
   if (response.metadata) {
+    const exitCode = response.metadata.metadata?.return;
+    if (typeof exitCode !== 'number') throw new Error(`Incus exec in ${containerName} reported no exit code`);
     return {
-      exitCode: response.metadata.metadata?.return || 0,
+      exitCode,
       stdout: response.metadata.metadata?.output?.['1'] || '',
       stderr: response.metadata.metadata?.output?.['2'] || '',
     };

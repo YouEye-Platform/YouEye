@@ -17,7 +17,7 @@ import {
   getLastCheckedAt,
   isCheckInProgress,
 } from '@/lib/apps/update-cache';
-import { listInstalledApps } from '@/lib/market/metadata';
+import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { refreshVersionCheck } from '@/lib/market/version-checker';
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
-      listInstalledApps(),
+      listReadableInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
     ]);

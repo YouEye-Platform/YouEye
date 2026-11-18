@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  let body: { appId?: string; keepData?: boolean };
+  let body: { appId?: string; keepData?: boolean; force?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -42,6 +42,21 @@ export async function POST(request: NextRequest) {
     // The uninstaller decides from the app's install.json (never the live catalog):
     // delete-data removes the app's own database and role, volumes, secrets and CA directory.
     const appId = body.appId;
+    if (body.force === true) {
+      // For what the normal removal refuses (a broken install record or ownership data): remove what carries this
+      // app's id and recorded installation id, and report exactly what was and wasn't removed.
+      // Only for a broken or unfinished install: an intact app goes through the normal removal, which keeps its
+      // ownership checks and the retained-data path.
+      if (!(await forceRemovalApplies(appId))) {
+        return NextResponse.json({ success: false, errors: [
+          `${appId} is installed and intact; remove it without --force (youeye app remove ${appId}).`] }, { status: 409 });
+      }
+      const { cleanupAppByScan } = await import('@/lib/market/reconciler');
+      const cleaned = await withUserOperationLockWait(() => cleanupAppByScan(appId, { keepData, force: true }));
+      if (cleaned.unresolved.length) logOperationFailure(`Forced removal of ${appId}`, new Error(cleaned.unresolved.join('; ')));
+      return NextResponse.json({ success: cleaned.unresolved.length === 0, removed: cleaned.repaired, errors: cleaned.unresolved },
+        { status: cleaned.unresolved.length === 0 ? 200 : 409 });
+    }
     const result = await withUserOperationLockWait(() => uninstallApp(appId, { keepData }));
     if (!result.success) {
       logOperationFailure(`Uninstall of ${appId}`, new Error(result.errors.join('; ')));
@@ -58,4 +73,17 @@ export async function POST(request: NextRequest) {
       { status: busy ? 409 : 500 }
     );
   }
+}
+
+/** An unfinished install, a removal left half-done, or a recorded container that no longer exists. */
+async function forceRemovalApplies(appId: string): Promise<boolean> {
+  const { readInstallMetadata } = await import('@/lib/market/metadata');
+  const meta = await readInstallMetadata(appId).catch(() => null);
+  if (!meta) return true; // cleanup by scan refuses on its own without a readable record
+  if (meta.lifecycleState === 'installing' || meta.cleanupPending) return true;
+  const { incusRequest } = await import('@/lib/incus/server');
+  const listed = await incusRequest<string[]>('GET', '/1.0/instances');
+  if (listed.type === 'error' || !Array.isArray(listed.metadata)) return false;
+  const present = new Set(listed.metadata.map(url => url.split('/').pop()));
+  return meta.containers.some(container => !present.has(container.containerName));
 }

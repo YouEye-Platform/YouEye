@@ -230,8 +230,31 @@ export async function retainAdmissionOnUninstall(appId: string, keepData: boolea
     COMMIT;`);
 }
 
+/**
+ * A fresh install that never finished: not a backup restore or a retained-data adoption (those set
+ * recoveryPreserveData). It holds no user data, so its cleanup needs no data-ownership records, which are only
+ * written at finalize (bindInstalledAdmission).
+ */
+export function isUnfinishedFreshInstall(metadata: InstallMetadata): boolean {
+  return metadata.lifecycleState === 'installing' && metadata.recoveryPreserveData !== true;
+}
+
 export async function verifyAdmissionCleanup(metadata: InstallMetadata, keepData: boolean, restoreReplacement = false) {
   const policy = await getAdmissionPolicy(metadata.appId);
+  if (isUnfinishedFreshInstall(metadata)) {
+    // Identity must still match exactly: the recorded installation id, the policy (if it was created) and the app
+    // and installation tags on every runtime and volume that exists. Absent ones were never created.
+    if (!metadata.installationId || (policy && policy.installationId !== metadata.installationId)) {
+      throw new Error('Cleanup requires the matching immutable installation identity');
+    }
+    const { verifyUnfinishedRuntime } = await import('./runtime-ownership');
+    for (const container of metadata.containers || []) {
+      await verifyUnfinishedRuntime(metadata.appId, metadata.installationId, container.containerName);
+    }
+    const { verifyUnfinishedInstallStorage } = await import('@/lib/market/storage');
+    await verifyUnfinishedInstallStorage(metadata.storageVolumes || [], metadata.installationId);
+    return;
+  }
   if (!policy || metadata.installationId !== policy.installationId) {
     throw new Error('Cleanup requires the matching immutable installation identity');
   }

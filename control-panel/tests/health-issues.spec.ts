@@ -6,6 +6,7 @@ import {
   applyObservation,
   applyResolution,
   findOpenCriticalIssue,
+  issueAppId,
   type IssueStore,
 } from '../src/lib/health/issues';
 
@@ -64,4 +65,17 @@ test('only an open critical issue activates the destructive-operation gate', () 
 
   applyIgnore(store, input.id, 'Known maintenance', '2026-07-19T01:01:00.000Z');
   assert.equal(findOpenCriticalIssue(Object.values(store.issues)), null);
+});
+
+test('an app\'s own critical issues gate only that app; box issues gate every install', () => {
+  for (const [id, app] of [
+    ['market.app-network.bazarr', 'bazarr'], ['market.install.rollback.memos', 'memos'],
+    ['app.gramps-web.update-recovery', 'gramps-web'], ['app.bazarr.install-record', 'bazarr'],
+    ['market.install-operation.state', null], ['market.update-journal.damaged', null], ['service:caddy', null],
+  ] as const) assert.equal(issueAppId(id), app, id);
+  const store = emptyStore();
+  applyObservation(store, { ...input, id: 'app.bazarr.install-record', debounce: 1 }, '2026-11-18T08:40:00.000Z');
+  const issues = Object.values(store.issues);
+  assert.equal(findOpenCriticalIssue(issues, 'memos'), null);
+  assert.equal(findOpenCriticalIssue(issues, 'bazarr')?.id, 'app.bazarr.install-record');
 });

@@ -544,7 +544,8 @@ if (process.env.YOUEYE_TRANSACTION_CHILD) {
         }
       }
       const provider = new FailedHealthProvider(root, { point: 'metadata', edge: 'after' });
-      await assert.rejects(runAppUpdateTransaction(journal(root), input(root), provider, tx => provider.apply(tx)), /restored health failed/);
+      // The apply error is what the caller gets; the rollback's own failure is logged beside it.
+      await assert.rejects(runAppUpdateTransaction(journal(root), input(root), provider, tx => provider.apply(tx)), /injected metadata:after/);
       const [record] = journal(root).list();
       assert.equal(record.phase, 'recovery_required');
       assert.equal(record.rollbackVerifiedAt, undefined);

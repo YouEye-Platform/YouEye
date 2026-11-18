@@ -194,3 +194,42 @@ incus exec youeye-ui -- systemctl restart youeye-ui             # dashboard
 
 `youeye services restart <name>` goes through the Control Panel API, so it does not help when the Control Panel
 itself is down.
+
+## A Market app update is stuck and the System update waits for it
+
+Before 0.6.9, every Market app update stuck after its commit ("Update committed; cleanup requires attention", the app
+behind "503 Application maintenance"), and the System update to the fix refused to start while that record was
+unfinished (`lifecycle admission rejected before native action launch`). Since 0.6.9 a committed app update no longer
+blocks a System update, and the new Control Panel finishes it at its first start. A box still on 0.6.8 or older needs
+the new Spine first, then the normal update:
+
+```
+youeye spine install /path/to/spine-linux-amd64     # from the target release's assets; trial, rolls back if unhealthy
+youeye update core check
+```
+
+then `stage` and `activate` as usual. After the update, `youeye app recover <app>` reports the operation complete.
+
+## A box with stopped apps still works hard
+
+Before 0.6.9 the Control Panel read every installed app's manifest from Postgres (`incus exec psql`) twice per
+30-second pass, read every app network once per connection, inspected storage and took locks for stopped apps, wrote
+the 46 KB `installed-apps.json` for every app on every pass, and never deleted `incus exec` output (about 1.2 GB and
+430,000 files a day on a 36-app box). Since 0.6.9: manifests are cached by digest, stopped apps are skipped by the
+prober and the watchdog, health is written only on change, exec output is deleted after reading and swept daily by
+Spine (files older than a day), the ZFS ARC has a ceiling (when no one set one), a stopped app's network is audited
+every 10 minutes instead of every pass, and connections with a stopped side are not refreshed (starting an app
+refreshes its connections). To measure: `timeout 60 incus monitor --type=logging | grep -c "Matched trusted
+cert"` (Control Panel API requests per minute), `ls /var/lib/incus/containers/youeye-postgres/exec-output | wc -l`.
+
+
+## One app's record is damaged
+
+A corrupt or wrongly owned `install.json` (`/var/lib/youeye/app-<id>/install.json`, root, mode 0600) or app update
+record (`/var/lib/youeye/state/app-updates/operations/<id>_<operation>.json`) raises a critical health issue naming
+the app and the file. Since 0.6.9 the other apps keep working: health checks, update checks and app lists skip the
+broken app. Anything that must know who owns a container, volume or route (orphan cleanup, route removal, backup,
+restore, starting or stopping a container no readable record owns) refuses until the record is fixed, so the broken
+app's resources are never mistaken for leftovers. If only the owner or mode changed, set them back; otherwise restore
+the app from a backup. An update record written before 0.6.9 (`operations/<operation>.json`) names no app, so a damaged
+one still blocks every app update.

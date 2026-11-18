@@ -39,6 +39,24 @@ func TestCoreLifecycleRequiresSettledWorkAndExactCommit(t *testing.T) {
 	if err := b.Begin(j); err == nil {
 		t.Fatal("core checkpoint bypassed unfinished app recovery")
 	}
+	// Data still in flight (applying, not committed) keeps blocking.
+	if err := os.WriteFile(appReceipt, []byte(`{"schema":"youeye.app-update.v1","phase":"applying","cleanupComplete":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Begin(j); err == nil {
+		t.Fatal("core checkpoint bypassed an app update still applying")
+	}
+	// A committed update stuck at reopen (0.6.8 and earlier) has settled data: it must not block the System update
+	// that finishes it.
+	if err := os.WriteFile(appReceipt, []byte(`{"schema":"youeye.app-update.v1","phase":"cleanup","cleanupComplete":false,"commit":{"verifiedAt":"fixture"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Begin(j); err != nil {
+		t.Fatal("a committed app update awaiting reopen blocked the System update:", err)
+	}
+	if err := os.Remove(filepath.Join(b.Root, "core-reservation.json")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(appReceipt, []byte(`{"schema":"youeye.app-update.v1","phase":"cleanup","cleanupComplete":true,"rollbackVerifiedAt":"fixture"}`), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -50,9 +50,8 @@ test('backing volume aliases deduplicate without discarding a writable subpath o
   const result = planAppUpdateInventory(f.metadata, f.old, f.target, f.observations);
   assert.equal(result.resources.filter(r => r.kind === 'volume').length, 1);
   assert.equal(result.resources.find(r => r.kind === 'volume')?.mutable, true);
-  assert.deepEqual(result.resources.filter(r => r.kind === 'capacity').map(r => [r.scope, r.name, r.mutable]).sort(), [
-    ['control-state', 'app-updates', false], ['incus-pool', 'default', false],
-  ]);
+  // No reservation is shared with another app's update: a stuck update never blocks other apps.
+  assert.deepEqual(result.resources.filter(r => r.kind === 'capacity'), []);
   assert.deepEqual(result.originalRunning, { 'app-fixture': false });
   assert.deepEqual(result.databases, [
     { mode: 'shared', engine: 'youeye-postgres', name: 'fixture', ownerRole: 'fixture' },
@@ -78,16 +77,26 @@ test('writable sharing and unidentified writers refuse the finite v1 boundary', 
   f = fixture();
   f.observations.databases[0].writers.push('unknown-client');
   rejected(f, 'unsupported-shared-resource');
-  f = fixture();
+});
+
+test('a writable shared folder is updated in place: no checkpoint, reservation or budget, definition unchanged', () => {
+  const f = fixture();
   f.metadata.storageVolumes!.forEach(v => { v.sharedGroup = 'media'; });
   for (const manifest of [f.old, f.target]) {
     manifest.containers[0].volumes.forEach(v => { v.storageGroup = 'media'; });
   }
   f.observations.volumes[0].sharedGroup = 'media';
-  rejected(f, 'unsupported-shared-resource');
+  // Other apps write the same media library (sonarr, radarr, qbittorrent).
+  f.observations.volumes[0].users.push('app-radarr', 'app-qbittorrent');
+  const result = planAppUpdateInventory(f.metadata, f.old, f.target, f.observations);
+  assert.deepEqual(result.sharedFolders, ['media']);
+  assert.equal(result.resources.some(r => r.kind === 'volume'), false, 'never a recovery or reservation resource');
+  assert.deepEqual(result.volumes, []);
+  f.target.containers[0].volumes[0].container = '/media';
+  rejected(f, 'unsupported-storage-topology-change');
 });
 
-test('read-only shared inputs do not rewind other writers and changed definitions refuse', () => {
+test('read-only shared folders are not rewound either, and changed definitions refuse', () => {
   const f = fixture();
   f.metadata.storageVolumes!.forEach(v => { v.readOnly = true; v.sharedGroup = 'media'; });
   for (const m of [f.old, f.target]) {
@@ -97,7 +106,8 @@ test('read-only shared inputs do not rewind other writers and changed definition
   f.observations.volumes[0].sharedGroup = 'media';
   f.observations.volumes[0].users.push('app-other');
   const result = planAppUpdateInventory(f.metadata, f.old, f.target, f.observations);
-  assert.equal(result.resources.find(r => r.kind === 'volume')?.mutable, false);
+  assert.deepEqual(result.sharedFolders, ['media']);
+  assert.equal(result.resources.some(r => r.kind === 'volume'), false);
   f.target.containers[0].volumes[0].container = '/changed';
   rejected(f, 'unsupported-storage-topology-change');
 });
@@ -181,4 +191,38 @@ test('manifest storage cannot disappear from the install record while live inven
   f.observations.containers[0].volumes = [];
   f.observations.volumes = [];
   rejected(f, 'missing-declared-storage');
+});
+
+test('a sidecar mounting main\'s volume (from: main) is one volume on two of the app\'s containers', () => {
+  const metadata = {
+    appId: 'gramps', lifecycleState: 'active', databaseMode: 'none',
+    containers: [{ name: 'worker', containerName: 'app-gramps-worker', type: 'oci' },
+      { name: 'main', containerName: 'app-gramps-main', type: 'oci' }],
+    storageVolumes: [
+      { appId: 'gramps', pool: 'default', name: 'ye-gramps-main-gramps', logicalName: 'gramps',
+        containerName: 'app-gramps-main', containerPath: '/root/.gramps', type: 'data', readOnly: false, backup: true },
+      { appId: 'gramps', pool: 'default', name: 'ye-gramps-main-gramps', logicalName: 'gramps',
+        containerName: 'app-gramps-worker', containerPath: '/root/.gramps', type: 'data', readOnly: false,
+        backup: true, attachmentOnly: true },
+    ],
+  } as InstallMetadata;
+  const old = {
+    metadata: { id: 'gramps' }, database: { mode: 'none' },
+    containers: [
+      { name: 'worker', type: 'oci', volumes: [{ name: 'gramps', type: 'data', container: '/root/.gramps', read_only: false,
+        sourceVolume: 'gramps', sourceContainer: 'main' }] },
+      { name: 'main', type: 'oci', primary: true, volumes: [{ name: 'gramps', type: 'data', container: '/root/.gramps', read_only: false }] },
+    ],
+  } as unknown as AppManifest;
+  const attached = { pool: 'default', name: 'ye-gramps-main-gramps', readOnly: false };
+  const observations: UpdateInventoryObservations = {
+    containers: ['app-gramps-worker', 'app-gramps-main'].map(name => ({ name, ownerAppId: 'gramps', state: 'Running' as const,
+      rootPool: 'default', oldRuntimeAvailable: true, restoreSupported: true, volumes: [attached] })),
+    volumes: [{ pool: 'default', name: 'ye-gramps-main-gramps', ownerAppId: 'gramps', contentType: 'filesystem',
+      snapshotSupported: true, users: ['app-gramps-worker', 'app-gramps-main'] }],
+    databases: [],
+    pools: [{ name: 'default', availableBytes: 1000, checkpointBytes: 500, cleanupReserveBytes: 100 }],
+  };
+  const result = planAppUpdateInventory(metadata, old, structuredClone(old), observations);
+  assert.deepEqual(result.resources.filter(r => r.kind === 'volume').map(r => r.name), ['ye-gramps-main-gramps']);
 });

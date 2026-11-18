@@ -7,10 +7,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
+import { listReadableInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { containerExists, getContainerIP } from '@/lib/infrastructure/oci-deployer';
 import { incusRequest } from '@/lib/incus/server';
-import { getInstalledApp } from '@/lib/market/installed-apps';
+import { getInstalledApp, latestHealthCheckedAt } from '@/lib/market/installed-apps';
 import type { AppStatusInfo, ContainerStatusInfo, AppStatus } from '@/lib/market/types';
 import { inspectAppStorage } from '@/lib/market/storage';
 
@@ -76,7 +76,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       const dbApp = await getInstalledApp(appId);
       if (dbApp) {
         healthStatus = dbApp.healthStatus;
-        healthCheckedAt = dbApp.healthCheckedAt;
+        healthCheckedAt = latestHealthCheckedAt(appId, dbApp.healthCheckedAt);
         forwardAuthEnabled = dbApp.forwardAuthEnabled;
         installedVersion = dbApp.installedVersion || installedVersion;
         catalogVersion = dbApp.catalogVersion;
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get all installed apps from metadata
-    const installed = await listInstalledApps();
+    const installed = await listReadableInstalledApps();
     const metadataStatuses = await Promise.all(installed.map((m) => getAppStatus(m.appId)));
 
     // Also check native apps that might not have metadata yet (pre-migration)

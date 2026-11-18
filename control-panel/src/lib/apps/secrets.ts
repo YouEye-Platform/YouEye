@@ -233,7 +233,7 @@ export async function setPiholePassword(newPassword: string): Promise<void> {
       `/1.0/instances/${PIHOLE_CONTAINER}/exec`,
       {
         command: ['pihole', 'setpassword', newPassword],
-        'record-output': true,
+        'record-output': false, // the result is not read; recorded output is never deleted by Incus
         'wait-for-websocket': false,
       }
     );
