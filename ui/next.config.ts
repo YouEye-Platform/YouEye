@@ -14,6 +14,10 @@ const nextConfig = {
   generateBuildId: async () => process.env.YOUEYE_BUILD_ID || null,
   output: "standalone" as const,
   transpilePackages: ["@youeye/branding"],
+  // Never write rendered routes into the installed tree (.next/server/...):
+  // the update check verifies that tree against what was shipped. Build seeds
+  // are still read; regenerated responses stay in memory.
+  experimental: { isrFlushToDisk: false },
   async headers() {
     return [
       {

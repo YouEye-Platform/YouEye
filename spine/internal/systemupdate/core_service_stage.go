@@ -42,6 +42,16 @@ type CoreServiceStage struct {
 	StartState     string              `json:"start_state,omitempty"`
 }
 
+// coreStagePayloadMode: a service tree is checked strictly only when this
+// request wrote it, which its stage receipt records as "swapped". A reused
+// member (and anything else) is a tree this request did not write.
+func coreStagePayloadMode(stage CoreServiceStage) CorePayloadMode {
+	if stage.Phase == "swapped" && stage.ArtifactSHA256 != stage.PreviousSHA256 {
+		return CorePayloadStrict
+	}
+	return CorePayloadRecord
+}
+
 func coreServiceMember(r releasecache.CoreRelease, role string) (releasecache.CoreMember, error) {
 	for _, m := range r.Members {
 		if m.Role == role {

@@ -17,8 +17,8 @@ read a root-owned request file.
 
 | Command | Runs on | Does |
 |---|---|---|
-| `inventory` | source | lists the apps, resources and integrations the copy would need to handle; refuses unknown ones |
-| `reserve-source`, `release-source` | source | take and release a lifecycle reservation on the source |
+| `inventory` | source | lists the apps, resources and integrations the copy would need to handle; refuses unknown ones, and a source whose shipped System files are changed or missing (extra files are fine) |
+| `reserve-source`, `release-source` | source | take and release a lifecycle reservation on the source (release works on a modified source too) |
 | `quiesce-source`, `restore-source` | source | record power and autostart state and stop the writers; restore them |
 | `prepare-host` | copy | import the copied datasets; new machine ID, ZFS host ID and SSH host keys; fresh session, bridge, CLI and deployment secrets; new Incus server certificate and CP client certificate; drop the source MAC from the DHCP profile. Requires a reboot afterwards |
 | `start-core` | copy | start the core containers with the new credentials; bind Pi-hole to the copy's address |

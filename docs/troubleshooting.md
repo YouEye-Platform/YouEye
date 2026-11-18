@@ -134,6 +134,41 @@ installed release. Each update has a request ID (`--request`), shown in the jour
   with backoff. GitHub allows 60 anonymous API requests per hour per IP, which is why boxes read only the channel
   index and release assets.
 - After a reboot, `youeye-core-update.service` continues a retained request by itself (`resume --boot`).
+- **A step failed.** Settings → System shows "This step failed: …", the reason (the step's `evidence` from the
+  status API) and, while only preparation ran, Cancel. "Resume checks" is not offered for a failed step: a failed
+  step is never run again, so resuming only records the same failure. Cancel, then check for updates again; after
+  the checkpoint, "Restore previous release" (`recover`). When the checkpoint preflight refused and Spine is already
+  `cancelling`, Cancel is still offered and finishes the cancellation.
+- **A step's outcome is uncertain** (`needs-recovery` with a step left `started`, for example after a crash). When
+  the step's action recorded an error, the panel shows it next to the step as "Reason: …"; when the action left no
+  result (a killed child), nothing is shown. Recover the request.
+- **After the update ended.** A rolled-back update shows "The last update was rolled back. The installed release is
+  unchanged."; a cancelled one with a failed step shows "The last update was cancelled. The installed release is
+  unchanged." Below it come "This step failed: …" and "Reason: …" for the apply step that stopped it
+  (`transaction.stopped_step` in the status API). Paths in a reason are shown as "…".
+- **`installed cp differs: …` / `installed ui differs: …`** in the evidence of `verify-members` or
+  `authenticated-health` (since 0.6.10) is information, not an error: the installed tree held files that were not
+  shipped, or a shipped file was changed or missing, and the update went on. `youeye update core observe` lists up
+  to 20 of the paths. A tree the update wrote itself is checked strictly; see
+  [core-release-contract.md](core-release-contract.md#installed-file-checks).
+- **Failed `youeye-core-*` units** in `systemctl --failed` belong to an update request. Since 0.6.10 they are reset
+  when the request is committed, cancelled or rolled back; a request in `needs-recovery` keeps them until then.
+  Units left failed by 0.6.9 or older go away at the next reboot.
+- **0.6.8 and 0.6.9 only: `verify-members: cp manifest-response-cache: unrecorded-path`** (UI: "Needs attention ·
+  Verifying the complete release", "Recorded lifecycle action failed; retain paired checkpoint and prior
+  release"). Once a browser has fetched the Control Panel's `/favicon.ico`, Next.js caches that response inside the
+  installed payload (`/opt/app/.next/server/route-cache/APP_ROUTE/adb2ea08…/`, the SHA-256 of `/favicon.ico/route`),
+  and the payload check of these versions allows only the `manifest.webmanifest` cache entry. The check runs in the
+  installed (old) Spine, so no release can lift it; 0.6.10 and later neither write nor refuse such files. Nothing
+  was changed; cancel, delete the entry, and start the update again:
+  ```sh
+  youeye update core cancel --request <id>
+  incus exec youeye-control -- rm -rf /opt/app/.next/server/route-cache/APP_ROUTE/adb2ea089a587cf57dd95fa5b11714bc555600b8777692e029801fce568a54ac
+  ```
+  Start the update at once (`youeye update core check`, then `stage` and `activate`, or Update in a tab that is
+  already open): loading a Control Panel page in a browser can write the entry again (a tab that already shows
+  the favicon usually doesn't), and the old Spine then refuses once more at `verify-members` or the checkpoint
+  preflight. From `apply-cp` on, the steps run in the new Spine, which no longer refuses it.
 
 ## The box does not boot the new image
 
@@ -209,6 +244,30 @@ youeye update core check
 ```
 
 then `stage` and `activate` as usual. After the update, `youeye app recover <app>` reports the operation complete.
+
+## An app says its source is not accepted, or "setup steps changed"
+
+Since 0.6.10 apps from a custom Market source are installed and updated only after the owner accepted the source
+(see [market.md](market.md#other-sources-and-consent)). A source added before 0.6.10 is not accepted yet: its apps
+are listed with "Not accepted", and an install or update answers `source-not-accepted`. If you trust the source:
+
+```
+youeye market source list              # the ACCEPTED column says "no"
+youeye market source accept <id>
+```
+
+A source whose address or branch was changed must be accepted again. `source-unavailable` means the source is turned
+off or gone: turn it on again (Market → Manage sources), or, for an install, name another source or none (the
+official Market).
+
+"Setup steps changed" (`setup-changed`) on an update of an app added by URL: its new version runs different setup
+files inside its containers, and nothing was changed. Read them (the update panel lists them), then update with
+`youeye app update <app> --allow-setup` or "Allow and update", only if you trust the publisher.
+
+`source-changed` on an update: the app's source id now points at another repository (or branch) than the app was
+installed from, for example after the source's address was edited or a removed source's id was taken again. The
+message names both. Nothing was changed, and the update check offers this app nothing. If you want its updates from
+the new repository, switch the app to that source on its page.
 
 ## A box with stopped apps still works hard
 

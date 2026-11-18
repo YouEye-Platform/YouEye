@@ -86,14 +86,17 @@ var marketInfoCmd = &cobra.Command{
 	},
 }
 
-var marketRepoCmd = &cobra.Command{
-	Use:   "repo",
-	Short: "Manage the Control Panel-owned Market repository",
+var marketSourceCmd = &cobra.Command{
+	Use:   "source",
+	Short: "List Market sources and accept a custom one",
+	Long: `The official Market is always a source. A custom source (a Git repository added under Market -> Manage
+sources) is accepted by the owner when it is added; until then its apps are listed but never installed, updated
+or switched to. Apps from a custom source are not checked by YouEye and run their own setup steps on the box.`,
 }
 
-var marketRepoGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Show the Market repository",
+var marketSourceListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List Market sources",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireCP(); err != nil {
 			return err
@@ -102,44 +105,61 @@ var marketRepoGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		source, _ := data["source"].(map[string]interface{})
-		output.StatusLine("Market repository", firstOf(source, "repo_url"), "")
-		output.StatusLine("Provider", firstOf(source, "provider"), "")
-		output.StatusLine("Channel", firstOf(source, "branch"), "")
-		output.StatusLine("Resolved commit", firstOf(source, "resolved_commit"), "")
-		if refreshError := firstOf(source, "refresh_error"); refreshError != "" {
-			output.StatusLine("Last refresh", "failed: "+refreshError, "")
-		} else {
-			output.StatusLine("Last refresh", firstOf(source, "resolved_at"), "")
-		}
+		output.Table([]string{"ID", "NAME", "ADDRESS", "BRANCH", "ENABLED", "ACCEPTED"}, marketSourceRows(data))
 		return nil
 	},
 }
 
-var marketRepoSetCmd = &cobra.Command{
-	Use:   "set <url>",
-	Short: "Set the Market repository",
+// marketSourceRows renders GET /api/market/source: the official source is always accepted; a custom one shows
+// when it was accepted, or "no".
+func marketSourceRows(data map[string]interface{}) [][]string {
+	sources, _ := data["sources"].([]interface{})
+	rows := [][]string{}
+	for _, item := range sources {
+		source, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		accepted := firstOf(source, "accepted_at")
+		address := firstOf(source, "repo_url")
+		if firstOf(source, "kind") == "channel" {
+			accepted = "official"
+			address = "(this channel's Market release)"
+		} else if accepted == "" {
+			accepted = "no"
+		}
+		enabled := "yes"
+		if on, ok := source["enabled"].(bool); ok && !on {
+			enabled = "no"
+		}
+		rows = append(rows, []string{firstOf(source, "id"), firstOf(source, "name"), address, firstOf(source, "branch"), enabled, accepted})
+	}
+	return rows
+}
+
+var marketSourceAcceptCmd = &cobra.Command{
+	Use:   "accept <id>",
+	Short: "Accept a custom Market source, so its apps may be installed and updated",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireCP(); err != nil {
 			return err
 		}
-		data, err := controlClient.Patch("/api/market/source", map[string]interface{}{
-			"repo_url": args[0],
-		})
+		output.Warn("Apps from this source are not checked by YouEye. They run their own setup steps on your box.")
+		data, err := controlClient.Post("/api/market/source/accept", map[string]interface{}{"id": args[0]})
 		if err != nil {
 			return err
 		}
 		source, _ := data["source"].(map[string]interface{})
-		output.Success("Market repository set to " + firstOf(source, "repo_url"))
+		output.Success(fmt.Sprintf("Market source %s (%s, branch %s) accepted", args[0], firstOf(source, "repo_url"), firstOf(source, "branch")))
 		return nil
 	},
 }
 
 func init() {
-	marketRepoCmd.AddCommand(marketRepoGetCmd)
-	marketRepoCmd.AddCommand(marketRepoSetCmd)
-	marketCmd.AddCommand(marketRepoCmd)
+	marketSourceCmd.AddCommand(marketSourceListCmd)
+	marketSourceCmd.AddCommand(marketSourceAcceptCmd)
+	marketCmd.AddCommand(marketSourceCmd)
 	marketCmd.AddCommand(marketSearchCmd)
 	marketCmd.AddCommand(marketInfoCmd)
 }

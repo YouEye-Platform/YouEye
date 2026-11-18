@@ -75,10 +75,7 @@ var applianceCopyReleaseCommand = &cobra.Command{Use: "release-source", Args: co
 		if err != nil || systemupdate.CoreReceiptDigest(receipt) != request.SourceReceiptSHA256 {
 			return fmt.Errorf("source receipt changed")
 		}
-		if observation := (coreAPIOperations{}).ObserveInstalled(cmd.Context(), receipt); observation.State != "verified" {
-			return fmt.Errorf("source installed health is not verified")
-		}
-		return nil
+		return copySourceReleaseObservation((coreAPIOperations{}).ObserveInstalled(cmd.Context(), receipt))
 	})
 	if err != nil {
 		return err
@@ -116,6 +113,32 @@ func init() {
 	applianceCopyCommand.AddCommand(applianceCopyInventoryCommand, applianceCopyReserveCommand, applianceCopyReleaseCommand, quiesce, restore)
 	applianceCommand.AddCommand(applianceCopyCommand)
 }
+
+// copySourceReleaseObservation decides whether the source's hold may be
+// released. Releasing ends the copy on the source; refusing would leave that
+// box closed to app and System work, updates included. The source was held to
+// its shipped files when it was reserved, so a file that differs now is
+// reported (`youeye update core observe`), not held against the release. An
+// installation that cannot be observed at all keeps the hold.
+func copySourceReleaseObservation(observation systemupdate.CoreInstalledObservation) error {
+	if observation.State != "verified" && observation.State != "modified" {
+		return fmt.Errorf("source installed health is not verified")
+	}
+	return nil
+}
+
+// copyInstalledObservation refuses a copy of (or onto) an installation whose
+// shipped System files are changed or missing, and says so.
+func copyInstalledObservation(observation systemupdate.CoreInstalledObservation) error {
+	switch observation.State {
+	case "verified":
+		return nil
+	case "modified":
+		return fmt.Errorf("copy requires unmodified System files, but this installation has changed or missing ones (%s); see `youeye update core observe`", systemupdate.CoreInstalledSummary(observation.Members))
+	}
+	return fmt.Errorf("copy requires current verified installed System membership")
+}
+
 func readNativeCopyRequest(file string) (systemupdate.CoreCopyRequest, error) {
 	var request systemupdate.CoreCopyRequest
 	if os.Geteuid() != 0 || !filepath.IsAbs(file) {
@@ -176,9 +199,11 @@ func inspectNativeCopy(ctx context.Context) (nativeCopyInventory, error) {
 	if err != nil {
 		return out, err
 	}
+	// A copy strands nobody, so its source is held to the shipped files: extra
+	// files are fine, a changed or missing shipped file refuses the copy.
 	observation := (coreAPIOperations{}).ObserveInstalled(ctx, receipt)
-	if observation.State != "verified" {
-		return out, fmt.Errorf("copy requires current verified installed System membership")
+	if err := copyInstalledObservation(observation); err != nil {
+		return out, err
 	}
 	if health := collectApplianceHealth("operational"); health.ExitCode != healthExitHealthy {
 		return out, fmt.Errorf("copy source operational health failed")

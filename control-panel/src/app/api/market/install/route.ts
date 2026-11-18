@@ -7,16 +7,17 @@
  * Body: { appId, subdomain?, domain?, sourceId?, customName?, customIcon? }
  *
  * Only appId is required. When the caller omits subdomain/sourceId (e.g. the
- * `youeye app install` CLI), they are resolved server-side from the catalog:
- * sourceId defaults to the default Market source and subdomain defaults to
- * the manifest's defaultSubdomain (falling back to the appId). This keeps
- * install records complete — a record persisted without catalog metadata
- * silently disables update detection.
+ * `youeye app install` CLI), they are resolved server-side: sourceId defaults
+ * to the official Market (never "the first enabled source") and subdomain
+ * defaults to the manifest's defaultSubdomain (falling back to the appId).
+ * A custom source must be accepted by the owner and an Added (URL) app needs
+ * its own consent flags (`marketSourceRefusal`, `directAppRefusal`); the
+ * source identity in the record is always set here, never by the client.
  */
 
 import { NextRequest } from 'next/server';
 import { resolveCatalogApp } from '@/lib/market/catalog';
-import { getMarketSource } from '@/lib/market/source';
+import { directAppRefusal, isMarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID } from '@/lib/market/source';
 import { installApp } from '@/lib/market/engine';
 import {
   finishTracking, logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent,
@@ -101,18 +102,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Resolve the Market source server-side when omitted so the install record
-  // always carries a real sourceId (update detection depends on it).
-  if (!config.sourceId) {
-    try {
-      config.sourceId = (await getMarketSource()).id;
-    } catch {
-      return new Response(
-        JSON.stringify({ error: 'Failed to resolve the configured Market source' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+  if (config.sourceId !== undefined && typeof config.sourceId !== 'string') {
+    return Response.json({ error: 'Invalid Market source' }, { status: 400 });
   }
+  // The official Market unless the caller named a source, so the install record always carries a real sourceId
+  // (update detection depends on it). Catalog identity fields come from the resolved source, never the client.
+  config.sourceId = config.sourceId?.trim() || OFFICIAL_MARKET_SOURCE_ID;
+  delete config.catalogKey;
+  delete config.sourceName;
+  delete config.sourceRepoUrl;
+  delete config.manifestPath;
+  delete config.manifestRepo;
+  delete config.manifestBranch;
+  delete config.manifestDigest;
 
   try {
     const canonicalDomain = await canonicalPlatformDomain();
@@ -130,15 +132,11 @@ export async function POST(request: NextRequest) {
   // Fetch the manifest: from an Added app (direct source) or the catalog
   let manifest;
   try {
-    if (config.sourceId?.startsWith('direct:')) {
-      if (config.acceptUnverifiedPublisher !== true) {
-        throw new Error('Confirm that you trust this Added app source before installing');
-      }
+    if (config.sourceId.startsWith('direct:')) {
       const direct = await getDirectMarketApp(config.sourceId, config.appId);
       if (!direct) throw new Error('Direct Market entry no longer exists');
-      if (direct.manifest.setups.length > 0 && config.allowSetup !== true) {
-        throw new Error('This app runs setup files inside its containers; allow them before installing (allowSetup)');
-      }
+      const refusal = directAppRefusal(direct.manifest.setups, config);
+      if (refusal) throw refusal;
       manifest = direct.manifest;
       config.catalogKey = `${direct.sourceId}:app:${direct.manifest.metadata.id}`;
       config.sourceName = 'Added';
@@ -146,15 +144,24 @@ export async function POST(request: NextRequest) {
       config.manifestPath = direct.manifestUrl;
       config.manifestDigest = direct.manifestDigest;
     } else {
-      const resolved = await resolveCatalogApp(config.appId, [config.sourceId]);
+      const resolved = await resolveCatalogApp(config.appId, config.sourceId);
       manifest = resolved.manifest;
+      config.catalogKey = `${resolved.source.id}:app:${config.appId}`;
+      config.sourceName = resolved.source.name;
+      config.sourceRepoUrl = resolved.source.repo_url || undefined;
       config.manifestPath = resolved.reference.path;
       config.manifestRepo = resolved.reference.repo;
       config.manifestBranch = resolved.reference.branch;
       config.manifestDigest = resolved.reference.digest;
     }
   } catch (error) {
-    const directError = config.sourceId?.startsWith('direct:') && error instanceof Error
+    if (isMarketSourceConsentError(error)) {
+      return Response.json({ error: error.message, code: error.code, ...(error.setups ? { setups: error.setups } : {}) },
+        { status: error.code === 'source-unavailable' ? 400 : 403 });
+    }
+    // resolveCatalogApp's own messages name only the app, the source and a fixed reason.
+    const directError = error instanceof Error && (config.sourceId?.startsWith('direct:')
+      || /^App "[^"]*" could not be resolved from Market source/.test(error.message))
       ? error.message
       : 'Failed to fetch or verify the app manifest';
     return new Response(

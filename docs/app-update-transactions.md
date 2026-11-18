@@ -179,6 +179,12 @@ failure, including recovery at Control Panel start, logs its cause.
 - Logical restore targets one dedicated database and keeps the current roles, passwords and grants (grants are
   captured before the drop, saved encrypted, and reused on retry).
 - An app-owned PostgreSQL engine keeps its runtime and data volumes; app updates never do major-version upgrades.
+- The logical checkpoint of an app-owned PostgreSQL needs a separate admin role, a non-superuser app owner and no
+  extensions. An app whose own server has a single superuser login or extensions (Immich: one `immich` superuser
+  and vector-search extensions) can't be checkpointed that way, so its update is refused before anything changes
+  (`own-postgres-update-unsupported`, "Update not possible in place … Nothing was changed",
+  `lib/market/update-provider.ts`). Such an app is updated by removing and reinstalling it, keeping a backup.
+  Checkpointing the stopped server's data volume instead is an open owner decision (`Plans/Backlog.md`).
 - Migration SQL runs as the app's own non-privileged owner, never as an admin with `SET ROLE`. The session must
   already suppress statement, error and duration logging; preload and logging settings are checked first. Unsafe
   settings refuse the migration.

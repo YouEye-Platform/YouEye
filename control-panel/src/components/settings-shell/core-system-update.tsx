@@ -109,7 +109,22 @@ async function headers() {
   }
   const transaction = status.transaction;
   const unfinished = transaction && !transaction.complete;
-  const canCancel = unfinished && !transaction.activation_requested && transaction.steps.every(step => step.state === "pending" || ["verify-members", "stage-host"].includes(step.name));
+  // A failed step is never run again: resuming only records the same failure. The way on is to cancel (when
+  // nothing past preparation ran) or to restore the previous release, so the reason is shown and Resume is not.
+  const failedStep = unfinished ? transaction.steps.find(step => step.state === "failed") : undefined;
+  // Spine cancels a request while only its preparation steps ran. A requested activation hides Cancel because the
+  // next step may start at any moment; after a failed step nothing starts, and Cancel is the only way on. Spine
+  // publishes "cancelling" over a failed checkpoint only after proving its preflight refused before any effect, and
+  // its Cancel finishes that cancellation; anywhere else a failed checkpoint needs recovery.
+  const canCancel = unfinished && (!transaction.activation_requested || !!failedStep) && transaction.steps.every(step => step.state === "pending"
+    || ["verify-members", "stage-host"].includes(step.name)
+    || (transaction.phase === "cancelling" && step.name === "checkpoint" && step.state === "failed"));
+  // A started step whose outcome is uncertain carries the error its action recorded, when there is one.
+  const uncertainStep = unfinished && transaction.phase === "needs-recovery" ? transaction.steps.find(step => step.state === "started" && step.evidence) : undefined;
+  // A finished request that did not install its release says so, with the step that stopped it and why.
+  const stoppedUpdate = transaction?.complete && (transaction.phase === "cancelled" || transaction.phase === "rolled-back");
+  const stoppedStep = stoppedUpdate ? transaction.stopped_step ?? transaction.steps.find(step => step.state === "failed") : undefined;
+  const stoppedNotice = !stoppedUpdate ? undefined : transaction.phase === "rolled-back" ? translateInterface("m70549d859aef") : stoppedStep ? translateInterface("m33d5f29d8b07") : undefined;
   const currentStep = transaction?.steps.find(step => step.state !== "succeeded");
   const waitingForApps = currentStep?.stage === "admission" && currentStep.action_state === "running";
   const canRetryAdmission = currentStep?.action_state === "retryable" && currentStep.stage === "admission" && currentStep.effect_state === "not-started";
@@ -134,6 +149,11 @@ async function headers() {
     {connection && <Alert><AlertDescription>{connection}</AlertDescription></Alert>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {notice && <p className="text-sm text-muted-foreground" role="status">{notice}</p>}
+    {stoppedNotice && <div className="space-y-1">
+      <p className="text-sm text-muted-foreground">{stoppedNotice}</p>
+      {stoppedStep && <p className="text-sm text-destructive">{translateInterface("mc505099f7d0c", {step: stepLabels[stoppedStep.name] ?? translateInterface("m89f42c216c85")})}</p>}
+      {stoppedStep?.evidence && <p className="break-words text-sm text-muted-foreground">{translateInterface("mae08e67fc5e9", {reason: stoppedStep.evidence})}</p>}
+    </div>}
     {pending && <div className="flex flex-wrap items-center gap-3">
       <p className="text-sm text-muted-foreground">{translateInterface("mde1fe9f85733")}</p>
       <Button variant="outline" disabled={!!busy} onClick={() => void submit(pending.action, pending)}>{translateInterface("m16003a1a9190")}</Button>
@@ -148,11 +168,15 @@ async function headers() {
       {waitingForApps && <p className="text-sm text-muted-foreground">{translateInterface("m7460797e6c6d")}</p>}
       {canRetryAdmission && <p className="text-sm text-muted-foreground">{admissionBlocked ? translateInterface("m2708962963e3") : translateInterface("mfa12e6c66819")}</p>}
       {transaction.error && <p className="text-sm text-destructive">{transaction.error}</p>}
+      {uncertainStep?.evidence && <p className="break-words text-sm text-muted-foreground">{translateInterface("mae08e67fc5e9", {reason: uncertainStep.evidence})}</p>}
+      {failedStep && <p className="text-sm text-destructive">{translateInterface("mc505099f7d0c", {step: stepLabels[failedStep.name] ?? translateInterface("m89f42c216c85")})}</p>}
+      {failedStep?.evidence && <p className="break-words text-sm text-muted-foreground">{translateInterface("mae08e67fc5e9", {reason: failedStep.evidence})}</p>}
+      {failedStep && canCancel && <p className="text-sm text-muted-foreground">{translateInterface("ma68984fb082f")}</p>}
       {recoveryMessage && <p className="text-sm text-muted-foreground">{recoveryMessage}</p>}
       <div className="flex flex-wrap gap-2">
         {transaction.phase === "awaiting-restart" && <Button disabled={!!busy || !!pending} onClick={() => void submit("activate")}>{translateInterface("m159713231bf6")}{transaction.target_version}</Button>}
         {canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("cancel")}>{translateInterface("me5013ddb039e")}</Button>}
-        {transaction.phase !== "cancelling" && <Button variant="outline" disabled={!!busy || !!pending || waitingForApps} onClick={() => void submit("resume")}>{canRetryAdmission ? recovering ? translateInterface("mf37b055f32a8") : translateInterface("md29ed82b9eeb") : translateInterface("m5aff816e24b2")}</Button>}
+        {transaction.phase !== "cancelling" && !failedStep && <Button variant="outline" disabled={!!busy || !!pending || waitingForApps} onClick={() => void submit("resume")}>{canRetryAdmission ? recovering ? translateInterface("mf37b055f32a8") : translateInterface("md29ed82b9eeb") : translateInterface("m5aff816e24b2")}</Button>}
         {transaction.phase === "needs-recovery" && !canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("recover")}>{translateInterface("mcbc4381b5be7")}</Button>}
       </div>
       {transaction.phase === "awaiting-restart" && <p className="text-sm text-muted-foreground">{translateInterface("m4d6705344b6d")}</p>}

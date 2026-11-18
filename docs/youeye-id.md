@@ -11,7 +11,7 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
   - `youeye-id.service` on port 3001 with `IDENTITY_SERVICE=true` (YouEye ID).
 - In identity mode, `proxy.ts` allows only the identity routes (`/identity/*`, `/application/o/*`, `/oauth/*`,
   `/forward-auth/caddy`, the favicon). `instrumentation.ts` starts only the back-channel logout sender there; the
-  platform jobs (health monitor, update queue, …) run in the Control Panel process only.
+  platform jobs (health monitor, update checks, backup scheduler, …) run in the Control Panel process only.
 - The public host is `<subdomains.identity>.<domain>` from `youeye.yaml` (setup proposes `id`). It must differ from
   the dashboard host. The issuer base is `https://<identity host>` (`lib/identity/config.ts`).
 - Data lives in the platform PostgreSQL (`youeye-postgres`, database `youeye`): tables `identity_*` (users,

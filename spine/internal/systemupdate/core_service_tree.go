@@ -2,6 +2,7 @@ package systemupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,19 +11,37 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func verifyCoreServiceChild(ctx context.Context, parent *os.File, name string, index CorePayloadIndex) error {
+func verifyCoreServiceChild(ctx context.Context, parent *os.File, name string, index CorePayloadIndex, mode CorePayloadMode) (CorePayloadFindings, error) {
 	dir, err := openCorePayloadDirectory(int(parent.Fd()), name)
 	if err != nil {
-		return err
+		return CorePayloadFindings{}, err
 	}
 	defer dir.Close()
-	return verifyCorePayloadDescriptor(ctx, dir, index)
+	return verifyCorePayloadDescriptor(ctx, dir, index, mode)
+}
+
+// coreTreeHoldsExactly: the child holds every recorded file of the index,
+// unchanged. A tree that cannot be opened or walked is an error, not "no".
+func coreTreeHoldsExactly(ctx context.Context, parent *os.File, name string, index CorePayloadIndex) (bool, CorePayloadFindings, error) {
+	found, err := verifyCoreServiceChild(ctx, parent, name, index, CorePayloadStrict)
+	var differs *CorePayloadDifferenceError
+	if errors.As(err, &differs) {
+		return false, found, nil
+	}
+	return err == nil, found, err
 }
 
 // stageCoreServiceTree exchanges complete directory trees atomically. The old
-// tree remains under the owned stage name until accepted retention cleanup.
-// Readback of both trees reconciles a lost exchange acknowledgement; partial
-// extraction is deliberately unknown and requires the paired recovery path.
+// tree remains under the owned stage name. Partial extraction is deliberately
+// unknown and requires the paired recovery path.
+//
+// Which side is checked how: the tree this request writes (the extracted stage,
+// then the application directory after the exchange) is checked strictly
+// against the next index. The tree this request did not write (the installed
+// application directory before the exchange, the same tree under the stage name
+// afterwards, and a reused member) is walked in record mode: it may hold files
+// we did not ship, changed files or be missing files, and it is replaced or
+// reused as it is. Record mode still requires that directory to exist.
 func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *CoreServiceStage, old, next CorePayloadIndex, save func(CoreServiceStage) error) error {
 	if err := old.Validate(); err != nil {
 		return err
@@ -35,7 +54,9 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 		return fmt.Errorf("exact core tree identities required")
 	}
 	if r.Phase == "reused" || r.ArtifactSHA256 == r.PreviousSHA256 {
-		if err := verifyCoreServiceChild(ctx, parent, base, next); err != nil {
+		// A reused member is reused as it is. Its differences were recorded by
+		// verify-members and are recorded again by authenticated-health.
+		if _, err := verifyCoreServiceChild(ctx, parent, base, next, CorePayloadRecord); err != nil {
 			return err
 		}
 		r.Phase = "reused"
@@ -43,7 +64,7 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 	}
 	switch r.Phase {
 	case "prepared":
-		if err := verifyCoreServiceChild(ctx, parent, base, old); err != nil {
+		if _, err := verifyCoreServiceChild(ctx, parent, base, old, CorePayloadRecord); err != nil {
 			return err
 		}
 		live, err := openCorePayloadDirectory(int(parent.Fd()), base)
@@ -118,23 +139,39 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 		return fmt.Errorf("unknown core service stage phase")
 	}
 	if r.Phase == "swapped" {
-		if err := verifyCoreServiceChild(ctx, parent, base, next); err != nil {
+		if _, err := verifyCoreServiceChild(ctx, parent, base, next, CorePayloadStrict); err != nil {
 			return err
 		}
-		return verifyCoreServiceChild(ctx, parent, r.StageName, old)
+		_, err := verifyCoreServiceChild(ctx, parent, r.StageName, old, CorePayloadRecord)
+		return err
 	}
 	if r.Phase == "exchange-requested" {
-		// Atomic exchange has exactly two observable sides. If both prove the
-		// acknowledged target/baseline, record the same effect instead of replaying.
-		if verifyCoreServiceChild(ctx, parent, base, next) == nil && verifyCoreServiceChild(ctx, parent, r.StageName, old) == nil {
+		// The exchange was requested and its acknowledgement lost. The old tree
+		// proves nothing (it is not checked strictly, and it may even hold all of
+		// next's files), so the decision rests on the tree this request wrote:
+		// the exchange happened when the application directory holds exactly
+		// next's files and the stage does not. When both hold them, the freshly
+		// extracted tree is the one without extra files; an application directory
+		// with none is as good as that extraction, so nothing is exchanged again.
+		// Whatever is decided, the request ends with an application directory
+		// that passed the strict check against next, or with an error.
+		baseNext, baseFound, err := coreTreeHoldsExactly(ctx, parent, base, next)
+		if err != nil {
+			return err
+		}
+		stageNext, _, err := coreTreeHoldsExactly(ctx, parent, r.StageName, next)
+		if err != nil {
+			return err
+		}
+		if baseNext && (!stageNext || baseFound.Unrecorded == 0) {
 			r.Phase = "swapped"
 			return save(*r)
 		}
 	}
-	if err := verifyCoreServiceChild(ctx, parent, base, old); err != nil {
+	if _, err := verifyCoreServiceChild(ctx, parent, base, old, CorePayloadRecord); err != nil {
 		return err
 	}
-	if err := verifyCoreServiceChild(ctx, parent, r.StageName, next); err != nil {
+	if _, err := verifyCoreServiceChild(ctx, parent, r.StageName, next, CorePayloadStrict); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -152,10 +189,10 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 	if err := parent.Sync(); err != nil {
 		return err
 	}
-	if err := verifyCoreServiceChild(ctx, parent, base, next); err != nil {
+	if _, err := verifyCoreServiceChild(ctx, parent, base, next, CorePayloadStrict); err != nil {
 		return err
 	}
-	if err := verifyCoreServiceChild(ctx, parent, r.StageName, old); err != nil {
+	if _, err := verifyCoreServiceChild(ctx, parent, r.StageName, old, CorePayloadRecord); err != nil {
 		return err
 	}
 	r.Phase = "swapped"

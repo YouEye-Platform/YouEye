@@ -269,7 +269,12 @@ function imageSourcesForCsp(request?: NextRequest): string {
  * next.config.ts headers() is evaluated at build time, not runtime.
  */
 function applySecurityHeaders(response: NextResponse, pathname: string, request?: NextRequest): NextResponse {
-  if (pathname === '/api/ping') {
+  if (pathname === '/api/market/image') {
+    // The image route answers without sign-in with bytes fetched from elsewhere (an SVG can carry script). Its
+    // answer must be sandboxed. A policy set here replaces the route's own (Next never sends both), so the
+    // sandbox policy has to be set here; the route sets the same one for requests that bypass the proxy.
+    response.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  } else if (pathname === '/api/ping') {
     response.headers.set('Content-Security-Policy',
       "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *");
   } else if (pathname.startsWith('/embed') || pathname === '/api/auth/sso' || pathname.startsWith('/api/auth/callback')) {

@@ -10,9 +10,8 @@
 import { isMap, isScalar, isSeq, parseDocument, type Node as YAMLNode } from 'yaml';
 import type { z } from 'zod/v4';
 import {
-  AppSchema, BundleSchema, CatalogIndexSchema, CatalogSchema, PINNED_IMAGE, SetupSchema, SystemAppSchema,
+  AppSchema, BundleSchema, CatalogIndexSchema, CatalogSchema, PINNED_IMAGE, SetupSchema,
   type AppDocument, type BundleDocument, type CatalogDocument, type CatalogIndexDocument, type SetupDocument,
-  type SystemAppDocument,
 } from './schema';
 import { checkVariable, variableReferences, type VariableScope } from './variables';
 
@@ -186,14 +185,6 @@ export function parseSetup(text: string, options: ParseSetupOptions = {}): Setup
 
 export function parseBundle(text: string): BundleDocument {
   return validate(BundleSchema, readYAML(text, 'bundle.yaml'), 'bundle.yaml');
-}
-
-export function parseSystemApp(text: string, options: ParseOptions = {}): SystemAppDocument {
-  const app = validate(SystemAppSchema, readYAML(text, 'system app'), 'system app');
-  if (!options.lenient && !options.allowUnpinned && !PINNED_IMAGE.test(app.image)) {
-    throw new AppFormatError('system app', ['image: image must be pinned by digest (@sha256:…)']);
-  }
-  return app;
 }
 
 export function parseCatalog(text: string): CatalogDocument {

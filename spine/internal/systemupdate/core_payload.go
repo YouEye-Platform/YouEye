@@ -31,10 +31,140 @@ type CorePayloadEntry struct {
 	Link   string `json:"link,omitempty"`
 }
 
-// These are runtime state, never signed executable payload. All other unknown
-// files, including added JavaScript, are modifications to the installed member.
+// corePayloadRuntimeRoots are written by the running service, never shipped:
+// every check skips them and everything under them, and no archive or index
+// may contain them. Next.js writes its response cache under route-cache.
+var corePayloadRuntimeRoots = []string{".next/cache", ".next/server/route-cache"}
+
 func mutableCorePayloadPath(name string) bool {
-	return name == ".env" || name == ".next/cache" || strings.HasPrefix(name, ".next/cache/")
+	if name == ".env" {
+		return true
+	}
+	for _, root := range corePayloadRuntimeRoots {
+		if name == root || strings.HasPrefix(name, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// CorePayloadMode says what a check of an installed tree may refuse. Which
+// mode a caller uses is decided by who wrote the tree, never by convenience:
+// a check that runs in the installed Spine must not refuse an update, a
+// recovery or a boot because of the state of a tree this request did not write.
+type CorePayloadMode int
+
+const (
+	// CorePayloadRecord is for a tree this request did not write: about to be
+	// replaced, reused, restored or merely installed. Differences are counted
+	// and reported, never refused. Only a tree that cannot be reached at all
+	// (no container, no application directory, a cancelled context) is an error.
+	CorePayloadRecord CorePayloadMode = iota
+	// CorePayloadStrict is for a tree written in this request, a freshly
+	// extracted stage and a fresh install: a recorded path that is missing or
+	// changed is refused. Paths that were not shipped are counted, never refused.
+	CorePayloadStrict
+)
+
+// CorePayloadFindings is what one complete walk of a tree found. Counts and
+// reasons may be written to durable evidence; Paths never is.
+type CorePayloadFindings struct {
+	Unrecorded int `json:"unrecorded"`
+	Changed    int `json:"changed"`
+	Missing    int `json:"missing"`
+	// UnrecordedCapped: the walk stopped descending into directories that were
+	// not shipped, so Unrecorded is a lower bound.
+	UnrecordedCapped bool `json:"unrecorded_capped,omitempty"`
+	// Reasons counts the changed paths by kind (changed-bytes, changed-mode,
+	// changed-link, invalid-type-or-link, changed-during-observation, unreadable).
+	Reasons map[string]int `json:"reasons,omitempty"`
+	// Paths is a bounded sample for an operator's terminal.
+	Paths []CorePayloadFinding `json:"paths,omitempty"`
+}
+
+type CorePayloadFinding struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+const corePayloadSampleLimit = 20
+
+// corePayloadUnrecordedLimit and corePayloadUnrecordedDepth bound the walk of
+// files we did not ship, so a huge or bottomless foreign directory cannot hold
+// an update, a recovery or a health gate (each level keeps a descriptor open).
+var corePayloadUnrecordedLimit = 100000
+
+const corePayloadUnrecordedDepth = 64
+
+// Differs: a recorded path is missing or changed. Paths that were not shipped
+// do not make a tree differ.
+func (f CorePayloadFindings) Differs() bool { return f.Changed+f.Missing > 0 }
+
+func (f *CorePayloadFindings) note(name, reason string) {
+	switch reason {
+	case "unrecorded-path":
+		f.Unrecorded++
+	case "missing-path":
+		f.Missing++
+	default:
+		f.Changed++
+		if f.Reasons == nil {
+			f.Reasons = map[string]int{}
+		}
+		f.Reasons[reason]++
+	}
+	if len(f.Paths) < corePayloadSampleLimit {
+		if len(name) > 256 {
+			name = name[:256] + "…"
+		}
+		f.Paths = append(f.Paths, CorePayloadFinding{Path: name, Reason: reason})
+	}
+}
+
+// Counts is the durable form: numbers and reasons, never a path.
+func (f CorePayloadFindings) Counts() string {
+	bound := ""
+	if f.UnrecordedCapped {
+		bound = "at least "
+	}
+	out := fmt.Sprintf("%s%d unrecorded, %d changed, %d missing", bound, f.Unrecorded, f.Changed, f.Missing)
+	if len(f.Reasons) == 0 {
+		return out
+	}
+	reasons := make([]string, 0, len(f.Reasons))
+	for reason, count := range f.Reasons {
+		reasons = append(reasons, fmt.Sprintf("%s %d", reason, count))
+	}
+	sort.Strings(reasons)
+	return out + " (" + strings.Join(reasons, ", ") + ")"
+}
+
+// Summary is one of the three states a reader sees: "verified",
+// "verified, 3 extra files" or "modified (1 changed, 0 missing)".
+func (f CorePayloadFindings) Summary() string {
+	extra := ""
+	if f.Unrecorded > 0 {
+		bound, plural := "", "s"
+		if f.UnrecordedCapped {
+			bound = "at least "
+		}
+		if f.Unrecorded == 1 {
+			plural = ""
+		}
+		extra = fmt.Sprintf(", %s%d extra file%s", bound, f.Unrecorded, plural)
+	}
+	if f.Differs() {
+		return fmt.Sprintf("modified (%d changed, %d missing)%s", f.Changed, f.Missing, extra)
+	}
+	return "verified" + extra
+}
+
+// CorePayloadDifferenceError is the strict refusal. Its text carries counts and
+// reasons only, so it may reach durable evidence.
+type CorePayloadDifferenceError struct{ Findings CorePayloadFindings }
+
+func (e *CorePayloadDifferenceError) Error() string {
+	return "installed payload differs from its recorded files: " + e.Findings.Counts()
 }
 
 func cleanPayloadPath(name string) (string, error) {
@@ -88,7 +218,7 @@ func IndexCorePayload(archive string, expectedSHA256 string) (CorePayloadIndex, 
 		if name == "." && header.Typeflag == tar.TypeDir {
 			continue
 		}
-		if name == "." || mutableCorePayloadPath(name) || coreResponseCachePath(name) || len(entries) >= 500000 || header.Mode&07000 != 0 {
+		if name == "." || mutableCorePayloadPath(name) || len(entries) >= 500000 || header.Mode&07000 != 0 {
 			return index, fmt.Errorf("unsupported core payload member")
 		}
 		if _, exists := entries[name]; exists {
@@ -212,23 +342,24 @@ func (index CorePayloadIndex) Validate() error {
 	return nil
 }
 
-// VerifyCorePayload observes every installed static path and refuses extra code,
-// modified bytes, executable modes and altered links. It never follows a symlink
-// directory. Dynamic configuration/cache paths remain outside payload identity.
-func VerifyCorePayload(root string, index CorePayloadIndex) error {
+// VerifyCorePayload walks the whole tree under root against its index and
+// counts paths that were not shipped, recorded paths that changed (bytes, mode,
+// link, type) and recorded paths that are missing. It never follows a symlink
+// directory and skips the runtime directories. See CorePayloadMode.
+func VerifyCorePayload(root string, index CorePayloadIndex, mode CorePayloadMode) (CorePayloadFindings, error) {
 	if err := index.Validate(); err != nil {
-		return err
+		return CorePayloadFindings{}, err
 	}
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() {
-		return fmt.Errorf("installed core payload root is not a directory")
+		return CorePayloadFindings{}, fmt.Errorf("installed core payload root is not a directory")
 	}
 	dir, err := openCorePayloadDirectoryFromRoot(root)
 	if err != nil {
-		return err
+		return CorePayloadFindings{}, err
 	}
 	defer dir.Close()
-	return verifyCorePayloadDescriptor(context.Background(), dir, index)
+	return verifyCorePayloadDescriptor(context.Background(), dir, index, mode)
 }
 
 func (m CoreManager) SavePayloadIndex(index CorePayloadIndex) error {

@@ -144,6 +144,37 @@ curl -fsSL <repository>/releases/download/<tag>/install.sh | sh -s -- --reposito
 `install.sh` is an asset of every System release; `releases.youeye.me/install.sh` is the copy of the current stable
 release.
 
+## Build guard (Control Panel and UI)
+
+A System update checks the installed CP and UI trees against what was shipped
+([core-release-contract.md](core-release-contract.md#installed-file-checks)), so the servers must not write into
+their own trees. Both apps set `experimental.isrFlushToDisk: false` in `next.config.ts` (rendered routes stay in
+memory; build seeds are still read), the Control Panel's favicon is a static file in `control-panel/public/`, and
+both are on Next.js 16.4.6.
+
+`.youeye/build/control-panel` and `.youeye/build/ui` end with `youeye_guard_standalone_payload` (`payload-guard.sh`; not in `lib.sh`, which is an input of the system image), which
+runs `.youeye/build/payload-guard.mjs` on the packaged `standalone.tar`:
+
+1. `.next/required-server-files.json` must carry `isrFlushToDisk: false`.
+2. A copy of the tree is started with its bundled Node (as `nobody` when the build runs as root, state in a
+   temporary directory, `NEXT_PHASE=phase-production-build` so no background jobs start). Every route in
+   `.next/prerender-manifest.json`, `/favicon.ico`, `/manifest.webmanifest`, the icon routes (`/icon`,
+   `/apple-icon`) and the sign-in pages (`…/login`, `…/sign-in`, `…/signin`) the build has are requested twice, the
+   server is stopped, and the copy must be exactly what was packaged. No directory is exempt.
+3. `/favicon.ico` and `/manifest.webmanifest` must answer HTTP 200 without a session when the tree ships them (a
+   file in `public/` or a prerendered route). Other routes may answer any status.
+
+The copy listens on loopback. When the packaged request proxy (`.next/server/middleware.js` or `proxy.js`) calls a
+fixed loopback port, the copy listens on that port, so those calls reach the copy: the Control Panel's proxy calls
+`http://localhost:3000`. **The guard then fails when that port is in use on the build machine** ("port 3000 is in
+use on this machine …"), so the run never talks to a real local service: stop whatever listens on port 3000 there
+and build again. Otherwise the copy takes any free port. When the server does not come up (it exits, or does not
+answer within 90 s), the guard tries once more, on another free port unless the port is fixed.
+
+A failure prints `payload-guard: FAILED: …` with the added, changed and removed paths, deletes `standalone.tar` and
+fails the build, so nothing is published. It means the app or a framework upgrade started writing into its tree:
+fix the app or its configuration. Never loosen the guard.
+
 ## Publishing and promotion (tools in the YouEye Mega workspace)
 
 - `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index.

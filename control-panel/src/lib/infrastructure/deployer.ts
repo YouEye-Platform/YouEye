@@ -46,7 +46,7 @@ import {
 import { controlPanelCaddyfile } from '../caddy/caddyfile';
 import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
-import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
+import { recordSystemContainerImage } from './system-images';
 import { repairControlPanelProxy, repairUIEgressAcl } from './security-posture';
 import { sanitizeDeploymentDetail } from './deployment-safety';
 import { getCoreProvenance, recordCoreProvenance } from '@/lib/updates/provenance';
@@ -359,20 +359,13 @@ async function _deployInfrastructureInner(
   hostIP: string,
   onEvent: EventCallback
 ): Promise<void> {
-  let systemImages: Awaited<ReturnType<typeof resolveSystemImageOverrides>>;
-  try {
-    systemImages = await resolveSystemImageOverrides();
-  } catch (err) {
-    failDeployment(onEvent, 1, 'Failed to load Market system app manifests', err);
-  }
-
   // ─── Step 1: PostgreSQL ─────────────────────────────────────
   emit(onEvent, 1, 'running', 'Deploying PostgreSQL database...');
   try {
     const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
-    const manifest = applySystemImage(postgresManifest(pgPassword), systemImages.postgresql);
+    const manifest = postgresManifest(pgPassword);
     await deployOCIContainer(manifest, '');
-    await recordSystemContainerManifest('postgresql', systemImages.postgresql);
+    await recordSystemContainerImage('postgresql');
     await applyResourcePolicy('youeye-postgres', 'critical');
     await reconcilePostgresCredential(pgPassword);
 
@@ -389,9 +382,9 @@ async function _deployInfrastructureInner(
   // ─── Step 2: Caddy reverse proxy ─────────────────────────
   emit(onEvent, 2, 'running', 'Deploying Caddy reverse proxy...');
   try {
-    const manifest = applySystemImage(caddyManifest(await caddyAdminAddress()), systemImages.caddy);
+    const manifest = caddyManifest(await caddyAdminAddress());
     await deployOCIContainer(manifest, hostIP);
-    await recordSystemContainerManifest('caddy', systemImages.caddy);
+    await recordSystemContainerImage('caddy');
     await applyResourcePolicy('youeye-caddy', 'critical');
 
     const healthy = await waitForCaddy();
@@ -426,9 +419,9 @@ async function _deployInfrastructureInner(
   emit(onEvent, 3, 'running', 'Deploying Pi-Hole DNS...');
   try {
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
-    const manifest = applySystemImage(piholeManifest(hostIP), systemImages.pihole);
+    const manifest = piholeManifest(hostIP);
     await deployOCIContainer(manifest, hostIP);
-    await recordSystemContainerManifest('pihole', systemImages.pihole);
+    await recordSystemContainerImage('pihole');
     await applyResourcePolicy('youeye-pihole', 'critical');
 
     const healthy = await waitForPiHole();
@@ -559,27 +552,14 @@ export async function reconcileInfrastructure(
 
   if (missing.length > 0) console.log(`[reconcile] Missing containers: ${missing.join(', ')}`);
 
-  type SystemImages = Awaited<ReturnType<typeof resolveSystemImageOverrides>>;
-  let systemImages: SystemImages | undefined;
-  async function requireSystemImages(step: number): Promise<SystemImages> {
-    if (systemImages) return systemImages;
-    try {
-      systemImages = await resolveSystemImageOverrides();
-      return systemImages;
-    } catch (err) {
-      return failReconcile(step, 'Failed to load Market system app manifests', err);
-    }
-  }
-
   // ─── Step 1: PostgreSQL ─────────────────────────────────────
   if (missing.includes('youeye-postgres')) {
     remit(2, 'running', 'Deploying missing PostgreSQL database...');
     try {
-      const images = await requireSystemImages(2);
       const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
-      const manifest = applySystemImage(postgresManifest(pgPassword), images.postgresql);
+      const manifest = postgresManifest(pgPassword);
       await deployOCIContainer(manifest, '');
-      await recordSystemContainerManifest('postgresql', images.postgresql);
+      await recordSystemContainerImage('postgresql');
       await applyResourcePolicy('youeye-postgres', 'critical');
       await reconcilePostgresCredential(pgPassword);
       const healthy = await waitForPostgres(pgPassword);
@@ -600,11 +580,10 @@ export async function reconcileInfrastructure(
         'PostgreSQL',
         (stage) => waitForPostgres(pgPassword, 'youeye-postgres', stage === 'initial' ? 10_000 : 60_000),
         async () => {
-          const images = await requireSystemImages(2);
-          const manifest = applySystemImage(postgresManifest(pgPassword), images.postgresql);
+          const manifest = postgresManifest(pgPassword);
           remit(2, 'running', 'PostgreSQL exists but is unhealthy; recreating its container around persistent data...');
           await deployOCIContainer(manifest, '');
-          await recordSystemContainerManifest('postgresql', images.postgresql);
+          await recordSystemContainerImage('postgresql');
           await applyResourcePolicy('youeye-postgres', 'critical');
           await reconcilePostgresCredential(pgPassword);
         },
@@ -621,10 +600,9 @@ export async function reconcileInfrastructure(
   if (missing.includes('youeye-caddy')) {
     remit(3, 'running', 'Deploying missing Caddy reverse proxy...');
     try {
-      const images = await requireSystemImages(3);
-      const manifest = applySystemImage(caddyManifest(await caddyAdminAddress()), images.caddy);
+      const manifest = caddyManifest(await caddyAdminAddress());
       await deployOCIContainer(manifest, hostIP);
-      await recordSystemContainerManifest('caddy', images.caddy);
+      await recordSystemContainerImage('caddy');
       await applyResourcePolicy('youeye-caddy', 'critical');
       const healthy = await waitForCaddy();
       if (!healthy) {
@@ -666,11 +644,10 @@ export async function reconcileInfrastructure(
   if (missing.includes('youeye-pihole')) {
     remit(4, 'running', 'Deploying missing Pi-Hole DNS...');
     try {
-      const images = await requireSystemImages(4);
       const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
-      const manifest = applySystemImage(piholeManifest(hostIP), images.pihole);
+      const manifest = piholeManifest(hostIP);
       await deployOCIContainer(manifest, hostIP);
-      await recordSystemContainerManifest('pihole', images.pihole);
+      await recordSystemContainerImage('pihole');
       await applyResourcePolicy('youeye-pihole', 'critical');
       const healthy = await waitForPiHole();
       if (!healthy) {
@@ -690,11 +667,10 @@ export async function reconcileInfrastructure(
         'Pi-Hole',
         (stage) => waitForPiHole('youeye-pihole', stage === 'initial' ? 10_000 : 180_000),
         async () => {
-          const images = await requireSystemImages(4);
-          const manifest = applySystemImage(piholeManifest(hostIP), images.pihole);
+          const manifest = piholeManifest(hostIP);
           remit(4, 'running', 'Pi-Hole exists but DNS is unhealthy; recreating its container around persistent data...');
           await deployOCIContainer(manifest, hostIP);
-          await recordSystemContainerManifest('pihole', images.pihole);
+          await recordSystemContainerImage('pihole');
           await applyResourcePolicy('youeye-pihole', 'critical');
         },
       );

@@ -3,15 +3,16 @@
  *
  *   node --import tsx scripts/validate-app-sources.ts <market-repo> [native-repo…] [--ref <git ref>]
  *
- * A market repo is checked as a catalog (catalog.yaml, apps/<id>/, bundles/<id>/bundle.yaml,
- * system/<id>.yaml); any other repo as one app (youeye-app.yaml + setup/*.yaml at its root).
+ * A market repo is checked as a catalog (catalog.yaml, apps/<id>/, bundles/<id>/bundle.yaml;
+ * other files, such as old system/*.yaml, are not read); any other repo as one app
+ * (youeye-app.yaml + setup/*.yaml at its root).
  * With --ref, files are read from that git ref (git show) instead of the working tree.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { loadApp } from '../src/lib/market/app-format/compile';
-import { parseBundle, parseCatalog, parseSystemApp } from '../src/lib/market/app-format/parse';
+import { parseBundle, parseCatalog } from '../src/lib/market/app-format/parse';
 import { catalogFromFiles } from '../src/lib/market/catalog';
 
 const args = process.argv.slice(2);
@@ -52,10 +53,9 @@ for (const repo of args) {
   const list = files(repo);
   const name = path.basename(repo);
   if (list.includes('catalog.yaml')) {
-    check(`${name}/catalog.yaml`, () => { const c = catalogFromFiles(read(repo, 'catalog.yaml'), list); parseCatalog(read(repo, 'catalog.yaml')); return `${c.apps.length} apps, ${c.bundles.length} bundles, ${c.system.length} system`; });
+    check(`${name}/catalog.yaml`, () => { const c = catalogFromFiles(read(repo, 'catalog.yaml'), list); parseCatalog(read(repo, 'catalog.yaml')); return `${c.apps.length} apps, ${c.bundles.length} bundles`; });
     for (const file of list.filter((f) => /^apps\/[^/]+\/youeye-app\.yaml$/.test(f))) check(`${name}/${path.dirname(file)}`, () => appIn(repo, list, path.dirname(file)));
     for (const file of list.filter((f) => /^bundles\/[^/]+\/bundle\.yaml$/.test(f))) check(`${name}/${file}`, () => parseBundle(read(repo, file)).id);
-    for (const file of list.filter((f) => /^system\/[^/]+\.yaml$/.test(f))) check(`${name}/${file}`, () => parseSystemApp(read(repo, file)).id);
   } else if (list.includes('youeye-app.yaml') || (!ref && existsSync(path.join(repo, 'youeye-app.yaml')))) {
     check(`${name}/youeye-app.yaml`, () => appIn(repo, list, ''));
   } else {

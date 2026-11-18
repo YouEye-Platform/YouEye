@@ -58,7 +58,7 @@ func (s NativeCoreServices) RecoverServices(ctx context.Context, request string,
 			return "", err
 		}
 	}
-	return "previous exact CP/UI payloads, completed schema identities and running units verified", nil
+	return "previous CP/UI payloads, completed schema identities and running units verified", nil
 }
 
 func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, record NativeCoreCheckpointRecord, selection CoreHostSelection, role string, observeOnly bool) error {
@@ -162,7 +162,10 @@ func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, r
 	if err != nil {
 		return err
 	}
-	if err = VerifyCoreContainerPayload(ctx, name, appDir, index); err != nil {
+	// The restored tree is the one the box had before this request; the marker
+	// above binds its identity. Whatever differences it had then, it has now:
+	// they never refuse a recovery.
+	if _, err = VerifyCoreContainerPayload(ctx, name, appDir, index, CorePayloadRecord); err != nil {
 		return err
 	}
 	root, err := os.Open(fmt.Sprintf("/proc/%d/root", pid))

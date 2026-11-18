@@ -101,6 +101,36 @@ export function repositoriesMatch(
   return !!normalizedLeft && normalizedLeft === normalizedRight;
 }
 
+/**
+ * Why an installed app may not take updates from the source its id now resolves to, or null when it may: the app
+ * recorded another repository (or, for the same repository, another branch) than the source has now. Source ids are
+ * reused after a source is removed, and a source's address can be edited; an app follows the repository it was
+ * installed from (or explicitly switched to, `PATCH /api/market/app/<id>/source`), never just the id. The official
+ * source has no repository and is never "changed".
+ */
+export function recordedSourceRepositoryChange(
+  recorded: { sourceRepoUrl?: string | null; manifestRepo?: string | null; manifestBranch?: string | null },
+  source: { kind: string; name: string; repo_url: string; branch: string; organization: string; repository: string },
+): { recordedRepoUrl: string; message: string } | null {
+  if (source.kind !== 'git') return null;
+  const recordedRepoUrl = clean(recorded.sourceRepoUrl);
+  if (!recordedRepoUrl) return null;
+  const sameRepository = repositoriesMatch(recordedRepoUrl, source.repo_url);
+  // A git source's manifests are read from `<organization>/<repository>` at its branch (catalog.ts records both).
+  const recordedBranch = clean(recorded.manifestBranch);
+  const sameBranch = !recordedBranch
+    || clean(recorded.manifestRepo)?.toLowerCase() !== `${source.organization}/${source.repository}`.toLowerCase()
+    || recordedBranch === source.branch;
+  if (sameRepository && sameBranch) return null;
+  const was = sameRepository ? `${recordedRepoUrl} (branch ${recordedBranch})` : recordedRepoUrl;
+  const now = sameRepository ? `${source.repo_url} (branch ${source.branch})` : source.repo_url;
+  return {
+    recordedRepoUrl,
+    message: `This app was installed from ${was}; the Market source "${source.name}" now points at ${now}. `
+      + 'Switch the app to that source on its page if you want its updates from there.',
+  };
+}
+
 function catalogKeySourceId(catalogKey: string | null | undefined): string | undefined {
   const value = clean(catalogKey);
   if (!value) return undefined;

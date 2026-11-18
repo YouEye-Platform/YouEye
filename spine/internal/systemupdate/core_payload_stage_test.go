@@ -31,7 +31,7 @@ func TestCorePayloadHostExtraction(t *testing.T) {
 	if err = extractCorePayload(context.Background(), file, dir, index, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	if err = VerifyCorePayload(root, index); err != nil {
+	if _, err = VerifyCorePayload(root, index, CorePayloadStrict); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.Stat(filepath.Join(root, "server.js"))

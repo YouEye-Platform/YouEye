@@ -102,6 +102,8 @@ const preparingInstallEvent: InstallEvent = {
   const [pollingAppId, setPollingAppId] = useState<string | null>(null);
   const [switchingSource, setSwitchingSource] = useState(false);
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
+  // Switching to an app added by URL needs the same consent as installing it.
+  const [switchConsent, setSwitchConsent] = useState(false);
   const [syncingManifest, setSyncingManifest] = useState(false);
   const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
 
@@ -321,7 +323,9 @@ const preparingInstallEvent: InstallEvent = {
       const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/source`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId: app.sourceId }),
+        body: JSON.stringify(app.sourceId.startsWith('direct:')
+          ? { sourceId: app.sourceId, acceptUnverifiedPublisher: switchConsent, allowSetup: switchConsent }
+          : { sourceId: app.sourceId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || translateInterface("m5aa40c1a8a54"));
@@ -448,6 +452,8 @@ const preparingInstallEvent: InstallEvent = {
     ? translateInterface("m2a2e0c73779e", {site: siteName})
     : translateInterface("m35b0d6f9bfd7");
   const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
+  // Listed, but its custom source is not accepted: install and switch are refused until the owner accepts it.
+  const sourceNotAccepted = app.sourceNotAccepted === true;
   const capabilityLabels = [
     app.capabilities?.widgets ? 'Widgets' : null,
     app.capabilities?.notifications ? 'Notifications' : null,
@@ -510,6 +516,14 @@ const preparingInstallEvent: InstallEvent = {
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mc011d6097bfb")}</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m50dfc76409a6")}</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{(app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}</span></div>
       </div>
+
+      {sourceNotAccepted && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <p className="text-sm text-foreground">
+            {translateInterface("me9861c99fab8", { source: app.sourceName || app.sourceId || '', id: app.sourceId || '' })}</p>
+        </div>
+      )}
 
       {isDirectEntry && (
         <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
@@ -725,11 +739,16 @@ const preparingInstallEvent: InstallEvent = {
                   {translateInterface("m14d6f9f6432e", {source: status?.sourceName || status?.sourceId || ""})}
                 </p>
               </div>
+              {isDirectEntry && (
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-foreground">
+                  <input type="checkbox" checked={switchConsent} onChange={(event) => setSwitchConsent(event.target.checked)} />
+                  {translateInterface("m5ae862f2c24b")}</label>
+              )}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleSwitchSource}
-                disabled={switchingSource}
+                disabled={switchingSource || sourceNotAccepted || (isDirectEntry && !switchConsent)}
                 className="border-primary/30 bg-card text-muted-foreground hover:bg-primary/15"
               >
                 {switchingSource ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
@@ -939,7 +958,7 @@ const preparingInstallEvent: InstallEvent = {
               <div className="grid gap-2">
                 {!isInstalled ? (
                   <>
-                    <Button onClick={() => setShowInstallDialog(true)}>
+                    <Button onClick={() => setShowInstallDialog(true)} disabled={sourceNotAccepted}>
                       {translateInterface("m569ca49f4aaf")}{" "}{app.name}
                     </Button>
                     {isDirectEntry && (

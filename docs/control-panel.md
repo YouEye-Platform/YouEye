@@ -22,7 +22,10 @@ Spine creates the CP during first deploy (`youeye deploy`; `spine/internal/conta
 
 Environment in the unit: `JWT_SECRET`, `HOST_IP`, `TEST_ADMIN_SECRET` (the deploy secret; also on the host in
 `/var/lib/youeye/control/.deploy_secret`), `SECURE_COOKIES=true`, `INCUS_HTTPS_URL`, `INCUS_CLIENT_CERT`,
-`INCUS_CLIENT_KEY`.
+`INCUS_CLIENT_KEY`. Both units have `SuccessExitStatus=143` (Next.js exits with 143 on SIGTERM, so a normal stop is
+not logged as a failure); units written before 0.6.10 are not rewritten, so only fresh deployments have it. The same
+holds for the unit template the CP writes into the dashboard, native app and Pointer containers
+(`lib/infrastructure/lxd-deployer.ts`): `SuccessExitStatus=143` since 0.6.10, in units written from then on.
 
 A CP update replaces the bundle with the one in the System release; no image rebuild or reboot
 ([releases.md](releases.md)).
@@ -44,7 +47,7 @@ Background jobs start in `src/instrumentation.ts`, only in the CP process (not i
 - DNS-provider and YouEye Names maintenance ([youeye-names.md](youeye-names.md));
 - health monitor every 60 s: service checks, container watchdog with crash-loop detection, disk every 5 min,
   certificate expiry every 6 h, notifications on state changes (`lib/health/monitor.ts`);
-- the update queue worker, Market version and health checkers, the backup scheduler;
+- the Market version and health checkers, the backup scheduler;
 - admission reconciliation and the 20 s admission push to the dashboard ([app-admission.md](app-admission.md));
 - startup reconciliation of Incus containers.
 
@@ -69,8 +72,11 @@ dropped stream and retry with the same ID without starting a second job.
 5. **Pointer** (`youeye-pointer`): deferred until setup has set the domain; then deployed, health-checked and
    routed.
 
-Image references for PostgreSQL, Caddy and Pi-hole come from the Market's `system/` manifests
-(`lib/infrastructure/system-market-manifests.ts`). Each container gets the `critical` resource policy.
+The images of PostgreSQL, Caddy and Pi-hole are pinned by digest in `lib/infrastructure/system-images.ts`. They
+ship with the Control Panel and change only with a System release; no Market source can supply or replace them, so
+first deployment does not need the Market for them. Each container records its image in the Incus keys
+`user.youeye.market.image` and `user.youeye.market.version` (the names are older than the pins and are kept so that
+existing containers stay tracked). Each container gets the `critical` resource policy.
 
 `POST /api/deploy/infrastructure/reconcile` (used by `youeye deploy --resume`) creates only missing containers and
 re-checks the security posture; it never replaces running ones.
@@ -94,6 +100,9 @@ re-checks the security posture; it never replaces running ones.
   watchdog start yields to a waiting user. Still busy after 30 s: `409 {"code": "operation_in_progress"}`, never a
   500. Other failures are logged with their cause chain (`[Market] <operation> failed: …`) and answered with a fixed
   message.
+- **Market sources:** an install, bundle install, app update or source switch reads only the official Market, a
+  custom source the owner accepted, or an app added by URL with its own confirmation (`lib/market/source.ts`; see
+  [market.md](market.md#other-sources-and-consent)).
 - **Orphans** (`/api/admin/orphans`, `youeye orphans [clean]`): admin only. Only resources an install left behind are
   listed: installation-tagged containers no record names, Market app routes (id `app-route-<app>-…`, since 0.6.8) of
   apps with no install or kept-data record, app databases and YouEye app storage no record names. Platform routes,
@@ -169,10 +178,10 @@ YouEye ID and the admission tables are in PostgreSQL (`youeye` database); the da
 
 | What | How |
 |---|---|
-| Spine, CP, dashboard, image | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). `POST /api/updates/{spine,control,ui}` is refused (`409 system_release`). |
+| Spine, CP, dashboard, image | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). |
 | Release channel | `GET`/`PUT /api/releases/channel` (`dev`, `alpha`, `beta`, `stable`). The box never downgrades. |
-| PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image in the Market's `system/` manifest and rebuilds it (`lib/infrastructure/system-updater.ts`). |
-| Incus, host packages | `POST /api/updates/{incus,system}` asks Spine to update Incus or the host packages (`system` is refused while a critical health issue is open). The Settings pages call neither today. |
+| PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image pinned in `system-images.ts` and rebuilds it on that image (`lib/infrastructure/system-updater.ts`). Settings → Apps and the `/embed/apps` page use `POST /settings/api/apps/{postgres,caddy,pihole}/update` with the same acknowledgements (`confirmMaintenanceWindow`, `confirmContainerName`, and `allowDatabaseUpdate` for PostgreSQL). Both answer HTTP 423 naming the issue while a critical health issue is open. The `/settings/api/apps/<id>/update` route ignores that container's own issue (`service.<id>.down`, `container.<name>.crash-loop`), which the update may repair; `system-updates` makes no such exception. There is no moving-tag update path. |
+| Incus, host packages | `POST /settings/api/apps/{incus,host-system}/update` asks Spine (`/api/update/{incus,system}`) to update Incus or the host packages; `host-system` answers HTTP 423 naming the issue while a critical health issue is open. |
 | Market apps | `POST /api/market/update`; a journaled, recoverable transaction. Status and recovery: `GET /api/market/update/status?appId=…`, `POST /api/market/update/recovery`. See [app-update-transactions.md](app-update-transactions.md). |
 
 All update routes need an admin session; changes also need a CSRF token.

@@ -308,9 +308,7 @@ func collectApplianceHealth(profile string) applianceHealthResult {
 				add(container, "pass", "required container is running")
 			}
 		}
-		if _, err := os.Stat("/var/lib/youeye-state/first-deploy/complete"); errors.Is(err, os.ErrNotExist) {
-			addFirstDeployReleaseSetChecks(*manifest, add)
-		}
+		addInstalledReleaseChecks(*manifest, add)
 		if _, err := os.Stat(GetConfig().API.SocketPath); err != nil {
 			add("Spine API socket", "fail", "API socket is unavailable")
 		} else {
@@ -326,6 +324,21 @@ func collectApplianceHealth(profile string) applianceHealthResult {
 	}
 	result.Status, result.ExitCode = aggregateApplianceHealth(result.Checks)
 	return result
+}
+
+var firstDeployCompletePath = "/var/lib/youeye-state/first-deploy/complete"
+
+// addInstalledReleaseChecks looks at the installed Control Panel and UI only
+// until first deployment is complete: that is the fresh-install gate. Once the
+// box is set up, `youeye appliance health` no longer walks their files at all,
+// so boot blessing, an update's and a recovery's final health step and a copy
+// cannot fail here because of what an installed tree holds. Their file check is
+// NativeCoreServices.Health and ObserveInstalled, which follow the same rule
+// (see systemupdate.CorePayloadMode).
+func addInstalledReleaseChecks(manifest appliance.Manifest, add func(string, string, string)) {
+	if _, err := os.Stat(firstDeployCompletePath); errors.Is(err, os.ErrNotExist) {
+		addFirstDeployReleaseSetChecks(manifest, add)
+	}
 }
 
 type installedReleaseIdentity struct {

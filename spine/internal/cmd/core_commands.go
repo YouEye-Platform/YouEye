@@ -106,6 +106,7 @@ func installCoreCommands(parent *cobra.Command) {
 			}
 			if action == "cancel" {
 				journal, err = m.Cancel(cmd.Context(), request)
+				runtime.Runner.ResetFailedUnits(cmd.Context(), journal)
 			} else {
 				journal, err = continueCoreRequest(cmd.Context(), runtime, request, action == "activate", action == "recover", once)
 			}
@@ -167,9 +168,11 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		}
 		if current.Phase == "rolled-back" || current.Phase == "committed" {
 			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
+			r.Runner.ResetFailedUnits(ctx, current)
 			return current, err
 		}
 		if current.Phase == "cancelled" {
+			r.Runner.ResetFailedUnits(ctx, current)
 			return current, nil
 		}
 		if recover {
@@ -195,6 +198,7 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		}
 		if j.Phase == "committed" || j.Phase == "rolled-back" {
 			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
+			r.Runner.ResetFailedUnits(ctx, j)
 			return j, err
 		}
 		if j.Phase == "needs-recovery" {

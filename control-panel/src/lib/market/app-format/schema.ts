@@ -1,6 +1,6 @@
 /**
  * Zod schemas for the app formats (docs/app-manifest.md):
- * `youeye.app.v1`, `youeye.setup.v1`, `youeye.bundle.v1`, `youeye.system-app.v1`, `youeye.catalog.v1`.
+ * `youeye.app.v1`, `youeye.setup.v1`, `youeye.bundle.v1`, `youeye.catalog.v1`.
  *
  * Every object is strict: an unknown key is an error, except keys starting with `x-`, which are
  * kept and never read. Free-form maps (env, headers, bodies) are not objects of this kind.
@@ -423,17 +423,6 @@ export const BundleSchema = xobject({
 
 export type BundleDocument = z.infer<typeof BundleSchema>;
 
-export const SystemAppSchema = xobject({
-  schema: z.literal('youeye.system-app.v1'),
-  id: AppId,
-  version: Version,
-  name: Text,
-  image: ImageRef,
-  health: Health.optional(),
-});
-
-export type SystemAppDocument = z.infer<typeof SystemAppSchema>;
-
 export const CatalogSchema = xobject({
   schema: z.literal('youeye.catalog.v1'),
   categories: z.array(xobject({
@@ -454,13 +443,15 @@ export type CatalogDocument = z.infer<typeof CatalogSchema>;
 
 /**
  * The generated index of a custom (git) Market source, which cannot list folders:
- * `catalog.json` lists the app, bundle and system ids found in its folders.
+ * `catalog.json` lists the app and bundle ids found in its folders. Indexes written before
+ * 0.6.10 also list `system` ids; the list is accepted and ignored (a source never supplies the
+ * core containers).
  */
 export const CatalogIndexSchema = xobject({
   schema: z.literal('youeye.catalog-index.v1'),
   apps: z.array(AppId),
   bundles: z.array(AppId).optional(),
-  system: z.array(AppId).optional(),
+  system: z.array(z.unknown()).optional(),
 });
 
 export type CatalogIndexDocument = z.infer<typeof CatalogIndexSchema>;

@@ -9,14 +9,15 @@ import { applyResourcePolicy } from './resource-policy';
 import { generatePassword, getOrCreateSecret, readSecret } from './secrets';
 import { waitForCaddy, waitForPiHole, waitForPostgres } from './health-checks';
 import {
-  getRequiredSystemContainerName,
-  recordSystemContainerManifest,
-  REQUIRED_SYSTEM_APP_IDS,
-  resolveSystemImageOverrides,
-  type SystemImageOverrides,
-} from './system-market-manifests';
+  RECORDED_IMAGE_KEY,
+  RECORDED_VERSION_KEY,
+  recordSystemContainerImage,
+  SYSTEM_IMAGE_IDS,
+  SYSTEM_IMAGES,
+  type SystemImageId,
+} from './system-images';
 
-type SystemId = keyof SystemImageOverrides;
+type SystemId = SystemImageId;
 
 type TrackingStatus = 'tracked' | 'untracked' | 'missing';
 
@@ -29,9 +30,6 @@ export interface SystemUpdatePlan {
   containerName: string;
   desiredImage: string;
   desiredVersion: string;
-  sourceId?: string;
-  manifestPath?: string;
-  manifestDigest?: string;
   exists: boolean;
   running: boolean;
   trackingStatus: TrackingStatus;
@@ -114,14 +112,14 @@ async function isRunning(containerName: string): Promise<boolean> {
 
 function describePlan(
   systemId: SystemId,
-  desired: SystemImageOverrides[SystemId],
   metadata: IncusInstanceMetadata | null,
   running: boolean,
 ): SystemUpdatePlan {
-  const containerName = getRequiredSystemContainerName(systemId);
+  const desired = SYSTEM_IMAGES[systemId];
+  const containerName = desired.containerName;
   const config = metadata?.config ?? {};
-  const recordedImage = config['user.youeye.market.image'];
-  const recordedVersion = config['user.youeye.market.version'];
+  const recordedImage = config[RECORDED_IMAGE_KEY];
+  const recordedVersion = config[RECORDED_VERSION_KEY];
 
   if (!metadata) {
     return {
@@ -129,15 +127,12 @@ function describePlan(
       containerName,
       desiredImage: desired.image,
       desiredVersion: desired.version,
-      sourceId: desired.sourceId,
-      manifestPath: desired.manifestPath,
-      manifestDigest: desired.manifestDigest,
       exists: false,
       running: false,
       trackingStatus: 'missing',
       updateAvailable: false,
       recreateRecommended: false,
-      reason: 'Container is missing; run infrastructure reconcile to create it from the Market system manifest.',
+      reason: 'Container is missing; run infrastructure reconcile to create it from the pinned image.',
     };
   }
 
@@ -148,9 +143,6 @@ function describePlan(
       containerName,
       desiredImage: desired.image,
       desiredVersion: desired.version,
-      sourceId: desired.sourceId,
-      manifestPath: desired.manifestPath,
-      manifestDigest: desired.manifestDigest,
       exists: true,
       running,
       trackingStatus: 'tracked',
@@ -161,8 +153,8 @@ function describePlan(
       updateAvailable,
       recreateRecommended: updateAvailable,
       reason: updateAvailable
-        ? 'Tracked container image/version differs from the Market system manifest.'
-        : 'Tracked container matches the Market system manifest.',
+        ? 'Container image differs from the image pinned by this YouEye release.'
+        : 'Container matches the image pinned by this YouEye release.',
     };
   }
 
@@ -171,26 +163,22 @@ function describePlan(
     containerName,
     desiredImage: desired.image,
     desiredVersion: desired.version,
-    sourceId: desired.sourceId,
-    manifestPath: desired.manifestPath,
-    manifestDigest: desired.manifestDigest,
     exists: true,
     running,
     trackingStatus: 'untracked',
     updateAvailable: false,
     recreateRecommended: true,
-    reason: 'Container has no recorded Market system manifest; adopt it with a recreate only during a maintenance window.',
+    reason: 'Container has no recorded image; adopt it with a recreate only during a maintenance window.',
   };
 }
 
 export async function planSystemUpdates(): Promise<SystemUpdatePlan[]> {
-  const desired = await resolveSystemImageOverrides();
   const plans: SystemUpdatePlan[] = [];
 
-  for (const id of REQUIRED_SYSTEM_APP_IDS) {
-    const containerName = getRequiredSystemContainerName(id);
+  for (const id of SYSTEM_IMAGE_IDS) {
+    const { containerName } = SYSTEM_IMAGES[id];
     const metadata = await getInstanceMetadata(containerName);
-    plans.push(describePlan(id, desired[id], metadata, await isRunning(containerName)));
+    plans.push(describePlan(id, metadata, await isRunning(containerName)));
   }
 
   return plans;
@@ -206,7 +194,7 @@ async function verifySystemHealth(systemId: SystemId): Promise<boolean> {
 }
 
 async function postUpdateRepair(systemId: SystemId): Promise<void> {
-  const containerName = getRequiredSystemContainerName(systemId);
+  const { containerName } = SYSTEM_IMAGES[systemId];
   await applyResourcePolicy(containerName, 'critical');
 
   if (systemId === 'pihole') {
@@ -223,7 +211,7 @@ async function postUpdateRepair(systemId: SystemId): Promise<void> {
   }
 }
 
-export async function updateSystemFromMarket(
+export async function updateSystemContainer(
   options: SystemUpdateOptions,
   onEvent: EventCallback,
 ): Promise<SystemUpdateResult> {
@@ -267,13 +255,13 @@ export async function updateSystemFromMarket(
   }
 
   if (plan.trackingStatus !== 'tracked' && !options.adoptUntracked) {
-    const message = `${plan.containerName} is ${plan.trackingStatus}; pass adoptUntracked to adopt it into Market tracking during a maintenance window.`;
+    const message = `${plan.containerName} is ${plan.trackingStatus}; pass adoptUntracked to adopt it during a maintenance window.`;
     emit(onEvent, 1, totalSteps, 'error', message);
     return { success: false, systemId: plan.id, message, plan, error: message };
   }
 
   if (!plan.updateAvailable && plan.trackingStatus === 'tracked') {
-    const message = `${plan.containerName} already matches the Market system manifest.`;
+    const message = `${plan.containerName} already runs its pinned image.`;
     emit(onEvent, 1, totalSteps, 'skipped', message);
     return {
       success: true,
@@ -316,8 +304,7 @@ export async function updateSystemFromMarket(
     }
     await postUpdateRepair(plan.id);
 
-    const desired = await resolveSystemImageOverrides();
-    await recordSystemContainerManifest(plan.id, desired[plan.id]);
+    await recordSystemContainerImage(plan.id);
 
     emit(onEvent, 6, totalSteps, 'success', `${plan.containerName} now tracks ${plan.desiredImage}`);
     return {
@@ -325,7 +312,7 @@ export async function updateSystemFromMarket(
       systemId: plan.id,
       previousVersion: plan.currentVersion,
       newVersion: plan.desiredVersion,
-      message: `${plan.containerName} updated from Market system manifest`,
+      message: `${plan.containerName} updated to its pinned image`,
       plan,
     };
   } catch (error) {

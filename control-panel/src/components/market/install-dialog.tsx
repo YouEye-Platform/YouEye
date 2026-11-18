@@ -123,11 +123,14 @@ function formatBytes(value: number | null): string {
   const [aiGroupsLoading, setAIGroupsLoading] = useState(supportsAI);
   const [aiGroupsError, setAIGroupsError] = useState('');
   const isDirectEntry = app.sourceId?.startsWith('direct:') === true;
-  const [directSourceAccepted, setDirectSourceAccepted] = useState(!isDirectEntry);
-  // Setup files of an app from an added (URL) source need a second, explicit approval.
+  // An app added by URL needs one confirmation: the owner trusts its publisher and, when it has setup files, lets
+  // them run. The dialog shows where it comes from, its images and its setup files.
+  const [directConsent, setDirectConsent] = useState(!isDirectEntry);
   const setupFiles = app.setups ?? [];
   const needsSetupApproval = isDirectEntry && setupFiles.length > 0;
-  const [setupFilesAllowed, setSetupFilesAllowed] = useState(!needsSetupApproval);
+  const directHost = (() => {
+    try { return app.sourceRepoUrl ? new URL(app.sourceRepoUrl).host : ''; } catch { return ''; }
+  })();
   const setupPurpose = (purpose: string) => {
     if (purpose === 'install') return translateInterface("m3214819b16f1");
     if (purpose === 'sso') return translateInterface("mfb7ed10de1ed");
@@ -219,8 +222,7 @@ function formatBytes(value: number | null): string {
   const installDisabled =
     !displayName.trim() ||
     !subdomain.trim() ||
-    !directSourceAccepted ||
-    !setupFilesAllowed ||
+    !directConsent ||
     (supportsAI && useAISettings && (aiGroupsLoading || !aiGroupId || Boolean(aiGroupsError))) ||
     storageLoading || !storagePool || Boolean(storageError);
 
@@ -241,8 +243,8 @@ function formatBytes(value: number | null): string {
       sourceId: app.sourceId,
       sourceName: app.sourceName,
       sourceRepoUrl: app.sourceRepoUrl,
-      acceptUnverifiedPublisher: isDirectEntry ? directSourceAccepted : undefined,
-      allowSetup: needsSetupApproval ? setupFilesAllowed : undefined,
+      acceptUnverifiedPublisher: isDirectEntry ? directConsent : undefined,
+      allowSetup: needsSetupApproval ? directConsent : undefined,
       manifestPath: app.manifestPath,
       manifestRepo: app.manifestRepo,
       manifestBranch: app.manifestBranch,
@@ -324,15 +326,38 @@ function formatBytes(value: number | null): string {
             <Alert>
               <ShieldOff className="h-4 w-4" />
               <AlertTitle>{translateInterface("m9bb143fefd58")}</AlertTitle>
-              <AlertDescription>
+              <AlertDescription className="space-y-2">
                 <p>{translateInterface("m0831254a1909")}</p>
-                <label className="mt-2 flex cursor-pointer items-center gap-2 text-foreground">
-                  <Switch checked={directSourceAccepted} onCheckedChange={setDirectSourceAccepted} />
-                  {translateInterface("m1dbfa29a7696")}</label>
+                {directHost && <p className="font-medium text-foreground">{translateInterface("mf6c7ca4ee26a", { host: directHost })}</p>}
+                {(app.images?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="font-medium text-foreground">{translateInterface("mbe7e2f201293")}</p>
+                    <ul className="mt-1 space-y-0.5">
+                      {app.images!.map((image) => <li key={image} className="break-all font-mono text-xs">{image}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {setupFiles.length > 0 && (
+                  <div>
+                    <p className="font-medium text-foreground">{translateInterface("m8977bde3d0f7")}</p>
+                    <p>{translateInterface("m41a1b4787986")}</p>
+                    <ul className="mt-1 space-y-1 rounded-lg border bg-muted/30 p-3">
+                      {setupFiles.map((setup) => (
+                        <li key={setup.name} className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-xs">{setup.name}</span>
+                          <span>{setupPurpose(setup.for)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <label className="flex cursor-pointer items-center gap-2 text-foreground">
+                  <input type="checkbox" checked={directConsent} onChange={(event) => setDirectConsent(event.target.checked)} />
+                  {needsSetupApproval ? translateInterface("m5ae862f2c24b") : translateInterface("m1dbfa29a7696")}</label>
               </AlertDescription>
             </Alert>
           )}
-          {setupFiles.length > 0 && (
+          {!isDirectEntry && setupFiles.length > 0 && (
             <section className="space-y-2" aria-labelledby="install-setup-files">
               <h3 id="install-setup-files" className="text-sm font-semibold text-foreground">{translateInterface("m8977bde3d0f7")}</h3>
               <p className="text-sm text-muted-foreground">{translateInterface("m41a1b4787986")}</p>
@@ -344,11 +369,6 @@ function formatBytes(value: number | null): string {
                   </li>
                 ))}
               </ul>
-              {needsSetupApproval && (
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-                  <input type="checkbox" checked={setupFilesAllowed} onChange={(event) => setSetupFilesAllowed(event.target.checked)} />
-                  {translateInterface("m2514aaccdb83")}</label>
-              )}
             </section>
           )}
           <section className="space-y-4">

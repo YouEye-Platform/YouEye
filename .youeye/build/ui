@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib.sh"
+. "$script_dir/payload-guard.sh"
 youeye_prepare_contract
 youeye_require_pnpm
 
@@ -13,3 +14,4 @@ pnpm --dir ui run typecheck
 pnpm --dir ui run build
 standalone_root="$(youeye_find_standalone_root "$YOUEYE_SOURCE_DIR/ui/.next/standalone")"
 youeye_package_standalone "$standalone_root"
+youeye_guard_standalone_payload

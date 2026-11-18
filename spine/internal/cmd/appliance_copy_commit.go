@@ -99,7 +99,8 @@ var applianceCopyCommitCommand = &cobra.Command{Use: "commit", Args: cobra.NoArg
 		}
 		expected := source
 		expected.Machine = machine
-		if e = runtime.Services.VerifyInstalled(ctx, expected, verifyCopySignedHost); e != nil {
+		// The destination's trees were written by this copy: strict.
+		if _, e = runtime.Services.VerifyInstalled(ctx, expected, systemupdate.CorePayloadStrict, verifyCopySignedHost); e != nil {
 			return fail(e)
 		}
 		if e = verifyDeploymentCompletion(address); e != nil {
@@ -147,8 +148,8 @@ func verifyCommittedCopy(ctx context.Context, request systemupdate.CoreCopyReque
 	if _, err := m.VerifyIndependentCopyHost(request, "/", copyHardware); err != nil {
 		return err
 	}
-	if observation := (coreAPIOperations{}).ObserveInstalled(ctx, receipt); observation.State != "verified" {
-		return fmt.Errorf("committed copy installed observation failed")
+	if err := copyInstalledObservation((coreAPIOperations{}).ObserveInstalled(ctx, receipt)); err != nil {
+		return fmt.Errorf("committed copy installed observation failed: %w", err)
 	}
 	return nil
 }

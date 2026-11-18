@@ -684,6 +684,7 @@ Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target
@@ -717,6 +718,7 @@ Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target

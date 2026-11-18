@@ -3,7 +3,6 @@ package systemupdate
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,17 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-// This reference verifier is used by fixtures only. Installed truth is observed
-// from the host, never by asking the potentially modified container runtime.
-//
-//go:embed core_payload_verify.cjs
-var corePayloadVerifier string
 var coreContainerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 func nativeCoreIncusClient() (*http.Client, *http.Transport) {
@@ -68,49 +63,52 @@ func nativeCoreContainerPID(ctx context.Context, container string) (int, error) 
 // VerifyCoreContainerPayload hashes bytes through host-owned descriptors anchored
 // to Incus's current init process. No executable from the container is trusted.
 // A held update container must be started before observing its staged payload.
-func VerifyCoreContainerPayload(ctx context.Context, container, appDir string, index CorePayloadIndex) error {
-	return verifyCoreContainerPayload(ctx, container, appDir, index, nativeCoreContainerPID)
+// The mode decides whether differences are refused; see CorePayloadMode.
+func VerifyCoreContainerPayload(ctx context.Context, container, appDir string, index CorePayloadIndex, mode CorePayloadMode) (CorePayloadFindings, error) {
+	return verifyCoreContainerPayload(ctx, container, appDir, index, mode, nativeCoreContainerPID)
 }
 
-func verifyCoreContainerPayload(ctx context.Context, container, appDir string, index CorePayloadIndex, observe func(context.Context, string) (int, error)) error {
+func verifyCoreContainerPayload(ctx context.Context, container, appDir string, index CorePayloadIndex, mode CorePayloadMode, observe func(context.Context, string) (int, error)) (CorePayloadFindings, error) {
+	var found CorePayloadFindings
 	if err := index.Validate(); err != nil {
-		return err
+		return found, err
 	}
 	if !coreContainerName.MatchString(container) || !filepath.IsAbs(appDir) || filepath.Clean(appDir) != appDir || appDir == "/" || strings.ContainsAny(appDir, "\x00\r\n\\") {
-		return fmt.Errorf("exact core container and application directory required")
+		return found, fmt.Errorf("exact core container and application directory required")
 	}
 	pid, err := observe(ctx, container)
 	if err != nil {
-		return err
+		return found, err
 	}
 	identity, err := nativeProcessIdentity(pid)
 	if err != nil {
-		return fmt.Errorf("core container process unavailable")
+		return found, fmt.Errorf("core container process unavailable")
 	}
 	root, err := os.Open(fmt.Sprintf("/proc/%d/root", pid))
 	if err != nil {
-		return fmt.Errorf("core container filesystem unavailable")
+		return found, fmt.Errorf("core container filesystem unavailable")
 	}
 	defer root.Close()
 	// Each path component is opened without following links; ancestor replacement
 	// cannot redirect subsequent reads outside the anchored filesystem.
 	dir, err := openCorePayloadDirectory(int(root.Fd()), strings.TrimPrefix(appDir, "/"))
 	if err != nil {
-		return err
+		return found, err
 	}
 	defer dir.Close()
-	if err := verifyCorePayloadDescriptor(ctx, dir, index); err != nil {
-		return err
+	found, err = verifyCorePayloadDescriptor(ctx, dir, index, mode)
+	if err != nil {
+		return found, err
 	}
 	current, err := observe(ctx, container)
 	if err != nil || current != pid {
-		return fmt.Errorf("core container changed during observation")
+		return found, fmt.Errorf("core container changed during observation")
 	}
 	after, err := nativeProcessIdentity(pid)
 	if err != nil || after != identity {
-		return fmt.Errorf("core container process changed during observation")
+		return found, fmt.Errorf("core container process changed during observation")
 	}
-	return nil
+	return found, nil
 }
 
 func openCorePayloadDirectory(root int, rel string) (*os.File, error) {
@@ -147,21 +145,67 @@ func openCorePayloadDirectoryFromRoot(root string) (*os.File, error) {
 	return openCorePayloadDirectory(int(base.Fd()), strings.TrimPrefix(absolute, "/"))
 }
 
-func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CorePayloadIndex) error {
+// verifyCorePayloadDescriptor walks the whole tree and reports everything it
+// finds; it does not stop at the first difference. A problem with one recorded
+// path (it cannot be read, or it changes while it is read) is a finding about
+// that path, so a damaged tree that is about to be replaced can still be
+// replaced. Only a cancelled context or an unlistable root is an error in record
+// mode. Strict mode adds one refusal: a recorded path is missing or changed.
+func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CorePayloadIndex, mode CorePayloadMode) (CorePayloadFindings, error) {
+	var found CorePayloadFindings
 	expected := make(map[string]CorePayloadEntry, len(index.Entries))
 	for _, e := range index.Entries {
 		expected[e.Path] = e
 	}
-	seen := 0
-	cacheEnabled := coreHasManifestRoute(index)
+	// walkUnrecorded only counts. Such a directory belongs to nobody we know: it
+	// may change or vanish while it is listed, and nothing in it can be an error.
+	var walkUnrecorded func(*os.File, string, int) error
+	walkUnrecorded = func(dir *os.File, prefix string, depth int) error {
+		for {
+			children, err := dir.ReadDir(128)
+			for _, child := range children {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if found.Unrecorded >= corePayloadUnrecordedLimit {
+					found.UnrecordedCapped = true
+					return nil
+				}
+				rel := prefix + "/" + child.Name()
+				found.note(rel, "unrecorded-path")
+				if !child.IsDir() {
+					continue
+				}
+				if depth >= corePayloadUnrecordedDepth {
+					found.UnrecordedCapped = true
+					continue
+				}
+				sub, err := openCorePayloadDirectory(int(dir.Fd()), child.Name())
+				if err != nil {
+					continue
+				}
+				err = walkUnrecorded(sub, rel, depth+1)
+				sub.Close()
+				if err != nil {
+					return err
+				}
+			}
+			if err != nil {
+				return nil
+			}
+		}
+	}
 	var walk func(*os.File, string) error
-	walk = func(dir *os.File, prefix string) (scanErr error) {
-		observedPath := prefix
-		defer func() { scanErr = corePayloadDiagnostic(scanErr, observedPath) }()
+	walk = func(dir *os.File, prefix string) error {
 		for {
 			children, err := dir.ReadDir(128)
 			if err != nil && err != io.EOF {
-				return fmt.Errorf("core directory observation failed")
+				if prefix == "" {
+					return fmt.Errorf("core directory observation failed")
+				}
+				// Its unlisted children are reported missing below.
+				found.note(prefix, "unreadable")
+				return nil
 			}
 			for _, child := range children {
 				if err := ctx.Err(); err != nil {
@@ -172,67 +216,53 @@ func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CoreP
 				if prefix != "" {
 					rel = prefix + "/" + name
 				}
-				observedPath = rel
 				if mutableCorePayloadPath(rel) {
 					continue
 				}
 				e, ok := expected[rel]
 				if !ok {
-					kind := coreResponseCacheKind(rel, cacheEnabled)
-					if kind == "" {
-						return fmt.Errorf("installed core contains an unrecorded path")
-					}
-					var stat unix.Stat_t
-					err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW)
-					// Runtime cache may disappear during an ordinary request. Signed
-					// entries never receive this exception, nor do unsupported names.
-					if err == unix.ENOENT {
+					if found.Unrecorded >= corePayloadUnrecordedLimit {
+						found.UnrecordedCapped = true
 						continue
 					}
-					if err != nil || stat.Mode&07000 != 0 {
-						return fmt.Errorf("invalid manifest response cache mode")
-					}
-					if kind == "file" {
-						if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0111 != 0 || stat.Nlink > 1 {
-							return fmt.Errorf("invalid manifest response cache file")
-						}
-					} else {
-						if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
-							return fmt.Errorf("invalid manifest response cache directory")
-						}
-						fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-						if err == unix.ENOENT {
-							continue
-						}
-						if err != nil {
-							return fmt.Errorf("manifest response cache directory unavailable or linked")
-						}
-						sub := os.NewFile(uintptr(fd), name)
-						var opened unix.Stat_t
-						if unix.Fstat(fd, &opened) != nil || opened.Ino != stat.Ino || opened.Dev != stat.Dev || opened.Mode != stat.Mode {
+					found.note(rel, "unrecorded-path")
+					if child.IsDir() {
+						if sub, err := openCorePayloadDirectory(int(dir.Fd()), name); err == nil {
+							err = walkUnrecorded(sub, rel, 1)
 							sub.Close()
-							return fmt.Errorf("manifest response cache directory changed during observation")
-						}
-						err = walk(sub, rel)
-						sub.Close()
-						if err != nil {
-							return err
+							if err != nil {
+								return err
+							}
 						}
 					}
 					continue
 				}
 				var stat unix.Stat_t
-				if unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW) != nil || int64(stat.Mode&07777) != e.Mode {
-					return fmt.Errorf("installed core mode changed")
+				if err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+					if err == unix.ENOENT {
+						continue // removed while listing: reported missing below
+					}
+					delete(expected, rel)
+					found.note(rel, "unreadable")
+					continue
 				}
+				delete(expected, rel)
+				modeChanged := int64(stat.Mode&07777) != e.Mode
 				switch e.Kind {
 				case "directory":
 					if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
-						return fmt.Errorf("installed core directory changed")
+						found.note(rel, "invalid-type-or-link")
+						continue
+					}
+					if modeChanged {
+						found.note(rel, "changed-mode")
 					}
 					sub, err := openCorePayloadDirectory(int(dir.Fd()), name)
 					if err != nil {
-						return err
+						if !modeChanged {
+							found.note(rel, "changed-during-observation")
+						}
+						continue
 					}
 					err = walk(sub, rel)
 					sub.Close()
@@ -241,26 +271,44 @@ func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CoreP
 					}
 				case "symlink":
 					if stat.Mode&unix.S_IFMT != unix.S_IFLNK {
-						return fmt.Errorf("installed core link changed")
+						found.note(rel, "invalid-type-or-link")
+						continue
 					}
 					target := make([]byte, 4097)
 					n, err := unix.Readlinkat(int(dir.Fd()), name, target)
 					if err != nil || n == len(target) || string(target[:n]) != e.Link {
-						return fmt.Errorf("installed core link changed")
+						found.note(rel, "changed-link")
+					} else if modeChanged {
+						found.note(rel, "changed-mode")
 					}
 				case "file":
-					if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size != e.Size {
-						return fmt.Errorf("installed core file changed")
+					if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+						found.note(rel, "invalid-type-or-link")
+						continue
+					}
+					if modeChanged {
+						found.note(rel, "changed-mode")
+						continue
+					}
+					if stat.Size != e.Size {
+						found.note(rel, "changed-bytes")
+						continue
 					}
 					fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 					if err != nil {
-						return fmt.Errorf("installed core file unavailable")
+						reason := "unreadable"
+						if err == unix.ENOENT || err == unix.ELOOP || err == unix.ENXIO {
+							reason = "changed-during-observation"
+						}
+						found.note(rel, reason)
+						continue
 					}
 					file := os.NewFile(uintptr(fd), name)
 					var opened unix.Stat_t
 					if unix.Fstat(fd, &opened) != nil || opened.Ino != stat.Ino || opened.Dev != stat.Dev || opened.Mode != stat.Mode || opened.Size != stat.Size {
 						file.Close()
-						return fmt.Errorf("installed core file changed during observation")
+						found.note(rel, "changed-during-observation")
+						continue
 					}
 					hash := sha256.New()
 					n, err := io.CopyN(hash, file, e.Size)
@@ -269,24 +317,34 @@ func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CoreP
 					var after unix.Stat_t
 					stable := unix.Fstat(fd, &after) == nil && opened.Ino == after.Ino && opened.Dev == after.Dev && opened.Mode == after.Mode && opened.Size == after.Size && opened.Mtim == after.Mtim && opened.Ctim == after.Ctim
 					file.Close()
-					if err != nil || n != e.Size || more != 0 || end != io.EOF || !stable || fmt.Sprintf("%x", hash.Sum(nil)) != e.SHA256 {
-						return fmt.Errorf("installed core bytes changed")
+					switch {
+					case err != nil && err != io.EOF:
+						found.note(rel, "unreadable")
+					case err != nil || n != e.Size || more != 0 || end != io.EOF || !stable:
+						found.note(rel, "changed-during-observation")
+					case fmt.Sprintf("%x", hash.Sum(nil)) != e.SHA256:
+						found.note(rel, "changed-bytes")
 					}
 				}
-				delete(expected, rel)
-				seen++
 			}
 			if err == io.EOF {
-				break
+				return nil
 			}
 		}
-		return nil
 	}
 	if err := walk(root, ""); err != nil {
-		return err
+		return found, err
 	}
-	if seen != len(index.Entries) || len(expected) != 0 {
-		return corePayloadDiagnostic(fmt.Errorf("installed core is missing recorded paths"), "")
+	missing := make([]string, 0, len(expected))
+	for name := range expected {
+		missing = append(missing, name)
 	}
-	return nil
+	sort.Strings(missing)
+	for _, name := range missing {
+		found.note(name, "missing-path")
+	}
+	if mode == CorePayloadStrict && found.Differs() {
+		return found, &CorePayloadDifferenceError{Findings: found}
+	}
+	return found, nil
 }

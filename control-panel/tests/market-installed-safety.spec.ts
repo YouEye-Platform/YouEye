@@ -17,6 +17,7 @@ import { caddyTrustAppDirectory, removeCaddyTrustBundle } from '../src/lib/marke
 import { catalogIconPath, resolveAppIcon } from '../src/lib/market/app-icon';
 import type { InstallMetadata } from '../src/lib/market/types';
 import { routeServers } from '../src/lib/caddy/servers';
+import * as marketSource from '../src/lib/market/source';
 
 const require = createRequire(import.meta.url);
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
@@ -423,6 +424,7 @@ function routeModule(file: string, setups: Array<{ name: string; for: string }>)
     '@/lib/auth/session': { verifyCSRFToken: async () => true },
     '@/lib/admission/management': { admissionAdministrator: async () => INSTALLATION },
     '@/lib/market/direct-apps': { saveDirectMarketApp: async () => { started.push('saved'); return {}; } },
+    '@/lib/market/source': marketSource,
   }, { Response, TextEncoder, ReadableStream });
   return { loaded, started };
 }

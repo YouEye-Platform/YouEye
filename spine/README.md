@@ -32,8 +32,7 @@ youeye install incus       # Install Incus only
 youeye install control     # Deploy Control Panel only
 
 # Updates
-youeye update self         # Update Spine binary
-youeye update control      # Update Control Panel
+youeye update core check   # System release (Spine, Control Panel, UI, image); see docs/core-release-contract.md
 youeye update incus        # Update Incus package
 youeye update system       # Update host OS packages
 
@@ -43,13 +42,12 @@ youeye version             # Spine version
 youeye logs                # View service logs
 
 # Management
-youeye branch set dev      # Switch release channel
+youeye channel set dev     # Switch release channel
 youeye cleanup             # Clean uninstall
 
 # API Server
-youeye api start           # Start socket API (runs as systemd service)
+youeye api serve           # Run the socket API (youeye.service runs this)
 youeye api stop            # Stop socket API
-youeye api status          # Check API status
 ```
 
 ## Socket API
@@ -61,22 +59,19 @@ Spine runs a Unix socket server at `/var/run/youeye/youeye.sock`. The Control Pa
 | `/api/health` | GET | Health check |
 | `/api/version` | GET | Version info |
 | `/api/status` | GET | Full system status |
-| `/api/updates/check` | GET | Check for available updates |
 | `/api/auth/verify` | POST | PAM authentication |
-| `/api/update/self` | POST | Update Spine |
-| `/api/update/control` | POST | Update Control Panel |
+| `/api/appliance/core-update/*` | GET/POST | System release: status, check, stage, activate, resume, recover, cancel |
 | `/api/update/incus` | POST | Update Incus |
 | `/api/update/system` | POST | Update host OS |
 
+The full list of route groups is in [docs/spine.md](../docs/spine.md#the-api). Spine has no route that updates a
+container image by tag; the Control Panel rebuilds the core containers on the images it pins.
+
 ## Update System
 
-Spine checks for new releases on the configured Git server. It supports branch-aware release channels:
-
-- **Main channel**: tags like `spine-v0.5.2` (stable releases)
-- **Dev channel**: tags like `spine-dev-v0.5.2.1` (development builds)
-- **Branch channels**: tags like `spine-mybranch-v0.5.2.1` (per-branch builds)
-
-Switch channels with `youeye branch set <channel>`.
+Spine is one member of the System release (`core-release.json`) and is updated with it, as a trial on State without
+a reboot ([docs/spine.md](../docs/spine.md), [docs/core-release-contract.md](../docs/core-release-contract.md)). The
+box follows one channel (`dev`, `alpha`, `beta`, `stable`); switch with `youeye channel set <channel>`.
 
 ## Building from Source
 

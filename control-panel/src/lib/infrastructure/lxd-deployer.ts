@@ -566,7 +566,8 @@ async function installNodeAndApp(
     if (staged.exitCode !== 0) throw new Error('Fresh core component identity differs from retained state');
   }
 
-  // Create systemd service file using base64 (more reliable than heredoc over exec API)
+  // Create systemd service file using base64 (more reliable than heredoc over exec API). Next exits 143 on SIGTERM:
+  // SuccessExitStatus=143 keeps every normal stop from being logged as a failure.
   const serviceName = spec.containerName;
   const serviceFile = `[Unit]
 Description=${spec.displayName}
@@ -582,6 +583,7 @@ Environment=PORT=${spec.port}
 Environment=HOSTNAME=0.0.0.0
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target

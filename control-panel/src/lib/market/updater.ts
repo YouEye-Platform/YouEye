@@ -50,8 +50,11 @@ import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import {
   classifyAppUpdateRouting,
   recordedCatalogSourceIds,
+  recordedSourceRepositoryChange,
 } from './update-routing';
-import { refreshDirectMarketApp } from './direct-apps';
+import { fetchDirectMarketAppUpdate, saveDirectMarketApp } from './direct-apps';
+import { readFrozenUpdateManifest } from './frozen-manifest';
+import { isMarketSourceConsentError, MarketSourceConsentError, setupFilesChanged } from './source';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
@@ -68,6 +71,8 @@ export interface UpdateConfig {
   appId: string;
   /** Force update even if versions match */
   force?: boolean;
+  /** The owner allows changed setup files of an app added by URL (asked again on every such change). */
+  allowSetup?: boolean;
 }
 
 export interface UpdateResult {
@@ -83,6 +88,8 @@ export interface UpdateResult {
   errorCode?: string;
   /** The journal operation this attempt created; absent when it was refused before one (preflight, busy). */
   operationId?: string;
+  /** `setup-changed`: the setup files the new version would run (nothing was changed). */
+  setups?: Array<{ name: string; for: string }>;
 }
 
 // ─── Emit Helper ──────────────────────────────────────────
@@ -211,21 +218,33 @@ async function updateMarketAppLocked(
 
   clearCatalogCache();
 
-  const directSourceId = installMeta.sourceId?.startsWith('direct:')
-    ? installMeta.sourceId
-    : installedApp.sourceId?.startsWith('direct:') ? installedApp.sourceId : null;
-  const directEntry = directSourceId ? await refreshDirectMarketApp(directSourceId) : null;
+  // The app's own recorded source, else the official Market; never another one (resolveCatalogApp refuses a
+  // custom source the owner has not accepted). An app added by URL re-reads its URL, without saving it yet.
+  const recordedSourceId = recordedCatalogSourceIds(installedApp, installMeta)[0];
+  const directUpdate = recordedSourceId?.startsWith('direct:') ? await fetchDirectMarketAppUpdate(recordedSourceId) : null;
+  const directEntry = directUpdate ? {
+    sourceId: directUpdate.entry.sourceId,
+    manifestUrl: directUpdate.entry.manifestUrl,
+    manifestDigest: directUpdate.manifest.frozen!.digest,
+    manifest: directUpdate.manifest,
+  } : null;
   let resolvedCatalog: Awaited<ReturnType<typeof resolveCatalogApp>> | null = null;
   if (!directEntry) {
     try {
-      resolvedCatalog = await resolveCatalogApp(
-        appId,
-        recordedCatalogSourceIds(installedApp, installMeta),
-      );
+      resolvedCatalog = await resolveCatalogApp(appId, recordedSourceId);
     } catch (err) {
+      if (isMarketSourceConsentError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to resolve Market source for "${appId}": ${message}`);
     }
+    // The id may name another repository by now (a removed source's id reused, or a source re-pointed): the app
+    // follows the repository it recorded, never just the id.
+    const change = recordedSourceRepositoryChange({
+      sourceRepoUrl: installMeta.sourceRepoUrl ?? installedApp.sourceRepoUrl,
+      manifestRepo: installMeta.manifestRepo,
+      manifestBranch: installMeta.manifestBranch,
+    }, resolvedCatalog.source);
+    if (change) throw new MarketSourceConsentError('source-changed', change.message);
   }
 
   // Classify before any release lookup or runtime mutation. A native app's
@@ -285,6 +304,18 @@ async function updateMarketAppLocked(
       return adopted;
     }
   }
+  // An app added by URL whose new version changes its setup files asks again (decision 7). Compared with the installed
+  // copy; nothing is written before the owner allows it.
+  if (directEntry && !config.allowSetup) {
+    const installedCopy = await readFrozenUpdateManifest(appId).catch(() => directUpdate!.entry.manifest);
+    if (setupFilesChanged(installedCopy, manifest)) {
+      const setups = manifest.setups.map((setup) => ({ name: setup.name, for: setup.for }));
+      const message = `The new version of ${appId} changes its setup steps; allow them to update (allowSetup, youeye app update ${appId} --allow-setup)`;
+      emit(onEvent, 1, 1, 'error', message);
+      return { success: false, previousVersion: installedVersion, newVersion: targetVersion, migrationsRun: 0, error: message, errorCode: 'setup-changed', setups };
+    }
+  }
+
   // An update that needs a newer YouEye waits for the platform (it is never offered).
   try {
     await assertYouEyeRequirement(manifest);
@@ -535,6 +566,11 @@ async function updateMarketAppLocked(
     await bindInstalledAdmission(installMeta);
     const { reconcileAdmissionProjections } = await import('@/lib/admission/projection');
     await reconcileAdmissionProjections();
+    // The Market listing of an Added app now shows what is installed (the copy the owner agreed to).
+    if (directUpdate && result.success) {
+      await saveDirectMarketApp({ manifestUrl: directUpdate.entry.manifestUrl, manifest })
+        .catch((error) => logOperationFailure(`Recording the updated Added app ${appId}`, error));
+    }
     return result;
   } catch (error) {
     logOperationFailure(`Update of ${appId} (operation ${attemptedOperation ?? 'not admitted'})`, error);

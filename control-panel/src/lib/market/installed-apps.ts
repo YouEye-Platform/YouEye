@@ -24,6 +24,7 @@ import {
   hasRecordedCatalogIdentity,
   projectUpdateAvailability,
   recordedCatalogSourceIds,
+  recordedSourceRepositoryChange,
   repositoriesMatch,
 } from './update-routing';
 import type { AppManifest, InstallMetadata } from './types';
@@ -90,6 +91,11 @@ export interface InstalledApp {
   /** Candidate tag the effective channel currently resolves to. */
   candidateTag?: string | null;
   updatePath?: string | null;
+  /**
+   * Why the last update check offers no update although the app's source id resolves: the id now names another
+   * repository than the app was installed from (`recordedSourceRepositoryChange`). Null when nothing blocks.
+   */
+  updateBlocked?: { code: 'source-changed'; message: string } | null;
   migrationsRequired?: number;
   migrationGates?: Array<{
     fromVersion: string;
@@ -392,13 +398,13 @@ export async function migrateFromInstallJson(): Promise<number> {
 
 // ─── Update Detection ─────────────────────────────────────────
 
-/** The current manifest of an app added by URL (parsed by the one app-format parser). */
-async function fetchUrlAppManifest(sourceUrl: string): Promise<AppManifest | null> {
+/** The current manifest of an app added by URL (parsed by the one app-format parser); nothing is saved. */
+async function fetchUrlAppManifest(sourceId: string): Promise<AppManifest | null> {
   try {
-    const { fetchUrlApp } = await import('./url-app');
-    return await fetchUrlApp(sourceUrl);
+    const { fetchDirectMarketAppUpdate } = await import('./direct-apps');
+    return (await fetchDirectMarketAppUpdate(sourceId)).manifest;
   } catch (err) {
-    console.warn('[installed-apps] Failed to fetch URL app manifest:', sourceUrl, err);
+    console.warn('[installed-apps] Failed to fetch URL app manifest:', sourceId, err);
     return null;
   }
 }
@@ -440,15 +446,32 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     let catalogVersion: string | null = null;
     let sourceManifest: AppManifest | null = null;
     let resolvedCatalog: Awaited<ReturnType<typeof resolveCatalogApp>> | null = null;
-    const recordedSourceIds = recordedCatalogSourceIds(app, installMeta ?? {});
+    // Only the app's own recorded source is asked (else the official Market): a check never moves an app to another
+    // source, and a source the owner has not accepted is refused like an install.
+    const recordedSourceId = recordedCatalogSourceIds(app, installMeta ?? {})[0];
     const defaultEntry = entryMap.get(app.appId);
-    if (recordedSourceIds.length > 0 || hasRecordedCatalogIdentity(app, installMeta ?? {}) || defaultEntry) {
-      resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceIds);
+    if (recordedSourceId?.startsWith('direct:')) {
+      sourceManifest = await fetchUrlAppManifest(recordedSourceId);
+      catalogVersion = sourceManifest?.version ?? null;
+    } else if (recordedSourceId || hasRecordedCatalogIdentity(app, installMeta ?? {}) || defaultEntry) {
+      resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceId);
+      // The id may name another repository by now: offer nothing from it, and say why.
+      const change = recordedSourceRepositoryChange({
+        sourceRepoUrl: installMeta?.sourceRepoUrl ?? app.sourceRepoUrl,
+        manifestRepo: installMeta?.manifestRepo,
+        manifestBranch: installMeta?.manifestBranch,
+      }, resolvedCatalog.source);
+      if (change) {
+        console.warn(`[installed-apps] No update offered for ${app.appId}: ${change.message}`);
+        Object.assign(app, {
+          catalogVersion: null, updateAvailable: false, switchPending: false, candidateVersion: null, candidateBranch: null,
+          candidateTag: null, updatePath: null, migrationsRequired: 0, migrationGates: [],
+          updateBlocked: { code: 'source-changed', message: change.message },
+        } satisfies Partial<InstalledApp>);
+        return app;
+      }
       sourceManifest = resolvedCatalog.manifest;
       catalogVersion = sourceManifest.version ?? null;
-    } else if (app.source === 'url' && app.sourceUrl) {
-      sourceManifest = await fetchUrlAppManifest(app.sourceUrl);
-      catalogVersion = sourceManifest?.version ?? null;
     }
 
     const routing = classifyAppUpdateRouting({
@@ -463,7 +486,8 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
         manifestIntegration: resolvedCatalog.manifest.integration,
       } : null,
     });
-    if (resolvedCatalog) {
+    // The resolved source is the app's recorded one, or the official Market for an app that recorded none.
+    if (resolvedCatalog && (resolvedCatalog.source.id === recordedSourceId || !recordedSourceId)) {
       app.sourceId = resolvedCatalog.source.id;
       app.sourceName = resolvedCatalog.source.name;
       if (!app.sourceRepoUrl || resolvedCatalog.configuredSourceRepoUrls.some(
@@ -497,6 +521,7 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     app.candidateBranch = availability.candidateBranch;
     app.candidateTag = availability.candidateTag;
     app.updatePath = null;
+    app.updateBlocked = null;
     app.migrationsRequired = 0;
     app.migrationGates = [];
 
@@ -540,7 +565,7 @@ export async function mergeInstalledAppPreviews(
       for (const field of [
         'catalogVersion', 'updateAvailable', 'switchPending',
         'candidateVersion', 'candidateBranch', 'candidateTag',
-        'updatePath', 'migrationsRequired', 'migrationGates',
+        'updatePath', 'updateBlocked', 'migrationsRequired', 'migrationGates',
         'sourceId', 'sourceName', 'sourceRepoUrl', 'catalogKey',
       ] as const) {
         if (Object.hasOwn(preview, field)) Object.assign(latest, { [field]: structuredClone(preview[field]) });

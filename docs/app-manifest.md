@@ -263,8 +263,12 @@ remove:                          # optional: undo steps, run when the feature is
   In a `connect:<app>` file `${peer.api_key}` is that secret of the connected app and `${self.api_key}` the
   consumer's own, each read from the installed app's secret store as its frozen manifest names it. An app
   without `api_key:` has no `${…api_key}` value, and a step that uses it fails.
-- Setup files are listed in the install dialog. An app installed from a URL with setup files needs a second, explicit
-  acknowledgement (`--allow-setup` on the CLI; `allowSetup` in the install API).
+- Setup files are listed in the install dialog. An app added by URL has one confirmation that names its host, images
+  and setup files; with setup files it must allow them (`--allow-setup` on the CLI; `allowSetup` in the install
+  API). An update of such an app whose setup files changed is refused until they are allowed again
+  (`youeye app update <id> --allow-setup`; see [market.md](market.md#other-sources-and-consent)). An update never
+  runs setup files itself: the new files become the installed copy and run on the next sign-in change, address
+  change or connection.
 - An app added by URL is fetched over HTTPS from a public server only: the host is resolved first and every address
   must be public (no private, loopback, link-local, CGNAT, unique-local, multicast, reserved or cloud metadata
   address); the request connects to that checked address, redirects are refused and each file is at most 1 MiB.
@@ -288,15 +292,17 @@ remove:                          # optional: undo steps, run when the feature is
 ## Other kinds
 - **Bundle** (`bundles/<id>/bundle.yaml`, `youeye.bundle.v1`): `id`, `name`, `description`, `icon`, `category`,
   `summary`, `members` (install order), `connections` (`{from, to, scope}`), `shared` (groups).
-- **System app** (`system/<id>.yaml`, `youeye.system-app.v1`): `id`, `version`, `name`, `image` (digest-pinned),
-  `health`.
 - **Catalog** (`catalog.yaml`, `youeye.catalog.v1`): `categories`, `curation` (`spotlight`, `collections`) and
-  `native: [ids]` (the native apps the Market shows; each comes from its own product release). Container apps,
-  bundles and system apps are discovered from the folders `apps/<id>/youeye-app.yaml`, `bundles/<id>/bundle.yaml`
-  and `system/<id>.yaml`; there is no hand-written app list.
-- **Catalog index** (`catalog.json`, `youeye.catalog-index.v1`: `apps`, `bundles`, `system` id lists): only custom
+  `native: [ids]` (the native apps the Market shows; each comes from its own product release). Container apps and
+  bundles are discovered from the folders `apps/<id>/youeye-app.yaml` and `bundles/<id>/bundle.yaml`; there is no
+  hand-written app list.
+- **Catalog index** (`catalog.json`, `youeye.catalog-index.v1`: `apps` and `bundles` id lists): only custom
   Market sources read it, because a repository read as raw files cannot list folders. Such a source writes it
-  itself; the Market's own release does not need it.
+  itself; the Market's own release does not need it. A `system` list is still accepted and ignored.
+- **No system apps.** The images of Caddy, PostgreSQL and Pi-hole are pinned in the Control Panel
+  (`control-panel/src/lib/infrastructure/system-images.ts`) and change only with a System release. The
+  `youeye.system-app.v1` reader is gone; `system/<id>.yaml` files are not read from any source. The ones still in
+  `YE-AppMarket` serve only boxes up to 0.6.9 and are removed by the next plan.
 
 ## Installed resources
 - Every Incus instance, custom volume and network an install creates carries

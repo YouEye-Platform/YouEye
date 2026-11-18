@@ -48,7 +48,7 @@ and the code disagree, the code wins: fix the page in the same change. The old Y
 
 | Page | What it covers |
 |---|---|
-| [Market](market.md) | The catalog, install, sign-in, AI settings, public access, connections, updates, uninstall |
+| [Market](market.md) | The catalog, other sources and consent, install, sign-in, AI settings, public access, connections, updates, uninstall |
 | [App manifest](app-manifest.md) | `youeye.app.v1` and setup files (`youeye.setup.v1`), field by field |
 | [App environment](app-environment.md) | The `${…}` variables an app can use, and the doorways |
 | [App access](app-admission.md) | Admission: owner, users, groups, public access; ownership and restore |

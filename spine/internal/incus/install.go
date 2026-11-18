@@ -355,8 +355,12 @@ func manualZFSCreateArgs(opts InstallOptions) []string {
 func initializeWithPreseed(opts InstallOptions) error {
 	driver, driverConfig := planPreseedStorage(opts)
 
+	// images.auto_update_interval 0: every app and system image is pinned by digest, so Incus's periodic refresh
+	// of cached images (default every 6 hours) only costs registry requests. Existing boxes get the same value from
+	// host maintenance (cmd/host_maintenance.go).
 	preseed := fmt.Sprintf(`config:
   core.https_address: '[::]:8443'
+  images.auto_update_interval: '0'
 networks:
 - config:
     ipv4.address: auto

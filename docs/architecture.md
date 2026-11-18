@@ -22,17 +22,18 @@ containers. This page says what lives where and how the parts talk. Install and 
 | **Spine** | on the host, `youeye.service` (`youeye api serve`) | `spine/` |
 | **Control Panel** + **YouEye ID** | Incus system container `youeye-control` (Debian 12); two systemd units, `youeye-control` (port 3000) and `youeye-id` (port 3001), running the same `/opt/app` bundle | `control-panel/` |
 | **Dashboard UI** | Incus system container `youeye-ui` (Debian 12), `youeye-ui.service`, port 3000 | `ui/` |
-| **Caddy** | OCI container `youeye-caddy`; host ports 80 and 443 | image from the Market catalog |
-| **PostgreSQL** | OCI container `youeye-postgres`; no host port | image from the Market catalog |
-| **Pi-hole** | OCI container `youeye-pihole`; host port 53 (TCP and UDP) | image from the Market catalog |
+| **Caddy** | OCI container `youeye-caddy`; host ports 80 and 443 | image pinned in the Control Panel |
+| **PostgreSQL** | OCI container `youeye-postgres`; no host port | image pinned in the Control Panel |
+| **Pi-hole** | OCI container `youeye-pihole`; host port 53 (TCP and UDP) | image pinned in the Control Panel |
 | **Pointer** (AI) | Incus system container `youeye-pointer`, Bun, ports 4001 and 4002 | Pointer repository |
 | **Apps** | `app-<id>` or `app-<id>-<container>`, one network per app | native app repos, YE-AppMarket |
 
 - Spine creates Incus storage and `youeye-control`, and deploys the Control Panel into it (`youeye deploy`). Spine
   does not deploy anything else.
 - The Control Panel deploys and manages everything else: PostgreSQL, Caddy, Pi-hole, the UI, Pointer, native apps
-  and Market apps (`control-panel/src/lib/infrastructure/`). The Caddy, PostgreSQL and Pi-hole images come from the
-  Market catalog's `system/` entries (`system-market-manifests.ts`).
+  and Market apps (`control-panel/src/lib/infrastructure/`). The Caddy, PostgreSQL and Pi-hole images are pinned by
+  digest in the Control Panel (`system-images.ts`): they change only with a System release, never come from a Market
+  source, and first deployment needs no Market for them.
 - Both web apps are Next.js 16 and ship with their own Node runtime (Node 24.22.0, copied in by
   `scripts/bundle-node-runtime.mjs` in each app).
 - The Control Panel is served at `https://<domain>/settings`. YouEye ID has its own subdomain

@@ -220,7 +220,13 @@ export interface CoreUpdateStatus {
     machine_bound: boolean;
     payload_observation: 'not-observed';
   };
-  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string; action_state?: string; stage?: string; code?: string; effect_state?: string }[]; error?: string };
+  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string; action_state?: string; stage?: string; code?: string; effect_state?: string;
+    /** Why the step failed, as one short line from Spine. Present only for a `failed` step, or for a `started` step
+     * whose outcome is uncertain (phase `needs-recovery`) when its action recorded an error. */
+    evidence?: string }[]; error?: string;
+    /** Once recovery owns the request, `steps` is the recovery graph; this is the apply step that stopped the update
+     * (`failed`, or `started` with an uncertain outcome) and its reason, if Spine has one. */
+    stopped_step?: { name: string; state: string; evidence?: string } };
 }
 
 export interface CoreUpdateCandidate {
@@ -490,13 +496,6 @@ export class SpineClient {
     return this.request(`/api/appliance/remote-access/keys/${encodeURIComponent(id)}`, 'DELETE', {
       confirm_last_key: confirmLastKey,
     });
-  }
-
-  /**
-   * Update an OCI app container (rebuild with latest image)
-   */
-  async updateApp(appName: string): Promise<SpineUpdateResponse> {
-    return this.request(`/api/update/app/${appName}`, 'POST');
   }
 
   /**

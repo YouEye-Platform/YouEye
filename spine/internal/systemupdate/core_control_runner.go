@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // CoreControlRunner detaches a reconciliation command from an HTTP connection.
@@ -106,6 +108,61 @@ func (r CoreControlRunner) Start(ctx context.Context, request, command string) (
 	}
 	return observed, nil
 }
+
+var coreFinishedUnitName = regexp.MustCompile(`^youeye-core-(control-)?[0-9a-f]{64}\.service$`)
+
+// ResetFailedUnits clears the failed state of the transient units a finished
+// request left behind: its action units (youeye-core-*) and its continuation
+// units (youeye-core-control-*). Without this they stay in `systemctl --failed`
+// until the next reboot, long after the request was cancelled, rolled back or
+// committed. It runs only for a request in a terminal phase. Such a request is
+// never advanced, fenced or settled again, and observation of a finished
+// action reads its retained terminal receipt before it looks at any unit, so
+// nothing depends on these units any more. A unit that is not failed (still
+// running, or exited cleanly) is left as it is: reset-failed does not touch it.
+// Best effort: an error changes nothing about the request.
+func (r CoreSystemdRunner) ResetFailedUnits(ctx context.Context, j CoreJournal) []string {
+	if j.Phase != "committed" && j.Phase != "cancelled" && j.Phase != "rolled-back" {
+		return nil
+	}
+	units := []string{}
+	for _, steps := range [][]CoreStep{j.Steps, j.RecoverySteps} {
+		for _, step := range steps {
+			if step.State != "pending" {
+				units = append(units, r.unit(j, step))
+			}
+		}
+	}
+	root := filepath.Join(r.Root, "controllers")
+	entries, _ := os.ReadDir(root)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "youeye-core-control-") || !strings.HasSuffix(name, ".service.json") {
+			continue
+		}
+		var receipt CoreControlReceipt
+		raw, err := ReadCoreState(filepath.Join(root, name), 16384)
+		if err != nil || json.Unmarshal(raw, &receipt) != nil || receipt.RequestID != j.RequestID || receipt.Unit+".json" != name {
+			continue
+		}
+		units = append(units, receipt.Unit)
+	}
+	named := []string{"reset-failed"}
+	for _, unit := range units {
+		if coreFinishedUnitName.MatchString(unit) {
+			named = append(named, unit)
+		}
+	}
+	// Without a unit name, reset-failed would clear every unit on the host.
+	if len(named) == 1 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	_, _ = r.capture(ctx, "systemctl", named...)
+	return named[1:]
+}
+
 func (r CoreControlRunner) observe(ctx context.Context, receipt CoreControlReceipt) (CoreControlObservation, error) {
 	out := CoreControlObservation{RequestID: receipt.RequestID, CommandID: receipt.CommandID, State: "unknown"}
 	raw, err := r.capture(ctx, "systemctl", "show", "--property=Id,LoadState,ActiveState,SubState,Result,MainPID,Description,Transient,Type,User,WorkingDirectory,RootDirectory,RootImage,KillMode,Restart,RemainAfterExit", receipt.Unit)

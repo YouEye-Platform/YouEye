@@ -42,6 +42,45 @@ func runHostMaintenance() {
 	if removed > 0 {
 		util.LogSuccess(fmt.Sprintf("Removed %d old Incus exec output files", removed))
 	}
+	// Last: it may wait for Incus, which can still be starting when the API service comes up.
+	if err := disableIncusImageRefresh(incusConfig, incusImageRefreshAttempts, incusImageRefreshWait); err != nil {
+		util.LogError("Incus cached-image refresh not disabled: " + err.Error())
+	}
+}
+
+const (
+	incusImageRefreshKey      = "images.auto_update_interval"
+	incusImageRefreshAttempts = 10
+	incusImageRefreshWait     = 30 * time.Second
+)
+
+func incusConfig(args ...string) (string, error) {
+	out, err := runWithTimeout(15*time.Second, "incus", append([]string{"config"}, args...)...)
+	return string(out), err
+}
+
+// disableIncusImageRefresh sets images.auto_update_interval to 0 on a box installed before the preseed carried it.
+// App and system images are pinned by digest and the Debian base is a local image that never refreshes, so the
+// periodic refresh (default every 6 hours, one registry request per cached image) can only waste requests.
+func disableIncusImageRefresh(config func(args ...string) (string, error), attempts int, wait time.Duration) error {
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(wait)
+		}
+		var current string
+		if current, err = config("get", incusImageRefreshKey); err != nil {
+			continue // Incus not ready yet
+		}
+		if strings.TrimSpace(current) == "0" {
+			return nil
+		}
+		if _, err = config("set", incusImageRefreshKey, "0"); err == nil {
+			util.LogSuccess("Incus cached-image refresh disabled (images are pinned by digest)")
+			return nil
+		}
+	}
+	return err
 }
 
 // arcCeiling is Proxmox VE's rule for new installs (10 % of RAM, at most 16 GiB) with a 512 MiB floor. Unset, the

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { stringify } from 'yaml';
 
 import {
-  AppFormatError, parseApp, parseAppSource, parseBundle, parseCatalog, parseSetup, parseSystemApp,
+  AppFormatError, parseApp, parseAppSource, parseBundle, parseCatalog, parseCatalogIndex, parseSetup,
 } from '../src/lib/market/app-format/parse';
 import { loadApp, loadFrozenApp, quoteArgv } from '../src/lib/market/app-format/compile';
 import { manifestDigest } from '../src/lib/market/app-format/digest';
@@ -70,7 +70,6 @@ test('an image that is not pinned by digest is refused (tests may allow tags exp
   rejects(() => parseApp(appYAML({ image: 'ghcr.io/example/demo:latest' })), /image: image must be pinned by digest/);
   rejects(() => parseApp(appYAML({ sidecars: [{ name: 'redis', image: 'redis:7' }] })), /sidecars\[0\]\.image: image must be pinned/);
   assert.equal(parseApp(appYAML({ image: 'ghcr.io/example/demo:latest' }), { allowUnpinned: true }).image, 'ghcr.io/example/demo:latest');
-  rejects(() => parseSystemApp(stringify({ schema: 'youeye.system-app.v1', id: 'caddy', version: '2', name: 'Caddy', image: 'caddy:2' })), /pinned/);
 });
 
 test('native apps take source.node from {22, 24}; there is no app_dir', () => {
@@ -377,12 +376,10 @@ test('requires.youeye refuses older platforms with a clear message', () => {
 
 // ─── Other kinds and catalog discovery ────────────────────
 
-test('bundles, system apps and catalog.yaml use their own strict kinds', () => {
+test('bundles and catalog.yaml use their own strict kinds', () => {
   const bundle = parseBundle(stringify({ schema: 'youeye.bundle.v1', id: 'media', name: 'Media', description: 'd', members: ['sonarr'], connections: [{ from: 'sonarr', to: 'prowlarr' }], shared: ['media'] }));
   assert.deepEqual(bundle.members, ['sonarr']);
   rejects(() => parseBundle(stringify({ schema: 'youeye.bundle.v1', id: 'media', name: 'M', description: 'd', members: ['a'], storageGroups: [] })), /unknown field "storageGroups"/);
-  const system = parseSystemApp(stringify({ schema: 'youeye.system-app.v1', id: 'caddy', version: '2.11.4', name: 'Caddy', image: `docker.io/library/caddy${PIN}` }));
-  assert.equal(system.id, 'caddy');
   rejects(() => parseCatalog(stringify({ apiVersion: 'v1', kind: 'catalog', apps: [] })), /schema/);
   rejects(() => parseCatalog(stringify({ schema: 'youeye.catalog.v1', apps: [{ id: 'x' }] })), /unknown field "apps"/);
 });
@@ -409,9 +406,16 @@ test('the catalog app list is discovered from the folders', () => {
     { id: 'wiki', integration: 'native' },
   ]);
   assert.deepEqual(catalog.bundles, ['media-automation']);
-  assert.deepEqual(catalog.system, ['caddy', 'postgresql']);
+  // system/*.yaml files are not Market items: the core container images ship with the Control Panel.
+  assert.deepEqual(Object.keys(catalog).sort(), ['apps', 'bundles', 'categories', 'curation']);
   assert.deepEqual(catalog.curation, { spotlight: { title: undefined, apps: ['notes'] }, collections: [] });
   assert.throws(() => catalogFromFiles(stringify({ schema: 'youeye.catalog.v1', native: ['mealie'] }), ['apps/mealie/youeye-app.yaml']), /also has an app folder/);
+});
+
+test('a catalog.json may still list system ids; the list is accepted and ignored', () => {
+  const index = parseCatalogIndex(JSON.stringify({ schema: 'youeye.catalog-index.v1', apps: ['sonarr'], bundles: [], system: ['caddy', 'postgresql', 'pihole'] }));
+  assert.deepEqual(index.apps, ['sonarr']);
+  rejects(() => parseCatalogIndex(JSON.stringify({ schema: 'youeye.catalog-index.v1', apps: [], images: [] })), /unknown field "images"/);
 });
 
 // ─── Gaps found by the catalog conversion ─────────────────

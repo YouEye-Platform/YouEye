@@ -284,14 +284,6 @@ export interface AppManifest {
   frozen?: FrozenAppSource;
 }
 
-export interface SystemAppManifest {
-  id: string;
-  version: string;
-  name: string;
-  image: string;
-  health?: string;
-}
-
 export interface MarketCategory {
   id: string;
   label: string;
@@ -317,6 +309,11 @@ export interface MarketBundle {
   members: string[];
   connections: { from: string; to: string; scope: 'user' | 'service' }[];
   storageGroups: string[];
+  /** The Market source the bundle (and every member it installs) comes from. */
+  sourceId?: string;
+  sourceName?: string;
+  /** The source is a custom one the owner has not accepted: listed, but refused for install. */
+  sourceNotAccepted?: true;
 }
 
 /** One app of a Market source, discovered from its folders. */
@@ -332,7 +329,6 @@ export interface CatalogEntry {
 export interface Catalog {
   apps: CatalogEntry[];
   bundles: string[];
-  system: string[];
   categories: MarketCategory[];
   curation?: MarketCuration;
 }
@@ -756,7 +752,7 @@ export interface VariableContext {
 export interface MarketApp {
   id: string;
   catalogKey?: string;
-  itemKind?: 'app' | 'system';
+  itemKind?: 'app';
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
@@ -804,6 +800,10 @@ export interface MarketApp {
   forwardAuth?: 'default' | 'enabled' | 'disabled';
   /** Manifest `public_access: true`: the app protects itself, so installs default to public access. */
   publicAccess?: true;
+  /** The app's source is a custom one the owner has not accepted: listed, but refused for install. */
+  sourceNotAccepted?: true;
+  /** Images of an app added by URL (shown in its install confirmation). */
+  images?: string[];
   capabilities?: {
     widgets?: boolean;
     notifications?: boolean | 'push';
@@ -812,10 +812,6 @@ export interface MarketApp {
     link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
   };
   surfaces?: SurfaceSpec[];
-  system?: {
-    image: string;
-    managedBy: 'control-panel';
-  };
 }
 
 // ─── Restore Options ─────────────────────────────────────

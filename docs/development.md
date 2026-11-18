@@ -122,3 +122,21 @@ audit, Plan 7):
   both sides). A restore refuses a backup made by a newer CP, UI or Pointer build or a newer State/Data schema.
 - **Databases:** CP and UI tables change additively only (new columns nullable or defaulted) until they have a
   version table (Backlog).
+
+**A check that runs in the installed Spine must never refuse an update because of the state of what the update did
+not write.** Such a check runs in the Spine that is already on the box, so a mistake in it cannot be fixed by a
+release: the box refuses the very update that would fix it. 0.6.8 and 0.6.9 refused every System update once a
+browser had loaded the Control Panel's favicon (Next.js cached the response inside the installed tree). Instead:
+
+- record what you find (counts in the step's evidence) for a tree the update did not write, and check strictly
+  only what the request itself wrote ([core-release-contract.md](core-release-contract.md#installed-file-checks));
+- put a new requirement in the new Spine (from `apply-cp` on, every step runs in it) or in the release document,
+  never in a check the old Spine runs first (`verify-members`, the checkpoint preflight).
+
+`TestCorePayloadCheckSitesUseTheDecidedMode` (`spine/internal/systemupdate/core_payload_sites_test.go`) pins the
+literal mode argument of each installed-file check call, per function in source order; a computed mode is pinned
+there only as its expression, and what the mode functions return is pinned by
+`TestCoreStageModeFollowsTheStageReceipt`, `TestCoreHealthIsStrictOnlyForATreeThisRequestWrote` and
+`TestCoreInstalledHealthModeTable`. Changing a mode is a deliberate edit of these tests. A framework upgrade that starts
+writing into the installed tree is caught by the Control Panel and UI build guard
+([releases.md](releases.md#build-guard-control-panel-and-ui)).

@@ -54,7 +54,19 @@ interface AppInfo {
   status: string;
   updateAvailable: boolean;
   updateInfo?: string;
+  /** Caddy, Pi-Hole, PostgreSQL: the update needs the maintenance acknowledgements. */
+  systemManaged?: boolean;
 }
+
+/** Acknowledgements for a core container update, as Settings → Apps sends them. */
+interface SystemUpdateConfirmation {
+  confirmMaintenanceWindow: boolean;
+  confirmContainerName: string;
+  allowDatabaseUpdate?: boolean;
+}
+
+/** A core container's acknowledgements, or the owner allowing the changed setup files of an app added by URL. */
+type UpdateConfirmation = SystemUpdateConfirmation | { allowSetup: true };
 
 interface UpdateStatus {
   component: string;
@@ -103,6 +115,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   const [checking, setChecking] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, UpdateStatus>>(new Map());
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [setupChangedId, setSetupChangedId] = useState<string | null>(null);
   const [restartOverlay, setRestartOverlay] = useState<string | null>(null);
   const [editingApp, setEditingApp] = useState<AppInfo | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -173,14 +186,15 @@ const CATEGORY_LABELS: Record<string, string> = {
     window.parent.postMessage({ type: "youeye-embed-update-count", count }, "*");
   }, [apps]);
 
-  const handleUpdate = async (appId: string) => {
-    if (SELF_DESTRUCTIVE.has(appId) && confirmId !== appId) {
+  const handleUpdate = async (appId: string, confirm?: UpdateConfirmation) => {
+    // Core containers go only with the acknowledgements; self-restarting apps after one click to confirm.
+    const systemManaged = apps.find((app) => app.id === appId)?.systemManaged;
+    if ((systemManaged && !confirm) || (SELF_DESTRUCTIVE.has(appId) && confirmId !== appId)) {
       setConfirmId(appId);
       return;
     }
     setConfirmId(null);
-
-    const component = COMPONENT_MAP[appId] || appId;
+    setSetupChangedId(null);
 
     if (SELF_DESTRUCTIVE.has(appId)) {
       const action = appId === "control-panel" ? "control-restarting" : "ui-restarting";
@@ -193,11 +207,16 @@ const CATEGORY_LABELS: Record<string, string> = {
       pollingRef.current = setInterval(fetchStatuses, 2000);
     }
 
-    // Fire POST without awaiting — progress comes from polling /status
-    authenticatedFetch(`/api/ui-bridge/updates/${component}`, { method: "POST" })
+    // The same route as Settings → Apps. Fire POST without awaiting — progress comes from polling /status.
+    authenticatedFetch(`/settings/api/apps/${encodeURIComponent(appId)}/update`, {
+      method: "POST",
+      ...(confirm ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(confirm) } : {}),
+    })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Update failed" }));
+          // An app added by URL whose new version changes its setup files: nothing changed, ask the owner.
+          if (body.code === "setup-changed") setSetupChangedId(appId);
           console.error("Update failed:", body.error);
         }
         fetchStatuses();
@@ -249,7 +268,8 @@ const CATEGORY_LABELS: Record<string, string> = {
         {restartOverlay && <RestartOverlay name={restartOverlay} />}
         {appsWithUpdates.map(app => (
           <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-            onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+            onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+            setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
         ))}
         {editingApp && (
           <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
@@ -276,7 +296,8 @@ const CATEGORY_LABELS: Record<string, string> = {
               </div>
               {catApps.map(app => (
                 <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-                  onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+                  onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+            setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
               ))}
             </div>
           );
@@ -315,7 +336,8 @@ const CATEGORY_LABELS: Record<string, string> = {
           </div>
           {appsWithUpdates.map(app => (
             <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-              onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+              onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+            setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
           ))}
         </div>
       )}
@@ -331,7 +353,8 @@ const CATEGORY_LABELS: Record<string, string> = {
             </div>
             {catApps.map(app => (
               <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-                onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+                onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+            setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
             ))}
           </div>
         );
@@ -392,13 +415,15 @@ function AppIconBox({ app, isUserApp, onClick }: { app: AppInfo; isUserApp: bool
   );
 }
 
-function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }: {
+function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit, setupChanged, onCancelSetup }: {
   app: AppInfo;
   statuses: Map<string, UpdateStatus>;
   confirmId: string | null;
-  onUpdate: (id: string) => void;
+  onUpdate: (id: string, confirm?: UpdateConfirmation) => void;
   onCancelConfirm: () => void;
   onEdit: (app: AppInfo) => void;
+  setupChanged: boolean;
+  onCancelSetup: () => void;
 }) {
   const translateInterface = useInterfaceTranslations("interface");
 const STATUS_LABELS: Record<string, string> = {
@@ -410,6 +435,10 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 
+  const [maintAck, setMaintAck] = useState(false);
+  const [dbAck, setDbAck] = useState(false);
+  const isDatabase = app.id === "postgres";
+  const containerName = app.containers[0]?.name ?? "";
   const component = COMPONENT_MAP[app.id] || app.id;
   const ps = statuses.get(component);
   const isUpdating = ps && !["idle", "completed", "failed"].includes(ps.status);
@@ -469,8 +498,60 @@ const STATUS_LABELS: Record<string, string> = {
         </div>
       </div>
 
+      {/* Core container update: the acknowledgements Settings → Apps asks for */}
+      {confirmId === app.id && app.systemManaged && (
+        <div style={{
+          marginTop: 8, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: "color-mix(in srgb, var(--embed-warning) 10%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--embed-warning) 25%, transparent)",
+        }}>
+          <div style={{ color: "var(--embed-warning)", fontWeight: 500, marginBottom: 6 }}>
+            {translateInterface("m0bb71c644117", { value0: app.displayName, value1: containerName || translateInterface("m7dddf9085fdd") })}
+          </div>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
+            <input type="checkbox" checked={maintAck} onChange={(e) => setMaintAck(e.target.checked)} />
+            <span>{translateInterface("m28fe0e0aab6a")}</span>
+          </label>
+          {isDatabase && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
+              <input type="checkbox" checked={dbAck} onChange={(e) => setDbAck(e.target.checked)} />
+              <span>{translateInterface("mb549a14cb95b")}</span>
+            </label>
+          )}
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}
+              disabled={!maintAck || (isDatabase && !dbAck)}
+              onClick={() => onUpdate(app.id, {
+                confirmMaintenanceWindow: true,
+                confirmContainerName: containerName,
+                allowDatabaseUpdate: isDatabase ? dbAck : undefined,
+              })}>{translateInterface("m63bf045213ce")}</button>
+            <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12 }}
+              onClick={() => { setMaintAck(false); setDbAck(false); onCancelConfirm(); }}>{translateInterface("m19766ed6ccb2")}</button>
+          </div>
+        </div>
+      )}
+
+      {/* An app added by URL changed its setup steps: the update asks again */}
+      {setupChanged && (
+        <div style={{
+          marginTop: 8, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: "color-mix(in srgb, var(--embed-warning) 10%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--embed-warning) 25%, transparent)",
+        }}>
+          <div style={{ color: "var(--embed-warning)", fontWeight: 500, marginBottom: 4 }}>{translateInterface("mb94851be3547")}</div>
+          <div style={{ marginBottom: 6 }}>{translateInterface("m5315fd906595", { app: app.displayName })}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}
+              onClick={() => onUpdate(app.id, { allowSetup: true })}>{translateInterface("ma4a46c8cbe85")}</button>
+            <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12 }}
+              onClick={onCancelSetup}>{translateInterface("m19766ed6ccb2")}</button>
+          </div>
+        </div>
+      )}
+
       {/* Self-destructive warning */}
-      {confirmId === app.id && (
+      {confirmId === app.id && !app.systemManaged && (
         <div style={{
           marginTop: 8, padding: "8px 12px", borderRadius: 6, fontSize: 12,
           background: "color-mix(in srgb, var(--embed-warning) 10%, transparent)",

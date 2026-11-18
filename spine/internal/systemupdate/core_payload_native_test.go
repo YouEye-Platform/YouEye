@@ -71,9 +71,21 @@ func TestCoreHostPayloadObservation(t *testing.T) {
 				}
 				return os.Getpid(), nil
 			}
-			err = verifyCoreContainerPayload(ctx, "fixture", root, index, observe)
-			if (err == nil) != (change == "clean") {
-				t.Fatalf("result %v", err)
+			// What cannot be observed at all is an error in both modes. A
+			// difference is an error only for a tree this request wrote; files we
+			// did not ship are never one.
+			unobservable := change == "linked-root" || change == "process-changed" || change == "canceled"
+			differs := !unobservable && change != "clean" && change != "extra"
+			for _, mode := range []CorePayloadMode{CorePayloadRecord, CorePayloadStrict} {
+				calls = 0
+				found, err := verifyCoreContainerPayload(ctx, "fixture", root, index, mode, observe)
+				wantErr := unobservable || (mode == CorePayloadStrict && differs)
+				if (err != nil) != wantErr {
+					t.Fatalf("mode %d result %v (%s)", mode, err, found.Counts())
+				}
+				if !unobservable && (found.Differs() != differs || (change == "extra") != (found.Unrecorded == 1)) {
+					t.Fatalf("mode %d counted %s", mode, found.Counts())
+				}
 			}
 		})
 	}

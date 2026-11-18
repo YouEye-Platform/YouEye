@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
@@ -25,6 +28,56 @@ func (s *Server) coreSelectionRoot() string {
 		return s.coreBootstrapPath
 	}
 	return systemupdate.CoreBootstrapPath
+}
+
+const coreStepEvidenceLimit = 600
+
+// coreStepEvidence makes retained failure evidence fit for a status answer:
+// one line of printable text, at most coreStepEvidenceLimit characters, with
+// absolute file paths (words starting with "/") replaced by "…".
+func coreStepEvidence(evidence string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, evidence)
+	words := strings.Fields(clean)
+	for i, word := range words {
+		bare := strings.TrimLeft(word, "\"'([")
+		if end := coreEvidencePunctuation(bare); strings.HasPrefix(bare, "/") && len(bare)-len(end) > 1 {
+			words[i] = word[:len(word)-len(bare)] + "…" + end
+		}
+	}
+	clean = strings.Join(words, " ")
+	if runes := []rune(clean); len(runes) > coreStepEvidenceLimit {
+		clean = string(runes[:coreStepEvidenceLimit]) + "…"
+	}
+	return clean
+}
+
+// coreEvidencePunctuation keeps the punctuation that ends a redacted path, so
+// "open /x/y: denied" reads "open …: denied".
+func coreEvidencePunctuation(word string) string {
+	return word[len(strings.TrimRight(word, "\"')]:;,.")):]
+}
+
+// coreStatusEvidence is the reason shown for one step, or "". A failed step
+// carries the reason it was recorded with. A step left started when the
+// request needs recovery has an unknown outcome; its reason is the error its
+// action's child recorded (for example a strict payload refusal), if any. The
+// evidence of every other step stays private.
+func coreStatusEvidence(runner systemupdate.CoreSystemdRunner, j systemupdate.CoreJournal, step systemupdate.CoreStep, uncertain bool) string {
+	switch {
+	case step.State == "failed":
+		return coreStepEvidence(step.Evidence)
+	case step.State == "started" && uncertain:
+		return coreStepEvidence(runner.RetainedEvidence(j, step))
+	}
+	return ""
 }
 
 func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +119,11 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		if observer, ok := s.coreUpdateOperations.(coreInstalledObserver); ok {
 			observation = observer.ObserveInstalled(r.Context(), receipt)
 		}
+		// States and counts only. File names stay on the operator's terminal
+		// (`youeye update core observe`).
+		for i := range observation.Members {
+			observation.Members[i].Findings.Paths = nil
+		}
 		installed["observation"] = observation
 		installed["payload_observation"] = observation.State
 	}
@@ -80,10 +138,18 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		if len(j.RecoverySteps) > 0 {
 			graph = j.RecoverySteps
 		}
+		runner := systemupdate.CoreSystemdRunner{Root: s.coreRoot()}
 		for _, step := range graph {
 			item := map[string]string{"name": step.Name, "state": step.State}
 			if observed, err := (systemupdate.NativeCoreExecutor{Root: s.coreRoot()}).ActionStatus(j, step); err == nil {
 				item["action_state"], item["stage"], item["code"], item["effect_state"] = observed.State, observed.Stage, observed.Code, observed.EffectState
+			}
+			// Why a step failed, or why its outcome is uncertain, is the one piece
+			// of evidence the owner needs. Evidence of other steps stays private
+			// (ActionStatus blanks it), and this one is cut short: it can embed raw
+			// error text.
+			if evidence := coreStatusEvidence(runner, j, step, j.Phase == "needs-recovery"); evidence != "" {
+				item["evidence"] = evidence
 			}
 			steps = append(steps, item)
 		}
@@ -91,6 +157,23 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		out["transaction"] = map[string]any{"request_id": j.RequestID, "manifest_sha256": j.ManifestSHA256,
 			"phase": j.Phase, "restart_required": j.RestartRequired, "activation_requested": j.ActivationRequested, "error": j.Error,
 			"target_version": j.Target.Version, "complete": complete, "steps": steps}
+		// Once recovery owns the request, steps lists the recovery graph. The
+		// apply step that stopped the update (failed, or started with an
+		// uncertain outcome) is reported on its own, so a rolled-back update
+		// still says which step stopped it and why.
+		if len(j.RecoverySteps) > 0 {
+			for _, step := range j.Steps {
+				if step.State != "failed" && step.State != "started" {
+					continue
+				}
+				stopped := map[string]string{"name": step.Name, "state": step.State}
+				if evidence := coreStatusEvidence(runner, j, step, true); evidence != "" {
+					stopped["evidence"] = evidence
+				}
+				out["transaction"].(map[string]any)["stopped_step"] = stopped
+				break
+			}
+		}
 	}
 	jsonResponse(w, out)
 }
