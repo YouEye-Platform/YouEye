@@ -1,49 +1,53 @@
-import { officialCatalogFile, readAcceptedCatalog, refreshOfficialCatalog } from './catalog-release';
-import { nativeManifestFromRelease, resolveNativeProduct } from './native-artifact';
-import { describeReleaseError } from '../releases/channel-index';
-import { releaseCacheFetch } from '../releases/cache';
-import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 /**
- * Catalog fetcher — reads apps from the Market sources.
+ * The Market as the rest of the Control Panel reads it: apps, categories, curation and bundles of the box's markets.
  *
- * Layout of a Market source (docs/app-manifest.md):
- *   catalog.yaml                       youeye.catalog.v1: categories, curation, `native: [ids]`
- *   apps/<id>/youeye-app.yaml          a container app (+ setup/*.yaml, icons, screenshots)
- *   bundles/<id>/bundle.yaml           youeye.bundle.v1
+ * Every market, the official one included, is a folder of static files at an HTTPS address (`youeye.market.v1`,
+ * market-format.ts). The box keeps an accepted copy of each (market-store.ts); this module reads that copy and
+ * never the network itself. The store refreshes a market at most every five minutes in the background; a reader
+ * waits only when the store is still empty or right after `clearCatalogCache()` (an explicit "check for updates"),
+ * and then 20 seconds at most (`MARKET_READER_WAIT_MS`): a market that is slow to answer delays no listing longer.
  *
- * - The official Market is the `market` product of the box's channel index; every file comes
- *   from its accepted `catalog.tar` (see catalog-release.ts) and the app list is discovered
- *   from its folders. Native apps listed in `native:` come from their own product releases on
- *   the same channel (`youeye-app.yaml` asset).
- * - Custom sources added by URL are read as raw files from their branch. They cannot list
- *   folders, so their generated `catalog.json` (youeye.catalog-index.v1) names the ids.
- * - A source never supplies the core containers (Caddy, PostgreSQL, Pi-hole): their images are
- *   pinned in lib/infrastructure/system-images. `system/` files and a `system` list in
- *   `catalog.json` are ignored.
+ * - A container app is an index entry plus its bundle: the text of `youeye-app.yaml` and of its setup files, parsed
+ *   strictly with the one app-format parser, and the hashed paths of its pictures.
+ * - A native app is an id in the `native` list of the OFFICIAL Market's index; its manifest is the one of its release
+ *   on the box's channel (native-artifact.ts). Native apps are YouEye's own: the `native` list of any other market
+ *   is ignored (`nativeIdsOf`), so a custom market neither lists nor installs them.
+ * - An entry this box cannot use (its `requires.youeye` is above the box, or its kind is unknown) is listed as
+ *   "needs a newer YouEye" from the index alone; its bundle is never parsed, and installing it is refused.
+ * - A market never supplies the core containers (Caddy, PostgreSQL, Pi-hole): their images are pinned in
+ *   lib/infrastructure/system-images.
  */
 
-import { readFile, writeFile, mkdir, rename } from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
-import { fetchApp, loadApp } from './app-format/compile';
-import { parseBundle, parseCatalog, parseCatalogIndex } from './app-format/parse';
+import { loadApp } from './app-format/compile';
+import { parseBundle } from './app-format/parse';
+import { youeyeRequirementProblem } from './app-format/requires';
+import { describeReleaseError } from '../releases/channel-index';
+import { isKnownAppKind, requiredYouEye, type MarketAppBundle, type MarketIndexEntry } from './market-format';
+import { currentMarket, requestMarketRefresh, type AcceptedMarket } from './market-store';
+import { nativeListing } from './native-artifact';
+import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp, MarketBundle, MarketCategory, MarketCuration } from './types';
 import {
-  buildMarketRawURL, getConfiguredMarketSources, getMarketSources, isChannelMarketSource, marketSourceRefusal, officialMarketSource,
-  OFFICIAL_MARKET_SOURCE_ID, recordMarketSourceResolution, usableMarketSource, type MarketSource,
+  getConfiguredMarketSources, getMarketSources, isOfficialMarketSource, marketSourceRefusal, officialMarketSource,
+  OFFICIAL_MARKET_SOURCE_ID, usableMarketSource, type MarketSource,
 } from './source';
 
-const CATALOG_CACHE_DIR = '/var/lib/youeye';
-const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
+/** The address of a market picture on this box (`/api/market/image` serves only paths an accepted market names). */
+export const marketImageURL = (sourceId: string, file: string) =>
+  `/api/market/image?source=${encodeURIComponent(sourceId)}&file=${encodeURIComponent(file)}`;
 
-const DEFAULT_BRANCH = 'main';
-const proxyImageUrl = (url: string) => `/api/market/image?url=${encodeURIComponent(url)}`;
-const catalogImageUrl = (filePath: string) => `/api/market/image?catalog=${encodeURIComponent(filePath)}`;
-
+/**
+ * Where an app's manifest came from, as an install records it (`manifestPath`, `manifestRepo`, `manifestBranch`,
+ * `manifestDigest`).
+ */
 export interface ManifestReference {
+  /** `apps/<id>/youeye-app.yaml` for a market app; `youeye-app.yaml` for a native release. */
   path: string;
+  /** A market app: the market's address. A native app: its release repository. */
   repo: string;
+  /** A market app: the commit of the market it was read at. A native app: its release tag. */
   branch: string;
+  /** The manifest's frozen digest (app-format/digest.ts): the same for the same manifest and setup files, whatever carried them. */
   digest: string;
   /** Native channel products only: the build version of the release (orders updates). */
   build?: string;
@@ -57,319 +61,211 @@ export interface ManifestFetchResult {
 export interface ResolvedCatalogApp extends ManifestFetchResult {
   source: MarketSource;
   entry: CatalogEntry;
-  configuredSourceRepoUrls: string[];
 }
 
-/** The official source as configured (its refresh state), or its defaults. Never a custom source. */
-async function officialSource(): Promise<MarketSource> {
-  return (await getConfiguredMarketSources()).find(isChannelMarketSource) ?? officialMarketSource();
-}
-
-// ─── File Fetching ────────────────────────────────────────
-
-/** The ref a source's own files are read at: a custom source's branch; the official catalog has none. */
-export function sourceRef(source: MarketSource): string {
-  return isChannelMarketSource(source) ? '' : source.branch || DEFAULT_BRANCH;
-}
-
-/** One file of a Market source (the official one when none is given): from the accepted catalog.tar, or a custom source's branch. */
-export async function fetchFile(filePath: string, marketSource?: MarketSource): Promise<string> {
-  const source = marketSource || await officialSource();
-  if (isChannelMarketSource(source)) return (await officialCatalogFile(filePath)).toString('utf8');
-  return fetchRepoFile(source.organization, source.repository, filePath, sourceRef(source), source);
-}
-
-/** One file of a Market source, or null when it does not exist. */
-async function fetchOptionalFile(filePath: string, source: MarketSource): Promise<string | null> {
-  if (isChannelMarketSource(source)) {
-    const accepted = await readAcceptedCatalog() ?? await refreshOfficialCatalog();
-    return accepted.files.get(filePath)?.toString('utf8') ?? null;
+/**
+ * This box cannot use the app: it needs a newer YouEye (`requires.youeye` above the box, or a kind this YouEye does
+ * not know). The message is safe to show.
+ */
+export class MarketAppUnavailableError extends Error {
+  readonly code = 'requires-newer-youeye' as const;
+  constructor(
+    message: string,
+    /** The YouEye version the app needs (X.Y.Z), when the market states one above the box. */
+    readonly needsYouEye?: string,
+    /** The version the market offers. */
+    readonly version?: string,
+  ) {
+    super(message);
+    this.name = 'MarketAppUnavailableError';
   }
-  const url = buildMarketRawURL(source, source.organization, source.repository, filePath, sourceRef(source));
-  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Failed to fetch ${source.organization}/${source.repository}/${filePath}: ${res.status}`);
-  return res.text();
 }
 
-/** A raw file of a repository on a custom source's host. */
-export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string, source: MarketSource): Promise<string> {
-  const url = buildMarketRawURL(source, owner, repo, filePath, branch);
-  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${res.status}`);
-  return res.text();
+export function isMarketAppUnavailable(error: unknown): error is MarketAppUnavailableError {
+  return error instanceof Error && error.name === 'MarketAppUnavailableError';
+}
+
+/** The official source as configured (it may be turned off), or its defaults. Never a custom market. */
+async function officialSource(): Promise<MarketSource> {
+  return (await getConfiguredMarketSources()).find(isOfficialMarketSource) ?? officialMarketSource();
+}
+
+/** The version of YouEye on this box; null when Spine cannot say (then nothing is held back for its requirement here). */
+async function boxVersion(): Promise<string | null> {
+  try {
+    const { getPlatformContext } = await import('./platform-env');
+    const version = (await getPlatformContext()).version;
+    return version && version !== '0.0.0' ? version : null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Catalog ──────────────────────────────────────────────
 
-let catalogCache: Catalog | null = null;
-let catalogCacheTime = 0;
-const CACHE_TTL = 5 * 60 * 1000;
-
-const manifestCache = new Map<string, { manifest: AppManifest; reference?: ManifestReference; fetchedAt: number }>();
-
 /**
- * Build a source's catalog from `catalog.yaml` and the ids found in its folders
- * (`apps/<id>/youeye-app.yaml`, `bundles/<id>/bundle.yaml`). Other files are not listed.
+ * The native app ids a source lists: the official Market's `native` list, and nothing for any other source. A native
+ * app is installed from the box's channel index, never from a market, so only YouEye's own market may offer one.
  */
-export function catalogFromFiles(catalogYaml: string, files: Iterable<string>): Catalog {
-  const document = parseCatalog(catalogYaml);
-  const apps: CatalogEntry[] = [];
-  const bundles: string[] = [];
-  for (const file of files) {
-    let match = /^apps\/([a-z][a-z0-9-]{0,31})\/youeye-app\.yaml$/.exec(file);
-    if (match) { apps.push({ id: match[1], integration: 'basic', path: `apps/${match[1]}` }); continue; }
-    match = /^bundles\/([a-z][a-z0-9-]{0,31})\/bundle\.yaml$/.exec(file);
-    if (match) bundles.push(match[1]);
+function nativeIdsOf(source: Pick<MarketSource, 'kind'>, accepted: AcceptedMarket): readonly string[] {
+  return isOfficialMarketSource(source) ? accepted.index.native : [];
+}
+
+function catalogOf(source: Pick<MarketSource, 'kind'>, accepted: AcceptedMarket): Catalog {
+  const apps: CatalogEntry[] = accepted.index.apps.map((entry) => ({ id: entry.id, integration: 'basic', path: `apps/${entry.id}` }));
+  for (const id of nativeIdsOf(source, accepted)) {
+    // A container app wins over a native id of the same name; the listing says so (`fetchAvailableApps`).
+    if (!apps.some((app) => app.id === id)) apps.push({ id, integration: 'native' });
   }
-  for (const id of document.native ?? []) {
-    if (apps.some((app) => app.id === id)) throw new Error(`catalog.yaml lists native app "${id}" that also has an app folder`);
-    apps.push({ id, integration: 'native' });
-  }
-  const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
+  const curation = accepted.index.curation;
   return {
-    apps: apps.sort(byId),
-    bundles: bundles.sort(),
-    categories: (document.categories ?? []).map((category) => ({ ...category })),
-    curation: document.curation ? {
-      spotlight: document.curation.spotlight
-        ? { title: document.curation.spotlight.title, apps: [...document.curation.spotlight.apps] } : undefined,
-      collections: (document.curation.collections ?? []).map((collection) => ({ ...collection, apps: [...collection.apps] })),
+    apps: apps.sort((a, b) => a.id.localeCompare(b.id)),
+    bundles: accepted.index.bundles.map((bundle) => bundle.id),
+    categories: accepted.index.categories.map((category) => ({ ...category })),
+    curation: curation ? {
+      spotlight: curation.spotlight ? { title: curation.spotlight.title, apps: [...curation.spotlight.apps] } : undefined,
+      collections: (curation.collections ?? []).map((collection) => ({ ...collection, apps: [...collection.apps] })),
     } : undefined,
   };
 }
 
-/** A custom source: `catalog.yaml` plus its generated `catalog.json` index of folder ids. */
-function catalogFromIndex(catalogYaml: string, indexJson: string): Catalog {
-  const index = parseCatalogIndex(indexJson);
-  return catalogFromFiles(catalogYaml, [
-    ...index.apps.map((id) => `apps/${id}/youeye-app.yaml`),
-    ...(index.bundles ?? []).map((id) => `bundles/${id}/bundle.yaml`),
-  ]);
-}
-
-function acceptedCatalog(accepted: { files: Map<string, Buffer> }): Catalog {
-  const catalogYaml = accepted.files.get('catalog.yaml');
-  if (!catalogYaml) throw new Error('The Market catalog has no catalog.yaml');
-  return catalogFromFiles(catalogYaml.toString('utf8'), accepted.files.keys());
-}
-
+/** The catalog of a source (the official Market when none is given), from its store. */
 export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog> {
-  if (marketSource) {
-    return fetchValidatedSourceCatalog(marketSource);
-  }
-
-  if (catalogCache && Date.now() - catalogCacheTime < CACHE_TTL) {
-    return catalogCache;
-  }
-
-  try {
-    // Without a named source this is the official catalog, never the first custom source.
-    const source = await officialSource();
-    catalogCache = await fetchValidatedSourceCatalog(source);
-    catalogCacheTime = Date.now();
-    saveCatalogToFile(catalogCache).catch(() => {});
-    return catalogCache;
-  } catch (err) {
-    const cached = await loadCatalogFromFile();
-    if (cached) {
-      catalogCache = cached.catalog;
-      catalogCacheTime = Date.now();
-      return catalogCache;
-    }
-    throw err;
-  }
+  const source = marketSource ?? await officialSource();
+  return catalogOf(source, await currentMarket(source));
 }
 
-async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalog> {
-  if (isChannelMarketSource(source)) {
-    try {
-      const accepted = await refreshOfficialCatalog();
-      source.refresh_error = undefined;
-      await recordMarketSourceResolution(source.id, { ok: true }).catch(() => {});
-      return acceptedCatalog(accepted);
-    } catch (error) {
-      const message = describeReleaseError(error);
-      source.refresh_error = message;
-      await recordMarketSourceResolution(source.id, { error: message }).catch(() => {});
-      const accepted = await readAcceptedCatalog().catch(() => null);
-      if (accepted) return acceptedCatalog(accepted);
-      throw error;
-    }
+// ─── Manifests ────────────────────────────────────────────
+
+/** Why this box cannot use an index entry, or null when it can. */
+function entryBlock(entry: MarketIndexEntry, version: string | null): MarketAppUnavailableError | null {
+  const problem = version ? youeyeRequirementProblem(entry.requires, version) : null;
+  if (!isKnownAppKind(entry.kind)) {
+    return new MarketAppUnavailableError(problem ?? `${entry.name} needs a newer YouEye than this box runs.`,
+      problem ? requiredYouEye(entry) ?? undefined : undefined, entry.version);
   }
-  try {
-    const catalog = catalogFromIndex(await fetchFile('catalog.yaml', source), await fetchFile('catalog.json', source));
-    source.refresh_error = undefined;
-    await recordMarketSourceResolution(source.id, { ok: true }).catch(() => {});
-    return catalog;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Market refresh failed';
-    source.refresh_error = message;
-    await recordMarketSourceResolution(source.id, { error: message }).catch(() => {});
-    throw error;
-  }
-}
-
-// ─── Manifest Fetching ────────────────────────────────────
-
-/** Fetch an app by id from the official Market (for display; installs and updates use `resolveCatalogApp`). */
-export async function fetchManifest(appId: string): Promise<AppManifest> {
-  const cached = manifestCache.get(appId);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-    return cached.manifest;
-  }
-
-  const catalog = await fetchCatalog();
-  const source = await officialSource();
-  const entry = catalog.apps.find(e => e.id === appId);
-
-  if (!entry) throw new Error(`App "${appId}" not found in catalog`);
-
-  const result = await fetchManifestFromCatalogEntry(entry, source);
-
-  manifestCache.set(appId, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
-  return result.manifest;
+  return problem ? new MarketAppUnavailableError(problem, requiredYouEye(entry) ?? undefined, entry.version) : null;
 }
 
 /**
- * Fetch a manifest from a specific Market source.
- * Used when duplicate app IDs exist across sources and install/update must
- * follow the exact source selected by the user.
+ * Point the listing icon and screenshots at this box's image route. A manifest names its pictures by their file
+ * names in the app folder; the bundle's `files` map gives each its hashed path in the market.
  */
-export async function fetchManifestFromSource(appId: string, sourceId?: string): Promise<AppManifest> {
-  if (!sourceId) return fetchManifest(appId);
-
-  const sources = await getMarketSources();
-  const source = sources.find((s) => s.id === sourceId);
-  if (!source) throw new Error(`Market source "${sourceId}" not found`);
-
-  const cacheKey = `${source.id}:app:${appId}`;
-  const cached = manifestCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-    return cached.manifest;
-  }
-
-  const catalog = await fetchCatalog(source);
-  const entry = catalog.apps.find((e) => e.id === appId);
-  if (!entry) throw new Error(`App "${appId}" not found in Market source "${sourceId}"`);
-
-  const result = await fetchManifestFromCatalogEntry(entry, source);
-  manifestCache.set(cacheKey, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
-  return result.manifest;
-}
-
-/**
- * Resolve an app for an install or update from exactly one Market source: the one named (an install's choice, or
- * the source recorded for an installed app), else the official Market. Never another source, and never one the owner
- * has not accepted (`marketSourceRefusal`; the error is a `MarketSourceConsentError`).
- */
-export async function resolveCatalogApp(appId: string, sourceId?: string | null): Promise<ResolvedCatalogApp> {
-  const source = await usableMarketSource(sourceId);
-  const fail = (reason: string) => new Error(`App "${appId}" could not be resolved from Market source "${source.id}" (${reason})`);
-
-  let catalog: Catalog;
-  try {
-    catalog = await fetchCatalog(source);
-  } catch {
-    throw fail('catalog could not be loaded');
-  }
-  const entry = catalog.apps.find((candidate) => candidate.id === appId);
-  if (!entry) throw fail('app is not present');
-
-  let result: ManifestFetchResult;
-  try {
-    result = await fetchManifestFromCatalogEntry(entry, source);
-  } catch {
-    throw fail('app manifest could not be loaded');
-  }
-  manifestCache.set(`${source.id}:app:${appId}`, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
-  const sources = await getMarketSources();
-  return {
-    source,
-    entry,
-    configuredSourceRepoUrls: sources.map((candidate) => candidate.repo_url).filter(Boolean),
-    ...result,
+function resolveManifestPaths(manifest: AppManifest, source: MarketSource, files: MarketAppBundle['files']): void {
+  const address = (name: string | undefined) => {
+    const hashed = name ? files?.[name] : undefined;
+    return hashed ? marketImageURL(source.id, hashed) : undefined;
   };
+  manifest.metadata.iconUrl = address(manifest.metadata.iconUrl);
+  if (manifest.detail) {
+    manifest.detail.screenshots = manifest.detail.screenshots.flatMap((screenshot) => {
+      const url = address(screenshot.path);
+      return url ? [{ ...screenshot, path: url }] : [];
+    });
+  }
 }
 
-type FileLocation = { owner: string; repo: string; ref: string } | null;
+/** Compiled manifests by source, address, entry id and bundle hash (parsing 35 manifests on every listing call is not free). */
+const MANIFESTS = Symbol.for('youeye.market-compiled-manifests');
+const manifestHolder = globalThis as typeof globalThis & { [MANIFESTS]?: Map<string, AppManifest> };
+const compiledManifests = manifestHolder[MANIFESTS] ??= new Map();
+const MAX_COMPILED_MANIFESTS = 2000;
 
-/** Where a source's own files live: the official catalog.tar (null) or a custom repository at its branch. */
-function sourceLocation(source: MarketSource): FileLocation {
-  return isChannelMarketSource(source) ? null : { owner: source.organization, repo: source.repository, ref: sourceRef(source) };
-}
-
-/** The setup files in an app folder of the official catalog.tar (it can be listed). */
-async function officialSetupFiles(appPath: string): Promise<Record<string, string>> {
-  const accepted = await readAcceptedCatalog() ?? await refreshOfficialCatalog();
-  const prefix = `${appPath}/setup/`;
-  const setups: Record<string, string> = {};
-  for (const [name, bytes] of accepted.files) {
-    if (name.startsWith(prefix)) setups[name.slice(appPath.length + 1)] = bytes.toString('utf8');
+/** The app of an index entry, from its stored bundle, parsed strictly. Throws `MarketAppUnavailableError` for an entry this box cannot use. */
+function manifestOfEntry(accepted: AcceptedMarket, source: MarketSource, entry: MarketIndexEntry, version: string | null): ManifestFetchResult {
+  const blocked = entryBlock(entry, version);
+  if (blocked) throw blocked;
+  if (!entry.bundle) throw new Error('the market lists no bundle for it');
+  const stored = accepted.bundles.get(entry.id);
+  if (!stored) throw new Error('its bundle is missing from this box\'s copy of the market');
+  if (!stored.ok) throw new Error(stored.reason);
+  // The same bundle bytes under two entries are two compilations: what is kept belongs to one entry id.
+  const key = `${source.id}\0${accepted.address}\0${entry.id}\0${entry.bundle.sha256}`;
+  let manifest = compiledManifests.get(key);
+  if (!manifest) {
+    // Bundles name setup files by their file name; the parser knows them as `setup/<file name>`. Every file is
+    // passed, so a file the app does not name is refused.
+    const setups = Object.fromEntries(Object.entries(stored.bundle.setups ?? {}).map(([name, text]) => [`setup/${name}`, text]));
+    manifest = loadApp({ manifest: stored.bundle.manifest, setups });
+    resolveManifestPaths(manifest, source, stored.bundle.files);
+    if (compiledManifests.size >= MAX_COMPILED_MANIFESTS) compiledManifests.clear();
+    compiledManifests.set(key, manifest);
   }
-  return setups;
-}
-
-async function fetchManifestFromCatalogEntry(
-  entry: CatalogEntry,
-  source: MarketSource
-): Promise<ManifestFetchResult> {
-  // Native apps name a product of the box's channel index.
-  if (entry.integration === 'native') {
-    const selected = await resolveNativeProduct(entry.id);
-    const { manifest } = await nativeManifestFromRelease(selected);
-    return {
-      manifest,
-      reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, build: selected.build.build_version },
-    };
-  }
-  if (!entry.path) throw new Error(`Catalog entry "${entry.id}" has no app folder`);
-
-  const location = sourceLocation(source);
-  const manifestPath = `${entry.path}/youeye-app.yaml`;
-  const text = await fetchFile(manifestPath, source);
-  let manifest: AppManifest;
-  if (isChannelMarketSource(source)) {
-    // Every file under setup/ is passed: files the app does not name are refused.
-    manifest = loadApp({ manifest: text, setups: await officialSetupFiles(entry.path) });
-  } else {
-    manifest = await fetchApp(text, (name) => fetchOptionalFile(`${entry.path}/${name}`, source));
-  }
-  if (manifest.metadata.id !== entry.id) {
-    throw new Error(`App folder "${entry.path}" holds app "${manifest.metadata.id}"`);
-  }
-
-  await resolveManifestPaths(manifest, source, location, entry.path);
+  // Checked for every answer, kept or just compiled: an entry never resolves to the manifest of another app.
+  if (manifest.metadata.id !== entry.id) throw new Error(`its bundle holds app "${manifest.metadata.id}"`);
   return {
-    manifest,
+    manifest: structuredClone(manifest),
     reference: {
-      path: manifestPath,
-      repo: location ? `${location.owner}/${location.repo}` : 'official',
-      branch: location?.ref ?? '',
+      path: `apps/${entry.id}/youeye-app.yaml`,
+      repo: accepted.address,
+      branch: accepted.pointer.commit ?? '',
       digest: manifest.frozen!.digest,
     },
   };
 }
 
-// ─── Image Proxy ──────────────────────────────────────────
+/** A native app: its release on the box's channel (kept by the digest of its channel index entry). */
+async function nativeManifest(id: string): Promise<ManifestFetchResult> {
+  const { selected, manifest } = await nativeListing(id);
+  return {
+    manifest,
+    reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, build: selected.build.build_version },
+  };
+}
 
-/** Point the listing icon and screenshots (files in the app folder) at the image proxy. */
-export async function resolveManifestPaths(
-  manifest: AppManifest,
-  source: MarketSource,
-  location: FileLocation,
-  /** App folder (e.g. `apps/redlib`); relative assets resolve under it. */
-  basePath?: string
-): Promise<void> {
-  const relative = (asset: string) => basePath ? `${basePath.replace(/\/+$/, '')}/${asset}` : asset;
-  const assetURL = (asset: string) => location
-    ? proxyImageUrl(buildMarketRawURL(source, location.owner, location.repo, relative(asset), location.ref))
-    : catalogImageUrl(relative(asset));
+async function manifestOfApp(accepted: AcceptedMarket, source: MarketSource, appId: string): Promise<(ManifestFetchResult & { entry: CatalogEntry }) | null> {
+  const entry = accepted.index.apps.find((candidate) => candidate.id === appId);
+  if (entry) return { ...manifestOfEntry(accepted, source, entry, await boxVersion()), entry: { id: appId, integration: 'basic', path: `apps/${appId}` } };
+  if (nativeIdsOf(source, accepted).includes(appId)) return { ...await nativeManifest(appId), entry: { id: appId, integration: 'native' } };
+  return null;
+}
 
-  if (manifest.metadata.iconUrl) manifest.metadata.iconUrl = assetURL(manifest.metadata.iconUrl);
-  for (const screenshot of manifest.detail?.screenshots ?? []) {
-    if (screenshot.path) screenshot.path = assetURL(screenshot.path);
+/** An app by id from the official Market (for display; installs and updates use `resolveCatalogApp`). */
+export async function fetchManifest(appId: string): Promise<AppManifest> {
+  const source = await officialSource();
+  const found = await manifestOfApp(await currentMarket(source), source, appId);
+  if (!found) throw new Error(`App "${appId}" not found in catalog`);
+  return found.manifest;
+}
+
+/**
+ * An app's manifest from one named Market source (the official Market when none is named). Used when the same app
+ * id exists in several sources and the reader must follow the one the user chose.
+ */
+export async function fetchManifestFromSource(appId: string, sourceId?: string): Promise<AppManifest> {
+  if (!sourceId) return fetchManifest(appId);
+  const source = (await getMarketSources()).find((candidate) => candidate.id === sourceId);
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+  const found = await manifestOfApp(await currentMarket(source), source, appId);
+  if (!found) throw new Error(`App "${appId}" not found in Market source "${sourceId}"`);
+  return found.manifest;
+}
+
+/**
+ * Resolve an app for an install or update from exactly one Market source: the one named (an install's choice, or
+ * the source recorded for an installed app), else the official Market. Never another source, and never one the owner
+ * has not accepted (`marketSourceRefusal`; the error is a `MarketSourceConsentError`). An app this box cannot use is
+ * refused with `MarketAppUnavailableError`.
+ */
+export async function resolveCatalogApp(appId: string, sourceId?: string | null): Promise<ResolvedCatalogApp> {
+  const source = await usableMarketSource(sourceId);
+  const fail = (reason: string) => new Error(`App "${appId}" could not be resolved from Market source "${source.id}" (${reason})`);
+
+  let accepted: AcceptedMarket;
+  try {
+    accepted = await currentMarket(source);
+  } catch (error) {
+    throw fail(`catalog could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
   }
+  let found: Awaited<ReturnType<typeof manifestOfApp>>;
+  try {
+    found = await manifestOfApp(accepted, source, appId);
+  } catch (error) {
+    if (isMarketAppUnavailable(error)) throw error;
+    throw fail(`app manifest could not be loaded: ${describeReleaseError(error)}`);
+  }
+  if (!found) throw fail('app is not present');
+  return { source, ...found };
 }
 
 // ─── MarketApp Conversion ─────────────────────────────────
@@ -389,6 +285,19 @@ function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['i
   }];
 }
 
+/** The fields every listed app of a source carries, installable or not. */
+function sourceFields(source: MarketSource | undefined, appId: string) {
+  return {
+    catalogKey: source ? `${source.id}:app:${appId}` : undefined,
+    itemKind: 'app' as const,
+    sourceId: source?.id,
+    sourceName: source?.name,
+    sourceRepoUrl: source?.url || undefined,
+    // Listed, but refused for install until the owner accepts the source.
+    ...(source && marketSourceRefusal(source)?.code === 'source-not-accepted' ? { sourceNotAccepted: true as const } : {}),
+  };
+}
+
 export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
   const hasNotificationSurface = manifest.surfaces.some(
     (surface) => surface.kind === 'notification' && surface.placement === 'notification-center'
@@ -403,11 +312,7 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
 
   return {
     id: manifest.metadata.id,
-    catalogKey: source ? `${source.id}:app:${manifest.metadata.id}` : undefined,
-    itemKind: 'app',
-    sourceId: source?.id,
-    sourceName: source?.name,
-    sourceRepoUrl: source?.repo_url,
+    ...sourceFields(source, manifest.metadata.id),
     manifestPath: reference?.path,
     manifestRepo: reference?.repo,
     manifestBranch: reference?.branch,
@@ -443,57 +348,108 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
     forwardAuth: manifest.forwardAuth,
     // Only the official catalog may default an app to public access (added sources are not reviewed).
     publicAccess: source?.id === OFFICIAL_MARKET_SOURCE_ID ? manifest.publicAccess : undefined,
-    // Listed, but refused for install until the owner accepts the source.
-    ...(source && marketSourceRefusal(source)?.code === 'source-not-accepted' ? { sourceNotAccepted: true as const } : {}),
     capabilities,
     surfaces: manifest.surfaces,
   };
 }
 
+/** An app this box cannot install, listed from its index entry alone (its bundle is not read). */
+function blockedMarketApp(entry: MarketIndexEntry, source: MarketSource, blocked: MarketAppUnavailableError): MarketApp {
+  const description = entry.description ?? entry.tagline ?? entry.name;
+  return {
+    id: entry.id,
+    ...sourceFields(source, entry.id),
+    name: entry.name,
+    description,
+    icon: 'package',
+    iconUrl: entry.icon ? marketImageURL(source.id, entry.icon) : undefined,
+    category: entry.category ?? 'other',
+    integration: 'basic',
+    version: entry.version,
+    requiresYouEye: entry.requires?.youeye,
+    defaultSubdomain: entry.id,
+    supportsSSO: false,
+    developer: entry.developer,
+    tagline: entry.tagline,
+    tags: entry.tags ?? [],
+    installBlocked: { code: blocked.code, message: blocked.message },
+    ...(blocked.needsYouEye ? { needsYouEye: blocked.needsYouEye } : {}),
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────
 
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * Every app of every enabled source. An app this box cannot install is listed with `installBlocked`; an app whose
+ * manifest does not load, an index entry that was skipped and a source that cannot be read are reported through
+ * `onWarning` with the real reason, and never hide the others.
+ */
 export async function fetchAvailableApps(onWarning?: (warning: CatalogWarning) => void): Promise<MarketApp[]> {
   const sources = await getMarketSources();
-  const apps: MarketApp[] = [];
+  const version = await boxVersion();
 
   const results = await Promise.allSettled(sources.map(async (source) => {
-    const catalog = await fetchCatalog(source);
+    const accepted = await currentMarket(source);
+    for (const warning of accepted.index.warnings) onWarning?.({ sourceId: source.id, message: `${source.name}: skipped ${warning}.` });
     const reportFailure = (entry: { id: string }, error: unknown) => {
       console.warn(`[market] ${source.id}/${entry.id}: manifest unavailable`, error);
-      onWarning?.({ sourceId: source.id, itemId: entry.id, message: `${source.name}: could not load ${entry.id}.` });
+      onWarning?.({ sourceId: source.id, itemId: entry.id, message: `${source.name}: ${entry.id} could not be loaded: ${describeReleaseError(error)}` });
     };
-    return loadCatalogEntries(catalog.apps, async (entry) => {
-      const result = await fetchManifestFromCatalogEntry(entry, source);
+    const containers = accepted.index.apps.flatMap((entry): MarketApp[] => {
+      try {
+        const blocked = entryBlock(entry, version);
+        if (blocked) return [blockedMarketApp(entry, source, blocked)];
+        const result = manifestOfEntry(accepted, source, entry, version);
+        return [manifestToMarketApp(result.manifest, source, result.reference)];
+      } catch (error) {
+        reportFailure(entry, error);
+        return [];
+      }
+    });
+    const nativeIds = nativeIdsOf(source, accepted).filter((id) => {
+      if (!accepted.index.apps.some((entry) => entry.id === id)) return true;
+      onWarning?.({ sourceId: source.id, itemId: id, message: `${source.name}: ${id} is listed as a native app and as a container app; the container app is shown.` });
+      return false;
+    });
+    const natives = await loadCatalogEntries(nativeIds.map((id) => ({ id })), async (entry) => {
+      const result = await nativeManifest(entry.id);
       return manifestToMarketApp(result.manifest, source, result.reference);
     }, reportFailure);
+    return [...containers, ...natives].sort((a, b) => a.id.localeCompare(b.id));
   }));
 
+  const apps: MarketApp[] = [];
   for (const [index, result] of results.entries()) {
     if (result.status === 'fulfilled') {
       apps.push(...result.value);
     } else {
       const source = sources[index];
       console.warn(`[market] ${source.id}: catalog unavailable`, result.reason);
-      onWarning?.({ sourceId: source.id, message: `${source.name}: could not load its catalog.` });
+      onWarning?.({ sourceId: source.id, message: `${source.name}: could not load its catalog: ${reason(result.reason)}` });
     }
   }
-
   return apps;
 }
 
+/** The accepted markets of the enabled sources, in priority order; a source that cannot be read is left out. */
+async function enabledMarkets(sources?: MarketSource[]): Promise<Array<{ source: MarketSource; accepted: AcceptedMarket }>> {
+  const list = sources ?? await getMarketSources();
+  const results = await Promise.allSettled(list.map((source) => currentMarket(source)));
+  return results.flatMap((result, index) => (result.status === 'fulfilled' ? [{ source: list[index], accepted: result.value }] : []));
+}
+
 /**
- * Fetch Market category metadata (pills, labels, icons, ordering, fallback tiles) from the
- * enabled sources. Categories are merged by id across sources in priority order — the first
- * source to declare a category id wins — and returned sorted by `order`.
+ * Market category metadata (pills, labels, icons, ordering, fallback tiles) of the enabled sources. Categories are
+ * merged by id across sources in priority order (the first source to declare a category id wins) and returned
+ * sorted by `order`.
  */
 export async function fetchCategories(): Promise<MarketCategory[]> {
-  const sources = await getMarketSources();
   const byId = new Map<string, MarketCategory>();
-  const results = await Promise.allSettled(sources.map((source) => fetchCatalog(source)));
-  for (const result of results) {
-    if (result.status !== 'fulfilled') continue;
-    for (const category of result.value.categories ?? []) {
-      if (!byId.has(category.id)) byId.set(category.id, category);
+  for (const { accepted } of await enabledMarkets()) {
+    for (const category of accepted.index.categories) {
+      if (!byId.has(category.id)) byId.set(category.id, { ...category });
     }
   }
   return [...byId.values()].sort(
@@ -502,119 +458,77 @@ export async function fetchCategories(): Promise<MarketCategory[]> {
 }
 
 /**
- * Fetch the Market curation (spotlight strip + collections) for the Market home. The first
- * enabled source (priority order) that declares a `curation:` section wins.
+ * The Market curation (spotlight strip + collections) for the Market home. The first enabled source (priority
+ * order) that declares a `curation` section wins.
  */
 export async function fetchCuration(): Promise<MarketCuration | null> {
-  const sources = await getMarketSources();
-  const results = await Promise.allSettled(sources.map((source) => fetchCatalog(source)));
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value.curation) {
-      return result.value.curation;
-    }
+  for (const { source, accepted } of await enabledMarkets()) {
+    const curation = catalogOf(source, accepted).curation;
+    if (curation) return curation;
   }
   return null;
 }
 
-/**
- * Fetch the bundle definitions (`bundles/<id>/bundle.yaml`) across enabled Market sources, deduped by id with the
- * official Market first, then source priority. Each bundle names its source: its members install from it. A bundle
- * that fails to load is logged and skipped.
- */
-export async function fetchBundles(): Promise<MarketBundle[]> {
-  const sources = [...await getMarketSources()].sort((a, b) => Number(!isChannelMarketSource(a)) - Number(!isChannelMarketSource(b)));
+/** The bundle definitions of one source's market. A bundle that fails to load is logged and skipped. */
+function bundlesOf(source: MarketSource, accepted: AcceptedMarket): MarketBundle[] {
   const out: MarketBundle[] = [];
-  const seen = new Set<string>();
-  for (const source of sources) {
-    let catalog: Catalog;
+  for (const { id, definition } of accepted.index.bundles) {
     try {
-      catalog = await fetchCatalog(source);
-    } catch {
-      continue; // a bad source must not sink bundles from the others
-    }
-    for (const id of catalog.bundles ?? []) {
-      if (seen.has(id)) continue;
-      const file = `bundles/${id}/bundle.yaml`;
-      try {
-        const bundle = parseBundle(await fetchFile(file, source));
-        if (bundle.id !== id) throw new Error(`holds bundle "${bundle.id}"`);
-        out.push({
-          id: bundle.id,
-          name: bundle.name,
-          description: bundle.description,
-          icon: bundle.icon,
-          category: bundle.category,
-          setupSummary: bundle.summary,
-          members: [...bundle.members],
-          connections: (bundle.connections ?? []).map((connection) => ({ ...connection, scope: connection.scope ?? 'service' })),
-          storageGroups: [...(bundle.shared ?? [])],
-          sourceId: source.id,
-          sourceName: source.name,
-          ...(marketSourceRefusal(source)?.code === 'source-not-accepted' ? { sourceNotAccepted: true as const } : {}),
-        });
-        seen.add(id);
-      } catch (err) {
-        console.error(`[catalog] Failed to load bundle "${id}" (${file}):`, err);
-      }
+      const bundle = parseBundle(definition);
+      if (bundle.id !== id) throw new Error(`holds bundle "${bundle.id}"`);
+      out.push({
+        id: bundle.id,
+        name: bundle.name,
+        description: bundle.description,
+        icon: bundle.icon,
+        category: bundle.category,
+        setupSummary: bundle.summary,
+        members: [...bundle.members],
+        connections: (bundle.connections ?? []).map((connection) => ({ ...connection, scope: connection.scope ?? 'service' })),
+        storageGroups: [...(bundle.shared ?? [])],
+        sourceId: source.id,
+        sourceName: source.name,
+        ...(marketSourceRefusal(source)?.code === 'source-not-accepted' ? { sourceNotAccepted: true as const } : {}),
+      });
+    } catch (err) {
+      console.error(`[catalog] Failed to load bundle "${id}" of ${source.id}:`, err);
     }
   }
   return out;
 }
 
-/** A bundle definition by id from one source (the official Market when none is named), or null. */
+/**
+ * The bundle definitions across enabled Market sources, deduped by id with the official Market first, then source
+ * priority. Each bundle names its source: its members install from it.
+ */
+export async function fetchBundles(): Promise<MarketBundle[]> {
+  const sources = [...await getMarketSources()].sort((a, b) => Number(!isOfficialMarketSource(a)) - Number(!isOfficialMarketSource(b)));
+  const out: MarketBundle[] = [];
+  const seen = new Set<string>();
+  for (const { source, accepted } of await enabledMarkets(sources)) {
+    for (const bundle of bundlesOf(source, accepted)) {
+      if (seen.has(bundle.id)) continue;
+      seen.add(bundle.id);
+      out.push(bundle);
+    }
+  }
+  return out;
+}
+
+/** A bundle definition by id from one enabled source (the official Market when none is named), or null. */
 export async function fetchBundle(id: string, sourceId?: string | null): Promise<MarketBundle | null> {
   const wanted = sourceId?.trim() || OFFICIAL_MARKET_SOURCE_ID;
-  const bundles = await fetchBundles();
-  return bundles.find((b) => b.id === id && b.sourceId === wanted) ?? null;
+  const source = (await getMarketSources()).find((candidate) => candidate.id === wanted);
+  if (!source) return null;
+  const [market] = await enabledMarkets([source]);
+  return market ? bundlesOf(source, market.accepted).find((bundle) => bundle.id === id) ?? null : null;
 }
 
-export function clearCatalogCache(): void {
-  catalogCache = null;
-  catalogCacheTime = 0;
-  manifestCache.clear();
-}
-
-export async function refreshCatalog(): Promise<Catalog> {
-  clearCatalogCache();
-  return fetchCatalog();
-}
-
-export async function getCatalogCacheAge(): Promise<string | null> {
-  const cache = await loadCatalogFromFile();
-  if (!cache) return null;
-  const ageMs = Date.now() - new Date(cache.savedAt).getTime();
-  const minutes = Math.floor(ageMs / 60_000);
-  if (minutes < 60) return `${minutes} minutes ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hours ago`;
-  return `${Math.floor(hours / 24)} days ago`;
-}
-
-// ─── Catalog Cache Persistence ────────────────────────────
-
-interface CatalogCacheFile {
-  catalog: Catalog;
-  savedAt: string;
-}
-
-async function saveCatalogToFile(catalog: Catalog): Promise<void> {
-  try {
-    if (!existsSync(CATALOG_CACHE_DIR)) await mkdir(CATALOG_CACHE_DIR, { recursive: true });
-    const temporary = `${CATALOG_CACHE_PATH}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(temporary, JSON.stringify({ catalog, savedAt: new Date().toISOString() }, null, 2));
-    await rename(temporary, CATALOG_CACHE_PATH);
-  } catch {}
-}
-
-async function loadCatalogFromFile(): Promise<CatalogCacheFile | null> {
-  try {
-    if (!existsSync(CATALOG_CACHE_PATH)) return null;
-    const raw = await readFile(CATALOG_CACHE_PATH, 'utf-8');
-    const cached = JSON.parse(raw) as CatalogCacheFile;
-    // Only the current catalog shape (apps discovered from folders) is usable.
-    if (!Array.isArray(cached?.catalog?.apps) || !Array.isArray(cached.catalog.bundles)) return null;
-    return cached;
-  } catch {
-    return null;
-  }
+/**
+ * An explicit "check for updates" (and what follows a change of the source list): the next read of the source (of
+ * every source when none is named) asks its market again and waits for the answer. Without it, readers use the
+ * store and markets are asked in the background, at most every five minutes each.
+ */
+export function clearCatalogCache(sourceId?: string | null): void {
+  requestMarketRefresh(sourceId);
 }

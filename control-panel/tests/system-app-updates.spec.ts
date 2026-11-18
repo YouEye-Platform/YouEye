@@ -26,8 +26,8 @@ test('unified route detects via planSystemUpdates, flags systemManaged, skips OC
   assert.match(c, /planSystemUpdates/);
   assert.match(c, /systemManaged\?: boolean/);          // interface
   assert.match(c, /systemManaged: !!def\.systemImageId/); // response
-  // OCI branch is gated off for systemImageId apps (kills the false positive)
-  assert.match(c, /def\.updatedBy === 'control-panel' && !lxdResult && !def\.systemImageId/);
+  // No OCI digest check at all (Plan 11 F3: it covered no app); system apps follow their pinned images
+  assert.doesNotMatch(c, /getAllCachedUpdates|ociUpdates|New image available/);
   assert.match(c, /systemPlan\.trackingStatus === 'tracked'/);
 });
 

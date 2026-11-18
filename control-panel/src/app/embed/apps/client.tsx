@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { authenticatedFetch } from "@/lib/api-client";
+import { useUpdateBlockedText } from "@/components/market/update-blocked";
+import type { UpdateBlocked } from "@/lib/market/types";
 
 const ICON_MAP: Record<string, ComponentType<{ style?: React.CSSProperties }>> = {
   Server, Box, Cog, Monitor, Database, ShieldCheck, Globe, Shield,
@@ -54,6 +56,8 @@ interface AppInfo {
   status: string;
   updateAvailable: boolean;
   updateInfo?: string;
+  /** A Market app that gets no updates, and why. */
+  updateBlocked?: UpdateBlocked | null;
   /** Caddy, Pi-Hole, PostgreSQL: the update needs the maintenance acknowledgements. */
   systemManaged?: boolean;
 }
@@ -426,6 +430,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit, 
   onCancelSetup: () => void;
 }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const describeUpdateBlocked = useUpdateBlockedText();
 const STATUS_LABELS: Record<string, string> = {
   running: translateInterface("mf4ccae29e1bb"),
   stopped: translateInterface("m1a4f630ac1b6"),
@@ -497,6 +502,17 @@ const STATUS_LABELS: Record<string, string> = {
           )}
         </div>
       </div>
+
+      {/* A Market app that gets no updates: why, and where to act (a Control Panel page, in a new tab) */}
+      {app.updateBlocked && !app.updateAvailable && (() => {
+        const { text, link } = describeUpdateBlocked(app.updateBlocked, app.id) as { text: string; link?: { href: string; label: string } };
+        return (
+          <div role="status" style={{ marginTop: 6, fontSize: 12, color: "var(--embed-warning)" }}>
+            {text}
+            {link && <>{" "}<a href={link.href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--embed-primary)" }}>{link.label}</a></>}
+          </div>
+        );
+      })()}
 
       {/* Core container update: the acknowledgements Settings → Apps asks for */}
       {confirmId === app.id && app.systemManaged && (

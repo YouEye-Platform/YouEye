@@ -316,7 +316,7 @@ export interface MarketBundle {
   sourceNotAccepted?: true;
 }
 
-/** One app of a Market source, discovered from its folders. */
+/** One app of a Market source. */
 export interface CatalogEntry {
   id: string;
   /** Native apps come from their product release on the box's channel. */
@@ -325,7 +325,7 @@ export interface CatalogEntry {
   path?: string;
 }
 
-/** A Market source's catalog: `catalog.yaml` plus what was discovered from its folders. */
+/** A Market source's catalog, from the index of its market (or, in the generator, from a catalog repository's files). */
 export interface Catalog {
   apps: CatalogEntry[];
   bundles: string[];
@@ -665,6 +665,37 @@ export interface AppStatusInfo {
   manifestRepo?: string;
   manifestBranch?: string;
   manifestDigest?: string;
+  /** Why the last update check offers no update, when the reason is not "nothing newer" (installed-apps.ts). */
+  updateBlocked?: UpdateBlocked | null;
+}
+
+/** Why an installed app gets no updates (`InstalledApp.updateBlocked`). `message` is safe to show. */
+export interface UpdateBlocked {
+  code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye';
+  message: string;
+}
+
+/**
+ * Where an installed app takes its updates from, as its install recorded it (`GET /api/market/app/<id>`, field
+ * `installed`): kept apart from the catalog entry the page shows, which may be another market's variant.
+ */
+export interface MarketAppInstalledSource {
+  sourceId: string | null;
+  sourceName: string | null;
+  /** The market address (or, for an app added by URL, its manifest URL) the app follows. */
+  sourceAddress: string | null;
+  version: string | null;
+  updateBlocked: UpdateBlocked | null;
+}
+
+/** Another enabled market (or an Added app) that carries the same app id (`GET /api/market/app/<id>`, field `variants`). */
+export interface MarketAppVariant {
+  sourceId: string;
+  sourceName: string;
+  version: string | null;
+  sourceNotAccepted?: true;
+  needsYouEye?: string;
+  installBlocked?: true;
 }
 
 export interface ContainerStatusInfo {
@@ -802,6 +833,14 @@ export interface MarketApp {
   publicAccess?: true;
   /** The app's source is a custom one the owner has not accepted: listed, but refused for install. */
   sourceNotAccepted?: true;
+  /**
+   * This box cannot install the app: it needs a newer YouEye (the market's `requires.youeye` is above the box, or the
+   * app is of a kind this YouEye does not know). The app is listed from the market's index alone; install and update
+   * refuse it with this message.
+   */
+  installBlocked?: { code: 'requires-newer-youeye'; message: string };
+  /** With `installBlocked`: the YouEye version the app needs (`X.Y.Z`), when the market states one above this box. */
+  needsYouEye?: string;
   /** Images of an app added by URL (shown in its install confirmation). */
   images?: string[];
   capabilities?: {

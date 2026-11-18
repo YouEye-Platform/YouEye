@@ -23,7 +23,18 @@ export async function register() {
     const { isNextProductionBuild } = await import("@/lib/runtime-phase");
     if (!isNextProductionBuild()) {
       const { ensureFreshSchema } = await import("@/db");
-      await ensureFreshSchema();
+      try {
+        await ensureFreshSchema();
+      } catch (error) {
+        // A failed hook makes Next.js answer every request with that failure for the life of the process, while
+        // the service still counts as running. When the reason is only that the database did not answer in
+        // time, end the process: systemd starts it again (Restart=always) and it tries afresh. Other failures
+        // (an uncertain schema attempt) stay as they are: a restart must not hide them.
+        const { isDatabaseUnreachable } = await import("@/lib/database-wait");
+        if (!isDatabaseUnreachable(error)) throw error;
+        console.error("[startup] the database did not answer in time; exiting so the service starts again:", error);
+        process.exit(1);
+      }
     }
 
     // Import tracker to initialize it (starts flush interval)

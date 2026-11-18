@@ -36,7 +36,14 @@ interface CacheEntry {
   cachedAt: number;
 }
 
-const lxdCache = new Map<string, CacheEntry>();
+/**
+ * The results, shared by every copy of this module in the process: Next bundles `instrumentation` (whose background
+ * check fills it, update-cache.ts) and the API routes that read it (`/api/ui-bridge/apps`, `/api/apps/unified`)
+ * separately, so a module-level Map would leave the routes reading their own empty copy.
+ */
+const LXD_CACHE = Symbol.for('youeye.lxd-update-cache');
+const lxdCacheHolder = globalThis as typeof globalThis & { [LXD_CACHE]?: Map<string, CacheEntry> };
+const lxdCache = lxdCacheHolder[LXD_CACHE] ??= new Map<string, CacheEntry>();
 
 export function getCachedLxdUpdate(appId: string): LxdUpdateResult | null {
   const entry = lxdCache.get(appId);

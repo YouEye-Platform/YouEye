@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { loadApp } from '../src/lib/market/app-format/compile';
 import { parseBundle, parseCatalog } from '../src/lib/market/app-format/parse';
-import { catalogFromFiles } from '../src/lib/market/catalog';
+import { catalogFromFiles } from '../src/lib/market/app-format/catalog-files';
 
 const args = process.argv.slice(2);
 const refIndex = args.indexOf('--ref');

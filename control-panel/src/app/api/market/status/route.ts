@@ -72,6 +72,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
     let installedVersion: string | undefined = metadata.installedVersion;
     let catalogVersion: string | null | undefined;
     let updateAvailable = false;
+    let updateBlocked: AppStatusInfo['updateBlocked'] = null;
     try {
       const dbApp = await getInstalledApp(appId);
       if (dbApp) {
@@ -81,6 +82,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
         installedVersion = dbApp.installedVersion || installedVersion;
         catalogVersion = dbApp.catalogVersion;
         updateAvailable = dbApp.updateAvailable;
+        updateBlocked = dbApp.updateBlocked ?? null;
       }
     } catch {}
 
@@ -100,6 +102,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       installedVersion,
       catalogVersion,
       updateAvailable,
+      updateBlocked,
       healthStatus,
       healthCheckedAt,
       storageStatus: storage.available ? 'connected' : 'disconnected',

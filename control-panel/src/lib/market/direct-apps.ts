@@ -40,8 +40,15 @@ function sourceIdFor(url: string): string {
   return `direct:${createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
 }
 
+/** The source id an app added from this manifest URL has (or would have): `direct:` plus a hash of the URL. */
+export function directSourceIdFor(manifestUrl: string): string {
+  return sourceIdFor(new URL(manifestUrl).toString());
+}
+
+/** The stored apps; a file without an `entries` object (an empty `{}`, say) holds none rather than failing every read. */
 async function loadStore(): Promise<DirectMarketAppStore> {
-  return await readJSON<DirectMarketAppStore>(STORE_PATH) ?? { schemaVersion: 1, entries: {} };
+  const entries = (await readJSON<Partial<DirectMarketAppStore>>(STORE_PATH))?.entries;
+  return { schemaVersion: 1, entries: entries && typeof entries === 'object' && !Array.isArray(entries) ? entries : {} };
 }
 
 export async function saveDirectMarketApp(input: {

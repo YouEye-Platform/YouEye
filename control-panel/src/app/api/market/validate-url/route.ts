@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { AppManifest, MarketApp } from '@/lib/market/types';
-import { fetchUrlApp, isPrivateHostname, UrlAppError, validateAppUrl } from '@/lib/market/url-app';
+import { fetchUrlApp, resolveAppManifestUrl, UrlAppError, validateAppUrl } from '@/lib/market/url-app';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
@@ -72,27 +72,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Detect GitHub repo URLs and transform to raw manifest URL
-  // Pattern: https://github.com/{owner}/{repo} (with optional trailing slash)
-  const githubRepoPattern = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)\/?$/;
-  const githubMatch = manifestUrl.match(githubRepoPattern);
-  let forgejoManifestUrl: string | null = null;
-  if (!githubMatch) {
-    try {
-      const repository = new URL(manifestUrl);
-      const parts = repository.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
-      if (repository.protocol === 'https:' && !repository.username && !repository.password &&
-          !repository.search && !repository.hash && parts.length === 2 && parts.every(Boolean) &&
-          !isPrivateHostname(repository.hostname)) {
-        forgejoManifestUrl = `${repository.origin}/${parts.map(encodeURIComponent).join('/')}/raw/branch/main/youeye-app.yaml`;
-      }
-    } catch {
-      forgejoManifestUrl = null;
-    }
-  }
-  const resolvedUrl = githubMatch
-    ? `https://raw.githubusercontent.com/${githubMatch[1]}/${githubMatch[2]}/main/youeye-app.yaml`
-    : forgejoManifestUrl ?? manifestUrl;
+  // A repository address stands for its youeye-app.yaml (resolveAppManifestUrl).
+  const resolvedUrl = resolveAppManifestUrl(manifestUrl);
 
   // Step 1: Validate URL safety
   const urlError = validateAppUrl(resolvedUrl);

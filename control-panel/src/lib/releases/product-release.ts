@@ -13,7 +13,7 @@ import { canonicalReleaseRepository, RELEASE_READER, ReleaseNeedsNewerReader, re
  */
 
 export type ProductBuild = {
-  schema: 'youeye.product-build.v1'; product: string; kind: 'native' | 'source' | 'catalog';
+  schema: 'youeye.product-build.v1'; product: string; kind: 'native' | 'source';
   build_version: string; source_tree: string;
   input_sha256: string; contract_sha256: string; primary: string; assets: CoreBlob[];
 };
@@ -31,18 +31,17 @@ export type InstalledProductReceipt = {
   manifestBase64: string; manifestSHA256: string; repository: string;
 };
 
-export const PRODUCTS = ['pointer', 'market', 'canvas', 'cinema', 'notes', 'search', 'translate', 'weather', 'wiki'] as const;
+export const PRODUCTS = ['pointer', 'canvas', 'cinema', 'notes', 'search', 'translate', 'weather', 'wiki'] as const;
 const products = new Set<string>(PRODUCTS);
 const hash = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
 const digest = (raw: Buffer) => createHash('sha256').update(raw).digest('hex');
 
-/** Apps and Pointer: `v<version>`; Market: `catalog-v<version>`. The tag never names a channel. */
-export function productTag(product: string, version: string) {
-  return `${product === 'market' ? 'catalog-' : ''}v${version}`;
+/** `v<version>`. The tag never names a channel. */
+export function productTag(version: string) {
+  return `v${version}`;
 }
-function productTagVersion(product: string, tag: string): string | null {
-  const prefix = product === 'market' ? 'catalog-v' : 'v';
-  return tag.startsWith(prefix) && parseReleaseVersion(tag.slice(prefix.length)) ? tag.slice(prefix.length) : null;
+function productTagVersion(tag: string): string | null {
+  return tag.startsWith('v') && parseReleaseVersion(tag.slice(1)) ? tag.slice(1) : null;
 }
 function object(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid product metadata object');
@@ -55,13 +54,13 @@ export function parseProductBuild(raw: Buffer): ProductBuild {
   const b = document(raw) as ProductBuild;
   object(b);
   if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || !validSourceTree(b.source_tree)
-    || !hash(b.input_sha256) || !hash(b.contract_sha256) || !['native','source','catalog'].includes(b.kind)) throw new Error('Invalid immutable product build');
+    || !hash(b.input_sha256) || !hash(b.contract_sha256) || !['native','source'].includes(b.kind)) throw new Error('Invalid immutable product build');
   if (!Array.isArray(b.assets) || !b.assets.length || b.assets.length > 32) throw new Error('Invalid product asset set');
   const names = new Set<string>();
   for (const a of b.assets) {
     object(a);
     if (!validAssetName(a.name) || names.has(a.name) || !hash(a.sha256) || !Number.isSafeInteger(a.size_bytes) || a.size_bytes <= 0
-      || a.release !== undefined && !productTagVersion(b.product, a.release)) throw new Error('Invalid original product asset');
+      || a.release !== undefined && !productTagVersion(a.release)) throw new Error('Invalid original product asset');
     names.add(a.name);
   }
   if (!names.has(b.primary)) throw new Error('Missing primary product artifact');
@@ -81,7 +80,7 @@ export function parseProductRelease(raw: Buffer) {
     throw new ReleaseNeedsNewerReader(`Product release needs reader ${r.minimum_reader}`);
   }
   if (r.schema !== 'youeye.product-release.v1' || r.authority !== 'digest' || !products.has(r.product) || !parseReleaseVersion(r.version)
-    || r.tag !== productTag(r.product,r.version) || !validSourceTree(r.source_tree) || r.minimum_reader !== 1
+    || r.tag !== productTag(r.version) || !validSourceTree(r.source_tree) || r.minimum_reader !== 1
     || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid product release identity');
   const build = parseProductBuild(base64(r.build_manifest_base64,1024*1024));
   if (build.product !== r.product || build.source_tree !== r.source_tree) throw new Error('Product release references another build');

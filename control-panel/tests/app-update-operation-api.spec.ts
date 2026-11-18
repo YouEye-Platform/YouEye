@@ -363,6 +363,7 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
     '@/components/ui/select': {},
     '@/components/ui/switch': {},
     '@/components/setup/WordArtPickerInline': {},
+    '@/components/market/update-blocked': { UpdateBlockedNote: stub },
     './api-base': {},
     './page-header': { PageHeader: stub },
     './update-channels': {},

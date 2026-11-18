@@ -91,7 +91,7 @@ test('channel index entries follow the contract', () => {
   const base = spineIndex(youeye, 'stable', {}).index;
   const entry = { repository: notesRepo, tag: 'v0.6.1-dev.2', version: '0.6.1-dev.2', build: '0.6.1-dev.2', document: 'product-release.json', sha256: 'a'.repeat(64) };
   assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { notes: entry } }));
-  assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { youeye: { ...entry, repository: youeye, tag: 'youeye-v0.6.1-dev.2', document: 'core-release.json' }, market: { ...entry, tag: 'catalog-v0.6.1-dev.2' } } }));
+  assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { youeye: { ...entry, repository: youeye, tag: 'youeye-v0.6.1-dev.2', document: 'core-release.json' } } }));
   assert.throws(() => parseChannelIndex({ ...base, channel: 'feature' }), /Unsupported/);
   // Unknown products and fields are ignored; a bad entry fails only its product.
   const invalid = (products: Record<string, unknown>) => parseChannelIndex({ ...base, products: { ...products, wiki: { ...entry, tag: 'v0.6.1-dev.2' } } });
@@ -111,4 +111,25 @@ test('channel index entries follow the contract', () => {
   const mirrored = parseChannelIndex({ ...base, products: { notes: { ...entry, download_base: 'https://releases.example.test/files' } } }).products.notes;
   assert.equal(channelEntryDocumentURL(mirrored), 'https://releases.example.test/files/v0.6.1-dev.2/product-release.json');
   assert.doesNotThrow(() => parseChannelIndex({ ...base, products: { notes: { ...entry, tag: 'v0.6.1', version: '0.6.1' } } }));
+});
+
+test('an index that still carries a market entry parses; the Market is not a channel product any more', async () => {
+  // Every channel index keeps the frozen `market` entry (Market 0.6.4) for boxes up to 0.6.10.
+  const { f, files } = notesRelease();
+  const frozen = { repository: 'https://github.com/YouEye-Platform/Market', tag: 'catalog-v0.6.4', version: '0.6.4', build: '0.6.4-dev.2', document: 'product-release.json', sha256: 'c'.repeat(64) };
+  const answer = spineIndex(youeye, 'stable', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', raw: f.raw } });
+  (answer.index.products as Record<string, unknown>).market = frozen;
+  const box = await readChannelIndex({ getReleaseIndex: async () => answer });
+  assert.deepEqual(Object.keys(box.index.products), ['notes'], 'the market entry is skipped like any product this reader does not list');
+  assert.deepEqual(box.index.invalid, {});
+  // Even a market entry this reader would have called malformed fails nothing.
+  const odd = parseChannelIndex({ ...answer.index, products: { ...answer.index.products, market: { nonsense: true } } });
+  assert.deepEqual(odd.invalid, {});
+  assert.equal(odd.products.notes.version, '0.6.1-dev.2');
+  // The other products of that index resolve as before; the Market cannot be asked for.
+  const host = fakeReleaseHost(files);
+  const index = () => readChannelIndex({ getReleaseIndex: async () => answer });
+  assert.equal((await resolveChannelProduct('notes', { index, fetch: host.fetch }))!.release.tag, 'v0.6.1-dev.2');
+  await assert.rejects(resolveChannelProduct('market', { index, fetch: host.fetch }), /market is not a channel product/);
+  assert.ok(host.requests.every((url) => !/Market|catalog/.test(url)), host.requests.join('\n'));
 });

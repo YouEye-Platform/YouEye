@@ -17,7 +17,8 @@ test('direct manifests become instance-local Market entries and open the normal 
   const marketPage = await source('src/app/market/page.tsx');
 
   assert.match(validator, /requireAdmin\(\)/);
-  assert.match(validator, /repository\.origin.*raw\/branch\/main\/youeye-app\.yaml/);
+  assert.match(validator, /resolveAppManifestUrl\(manifestUrl\)/);
+  assert.match(await source('src/lib/market/url-app.ts'), /repository\.origin.*raw\/branch\/main\/youeye-app\.yaml/);
   assert.doesNotMatch(validator, /api\/v1\/repos/);
   assert.doesNotMatch(validator, /git\.potemk\.in/);
   assert.match(validator, /saveDirectMarketApp/);

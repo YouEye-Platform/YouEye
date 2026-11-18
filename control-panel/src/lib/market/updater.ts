@@ -33,7 +33,7 @@ import {
   waitForContainerExec,
   waitForRunning,
 } from '@/lib/incus/snapshot';
-import { clearCatalogCache, resolveCatalogApp } from './catalog';
+import { clearCatalogCache, isMarketAppUnavailable, resolveCatalogApp } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import {
   getInstalledApp,
@@ -50,11 +50,11 @@ import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import {
   classifyAppUpdateRouting,
   recordedCatalogSourceIds,
-  recordedSourceRepositoryChange,
+  recordedSourceAddressChange,
 } from './update-routing';
 import { fetchDirectMarketAppUpdate, saveDirectMarketApp } from './direct-apps';
 import { readFrozenUpdateManifest } from './frozen-manifest';
-import { isMarketSourceConsentError, MarketSourceConsentError, setupFilesChanged } from './source';
+import { isMarketSourceConsentError, MarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID, setupFilesChanged } from './source';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
@@ -80,6 +80,8 @@ export interface UpdateResult {
   previousVersion: string;
   newVersion: string;
   migrationsRun: number;
+  /** The installed version is already the one its source offers: nothing was changed. */
+  unchanged?: boolean;
   /** Shared folders the app mounts (e.g. `media`): updated in place and never rolled back. */
   sharedFolders?: string[];
   error?: string;
@@ -216,11 +218,11 @@ async function updateMarketAppLocked(
   if (installMeta.serviceCredentialState !== 'ready') throw new Error('App credentials require reconciliation before update');
   const originalInstallMeta = structuredClone(installMeta);
 
-  clearCatalogCache();
-
   // The app's own recorded source, else the official Market; never another one (resolveCatalogApp refuses a
   // custom source the owner has not accepted). An app added by URL re-reads its URL, without saving it yet.
   const recordedSourceId = recordedCatalogSourceIds(installedApp, installMeta)[0];
+  // An update uses the market as it is now: that one source is asked again (the others are left to their timers).
+  if (!recordedSourceId?.startsWith('direct:')) clearCatalogCache(recordedSourceId || OFFICIAL_MARKET_SOURCE_ID);
   const directUpdate = recordedSourceId?.startsWith('direct:') ? await fetchDirectMarketAppUpdate(recordedSourceId) : null;
   const directEntry = directUpdate ? {
     sourceId: directUpdate.entry.sourceId,
@@ -235,15 +237,17 @@ async function updateMarketAppLocked(
     } catch (err) {
       if (isMarketSourceConsentError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
+      // The market's version needs a newer YouEye: the update waits for the platform, like any such manifest.
+      if (isMarketAppUnavailable(err)) {
+        emit(onEvent, 1, 1, 'error', message);
+        return { success: false, previousVersion: installedApp.installedVersion || '0.0.0', newVersion: err.version || '0.0.0',
+          migrationsRun: 0, error: message, errorCode: 'requires-newer-youeye' };
+      }
       throw new Error(`Failed to resolve Market source for "${appId}": ${message}`);
     }
-    // The id may name another repository by now (a removed source's id reused, or a source re-pointed): the app
-    // follows the repository it recorded, never just the id.
-    const change = recordedSourceRepositoryChange({
-      sourceRepoUrl: installMeta.sourceRepoUrl ?? installedApp.sourceRepoUrl,
-      manifestRepo: installMeta.manifestRepo,
-      manifestBranch: installMeta.manifestBranch,
-    }, resolvedCatalog.source);
+    // The id may name another market address by now (a source re-pointed, or its id handed out again): the app
+    // follows the address it recorded, never just the id.
+    const change = recordedSourceAddressChange({ sourceRepoUrl: installMeta.sourceRepoUrl ?? installedApp.sourceRepoUrl }, resolvedCatalog.source);
     if (change) throw new MarketSourceConsentError('source-changed', change.message);
   }
 
@@ -255,8 +259,6 @@ async function updateMarketAppLocked(
     installMetadata: installMeta,
     catalog: {
       sourceId: resolvedCatalog.source.id,
-      sourceRepoUrl: resolvedCatalog.source.repo_url,
-      sourceRepoUrls: resolvedCatalog.configuredSourceRepoUrls,
       entry: resolvedCatalog.entry,
       manifestIntegration: resolvedCatalog.manifest.integration,
     },
@@ -289,11 +291,11 @@ async function updateMarketAppLocked(
     const installedRelease = installMeta.nativeArtifacts?.[0]?.productReleaseSHA256;
     if (!config.force && installedRelease === productRelease.manifestSHA256) {
       emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${productRelease.release.version})`);
-      return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
+      return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
     }
   } else if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
-    return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
+    return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
   }
 
   if (productRelease && channelManifestReference) {
@@ -491,8 +493,8 @@ async function updateMarketAppLocked(
     installMeta.itemKind = 'app';
     installMeta.sourceId = sourceId;
     installMeta.sourceName = directEntry ? 'Added' : resolvedCatalog!.source.name;
-    installMeta.sourceRepoUrl = directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url;
-    installMeta.manifestSource = directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url;
+    installMeta.sourceRepoUrl = directEntry?.manifestUrl ?? resolvedCatalog!.source.url;
+    installMeta.manifestSource = directEntry?.manifestUrl ?? resolvedCatalog!.source.url;
     if (directEntry) {
       installMeta.manifestPath = directEntry.manifestUrl;
       installMeta.manifestDigest = directEntry.manifestDigest;

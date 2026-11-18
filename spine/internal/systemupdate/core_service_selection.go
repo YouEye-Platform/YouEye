@@ -2,26 +2,68 @@ package systemupdate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"golang.org/x/sys/unix"
 )
+
+// The Control Panel's recorded selection is the file core-release.json in
+// coreSelectionDirectory of the youeye-control container. After a finished
+// request it holds the installed release document: apply-cp writes it for an
+// update, a promotion (a metadata-only request) writes it in its health step,
+// and a recovery puts the previous document back.
+const coreSelectionDirectory = "var/lib/youeye-state/core-selection"
+
+// coreSelectionTemp is the name a request writes a selection under before the
+// rename. purpose separates the request's writers.
+func coreSelectionTemp(request, purpose string) string {
+	return fmt.Sprintf(".youeye-core-%x%s.core-release.json", sha256.Sum256([]byte(request+"\x00cp")), purpose)
+}
+
+// recordedSelectionStandsFor decides whether the bytes recorded in the Control
+// Panel stand for the release expected. The exact document does. So does
+// another document of the same build: a Spine before 0.6.11 committed a
+// promotion without rewriting the file, so a box that took a build on one
+// channel and its promotion on the next still records the earlier document.
+// Such a document is accepted only when this box retains the same bytes under
+// their own digest (Spine accepted them as a release once) and they name the
+// same payloads and compatibility as the expected release (sameCorePayloads).
+// Anything else is foreign, as before.
+func (m CoreManager) recordedSelectionStandsFor(recorded []byte, expected CoreHostSelection) bool {
+	if bytes.Equal(recorded, expected.Raw) {
+		return true
+	}
+	release, digest, err := releasecache.ParseCoreRelease(recorded)
+	if err != nil {
+		return false
+	}
+	retained, _, err := m.Selection(digest)
+	if err != nil || !bytes.Equal(retained.Raw, recorded) {
+		return false
+	}
+	wanted, _, err := releasecache.ParseCoreRelease(expected.Raw)
+	return err == nil && sameCorePayloads(release, wanted)
+}
 
 // CP needs the complete current selection even when its own payload is reused.
 // Both files remain behind the service hold until this pair is verified. A
 // crash between their atomic renames leaves a recorded, reconcilable partial
 // pair; it cannot expose an unverified or silently re-resolved selection.
-func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, next CoreHostSelection, save func(CoreServiceStage) error) error {
+// What is replaced must stand for the previous release (recordedSelectionStandsFor).
+func installCoreServiceSelection(m CoreManager, root *os.File, r *CoreServiceStage, previous, next CoreHostSelection, save func(CoreServiceStage) error) error {
 	if r.Role != "cp" || (r.Phase != "swapped" && r.Phase != "reused") || fmt.Sprintf("%x", sha256.Sum256(next.Raw)) != r.ManifestSHA256 {
 		return fmt.Errorf("verified CP core selection required")
 	}
 	if r.SelectionState != "" && r.SelectionState != "requested" && r.SelectionState != "installed" {
 		return fmt.Errorf("unknown CP selection state")
 	}
-	dir, err := openCorePayloadDirectory(int(root.Fd()), "var/lib/youeye-state/core-selection")
+	dir, err := openCorePayloadDirectory(int(root.Fd()), coreSelectionDirectory)
 	if err != nil {
 		return err
 	}
@@ -48,7 +90,7 @@ func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, n
 			}
 			continue
 		}
-		if !bytes.Equal(actual, p.old) && !(r.SelectionState == "requested" && isNew) {
+		if !m.recordedSelectionStandsFor(actual, CoreHostSelection{Raw: p.old}) && !(r.SelectionState == "requested" && isNew) {
 			return fmt.Errorf("CP selection differs from retained transition")
 		}
 	}
@@ -66,6 +108,99 @@ func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, n
 	}
 	r.SelectionState = "installed"
 	return save(*r)
+}
+
+// recordPromotedCoreSelection is the one effect of a metadata-only request: the
+// Control Panel gets the promoted document, so that what it records is the
+// installed release and what it downloads is named as the box's channel names
+// it. It replaces only a recorded document of the same build (the previous
+// release's, or an earlier one an older Spine left there), and writing the same
+// bytes again changes nothing.
+func recordPromotedCoreSelection(m CoreManager, root *os.File, j CoreJournal) error {
+	if !j.MetadataOnly {
+		return fmt.Errorf("metadata-only core request required")
+	}
+	next, _, err := m.Selection(j.ManifestSHA256)
+	if err != nil {
+		return err
+	}
+	dir, err := openCorePayloadDirectory(int(root.Fd()), coreSelectionDirectory)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	actual, err := readCoreContainerStateAtLimit(dir, "core-release.json", 1<<20)
+	if err != nil {
+		return err
+	}
+	// The target names the previous release's payloads (validateCoreSteps), so a
+	// document that stands for the target stands for the previous release too.
+	if !m.recordedSelectionStandsFor(actual, next) {
+		return fmt.Errorf("CP selection differs from retained transition")
+	}
+	return writeCoreContainerFileAt(dir, "core-release.json", coreSelectionTemp(j.RequestID, ""), next.Raw, 1<<20)
+}
+
+// RecordPromotedSelection runs in the health action of a metadata-only request,
+// before the health checks: the Control Panel then answers them with the
+// promoted document. The container must be the running one that holds the
+// release's Control Panel.
+func (s NativeCoreServices) RecordPromotedSelection(ctx context.Context, request string) error {
+	m := CoreManager{Root: s.Checkpoint.Root}
+	j, err := m.Read()
+	if err != nil || j.RequestID != request || j.Phase != "applying" || !j.MetadataOnly {
+		return fmt.Errorf("active metadata-only core request required")
+	}
+	active := false
+	for _, step := range j.Steps {
+		if step.Name == "authenticated-health" && step.State == "started" {
+			active = true
+		}
+	}
+	if !active {
+		return fmt.Errorf("coordinator has not started core health action")
+	}
+	receipt, err := m.ReadReceipt()
+	if err != nil || !reflect.DeepEqual(receipt, j.Previous) {
+		return fmt.Errorf("installed core commitment changed")
+	}
+	machine, err := s.Checkpoint.observeMachine()
+	if err != nil || machine != j.Previous.Machine {
+		return fmt.Errorf("core selection machine changed")
+	}
+	member, err := coreServiceMember(j.Target, "cp")
+	if err != nil {
+		return err
+	}
+	pid, err := nativeCoreContainerPID(ctx, "youeye-control")
+	if err != nil {
+		return err
+	}
+	identity, err := nativeProcessIdentity(pid)
+	if err != nil {
+		return err
+	}
+	marker, err := readNativeCoreMarker(pid)
+	if err != nil || marker.Role != "cp" || marker.ArtifactSHA256 != member.Artifact.SHA256 {
+		return fmt.Errorf("selection component differs from selected payload")
+	}
+	root, err := os.Open(fmt.Sprintf("/proc/%d/root", pid))
+	if err != nil {
+		return fmt.Errorf("core selection filesystem unavailable")
+	}
+	defer root.Close()
+	if err = recordPromotedCoreSelection(m, root, j); err != nil {
+		return err
+	}
+	after, err := nativeCoreContainerPID(ctx, "youeye-control")
+	if err != nil || after != pid {
+		return fmt.Errorf("core selection container restarted")
+	}
+	actual, err := nativeProcessIdentity(pid)
+	if err != nil || actual != identity {
+		return fmt.Errorf("core selection process identity changed")
+	}
+	return nil
 }
 
 func writeCoreContainerFileAt(dir *os.File, name, temp string, data []byte, limit int64) error {

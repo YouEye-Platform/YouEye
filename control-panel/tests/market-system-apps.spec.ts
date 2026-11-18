@@ -1,15 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ts from 'typescript';
-import * as compile from '../src/lib/market/app-format/compile';
-import * as parse from '../src/lib/market/app-format/parse';
-import * as partialCatalog from '../src/lib/market/partial-catalog';
+import { openMarketSession } from '../src/lib/market/market-fetch';
+import { sha256Hex } from '../src/lib/market/market-format';
 import * as realSource from '../src/lib/market/source';
+import { buildFixtureMarket } from './fixtures/market';
+import { marketWorld, withMarketState } from './fixtures/market-world';
 
 // The core containers (Caddy, PostgreSQL, Pi-hole) run images pinned in the Control Panel
 // (src/lib/infrastructure/system-images.ts). No Market source can supply or replace them.
@@ -152,59 +153,44 @@ test('the Market lists apps only: no system items in its code or its API', () =>
   assert.doesNotMatch(readControl('src/app/api/market/catalog/route.ts'), /systemApps/);
 });
 
-test('a custom source whose catalog.json lists system and carries system/caddy.yaml changes nothing', async () => {
-  const repo = 'https://git.example.test/someone/market';
-  const custom = realSource.parseMarketRepoURL(repo, { id: 'someone' });
-  const files: Record<string, string> = {
-    'catalog.yaml': 'schema: youeye.catalog.v1\n',
-    'catalog.json': JSON.stringify({ schema: 'youeye.catalog-index.v1', apps: [], bundles: [], system: ['caddy'] }),
-    'system/caddy.yaml': [
-      'schema: youeye.system-app.v1', 'id: caddy', 'version: 9.9.9', 'name: Caddy',
-      'image: docker.io/someone/caddy@sha256:' + 'f'.repeat(64), '',
-    ].join('\n'),
-  };
-  const fetched: string[] = [];
-  const catalogModule = load('src/lib/market/catalog.ts', {
-    './catalog-release': {
-      officialCatalogFile: async () => { throw new Error('no official catalog in this test'); },
-      readAcceptedCatalog: async () => null,
-      refreshOfficialCatalog: async () => { throw new Error('no official catalog in this test'); },
-    },
-    './native-artifact': {},
-    '../releases/channel-index': { describeReleaseError: (error: unknown) => String(error) },
-    '../releases/cache': {
-      releaseCacheFetch: async (url: string) => {
-        const file = decodeURIComponent(url.slice(`${repo}/raw/branch/main/`.length));
-        fetched.push(file);
-        return file in files ? new Response(files[file]) : new Response('', { status: 404 });
-      },
-    },
-    './partial-catalog': partialCatalog,
-    './app-format/compile': compile,
-    './app-format/parse': parse,
-    './source': {
-      ...realSource,
-      getMarketSources: async () => [realSource.officialMarketSource(), custom],
-      getConfiguredMarketSources: async () => [realSource.officialMarketSource(), custom],
-      getMarketSource: async () => custom,
-      recordMarketSourceResolution: async () => {},
-    },
-  });
+test('a market that lists system items and carries a system/caddy.yaml changes nothing', withMarketState(async (directory) => {
+  const address = 'https://markets.example.org/someone/';
+  // A market in the published format, plus what an older catalog repository had: a `system` list and system files.
+  const built = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'demo' }] });
+  const index = Buffer.from(JSON.stringify({ ...JSON.parse(built.files.get(built.indexPath)!.toString('utf8')), system: ['caddy'] }));
+  const indexSha = sha256Hex(index);
+  const files = new Map(built.files);
+  files.delete(built.indexPath);
+  files.set(`h/index/${indexSha}.json`, index);
+  files.set('market.json', Buffer.from(JSON.stringify({ ...JSON.parse(built.pointer.toString('utf8')), index: { path: `h/index/${indexSha}.json`, sha256: indexSha, size: index.length } })));
+  files.set('system/caddy.yaml', Buffer.from([
+    'schema: youeye.system-app.v1', 'id: caddy', 'version: 9.9.9', 'name: Caddy',
+    'image: docker.io/someone/caddy@sha256:' + 'f'.repeat(64), '',
+  ].join('\n')));
+  writeFileSync(join(directory, 'market-sources.json'), JSON.stringify({ active_sources: [
+    { id: 'official', enabled: false },
+    { id: 'someone', name: 'Someone', url: address, enabled: true, priority: 1, accepted_at: '2026-11-18T10:00:00.000Z' },
+  ] }));
+  const world = marketWorld({ [address]: files });
+  const custom = (await realSource.getConfiguredMarketSources()).find((source) => source.id === 'someone')!;
 
-  const catalog = await catalogModule.fetchCatalog(custom);
-  assert.deepEqual(catalog.apps, []);
-  assert.deepEqual(catalog.bundles, []);
+  const catalog = await world.catalog.fetchCatalog(custom);
+  assert.deepEqual(catalog.apps, [{ id: 'demo', integration: 'basic', path: 'apps/demo' }]);
   assert.equal('system' in catalog, false);
-  assert.deepEqual(await catalogModule.fetchAvailableApps(), []);
-  assert.equal(fetched.includes('system/caddy.yaml'), false, `fetched: ${fetched.join(', ')}`);
-  assert.equal('fetchAvailableSystemApps' in catalogModule, false);
+  assert.deepEqual((await world.catalog.fetchAvailableApps()).map((app: any) => app.id), ['demo']);
+  const fetched = world.hosts.requests.map((request) => request.path);
+  assert.ok(fetched.every((file) => file === 'market.json' || file.startsWith('h/')), `fetched: ${fetched.join(', ')}`);
+  assert.equal('fetchAvailableSystemApps' in world.catalog, false);
+  // Only the paths of the format can be asked for at all.
+  const session = await openMarketSession(address, world.hosts.deps);
+  await assert.rejects(session.get('system/caddy.yaml', 'bundle'), /Not a market file path/);
 
   // The plan for the core containers is the same as without any source.
   const { updater } = infrastructure({ 'youeye-caddy': recorded(PINS.caddy.image, PINS.caddy.version) });
   const caddy = (await updater.planSystemUpdates()).find((plan: any) => plan.id === 'caddy');
   assert.equal(caddy.desiredImage, PINS.caddy.image);
   assert.equal(caddy.updateAvailable, false);
-});
+}));
 
 // The app-market is a SEPARATE repo (YE-AppMarket). Resolve it across names + env override.
 function resolveMarketRoot(): string | null {

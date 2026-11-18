@@ -37,6 +37,13 @@ The image bakes no repository, branch, channel or Market source: the installer r
 in protected State, so one image is promoted unchanged through every channel. Pass the Spine you already built as
 `YOUEYE_SPINE_FILE`; its SHA-256 must match the inputs.
 
+**Image inputs.** The publish tool rebuilds a part only when its inputs changed: it hashes the git tree listing of
+each part's paths and reuses the earlier release's files when the fingerprint is the same. The image's inputs are
+`appliance/`, `installer/`, `releasecache/`, `.youeye/build/appliance`, `.youeye/build/installer` and
+`.youeye/build/lib.sh`. A change to any of them, even a comment, makes a new image, and an image change reboots
+every box into the other slot. Spine (`spine/`, plus `releasecache/` and `appliance/ordering`), the Control Panel and
+the UI each have their own inputs and update without a reboot.
+
 ## Publishing a System release
 
 1. Put the 15 build outputs in one directory under their asset names:
@@ -64,7 +71,8 @@ curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
 
 - **Unattended test installs:** add `--silent --yes --erase-confirmed --vmid <id> --target-storage <storage>
   --iso-storage <storage> --cpu 4 --memory 8192 --target-disk-gb 64`.
-- **Native apps, Pointer and the Market catalog** come from the box's channel index, like the System.
+- **Native apps and Pointer** come from the box's channel index, like the System. The Market comes from
+  `https://market.youeye.me/dev/` on dev and alpha boxes ([market-format.md](market-format.md)).
 - **Spine changes** never need a new image: a Spine-only release updates a box in about a minute without a reboot.
   To try a binary by hand, `youeye spine install <file> --sha256 <d> --version <v>` runs it as a trial and rolls
   back if it is unhealthy ([spine.md](spine.md)).
@@ -94,8 +102,10 @@ original name, schema IDs stay `.v1`, and the old reader is deleted rather than 
 - **Left alone:** external versions (third-party APIs such as `/api/v3`, Docker manifest media types, Go module
   `/vN` paths, IPv4/v6, OAuth2, HTTP/2), semver release versions, model and product names, and the live YouEye
   Names service's snapshot format.
-- **A new manifest field** ships in a YouEye release before the catalog that uses it: an older Control Panel refuses
-  a field it doesn't know, and that app drops out of its catalog.
+- **A new manifest field** ships in a YouEye release before any market uses it, and gets a row in the "field, since
+  version" table (`control-panel/src/lib/market/app-format/since.ts`). An older Control Panel refuses a field it
+  doesn't know, so an app that uses it must say `requires: { youeye: ">=<that version>" }`; the generator refuses it
+  otherwise, and older boxes list it as needing a newer YouEye ([market-format.md](market-format.md#building-a-market)).
 
 Check with `git grep -nE '\b[vV][2-9]\b|[._-][vV][2-9]\b|V[2-9][A-Z]|schemaVersion:\s*[2-9]|format:\s*[2-9]|[Ll]egacy'`.
 
@@ -122,6 +132,14 @@ audit, Plan 7):
   both sides). A restore refuses a backup made by a newer CP, UI or Pointer build or a newer State/Data schema.
 - **Databases:** CP and UI tables change additively only (new columns nullable or defaulted) until they have a
   version table (Backlog).
+- **Markets** ([market-format.md](market-format.md)): `market.json` and the index may only grow; readers ignore
+  unknown fields, and an entry of an unknown `kind` is listed as needing a newer YouEye. Manifests change behind
+  `requires.youeye` and the field-since table. A box never accepts a lower `sequence` from the same address, so a
+  market is undone with a new commit, never by publishing an older one. The frozen `market` entry of every channel
+  index stays byte for byte ([releases.md](releases.md#the-frozen-market-entry)).
+- **Image inputs** (`appliance/`, `installer/`, `releasecache/`, `.youeye/build/{appliance,installer,lib.sh}`; see
+  Building) never change in a release that is meant to update boxes without a reboot. Collect such changes for the
+  next image release.
 
 **A check that runs in the installed Spine must never refuse an update because of the state of what the update did
 not write.** Such a check runs in the Spine that is already on the box, so a mistake in it cannot be fixed by a
@@ -132,6 +150,42 @@ browser had loaded the Control Panel's favicon (Next.js cached the response insi
   only what the request itself wrote ([core-release-contract.md](core-release-contract.md#installed-file-checks));
 - put a new requirement in the new Spine (from `apply-cp` on, every step runs in it) or in the release document,
   never in a check the old Spine runs first (`verify-members`, the checkpoint preflight).
+
+**`verify-members`, `checkpoint` and `apply-spine` always run in the installed Spine**, and so does the coordinator
+until the Spine step is done. A later release may only loosen what they require; anything stricter is checked by
+the new Spine after the Spine step, or in the release document. After `apply-spine` the installed Spine hands the
+request to the new one ([core-release-contract.md](core-release-contract.md#the-hand-over-after-the-spine-step)),
+which makes three things a contract between a release and the next one; keep all of them working in every Spine:
+
+- `youeye update core resume --request <id>` continues a request whose last finished step is `apply-spine`;
+- `youeye update core status --can-resume --request <id>` answers, by reading alone, whether this Spine's `resume`
+  can continue the request now: exit 0 with `can_resume: true`, `can_resume_request` (the request asked about) and
+  the judged `transaction` only when it can; otherwise a non-zero exit with `can_resume: false` and
+  `can_resume_reason`. The previous release's Spine asks this before every hand-over, so a release's Spine must
+  keep answering it the same way. A Spine that does not know the flag exits non-zero and is handed nothing;
+- the answer of `youeye update core status` carries `transaction.request_id`, `transaction.manifest_sha256`,
+  `transaction.phase` and `transaction.steps[].name` / `.state` with their current meaning.
+
+A defect in a release's coordinator now shows during the update **to** that release, so the update from the
+previous release with a Spine change is part of every release's tests.
+
+**Which Spine runs what** in a service update with a Spine change. Every step is a unit that starts through the
+launcher, so it runs the Spine that is current when it starts:
+
+| Piece | Spine |
+|---|---|
+| `verify-members`, `checkpoint`, `apply-spine` | the installed one |
+| `apply-cp`, `apply-ui`, `authenticated-health` | the new one |
+| the coordinator | the installed one until `apply-spine` is done, then the new one (0.6.10 and older: the installed one to the end) |
+| `recover` started after `apply-spine`: its coordinator, `recovery-fence`, `recovery-paired-restore` and the first pass of `recovery-health` (which returns the box to the previous Spine and then checks the services in the same process) | the new one |
+| any later command on that box (`recover` again, `resume`, `status`) | the previous one |
+| `recover` of an update that failed in `checkpoint` or `apply-spine` | the installed one, every step |
+
+So what a release's Spine accepts in `apply-cp` and in the first pass of `recovery-health` is decided by the
+release, and whatever a second pass of `recovery-health` checks is checked by the previous Spine: a recovery leaves
+the box in a state the previous Spine accepts byte for byte (the recorded selection is the example,
+[core-release-contract.md](core-release-contract.md#the-recorded-selection)). The update **from a box that took a
+promotion as an update** (dev, then alpha, then the next dev build) is part of every release's tests as well.
 
 `TestCorePayloadCheckSitesUseTheDecidedMode` (`spine/internal/systemupdate/core_payload_sites_test.go`) pins the
 literal mode argument of each installed-file check call, per function in source order; a computed mode is pinned

@@ -9,8 +9,10 @@ Every product is built once and promoted unchanged through four channels:
 | `beta` | GitHub `YouEye-Platform` | `beta` | prerelease |
 | `stable` | GitHub `YouEye-Platform` | `main` | normal (latest) |
 
-Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema), Pointer and the
-Market catalog. Nothing is signed; integrity comes from HTTPS and SHA-256.
+Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema) and Pointer.
+Nothing is signed; integrity comes from HTTPS and SHA-256. The Market is not a product: it has no releases and is
+published as static files ([market-format.md](market-format.md)); a channel index only keeps its
+[frozen entry](#the-frozen-market-entry) for older boxes.
 
 ## Signing is off
 
@@ -52,7 +54,7 @@ never share commits.
 - **System:** release `youeye-v<name>` with `core-release.json` (`youeye.core-release.v1`, see
   [core-release-contract.md](core-release-contract.md)). Its `version` is the release name and its `build` the build
   version; on dev they are equal.
-- **Apps and Pointer:** release `v<name>`; **Market:** `catalog-v<name>`. Each has `product-release.json` (see
+- **Apps and Pointer:** release `v<name>`. Each has `product-release.json` (see
   [product-release-contract.md](product-release-contract.md)) embedding the immutable build manifest
   (`build_version` = the build).
 - Documents **name** files (`{name, sha256, size_bytes, release?}`) and never locate them. A client downloads
@@ -84,7 +86,8 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
   `stable` channels a copy is served at `https://releases.youeye.me/v1/channels/<channel>.json` and tried first.
 - The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry. `build` is the
   entry's build version, used for ordering.
-- Products: `youeye`, `pointer`, `market`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`.
+- Products: `youeye`, `pointer`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`, plus the frozen
+  `market` entry (below).
 - **Read leniently, so later indexes never cut a box off:** unknown keys at any level are ignored, a product this
   reader doesn't know is skipped, and an invalid entry makes only that product unavailable (`Invalid` in Go,
   `invalid` in the CP). Only a different `schema` means an incompatible index. A new product or field therefore
@@ -106,6 +109,11 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
   retried with backoff — never as a network failure. `install.sh` also retries 5xx and network failures the same
   way (30, 60, 120 s) and does not retry a 404.
 
+Spine answers `GET /api/releases/index` from a copy it keeps for 5 minutes plus 0–10 % jitter. It asks each index
+address with `If-None-Match` and the ETag of that address's last good copy (a `304` keeps the copy), and while the
+release host fails (back-off from 30 s, doubling up to 10 minutes) it answers the last good index; only with no
+good copy yet does it answer the error (`spine/internal/api/releases.go`).
+
 Who reads it:
 
 | Client | Reads |
@@ -114,7 +122,16 @@ Who reads it:
 | Installer | the index, or an exact `--release-tag` + `--core-manifest-sha256` handed over by `install.sh` |
 | First-boot network check | one GET of the index (a 403/429 answer still proves the network works) |
 | Spine (`youeye update core check`) | the `youeye` entry of the box's channel |
-| Control Panel | native apps, Pointer and the Market catalog through Spine `GET /api/releases/index` |
+| Control Panel | native apps and Pointer through Spine `GET /api/releases/index` (never the Market) |
+
+### The frozen Market entry
+
+Up to 0.6.10 the Market was a product of the channel index (release `catalog-v<name>` with `catalog.tar`). Every
+channel index still carries that `market` entry, frozen at the 0.6.4 catalog (build `0.6.4-dev.3`, named for each
+channel), because boxes up to 0.6.10 read their Market only from it: it keeps them working until they update
+YouEye, after which they read the Market by address and no longer use the entry. The entry
+must never change or disappear: the release tools refuse to set it and stop any index write that would change it
+(`Tools/release/index frozen <channel>` prints it), and `promote all` never touches it.
 
 ## The box's channel
 
@@ -178,7 +195,9 @@ fix the app or its configuration. Never loosen the guard.
 ## Publishing and promotion (tools in the YouEye Mega workspace)
 
 - `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index.
-- `Tools/release/app-release <repo>` then `Tools/release/index set dev …` — the same for apps, Pointer, Market.
+- `Tools/release/app-release <repo>` then `Tools/release/index set dev …` — the same for native apps and Pointer.
+- The Market has none of these steps: a push to the catalog's `dev` or `main` branch is published to
+  `market.youeye.me` ([market-format.md](market-format.md#the-official-market)).
 - `Tools/release/promote <product|all> <alpha|beta|stable>` — never rebuilds; writes the channel's document
   (`alpha.N`, `beta.N`, `X.Y.Z`) for the same build:
   - **alpha:** a promotion commit with the build's exact tree on the development forge's `main`; the alpha release

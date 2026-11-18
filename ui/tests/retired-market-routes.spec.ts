@@ -15,4 +15,12 @@ describe('retired Market routes', () => {
     assert.equal(existsSync(join(root, 'src/app/app-market/page.tsx')), false);
     assert.equal(existsSync(join(root, 'src/app/app-store/page.tsx')), false);
   });
+
+  it('has no Market picture route and does not list one as public', () => {
+    const middleware = readFileSync(join(root, 'src/middleware.ts'), 'utf8');
+    assert.doesNotMatch(middleware, /market-image|\/api\/market\//);
+    for (const route of ['src/app/api/market-image', 'src/app/api/market/image', 'src/app/api/market']) {
+      assert.equal(existsSync(join(root, route)), false, route);
+    }
+  });
 });

@@ -4,16 +4,17 @@
  *
  * Its next update comes from that source, so the switch needs the same consent as an install from it: a custom
  * Market source must be accepted (`marketSourceRefusal`), an Added (URL) app needs its own flags (`directAppRefusal`).
- * Only the source identity changes (its id, name, repository and, for a git source, the repository path and branch its
- * manifests are read from); the installed copy and its digest stay as they are until the next update. This is the one
- * place that re-records an app's repository: an update refuses a source whose repository differs (`source-changed`).
+ * Only the source identity changes (its id, name and market address); the installed copy, its digest and where it
+ * was read from stay as they are until the next update. This is the one place that re-records an app's market
+ * address: an update refuses a source whose address differs (`source-changed`). It is also how an app whose source
+ * went away (`source-unavailable`) gets an update source again.
  *
  * The target is resolved first (network); the install record is then read, changed and saved inside the app's
  * lifecycle lock, so an update that commits meanwhile is never overwritten with stale metadata.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminCsrf } from '@/lib/auth/rbac';
-import { resolveCatalogApp } from '@/lib/market/catalog';
+import { isMarketAppUnavailable, resolveCatalogApp } from '@/lib/market/catalog';
 import { getDirectMarketApp } from '@/lib/market/direct-apps';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { updateInstalledAppSource, upsertInstalledApp } from '@/lib/market/installed-apps';
@@ -48,7 +49,7 @@ export async function PATCH(
     return NextResponse.json({ error: `App "${appId}" is not installed` }, { status: 404 });
   }
 
-  let target: { sourceId: string; sourceName: string; sourceRepoUrl: string; url?: string; manifestRepo?: string; manifestBranch?: string };
+  let target: { sourceId: string; sourceName: string; sourceRepoUrl: string; url?: string };
   if (sourceId.startsWith('direct:')) {
     const direct = await getDirectMarketApp(sourceId, appId);
     if (!direct) {
@@ -60,14 +61,13 @@ export async function PATCH(
   } else {
     try {
       const resolved = await resolveCatalogApp(appId, sourceId);
-      target = { sourceId: resolved.source.id, sourceName: resolved.source.name, sourceRepoUrl: resolved.source.repo_url };
-      // Where a git source's manifests are read from; the update compares the branch with it.
-      if (resolved.source.kind === 'git' && resolved.entry.integration !== 'native') {
-        target.manifestRepo = resolved.reference.repo;
-        target.manifestBranch = resolved.reference.branch;
-      }
+      target = { sourceId: resolved.source.id, sourceName: resolved.source.name, sourceRepoUrl: resolved.source.url };
     } catch (error) {
       if (isMarketSourceConsentError(error)) return refused(error);
+      // The source has the app only in a version this box cannot run: refused with that reason.
+      if (isMarketAppUnavailable(error)) {
+        return NextResponse.json({ error: error.message, code: error.code, ...(error.needsYouEye ? { needsYouEye: error.needsYouEye } : {}) }, { status: 409 });
+      }
       return NextResponse.json({ error: `App "${appId}" was not found in Market source "${sourceId}"` }, { status: 404 });
     }
   }
@@ -84,8 +84,6 @@ export async function PATCH(
       metadata.sourceName = target.sourceName;
       metadata.sourceRepoUrl = target.sourceRepoUrl;
       metadata.manifestSource = target.sourceRepoUrl || metadata.manifestSource;
-      if (target.manifestRepo !== undefined) metadata.manifestRepo = target.manifestRepo;
-      if (target.manifestBranch !== undefined) metadata.manifestBranch = target.manifestBranch;
 
       await saveInstallMetadata(metadata);
       await upsertInstalledApp({

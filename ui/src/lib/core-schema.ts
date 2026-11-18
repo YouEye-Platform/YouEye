@@ -113,6 +113,10 @@ export async function runCoreSchemaOnce(role: 'cp' | 'ui', initialize: () => Pro
 export async function runFreshCoreSchemaOnce(initialize: () => Promise<void>, paths?: CoreSchemaPaths, preflight?: () => Promise<unknown>): Promise<boolean> {
   const component = await coreSchemaComponent('ui', paths?.component);
   if (!component || component.requestId !== `install-${component.manifestSHA256}`) return false;
+  // A completed attempt needs nothing from the database: a restart (a reboot, when Postgres may come up after
+  // this process) must not depend on reaching it. Anything else goes through the attempt below, as before.
+  const status = await coreSchemaStatus('ui', paths).catch(() => null);
+  if (status?.state === 'completed') return true;
   await preflight?.();
   await runCoreSchemaOnce('ui', initialize, paths, undefined, component);
   return true;

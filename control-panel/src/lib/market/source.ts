@@ -1,43 +1,41 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import path from 'path';
-import { repositoriesMatch } from './update-routing';
+import { normalizeMarketAddress } from './market-format';
+import { sameMarketAddress } from './update-routing';
+import { isPrivateHostname } from './url-app';
 
-const MARKET_STATE_DIR = '/var/lib/youeye';
-const MARKET_SOURCES_PATH = path.join(MARKET_STATE_DIR, 'market-sources.json');
+/** Where the Market keeps its files. Tests point it at a temporary directory. */
+export function marketStateDir(): string {
+  return process.env.YOUEYE_MARKET_STATE_DIR || '/var/lib/youeye';
+}
+const sourcesPath = () => path.join(marketStateDir(), 'market-sources.json');
 
 /**
  * Market sources.
  *
- * - The official Market (`kind: 'channel'`) is the `market` product of the
- *   box's channel index: a digest-bound `catalog.tar`. It has no repository,
- *   branch or commit of its own here; it always exists and can only be
- *   disabled.
- * - Custom sources (`kind: 'git'`) are repositories the owner added by URL.
- *   Their catalog and manifests are read as raw files from a branch.
+ * A market is a folder of static files at an HTTPS address (`youeye.market.v1`, market-format.ts).
+ *
+ * - The official Market (`kind: 'official'`) always exists and can only be turned off. Its address is not stored: it
+ *   follows the box's channel (`officialMarketAddress`).
+ * - Custom markets (`kind: 'url'`) are addresses the owner added. Their ids are the box's (`custom-N`); a market never
+ *   names its own id.
+ *
+ * What a market holds, when it was last refreshed and why a refresh failed are in the market's store
+ * (market-store.ts), not in this list.
  */
 export interface MarketSource {
   id: string;
   name: string;
-  kind: 'channel' | 'git';
-  /** Repository URL of a custom source; empty for the official channel source. */
-  repo_url: string;
-  /** Branch of a custom source; empty for the official channel source. */
-  branch: string;
+  kind: 'official' | 'url';
+  /** Market address of a custom market (normalised, with the trailing slash); empty for the official Market. */
+  url: string;
   enabled: boolean;
   priority: number;
-  trust: 'official' | 'community' | 'custom';
-  provider: 'github' | 'gitea' | '';
-  base_url: string;
-  organization: string;
-  repository: string;
-  resolved_at?: string;
-  refresh_error?: string;
   /**
-   * When the owner accepted this custom source (ISO time). Set only by the Control Panel: when the source is added
-   * with `acceptRisk: true`, or by `POST /api/market/source/accept`. Without it, the source's apps are listed but
-   * never installed, updated or switched to (`marketSourceRefusal`). The official source needs none.
+   * When the owner accepted this custom market (ISO time). Set only by the Control Panel: when the market is added
+   * with `acceptRisk: true`, or by `POST /api/market/source/accept`. Without it, the market's apps are listed but
+   * never installed, updated or switched to (`marketSourceRefusal`). The official Market needs none.
    */
   accepted_at?: string;
 }
@@ -45,102 +43,119 @@ export interface MarketSource {
 interface StoredMarketSource {
   id?: string;
   name?: string;
+  url?: string;
+  /** Written before 0.6.11 by sources that were git repositories; such an entry is removed when it is read. */
   repo_url?: string;
   branch?: string;
   enabled?: boolean;
   priority?: number;
-  trust?: 'official' | 'community' | 'custom';
-  resolved_at?: string;
-  refresh_error?: string;
   accepted_at?: string;
 }
 
+/** A source this box had before 0.6.11 (a git repository read as raw files) that the Market can no longer read. */
+export interface RemovedMarketSource {
+  id: string;
+  name: string;
+  /** The repository address it had. */
+  address: string;
+  branch?: string;
+  removed_at: string;
+}
+
+interface StoredSourceList {
+  active_sources?: StoredMarketSource[];
+  removed_sources?: RemovedMarketSource[];
+}
+
 export const OFFICIAL_MARKET_SOURCE_ID = 'official';
-export const DEFAULT_MARKET_BRANCH = 'main';
-const MARKET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+export const OFFICIAL_MARKET_NAME = 'Official YouEye Market';
 
-export function officialMarketSource(options: { enabled?: boolean; resolved_at?: string; refresh_error?: string } = {}): MarketSource {
-  return {
-    id: OFFICIAL_MARKET_SOURCE_ID,
-    name: 'Official YouEye Market',
-    kind: 'channel',
-    repo_url: '',
-    branch: '',
-    enabled: options.enabled ?? true,
-    priority: 0,
-    trust: 'official',
-    provider: '',
-    base_url: '',
-    organization: '',
-    repository: '',
-    resolved_at: options.resolved_at,
-    refresh_error: options.refresh_error,
-  };
+/** The official Market's two lanes: `main` for boxes on the beta and stable channels, `dev` for dev and alpha. */
+export const OFFICIAL_MARKET_ADDRESSES = {
+  main: 'https://market.youeye.me/',
+  dev: 'https://market.youeye.me/dev/',
+} as const;
+
+export function isOfficialMarketAddress(address: string | null | undefined): boolean {
+  return address === OFFICIAL_MARKET_ADDRESSES.main || address === OFFICIAL_MARKET_ADDRESSES.dev;
 }
 
-export const isChannelMarketSource = (source: Pick<MarketSource, 'kind'>) => source.kind === 'channel';
+/** The answer when an official lane is offered as a custom market (adding it, re-pointing a market at it, a preview of the other lane). */
+export const OFFICIAL_MARKET_AS_CUSTOM = 'This is the official YouEye Market; your YouEye already follows it';
 
-function detectProvider(baseUrl: string): 'github' | 'gitea' {
-  const host = new URL(baseUrl).hostname.toLowerCase();
-  return host === 'github.com' || host.endsWith('.github.com') ? 'github' : 'gitea';
-}
-
-/** A custom (git) Market source added by URL. */
-export function parseMarketRepoURL(
-  repoUrl: string,
-  options: {
-    id?: string;
-    name?: string;
-    branch?: string;
-    enabled?: boolean;
-    priority?: number;
-    trust?: 'official' | 'community' | 'custom';
-    resolved_at?: string;
-    refresh_error?: string;
-    accepted_at?: string;
-  } = {}
-): MarketSource {
-  const trimmed = repoUrl.trim().replace(/\/$/, '').replace(/\.git$/, '');
-  if (!trimmed) throw new Error('Market repo URL is required');
-
-  let parsed: URL;
+/**
+ * True for the address of an official lane, however its host is spelled (a trailing dot names the same server).
+ * A custom market is never one of these: the box already follows the lane of its channel, and the other lane would
+ * list every app twice. Other folders of the same host (`https://market.youeye.me/test/…`) are ordinary markets.
+ */
+export function isOfficialMarketLane(address: string | null | undefined): boolean {
+  if (!address) return false;
   try {
-    parsed = new URL(trimmed);
+    const url = new URL(address);
+    return isOfficialMarketAddress(`${url.protocol}//${url.host.toLowerCase().replace(/\.(?=$|:)/, '')}${url.pathname}`);
   } catch {
-    throw new Error('Market repo URL must be a valid URL');
+    return false;
   }
+}
 
-  if (parsed.protocol !== 'https:') throw new Error('Market repo URL must start with https://');
+/** The official Market address for a release channel, or null for a channel this reader does not know. */
+export function officialMarketAddressForChannel(channel: unknown): string | null {
+  if (channel === 'dev' || channel === 'alpha') return OFFICIAL_MARKET_ADDRESSES.dev;
+  if (channel === 'beta' || channel === 'stable') return OFFICIAL_MARKET_ADDRESSES.main;
+  return null;
+}
 
-  const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/');
-  if (parts.length < 2 || !parts[0] || !parts[1]) {
-    throw new Error('Market repo URL must include owner and repository');
-  }
+export interface ReleaseChannelClient {
+  getReleaseChannel(): Promise<{ channel: string }>;
+}
 
-  const baseUrl = `${parsed.protocol}//${parsed.host}`;
-  const organization = parts[0];
-  const repository = parts[1].replace(/\.git$/, '');
+const CHANNEL_TIMEOUT_MS = 5_000;
 
-  const branch = (options.branch || DEFAULT_MARKET_BRANCH).trim() || DEFAULT_MARKET_BRANCH;
-  if (!MARKET_REF_PATTERN.test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('/')) {
-    throw new Error('Market branch must be a safe branch name');
-  }
+/**
+ * The official Market's address now. Spine knows the box's channel. When Spine cannot be asked (or names a channel
+ * this reader does not know), the lane last used (`lastKnown`, kept with the official market's store) stays; with
+ * none, the `main` lane is used. The dev lane is never a guess: it is only ever chosen because Spine said dev or alpha.
+ */
+export async function officialMarketAddress(
+  lastKnown?: string | null, client?: ReleaseChannelClient,
+): Promise<{ address: string; from: 'channel' | 'last-known' | 'default'; channel?: string }> {
+  try {
+    const spine = client ?? (await import('../spine/client')).spineClient;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await Promise.race([
+      spine.getReleaseChannel(),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Spine did not answer')), CHANNEL_TIMEOUT_MS); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    const address = officialMarketAddressForChannel(answer?.channel);
+    if (address) return { address, from: 'channel', channel: answer.channel };
+  } catch { /* Spine cannot be asked right now */ }
+  if (isOfficialMarketAddress(lastKnown)) return { address: lastKnown!, from: 'last-known' };
+  return { address: OFFICIAL_MARKET_ADDRESSES.main, from: 'default' };
+}
 
+export function officialMarketSource(options: { enabled?: boolean } = {}): MarketSource {
+  return { id: OFFICIAL_MARKET_SOURCE_ID, name: OFFICIAL_MARKET_NAME, kind: 'official', url: '', enabled: options.enabled ?? true, priority: 0 };
+}
+
+export const isOfficialMarketSource = (source: Pick<MarketSource, 'kind'>) => source.kind === 'official';
+
+const MARKET_SOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** Ids no custom market may take: the official Market's, and `direct` (the source id prefix of apps added by URL). */
+const RESERVED_MARKET_SOURCE_IDS = new Set([OFFICIAL_MARKET_SOURCE_ID, 'direct']);
+
+/** A custom market from its address. Throws when the address cannot be a market address. */
+export function customMarketSource(
+  url: string,
+  options: { id: string; name?: string; enabled?: boolean; priority?: number; accepted_at?: string },
+): MarketSource {
+  const address = normalizeMarketAddress(url);
   return {
-    id: options.id || 'custom',
-    name: options.name || repository,
-    kind: 'git',
-    repo_url: `${baseUrl}/${organization}/${repository}`,
-    branch,
+    id: options.id,
+    name: options.name?.trim() || new URL(address).host,
+    kind: 'url',
+    url: address,
     enabled: options.enabled ?? true,
     priority: options.priority ?? 1,
-    trust: options.trust === 'community' ? 'community' : 'custom',
-    provider: detectProvider(baseUrl),
-    base_url: baseUrl,
-    organization,
-    repository,
-    resolved_at: options.resolved_at,
-    refresh_error: options.refresh_error,
     accepted_at: options.accepted_at,
   };
 }
@@ -153,42 +168,74 @@ async function atomicWriteJSON(filePath: string, value: unknown): Promise<void> 
 }
 
 function stored(source: MarketSource): StoredMarketSource {
-  return source.kind === 'channel'
-    ? { id: source.id, enabled: source.enabled, trust: 'official', resolved_at: source.resolved_at, refresh_error: source.refresh_error }
-    : { id: source.id, name: source.name, repo_url: source.repo_url, branch: source.branch, enabled: source.enabled,
-        priority: source.priority, trust: source.trust, resolved_at: source.resolved_at, refresh_error: source.refresh_error,
-        accepted_at: source.accepted_at };
+  return isOfficialMarketSource(source)
+    ? { id: source.id, enabled: source.enabled }
+    : { id: source.id, name: source.name, url: source.url, enabled: source.enabled, priority: source.priority, accepted_at: source.accepted_at };
 }
 
-function fromStored(entries: StoredMarketSource[]): MarketSource[] {
-  const officialEntry = entries.find((entry) => entry.id === OFFICIAL_MARKET_SOURCE_ID || entry.trust === 'official' && !entry.repo_url);
-  const custom = entries
-    .filter((entry) => entry !== officialEntry && entry.id !== OFFICIAL_MARKET_SOURCE_ID && entry.trust !== 'official' && entry.repo_url)
-    .map((entry, index) => parseMarketRepoURL(entry.repo_url!, {
-      id: entry.id || `source-${index + 1}`,
-      name: entry.name || `Market ${index + 1}`,
-      branch: entry.branch,
-      enabled: entry.enabled ?? true,
-      priority: Math.max(1, entry.priority ?? index + 1),
-      trust: entry.trust,
-      resolved_at: entry.resolved_at,
-      refresh_error: entry.refresh_error,
-      accepted_at: typeof entry.accepted_at === 'string' && entry.accepted_at ? entry.accepted_at : undefined,
-    }));
-  return [officialMarketSource({ enabled: officialEntry?.enabled ?? true, resolved_at: officialEntry?.resolved_at, refresh_error: officialEntry?.refresh_error }), ...custom]
-    .sort((a, b) => a.priority - b.priority);
+interface SourceListState {
+  sources: MarketSource[];
+  removed: RemovedMarketSource[];
+  /** The file still holds entries this reader drops (git sources from before 0.6.11): it must be rewritten. */
+  stale: boolean;
 }
 
-async function readMarketSources(): Promise<MarketSource[]> {
-  if (!existsSync(MARKET_SOURCES_PATH)) return [officialMarketSource()];
-  const raw = JSON.parse(await readFile(MARKET_SOURCES_PATH, 'utf8')) as { active_sources?: StoredMarketSource[] };
-  return fromStored(Array.isArray(raw.active_sources) ? raw.active_sources : []);
+/**
+ * The source list from its stored entries. An entry that is not a market address is dropped: a git source from before
+ * 0.6.11 (`repo_url`) is remembered in `removed`, so the sources page can say what went away.
+ */
+function marketSourcesFromStored(raw: StoredSourceList | null | undefined, now = new Date().toISOString()): SourceListState {
+  const entries = Array.isArray(raw?.active_sources) ? raw!.active_sources!.filter((entry) => entry && typeof entry === 'object') : [];
+  const removed = (Array.isArray(raw?.removed_sources) ? raw!.removed_sources! : [])
+    .filter((entry) => entry && typeof entry.id === 'string' && typeof entry.address === 'string');
+  const officialEntry = entries.find((entry) => entry.id === OFFICIAL_MARKET_SOURCE_ID);
+  const custom: MarketSource[] = [];
+  let stale = false;
+  for (const [index, entry] of entries.entries()) {
+    if (entry === officialEntry) continue;
+    const id = typeof entry.id === 'string' ? entry.id : '';
+    try {
+      if (typeof entry.url !== 'string' || !MARKET_SOURCE_ID_PATTERN.test(id) || RESERVED_MARKET_SOURCE_IDS.has(id)
+        || custom.some((source) => source.id === id)) throw new Error('not a market entry');
+      custom.push(customMarketSource(entry.url, {
+        id,
+        name: typeof entry.name === 'string' ? entry.name : undefined,
+        enabled: entry.enabled !== false,
+        priority: Math.max(1, Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : index + 1),
+        accepted_at: typeof entry.accepted_at === 'string' && entry.accepted_at ? entry.accepted_at : undefined,
+      }));
+    } catch {
+      stale = true;
+      const address = typeof entry.repo_url === 'string' ? entry.repo_url : typeof entry.url === 'string' ? entry.url : '';
+      if (id && address && !removed.some((gone) => gone.id === id && gone.address === address)) {
+        removed.push({
+          id, name: typeof entry.name === 'string' && entry.name ? entry.name : id, address,
+          ...(typeof entry.branch === 'string' && entry.branch ? { branch: entry.branch } : {}), removed_at: now,
+        });
+      }
+    }
+  }
+  return {
+    sources: [officialMarketSource({ enabled: officialEntry?.enabled !== false }), ...custom].sort((a, b) => a.priority - b.priority),
+    removed,
+    stale,
+  };
+}
+
+async function readSourceList(): Promise<SourceListState> {
+  let text: string;
+  try { text = await readFile(sourcesPath(), 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { sources: [officialMarketSource()], removed: [], stale: false };
+    throw error;
+  }
+  return marketSourcesFromStored(JSON.parse(text) as StoredSourceList);
 }
 
 /**
  * The one write chain of the source list in this process. The module is bundled more than once (the API routes and
  * `instrumentation`'s background jobs each get a copy), so the chain lives on `globalThis`: a module-level chain per
- * copy would let a background resolution write a list read before an owner's add or edit, and revert it.
+ * copy would let one copy write a list read before the other's add or edit, and revert it.
  */
 const WRITE_CHAIN = Symbol.for('youeye.market-sources.write-chain');
 const writeChainHolder = globalThis as typeof globalThis & { [WRITE_CHAIN]?: { tail: Promise<unknown> } };
@@ -196,45 +243,68 @@ const writeChain = writeChainHolder[WRITE_CHAIN] ??= { tail: Promise.resolve() }
 
 /**
  * Read, change and write the source list as one step (one writer at a time in this process). The file is read inside
- * the serialised section. `change` returns null when nothing changes: then nothing is written.
+ * the serialised section. `change` returns null when nothing changes: then nothing is written, unless the file still
+ * holds entries the reader dropped.
  */
-async function mutateMarketSources(change: (sources: MarketSource[]) => MarketSource[] | null): Promise<MarketSource[]> {
+async function mutateMarketSources(
+  change: (sources: MarketSource[], removed: RemovedMarketSource[]) => { sources?: MarketSource[]; removed?: RemovedMarketSource[] } | null,
+): Promise<SourceListState> {
   const run = writeChain.tail.catch(() => undefined).then(async () => {
-    const current = await readMarketSources();
-    const next = change(current);
-    if (!next) return current;
-    await mkdir(MARKET_STATE_DIR, { recursive: true });
-    await atomicWriteJSON(MARKET_SOURCES_PATH, { active_sources: next.map(stored) });
+    const current = await readSourceList();
+    const changed = change(current.sources, current.removed);
+    if (!changed && !current.stale) return current;
+    const next: SourceListState = { sources: changed?.sources ?? current.sources, removed: changed?.removed ?? current.removed, stale: false };
+    await mkdir(marketStateDir(), { recursive: true });
+    await atomicWriteJSON(sourcesPath(), {
+      active_sources: next.sources.map(stored),
+      ...(next.removed.length ? { removed_sources: next.removed } : {}),
+    } satisfies StoredSourceList);
+    if (current.stale) console.warn('[market] Sources that are not market addresses were removed from the source list');
     return next;
   });
   writeChain.tail = run;
   return run;
 }
 
-/** The official source plus every custom source, in priority order. */
+/** The list as stored, written back first when it still holds entries this reader drops. */
+async function currentSourceList(): Promise<SourceListState> {
+  const state = await readSourceList();
+  return state.stale ? mutateMarketSources(() => null) : state;
+}
+
+/** The official Market plus every custom market, in priority order. */
 export async function getConfiguredMarketSources(): Promise<MarketSource[]> {
-  return readMarketSources();
+  return (await currentSourceList()).sources;
 }
 
 export async function getMarketSources(): Promise<MarketSource[]> {
   return (await getConfiguredMarketSources()).filter((source) => source.enabled);
 }
 
+/** Sources removed when this box moved to markets by address (git sources); shown on the sources page. */
+export async function getRemovedMarketSources(): Promise<RemovedMarketSource[]> {
+  return (await currentSourceList()).removed;
+}
+
+/** The owner has read the note about removed sources. */
+export async function dismissRemovedMarketSources(): Promise<void> {
+  await mutateMarketSources((_sources, removed) => (removed.length ? { removed: [] } : null));
+}
+
 /** One entry of the source list as a client sends it to `PATCH /api/market/source`. */
 export interface MarketSourceListEntry {
   id?: unknown;
   name?: unknown;
-  repo_url?: unknown;
-  branch?: unknown;
+  url?: unknown;
   enabled?: unknown;
   priority?: unknown;
 }
 
 /**
  * The source list after a client's edit: sources can be enabled, disabled, renamed, reordered and removed. A source
- * cannot be created here (`addMarketSource` does that, with consent), and acceptance and refresh state are never
- * taken from the client. A custom source whose address or branch changes loses its acceptance. The official source
- * is always kept (it may be disabled).
+ * cannot be created here (`addMarketSource` does that, with consent), and acceptance is never taken from the client.
+ * A custom market whose address changes loses its acceptance, and cannot be pointed at an official lane. The official
+ * Market is always kept (it may be turned off).
  */
 export function applyMarketSourceListEdit(current: MarketSource[], requested: MarketSourceListEntry[]): MarketSource[] {
   const seen = new Set<string>();
@@ -246,58 +316,63 @@ export function applyMarketSourceListEdit(current: MarketSource[], requested: Ma
     if (seen.has(id)) throw new Error(`Market source "${id}" is listed twice`);
     seen.add(id);
     const enabled = typeof entry.enabled === 'boolean' ? entry.enabled : existing.enabled;
-    if (isChannelMarketSource(existing)) {
+    if (isOfficialMarketSource(existing)) {
       next.push({ ...existing, enabled });
       continue;
     }
     const priority = Number.isFinite(Number(entry.priority)) && entry.priority !== null && entry.priority !== ''
       ? Math.max(1, Number(entry.priority)) : existing.priority;
     const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : existing.name;
-    const target = parseMarketRepoURL(typeof entry.repo_url === 'string' && entry.repo_url.trim() ? entry.repo_url : existing.repo_url, {
-      branch: typeof entry.branch === 'string' && entry.branch.trim() ? entry.branch : existing.branch,
-    });
-    const retargeted = target.repo_url !== existing.repo_url || target.branch !== existing.branch;
-    next.push(retargeted
-      ? { ...target, id, name, enabled, priority, trust: existing.trust, accepted_at: undefined, resolved_at: undefined, refresh_error: undefined }
+    const url = typeof entry.url === 'string' && entry.url.trim() ? checkedMarketAddress(entry.url) : existing.url;
+    if (url !== existing.url && isOfficialMarketLane(url)) throw new Error(OFFICIAL_MARKET_AS_CUSTOM);
+    next.push(url !== existing.url
+      ? { ...existing, url, name, enabled, priority, accepted_at: undefined }
       : { ...existing, name, enabled, priority });
   }
-  if (!seen.has(OFFICIAL_MARKET_SOURCE_ID)) next.push(current.find(isChannelMarketSource) ?? officialMarketSource());
+  if (!seen.has(OFFICIAL_MARKET_SOURCE_ID)) next.push(current.find(isOfficialMarketSource) ?? officialMarketSource());
+  const addresses = next.filter((source) => !isOfficialMarketSource(source)).map((source) => source.url);
+  if (new Set(addresses).size !== addresses.length) throw new Error('Two Market sources have the same address');
   return next.sort((a, b) => a.priority - b.priority);
 }
 
 /** Apply a client's edit of the source list (see `applyMarketSourceListEdit`). */
 export async function updateMarketSourceList(requested: MarketSourceListEntry[]): Promise<MarketSource[]> {
-  return mutateMarketSources((current) => applyMarketSourceListEdit(current, requested));
+  return (await mutateMarketSources((current) => ({ sources: applyMarketSourceListEdit(current, requested) }))).sources;
 }
 
-const MARKET_SOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** A normalised market address that is not an internal host by name (the fetcher checks what it resolves to). */
+export function checkedMarketAddress(input: string): string {
+  const address = normalizeMarketAddress(input);
+  if (isPrivateHostname(new URL(address).hostname)) throw new Error('A market address must point to a public server');
+  return address;
+}
 
 export interface NewMarketSource {
-  repo_url: string;
-  branch?: string;
+  /** The market's address (its folder URL, or its market.json). */
+  url: string;
   name?: string;
   /** Optional id (lowercase letters, digits, hyphens); generated when omitted. */
   id?: string;
 }
 
-/** Ids no custom source may take: the official source's, and `direct` (the source id prefix of apps added by URL). */
-const RESERVED_MARKET_SOURCE_IDS = new Set([OFFICIAL_MARKET_SOURCE_ID, 'direct']);
-
-/** A source id an installed app still records, with the repository it recorded (empty when none). */
+/** A source id an installed app still records, with the market address it recorded (empty when none). */
 export interface RecordedMarketSourceId {
   sourceId: string;
   sourceRepoUrl?: string | null;
 }
 
 /**
- * The source list with a new custom source, accepted at `acceptedAt`. Adding needs the owner's consent first.
+ * The source list with a new custom market, accepted at `acceptedAt`. Adding needs the owner's consent first. An
+ * official lane is refused (`OFFICIAL_MARKET_AS_CUSTOM`).
  *
  * An installed app follows its source id, so an id an installed app still records (`recorded`) is never handed out
- * again: a generated id skips it, and a chosen one is refused unless it names the same repository the app recorded.
+ * again: a generated id skips it, and a chosen one is refused unless it names the same address the app recorded.
  */
 export function withAddedMarketSource(
   current: MarketSource[], input: NewMarketSource, acceptedAt: string, recorded: RecordedMarketSourceId[] = [],
 ): MarketSource[] {
+  const address = checkedMarketAddress(input.url);
+  if (isOfficialMarketLane(address)) throw new Error(OFFICIAL_MARKET_AS_CUSTOM);
   const requestedId = input.id?.trim();
   if (requestedId !== undefined && requestedId !== '' && (!MARKET_SOURCE_ID_PATTERN.test(requestedId) || RESERVED_MARKET_SOURCE_IDS.has(requestedId))) {
     throw new Error('A Market source id uses lowercase letters, digits and hyphens (at most 32), and is not "official" or "direct"');
@@ -306,11 +381,12 @@ export function withAddedMarketSource(
     throw new Error(`Market source "${requestedId}" already exists`);
   }
   if (requestedId) {
-    const other = recorded.find((entry) => entry.sourceId === requestedId && !repositoriesMatch(entry.sourceRepoUrl, input.repo_url));
+    const other = recorded.find((entry) => entry.sourceId === requestedId && !sameMarketAddress(entry.sourceRepoUrl, address));
     if (other) {
-      throw new Error(`An installed app still records Market source "${requestedId}" for ${other.sourceRepoUrl || 'another repository'}; choose another id`);
+      throw new Error(`An installed app still records Market source "${requestedId}" for ${other.sourceRepoUrl || 'another address'}; choose another id`);
     }
   }
+  if (current.some((existing) => existing.url === address)) throw new Error('This market is already a Market source');
   const taken = (candidate: string) => current.some((source) => source.id === candidate)
     || recorded.some((entry) => entry.sourceId === candidate);
   let id = requestedId;
@@ -318,16 +394,10 @@ export function withAddedMarketSource(
     if (!taken(`custom-${n}`)) id = `custom-${n}`;
   }
   const priority = Math.max(0, ...current.map((source) => source.priority)) + 1;
-  const source = parseMarketRepoURL(input.repo_url, {
-    id, name: input.name?.trim() || undefined, branch: input.branch, enabled: true, priority, trust: 'custom', accepted_at: acceptedAt,
-  });
-  if (current.some((existing) => existing.repo_url === source.repo_url && existing.branch === source.branch)) {
-    throw new Error('This repository and branch is already a Market source');
-  }
-  return [...current, source];
+  return [...current, customMarketSource(address, { id, name: input.name, enabled: true, priority, accepted_at: acceptedAt })];
 }
 
-/** Source ids that installed apps record (installed-app store), with their repositories. */
+/** Source ids that installed apps record (installed-app store), with their market addresses. */
 async function recordedMarketSourceIds(): Promise<RecordedMarketSourceId[]> {
   // Loaded when needed: installed-apps imports the catalog, which imports this module.
   const { getAllInstalledApps } = await import('./installed-apps');
@@ -337,48 +407,24 @@ async function recordedMarketSourceIds(): Promise<RecordedMarketSourceId[]> {
   });
 }
 
-/** Add a custom source. The caller has the owner's consent (`acceptRisk`), so the source is accepted now. */
+/** Add a custom market. The caller has the owner's consent (`acceptRisk`), so the market is accepted now. */
 export async function addMarketSource(input: NewMarketSource): Promise<MarketSource> {
   const recorded = await recordedMarketSourceIds();
-  const sources = await mutateMarketSources((current) => withAddedMarketSource(current, input, new Date().toISOString(), recorded));
+  const { sources } = await mutateMarketSources((current) => ({ sources: withAddedMarketSource(current, input, new Date().toISOString(), recorded) }));
   return sources[sources.length - 1];
 }
 
-/** The owner accepts an existing custom source: its apps may be installed and updated from now on. */
+/** The owner accepts an existing custom market: its apps may be installed and updated from now on. */
 export async function acceptMarketSource(id: string): Promise<MarketSource> {
   let accepted: MarketSource | undefined;
-  await mutateMarketSources((current) => current.map((source) => {
+  await mutateMarketSources((current) => ({ sources: current.map((source) => {
     if (source.id !== id) return source;
-    if (isChannelMarketSource(source)) throw new Error('The official Market needs no acceptance');
+    if (isOfficialMarketSource(source)) throw new Error('The official Market needs no acceptance');
     accepted = { ...source, accepted_at: source.accepted_at ?? new Date().toISOString() };
     return accepted;
-  }));
+  }) }));
   if (!accepted) throw new Error(`Market source "${id}" does not exist`);
   return accepted;
-}
-
-/** A successful refresh newer than this is not recorded again (the time is shown, not used). */
-const RESOLUTION_RECORD_INTERVAL_MS = 60_000;
-
-/**
- * Record a source's last refresh (every catalog fetch calls this). Read-modify-write inside the one write chain; no
- * write when nothing changed: the same error again, a success within a minute of the recorded one, or a source that
- * no longer exists.
- */
-export async function recordMarketSourceResolution(sourceId: string, result: { ok?: boolean; error?: string }): Promise<void> {
-  await mutateMarketSources((sources) => {
-    const source = sources.find((candidate) => candidate.id === sourceId);
-    if (!source) return null;
-    const now = Date.now();
-    const recent = !!source.resolved_at && now - Date.parse(source.resolved_at) >= 0
-      && now - Date.parse(source.resolved_at) < RESOLUTION_RECORD_INTERVAL_MS;
-    if ((source.refresh_error ?? undefined) === (result.error ?? undefined) && (!result.ok || recent)) return null;
-    return sources.map((candidate) => candidate === source ? {
-      ...candidate,
-      ...(result.ok ? { resolved_at: new Date(now).toISOString() } : {}),
-      refresh_error: result.error,
-    } : candidate);
-  });
 }
 
 // ─── Consent ─────────────────────────────────────────────
@@ -386,18 +432,18 @@ export async function recordMarketSourceResolution(sourceId: string, result: { o
 /**
  * Why an app may not be installed, updated or re-pointed from this source; null when it may.
  *
- * The one rule for Market sources: the official Market may always be used; a custom source only after the owner
+ * The one rule for Market sources: the official Market may always be used; a custom market only after the owner
  * accepted it (`accepted_at`); a disabled or missing source never. Apps added by URL (`direct:` source ids) are not
  * Market sources: each install asks for its own consent (`directAppRefusal`).
  */
 export function marketSourceRefusal(source: MarketSource | null | undefined, sourceId?: string): MarketSourceConsentError | null {
   if (!source) return new MarketSourceConsentError('source-unavailable', `Market source "${sourceId ?? ''}" is not configured`);
   if (!source.enabled) return new MarketSourceConsentError('source-unavailable', `Market source "${source.name}" is turned off`);
-  if (isChannelMarketSource(source)) return null;
+  if (isOfficialMarketSource(source)) return null;
   if (!source.accepted_at) {
     return new MarketSourceConsentError('source-not-accepted',
       `Market source "${source.name}" is not accepted: its apps are not checked by YouEye. Accept it first `
-      + `(youeye market source accept ${source.id})`);
+      + `(youeye market accept ${source.id})`);
   }
   return null;
 }
@@ -417,7 +463,7 @@ export function directAppRefusal(
   return null;
 }
 
-/** A Market source that may be used for an install or update; the official source when none is named. */
+/** A Market source that may be used for an install or update; the official Market when none is named. */
 export async function usableMarketSource(sourceId?: string | null): Promise<MarketSource> {
   const id = sourceId?.trim() || OFFICIAL_MARKET_SOURCE_ID;
   if (id.startsWith('direct:')) throw new MarketSourceConsentError('source-unavailable', 'An Added app is not a Market source');
@@ -432,8 +478,8 @@ export type MarketSourceConsentCode = 'source-unavailable' | 'source-not-accepte
 
 /**
  * A refusal for lack of the owner's consent. Its message is safe to show; routes answer 403 (409 for setup-changed).
- * `source-changed`: the app's source id now names another repository than the app was installed from
- * (`recordedSourceRepositoryChange`); only an explicit switch of the app moves it.
+ * `source-changed`: the app's source id now names another market address than the app was installed from
+ * (`recordedSourceAddressChange`); only an explicit switch of the app moves it.
  */
 export class MarketSourceConsentError extends Error {
   constructor(
@@ -460,24 +506,4 @@ export function setupFilesChanged(
   const names = new Set([...Object.keys(left), ...Object.keys(right)]);
   for (const name of names) if (left[name] !== right[name]) return true;
   return false;
-}
-
-export function isGitHubMarketSource(source: MarketSource): boolean {
-  return source.provider === 'github';
-}
-
-/** Raw file of a custom (git) source. Plain web paths, never a forge API. */
-export function buildMarketRawURL(source: MarketSource, owner: string, repo: string, filePath: string, branch: string): string {
-  if (source.kind !== 'git') throw new Error('The official Market is read from its catalog release, not from git');
-  const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
-  if (isGitHubMarketSource(source)) {
-    return `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${encodedPath}`;
-  }
-  return `${source.base_url}/${owner}/${repo}/raw/branch/${branch.split('/').map(encodeURIComponent).join('/')}/${encodedPath}`;
-}
-
-/** The ref a custom catalog entry is read from. */
-export function catalogEntryRef(entry: { repo?: string; branch?: string }, catalogRef: string): string {
-  if (!entry.repo) return catalogRef;
-  return entry.branch || DEFAULT_MARKET_BRANCH;
 }

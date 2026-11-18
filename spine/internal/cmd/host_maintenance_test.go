@@ -116,3 +116,14 @@ func TestDisableIncusImageRefresh(t *testing.T) {
 		t.Fatal("an Incus that never answers must be reported")
 	}
 }
+
+// Off an installed appliance (a development machine, the build server) the sweep of old service trees has no
+// runtime to act on and does nothing.
+func TestStageTreeSweepNeedsAnInstalledAppliance(t *testing.T) {
+	if _, err := installedCoreRuntime(); err == nil {
+		t.Skip("this machine is an installed appliance")
+	}
+	if removed := removeFinishedCoreStageTrees(); len(removed) != 0 {
+		t.Fatalf("sweep acted without an installed appliance: %v", removed)
+	}
+}

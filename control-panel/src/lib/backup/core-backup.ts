@@ -4,7 +4,7 @@
  * Backs up the YouEye platform infrastructure:
  * 1. Dump the YouEye ID, UI, and AI PostgreSQL databases (live, MVCC-safe)
  * 2. Collect youeye.yaml config
- * 3. Build installed-apps.json from install metadata
+ * 3. Build installed-apps.json from install metadata; copy the Market's sources and Added apps (market-state.ts)
  * 4. Stage infra secrets, Caddy config, Pi-Hole config, identity media
  * 5. Call Spine for live volume backup of infrastructure directories
  * 6. Archive + encrypt
@@ -38,6 +38,7 @@ import {
 import { readCurrentBackupSourceIdentity } from './compatibility';
 import { stageRetainedApps } from './retained-apps';
 import { runWithBackupAdmission } from './admission';
+import { stageMarketState } from './market-state';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'create');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
@@ -196,6 +197,14 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
     // excluded so a restored PID can never inherit a stale lock owner.
     await stageAppNetworkRecoveryState(stagingDir);
     const retained = await stageRetainedApps(stagingDir);
+    // The market sources the owner added and the apps added by URL; what the markets hold is read again after a
+    // restore (/var/lib/youeye/markets is not backed up).
+    let marketFiles: string[];
+    try {
+      marketFiles = await stageMarketState(stagingDir, YOUEYE_DATA_DIR);
+    } catch (error) {
+      throw new Error(`Could not back up the Market sources: ${error}`);
+    }
 
     // ── Step 4: Stage Caddy config ─────────────────────────
     emit('stage-caddy', 'Staging Caddy configuration...');
@@ -252,6 +261,8 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
         timestamp: new Date().toISOString(),
         hostname: config.hostname || os.hostname(),
         infraContainers: INFRA_CONTAINERS,
+        // The Market files under market/ (an empty list: the box had none, and a restore removes the target's).
+        marketFiles,
         // Runtime authority is regenerated on restore; keep only provenance.
         serviceCredentials: await Promise.all((await listInstalledApps())
           .map(app => appServiceCredentials.projection(app.appId))),

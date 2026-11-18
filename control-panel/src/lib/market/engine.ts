@@ -2023,17 +2023,17 @@ async function installAppLocked(
   emit(onEvent, step, totalSteps, 'running', 'Preparing dashboard registration...');
   try {
     const displayName = config.customName || manifest.metadata.name;
-    // Inline the icon from the app's own catalog files (never a URL) so it works on all
-    // subdomains; fall back to the Lucide icon name.
+    // Inline the icon from the app's market (a picture its accepted index or bundle names, never a URL)
+    // so it works on all subdomains; fall back to the Lucide icon name.
     const { resolveAppIcon } = await import('./app-icon');
-    const { officialCatalogFile } = await import('./catalog-release');
+    const { readInstallIconPicture } = await import('./market-store');
     const displayIcon = await resolveAppIcon({
       appId,
       iconUrl: manifest.metadata.iconUrl,
       lucide: manifest.metadata.icon,
       customIcon: config.customIcon,
-      manifestPath: config.sourceId?.startsWith('direct:') ? undefined : config.manifestPath,
-    }, (filePath) => officialCatalogFile(filePath));
+      sourceId: config.sourceId,
+    }, readInstallIconPicture);
     const ssoEntryUrl = manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined;

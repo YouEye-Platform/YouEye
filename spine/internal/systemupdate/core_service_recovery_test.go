@@ -66,13 +66,17 @@ func TestRecoveredCPSelectionRequiresExactOriginalRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if err = verifyRecoveredCoreSelection(root, selection); err != nil {
+	m := CoreManager{Root: t.TempDir()}
+	if err = verifyRecoveredCoreSelection(m, root, selection, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(dir, "core-release.json"), []byte(`{"fixture":"another release"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = verifyRecoveredCoreSelection(root, selection); err == nil {
+	if err = verifyRecoveredCoreSelection(m, root, selection, ".fixture.core-release.json"); err == nil {
 		t.Fatal("changed historical release accepted")
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "core-release.json")); err != nil || string(raw) != `{"fixture":"another release"}` {
+		t.Fatal("refused selection was rewritten", err)
 	}
 }

@@ -10,8 +10,8 @@
 import { isMap, isScalar, isSeq, parseDocument, type Node as YAMLNode } from 'yaml';
 import type { z } from 'zod/v4';
 import {
-  AppSchema, BundleSchema, CatalogIndexSchema, CatalogSchema, PINNED_IMAGE, SetupSchema,
-  type AppDocument, type BundleDocument, type CatalogDocument, type CatalogIndexDocument, type SetupDocument,
+  AppSchema, BundleSchema, CatalogSchema, PINNED_IMAGE, SetupSchema,
+  type AppDocument, type BundleDocument, type CatalogDocument, type SetupDocument,
 } from './schema';
 import { checkVariable, variableReferences, type VariableScope } from './variables';
 
@@ -189,10 +189,6 @@ export function parseBundle(text: string): BundleDocument {
 
 export function parseCatalog(text: string): CatalogDocument {
   return validate(CatalogSchema, readYAML(text, 'catalog.yaml'), 'catalog.yaml');
-}
-
-export function parseCatalogIndex(text: string): CatalogIndexDocument {
-  return validate(CatalogIndexSchema, readYAML(text, 'catalog.json'), 'catalog.json');
 }
 
 // ─── App package (manifest + setup files) ─────────────────

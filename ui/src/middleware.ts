@@ -22,8 +22,6 @@ const PUBLIC_ROUTES = [
   "/api/v1/branding/icon",
   "/api/v1/header/config",
   "/api/v1/widgets",
-  "/api/market-image",
-  "/api/market/image",
   "/api/v1/user/avatar",  // Public: profile pictures are served without auth
   "/api/v1/onboarding",
   "/api/v1/telemetry/record",  // Accepts sendBeacon (no custom headers), validates session in route

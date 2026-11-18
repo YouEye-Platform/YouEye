@@ -87,6 +87,35 @@ func TestCoreControlDeliveryDoesNotRepeatLostLaunch(t *testing.T) {
 		})
 	}
 }
+
+// The continuation unit: what the coordinator writes to standard error (its
+// hand-over decision, the error it ends with) reaches the system journal;
+// standard output, the whole journal document, does not. Its lifetime and the
+// way it is killed stay as they are.
+func TestCoreControlUnitLogsStandardErrorToTheJournal(t *testing.T) {
+	m, _, target := coreJournalFixture(t)
+	j := prepareCoreFixture(t, m, target)
+	var launch []string
+	runner := CoreControlRunner{Root: m.Root, Executable: "/usr/local/bin/youeye"}
+	runner.Capture = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "systemd-run" {
+			launch = args
+			return nil, nil
+		}
+		return []byte("Id=" + args[len(args)-1] + "\nLoadState=not-found\n"), nil
+	}
+	if _, err := runner.Start(context.Background(), j.RequestID, "delivery-1"); err != nil {
+		t.Fatal(err)
+	}
+	unit := fmt.Sprintf("youeye-core-control-%x.service", sha256.Sum256([]byte(j.RequestID+"\x00delivery-1")))
+	want := []string{"--quiet", "--no-ask-password", "--unit=" + unit, "--description=YouEye core continuation " + unit, "--service-type=exec", "--remain-after-exit", "--uid=root", "--working-directory=/",
+		"--property=KillMode=control-group", "--property=Restart=no", "--property=RuntimeMaxSec=4h", "--property=UMask=0077", "--property=StandardOutput=null", "--property=StandardError=journal",
+		"--", "/usr/local/bin/youeye", "update", "core", "resume", "--request", j.RequestID}
+	if strings.Join(launch, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("continuation unit:\n got %q\nwant %q", launch, want)
+	}
+}
+
 func TestCoreActivationAdmissionRequiresCompletedStageAndKeepsOneRequest(t *testing.T) {
 	m, e, target := coreJournalFixture(t)
 	target.Members[2].Artifact.SHA256 = strings.Repeat("e", 64)

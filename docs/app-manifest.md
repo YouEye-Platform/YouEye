@@ -26,7 +26,8 @@ id: mealie                       # 1–32 chars, [a-z0-9-], starts with a letter
 version: 3.22.0                  # the app's own version (required)
 name: Mealie
 requires: { youeye: ">=0.6.2" }  # an older platform says "needs a newer YouEye" (never offered as an update);
-                                 # compares X.Y.Z only, so 0.6.2-dev.1 already satisfies >=0.6.2
+                                 # compares X.Y.Z only, so 0.6.2-dev.1 already satisfies >=0.6.2. Required when
+                                 # the app uses a newer field (see "Fields newer than the format" below)
 # subdomain: …                    # default and normal case: the id. Set it only when upstream itself names a
                                  # different hostname for the app
 
@@ -266,12 +267,14 @@ remove:                          # optional: undo steps, run when the feature is
 - Setup files are listed in the install dialog. An app added by URL has one confirmation that names its host, images
   and setup files; with setup files it must allow them (`--allow-setup` on the CLI; `allowSetup` in the install
   API). An update of such an app whose setup files changed is refused until they are allowed again
-  (`youeye app update <id> --allow-setup`; see [market.md](market.md#other-sources-and-consent)). An update never
+  (`youeye app update <id> --allow-setup`; see [market.md](market.md#markets-and-consent)). An update never
   runs setup files itself: the new files become the installed copy and run on the next sign-in change, address
   change or connection.
 - An app added by URL is fetched over HTTPS from a public server only: the host is resolved first and every address
   must be public (no private, loopback, link-local, CGNAT, unique-local, multicast, reserved or cloud metadata
   address); the request connects to that checked address, redirects are refused and each file is at most 1 MiB.
+  A file may take 20 s (5 s of silence end it earlier), and the manifest with all its setup files 60 s together
+  (`url-app.ts`).
 - **Names:** a file for `sso`, `install` or `url-change` is `setup/<for>.yaml`; a `connect:<app>` file is named
   by the `connects[].setup` of that app. Any other file under `setup/` is an error, so every source (catalog,
   repository, URL) finds the same files.
@@ -289,20 +292,44 @@ remove:                          # optional: undo steps, run when the feature is
   uninstalled app can succeed. Failures are logged and never undo the connection change.
   It sees only `${app.*}`, `${secret.*}`, `${self.*}` and `${peer.*}`.
 
+## Fields newer than the format
+
+`youeye.app.v1` first shipped with YouEye 0.6.3. A field added later is unknown to older boxes, whose strict parser
+refuses it. `control-panel/src/lib/market/app-format/since.ts` lists each such field with the first YouEye version
+that reads it:
+
+| Document | Field | Since |
+|---|---|---|
+| `youeye-app.yaml` | `public_access` | 0.6.4 |
+| setup file | `steps[].http.form` | 0.6.9 |
+| setup file | `remove[].http.form` | 0.6.9 |
+| `youeye-app.yaml` | `sidecars[].data[].from` | 0.6.9 |
+
+(`public_access` is 0.6.4: stable 0.6.3 is build 0.6.3-dev.20, made before the field.)
+
+- **Only fields newer than 0.6.11 need `requires`.** A market is read only by YouEye 0.6.11 or later
+  (`OLDEST_MARKET_READER` in `since.ts`), and every such box knows the fields above, so these rows are kept as a
+  record and the generator does not enforce them. For a row above 0.6.11, an app author who uses the field writes
+  `requires: { youeye: ">=<since>" }` (or higher); the market generator refuses the app otherwise and says what to
+  write (a missing `requires` counts as 0.6.3). A box below the version then lists the app as "Needs YouEye X.Y.Z or
+  newer" from the market's index and never parses its manifest
+  ([market-format.md](market-format.md#rules-that-keep-every-box-working)).
+- **Whoever adds a field to `schema.ts`** adds its row in the same change, with the version of the release that
+  first ships it (`tests/app-format-since.spec.ts` checks every row against the schema), and ships that YouEye
+  release before any market uses the field.
+
 ## Other kinds
 - **Bundle** (`bundles/<id>/bundle.yaml`, `youeye.bundle.v1`): `id`, `name`, `description`, `icon`, `category`,
   `summary`, `members` (install order), `connections` (`{from, to, scope}`), `shared` (groups).
 - **Catalog** (`catalog.yaml`, `youeye.catalog.v1`): `categories`, `curation` (`spotlight`, `collections`) and
-  `native: [ids]` (the native apps the Market shows; each comes from its own product release). Container apps and
+  `native: [ids]` (the native apps the Market shows, read from the official Market only; each comes from its own
+  product release). Container apps and
   bundles are discovered from the folders `apps/<id>/youeye-app.yaml` and `bundles/<id>/bundle.yaml`; there is no
-  hand-written app list.
-- **Catalog index** (`catalog.json`, `youeye.catalog-index.v1`: `apps` and `bundles` id lists): only custom
-  Market sources read it, because a repository read as raw files cannot list folders. Such a source writes it
-  itself; the Market's own release does not need it. A `system` list is still accepted and ignored.
+  hand-written app list. With `store.yaml` (the market's name and publisher) this is what the generator turns into
+  a published market ([market-format.md](market-format.md)).
 - **No system apps.** The images of Caddy, PostgreSQL and Pi-hole are pinned in the Control Panel
-  (`control-panel/src/lib/infrastructure/system-images.ts`) and change only with a System release. The
-  `youeye.system-app.v1` reader is gone; `system/<id>.yaml` files are not read from any source. The ones still in
-  `YE-AppMarket` serve only boxes up to 0.6.9 and are removed by the next plan.
+  (`control-panel/src/lib/infrastructure/system-images.ts`) and change only with a System release. No market
+  carries them.
 
 ## Installed resources
 - Every Incus instance, custom volume and network an install creates carries

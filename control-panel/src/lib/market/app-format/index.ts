@@ -1,4 +1,4 @@
-export { AppFormatError, PURPOSE_SETUP_FILES, parseApp, parseAppSource, readAppSource, setupFileNames, parseBundle, parseCatalog, parseCatalogIndex, parseSetup, readYAML } from './parse';
+export { AppFormatError, PURPOSE_SETUP_FILES, parseApp, parseAppSource, readAppSource, setupFileNames, parseBundle, parseCatalog, parseSetup, readYAML } from './parse';
 export type { AppSource, ParsedApp, ParseOptions } from './parse';
 export { compileApp, fetchApp, loadApp, loadFrozenApp, quoteArgv } from './compile';
 export { manifestDigest, canonicalJSON } from './digest';

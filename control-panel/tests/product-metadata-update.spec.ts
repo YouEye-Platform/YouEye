@@ -18,7 +18,7 @@ test('release-only adoption and ambiguous publication recovery use the durable j
   const base = productFixture('notes','1.0.0',source,{'standalone.tar':Buffer.from('standalone.tar')});
   const build = base.build;
   function release(version: string, sequence: number) {
-    const r = {...base.release,version,tag:productTag('notes',version),sequence};
+    const r = {...base.release,version,tag:productTag(version),sequence};
     return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'notes',repository:source,tag:r.tag});
   }
   const old = release('1.0.0',1), selected = release('1.0.1',2);
