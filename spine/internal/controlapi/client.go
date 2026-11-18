@@ -45,9 +45,40 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// HTTPError is a Control Panel answer that is not a success. Error keeps the raw form; Field reads a text field of
+// the JSON body (the Control Panel answers refusals as {error, code, ...}).
+type HTTPError struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("control panel returned %d: %s", e.StatusCode, string(e.Body))
+}
+
+// Field is the text value of a top-level field of the JSON body, or "" when there is none.
+func (e *HTTPError) Field(name string) string {
+	var body map[string]interface{}
+	if json.Unmarshal(e.Body, &body) != nil {
+		return ""
+	}
+	value, _ := body[name].(string)
+	return value
+}
+
 func NewClient() *Client {
-	c := &Client{
-		baseURL: DefaultCPURL,
+	c := NewClientAt(DefaultCPURL, "")
+	if data, err := os.ReadFile(CLITokenPath); err == nil {
+		c.token = strings.TrimSpace(string(data))
+	}
+	return c
+}
+
+// NewClientAt is a client for the Control Panel at baseURL with this CLI token (tests use a local server).
+func NewClientAt(baseURL, token string) *Client {
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
 		httpClient: &http.Client{
 			Timeout: 2 * time.Minute,
 			Transport: &http.Transport{
@@ -55,10 +86,6 @@ func NewClient() *Client {
 			},
 		},
 	}
-	if data, err := os.ReadFile(CLITokenPath); err == nil {
-		c.token = strings.TrimSpace(string(data))
-	}
-	return c
 }
 
 func (c *Client) Available() bool {
@@ -108,7 +135,7 @@ func (c *Client) Get(path string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("unauthorized -- CLI token missing or invalid (run 'spine deploy' or check %s)", CLITokenPath)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(data))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	var result map[string]interface{}
@@ -134,7 +161,7 @@ func (c *Client) GetArray(path string) ([]interface{}, error) {
 		return nil, fmt.Errorf("unauthorized -- CLI token missing or invalid")
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(data))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	var result []interface{}
@@ -180,7 +207,7 @@ func (c *Client) Post(path string, payload interface{}) (map[string]interface{},
 		return nil, fmt.Errorf("unauthorized -- CLI token missing or invalid")
 	}
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		return nil, fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(data))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	var result map[string]interface{}
@@ -212,7 +239,7 @@ func (c *Client) Patch(path string, payload interface{}) (map[string]interface{}
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(data))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	var result map[string]interface{}
@@ -235,7 +262,7 @@ func (c *Client) Delete(path string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(data))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	var result map[string]interface{}
@@ -288,7 +315,7 @@ func (c *Client) PostSSEJSON(path string, payload interface{}, handler func(raw 
 	}
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(body))
+		return &HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -337,7 +364,7 @@ func (c *Client) PostSSE(path string, payload interface{}, handler func(event SS
 	}
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(body))
+		return &HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 
 	return scanSSEEvents(resp.Body, handler)

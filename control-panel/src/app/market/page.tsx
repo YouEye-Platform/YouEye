@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration, MarketBundle } from '@/lib/market/types';
 import { Input } from '@/components/ui/input';
+import { installBlockedLabel } from '@/components/market/update-blocked';
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -221,6 +222,14 @@ export default function MarketPage() {
   const healthOf = (app: MarketApp) => statuses[app.id]?.healthStatus;
   const isInstalled = (app: MarketApp) => statusOf(app) !== 'not-installed';
   const hasUpdate = (app: MarketApp) => !!statuses[app.id]?.updateAvailable;
+  // An app this box cannot install says which YouEye it needs, in place of its state.
+  const blockedLabel = (app: MarketApp) => (isInstalled(app) ? null : installBlockedLabel(translateInterface, app));
+  const cardState = (app: MarketApp) => {
+    if (hasUpdate(app)) return <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>;
+    const blocked = blockedLabel(app);
+    if (blocked) return <span className="max-w-[45%] shrink-0 truncate text-[11px] font-medium text-amber-700 dark:text-amber-500" title={blocked}>{blocked}</span>;
+    return <StatusDot status={statusOf(app)} health={healthOf(app)} />;
+  };
 
   const matchesSearch = (app: MarketApp) => {
     const q = search.trim().toLowerCase();
@@ -295,7 +304,9 @@ export default function MarketPage() {
     .map((b) => ({ ...b, memberApps: resolveIds(b.members) }))
     .filter((b) => b.memberApps.length > 0);
 
-  const featured = spotlightApps.find((a) => !isInstalled(a)) || spotlightApps[0] || realApps[0];
+  // Never feature an app this box cannot install.
+  const featured = spotlightApps.find((a) => !isInstalled(a) && !a.installBlocked)
+    || spotlightApps.find((a) => !a.installBlocked) || realApps.find((a) => !a.installBlocked);
 
   // App ids surfaced in a curated strip — excluded from the generic category browse below
   // (on the unfiltered All-apps view, where the strips are visible) so they aren't shown twice.
@@ -428,7 +439,7 @@ export default function MarketPage() {
               >
                 <MarketIcon app={app} size={56} tile={catTile(app.category)} />
                 <span className="text-[13.5px] font-semibold">{app.name}</span>
-                <span className="text-[11.5px] text-muted-foreground">{catLabel(app.category)}</span>
+                <span className="text-[11.5px] text-muted-foreground">{blockedLabel(app) ?? catLabel(app.category)}</span>
               </Link>
             ))}
           </div>
@@ -509,11 +520,7 @@ export default function MarketPage() {
                   <div className="flex items-center gap-2 text-sm font-semibold"><span className="truncate">{app.name}</span><SourceTag app={app} /></div>
                   <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                 </div>
-                {hasUpdate(app) ? (
-                  <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>
-                ) : (
-                  <StatusDot status={statusOf(app)} health={healthOf(app)} />
-                )}
+                {cardState(app)}
               </Link>
             ))}
           </div>
@@ -569,11 +576,7 @@ export default function MarketPage() {
                     </div>
                     <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                   </div>
-                  {hasUpdate(app) ? (
-                    <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>
-                  ) : (
-                    <StatusDot status={statusOf(app)} health={healthOf(app)} />
-                  )}
+                  {cardState(app)}
                 </Link>
               ))}
             </div>

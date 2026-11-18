@@ -40,8 +40,10 @@ func (p NativeCoreCheckpoint) Fence(ctx context.Context, request string, runner 
 	}
 	// If checkpoint admission itself failed, reacquire the ordinary lifecycle
 	// lease through its normal admission path. Never bypass unfinished app work.
+	// The locks are waited for (bounded): a fence that fails here stays uncertain
+	// and is never run again, which would hold the box in recovery.
 	barrier := CoreLifecycleBarrier{Root: filepath.Join(p.DataRoot, "state", "app-updates")}
-	if err = barrier.Begin(j); err != nil {
+	if err = barrier.BeginAdmitted(ctx, j); err != nil {
 		return "", err
 	}
 	machine, err := p.observeMachine()

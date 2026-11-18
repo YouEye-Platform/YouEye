@@ -635,14 +635,6 @@ export class SpineClient {
   }
 
   /**
-   * Fetch OCI image manifest digest from a remote registry.
-   * Spine runs on the host with internet access; the CP container is firewalled.
-   */
-  async getRegistryDigest(image: string, tag: string = 'latest'): Promise<{ digest: string; image: string; tag: string }> {
-    return this.request(`/api/registry/digest?image=${encodeURIComponent(image)}&tag=${encodeURIComponent(tag)}`);
-  }
-
-  /**
    * Start a backup operation on Spine.
    * Spine handles host-level operations: stop containers, copy volumes, archive, encrypt.
    */

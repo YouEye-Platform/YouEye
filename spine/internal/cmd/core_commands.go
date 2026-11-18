@@ -22,21 +22,7 @@ func installCoreCommands(parent *cobra.Command) {
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode((coreAPIOperations{}).ObserveInstalled(cmd.Context(), receipt))
 	}})
-	parent.AddCommand(&cobra.Command{Use: "status", Args: cobra.NoArgs, Short: "Read the installed System release and retained transaction", RunE: func(cmd *cobra.Command, _ []string) error {
-		m := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
-		receipt, err := m.ReadReceipt()
-		if err != nil {
-			return err
-		}
-		out := map[string]any{"installed": receipt}
-		journal, err := m.Read()
-		if err == nil {
-			out["transaction"] = journal
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-	}})
+	parent.AddCommand(coreStatusCommand())
 	parent.AddCommand(&cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Resolve the current complete System selection", RunE: func(cmd *cobra.Command, _ []string) error {
 		if _, err := installedCoreRuntime(); err != nil {
 			return err
@@ -147,13 +133,98 @@ func installCoreCommands(parent *cobra.Command) {
 	parent.AddCommand(child)
 }
 
+// coreStatusRoot is where `update core status` reads. Tests point it at a fixture.
+var coreStatusRoot = systemupdate.CoreStatePath
+
+// coreStatusCommand is `update core status`. Without flags it reads two files
+// (the committed receipt and the journal, each with its frozen release) and
+// prints them; that answer is a contract with older coordinators and with the
+// Control Panel. With --can-resume --request <id> it adds this Spine's answer
+// to "can you continue this request now?" (see coreAnswerCanResume) and exits
+// non-zero unless the answer is yes. A Spine without the flag fails to parse it
+// and exits non-zero too, which the asking coordinator reads as "no".
+func coreStatusCommand() *cobra.Command {
+	var canResume bool
+	var request string
+	command := &cobra.Command{Use: "status", Args: cobra.NoArgs, Short: "Read the installed System release and retained transaction", RunE: func(cmd *cobra.Command, _ []string) error {
+		if canResume && request == "" {
+			return fmt.Errorf("exact --request required")
+		}
+		if !canResume && request != "" {
+			return fmt.Errorf("--request is read only with --can-resume")
+		}
+		m := systemupdate.CoreManager{Root: coreStatusRoot}
+		receipt, err := m.ReadReceipt()
+		if err != nil {
+			return err
+		}
+		out := map[string]any{"installed": receipt}
+		journal, err := m.Read()
+		if err == nil {
+			out["transaction"] = journal
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if !canResume {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+		}
+		refusal := coreAnswerCanResume(cmd.Context(), out, request)
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(out); err != nil {
+			return err
+		}
+		return refusal
+	}}
+	command.Flags().BoolVar(&canResume, "can-resume", false, "also answer whether this Spine can continue the request named by --request; changes nothing")
+	command.Flags().StringVar(&request, "request", "", "the request --can-resume asks about")
+	return command
+}
+
+// coreContinuation is what the continuation loop needs from the installed
+// runtime: the coordinator, what to do when the request has ended, and how to
+// hand the rest of a request to the new Spine. Tests supply their own.
+type coreContinuation struct {
+	manager systemupdate.CoreManager
+	// finished runs when the request is committed, rolled back or cancelled.
+	finished func(context.Context, systemupdate.CoreJournal) error
+	// handOver replaces this process with the selected Spine's continuation of
+	// the same request. It returns only when it did not: the caller continues.
+	handOver func(context.Context, systemupdate.CoreJournal) error
+}
+
+// coreContinuationManager is the coordinator of `update core activate|resume|
+// recover`. The hand-over probe (`update core status --can-resume`) builds the
+// same one.
+func coreContinuationManager(r systemupdate.NativeCoreRuntime) systemupdate.CoreManager {
+	return systemupdate.CoreManager{Root: r.Root, Executor: r.Executor(), YieldAfterSpine: true}
+}
+
+func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, request string, activate, recover, once bool) (systemupdate.CoreJournal, error) {
+	return runCoreContinuation(ctx, coreContinuation{
+		manager: coreContinuationManager(r),
+		finished: func(ctx context.Context, j systemupdate.CoreJournal) error {
+			var err error
+			if j.Phase != "cancelled" {
+				_, err = r.Checkpoint.ReleaseCompleted(ctx, j.RequestID)
+			}
+			r.Runner.ResetFailedUnits(ctx, j)
+			if err == nil {
+				// The platform is open again: remove the old service trees that this and
+				// earlier finished requests left under their stage names. Best effort.
+				r.Services.RemoveFinishedStageTrees(ctx)
+			}
+			return err
+		},
+		handOver: coreHandOverToSelectedSpine,
+	}, request, activate, recover, once)
+}
+
 // A caller can detach without canceling the separately owned native action.
 // Continuation observes its receipt before admitting another graph step. It
 // never infers that an unknown child should be launched a second time.
-func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, request string, activate, recover, once bool) (systemupdate.CoreJournal, error) {
+func runCoreContinuation(ctx context.Context, c coreContinuation, request string, activate, recover, once bool) (systemupdate.CoreJournal, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Hour)
 	defer cancel()
-	m := systemupdate.CoreManager{Root: r.Root, Executor: r.Executor()}
+	m := c.manager
 	var j systemupdate.CoreJournal
 	for {
 		current, err := m.Read()
@@ -166,14 +237,8 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		if len(current.RecoverySteps) > 0 {
 			recover = true
 		}
-		if current.Phase == "rolled-back" || current.Phase == "committed" {
-			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
-			r.Runner.ResetFailedUnits(ctx, current)
-			return current, err
-		}
-		if current.Phase == "cancelled" {
-			r.Runner.ResetFailedUnits(ctx, current)
-			return current, nil
+		if current.Phase == "rolled-back" || current.Phase == "committed" || current.Phase == "cancelled" {
+			return current, c.finished(ctx, current)
 		}
 		if recover {
 			j, err = m.Recover(ctx, request)
@@ -197,15 +262,25 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 			return j, err
 		}
 		if j.Phase == "committed" || j.Phase == "rolled-back" {
-			_, err = r.Checkpoint.ReleaseCompleted(ctx, request)
-			r.Runner.ResetFailedUnits(ctx, j)
-			return j, err
+			return j, c.finished(ctx, j)
 		}
 		if j.Phase == "needs-recovery" {
 			return j, fmt.Errorf("core action requires recovery; retained data and ownership remain held")
 		}
 		if once || j.Phase == "awaiting-restart" {
 			return j, nil
+		}
+		if !recover && c.handOver != nil && systemupdate.CoreSpineJustApplied(current, j) {
+			// The Spine step is done and nothing after it has started. The new Spine
+			// coordinates the rest: this process becomes its `resume` of the same
+			// request. No lock, descriptor or hold lives in this process between
+			// steps, so the journal is exactly what a lost coordinator leaves and
+			// what `resume` continues. A hand-over that cannot be made changes
+			// nothing: this Spine carries on, as before.
+			if err := c.handOver(ctx, j); err != nil {
+				coreNotice(fmt.Sprintf("this Spine keeps coordinating the request: %v", err))
+			}
+			continue
 		}
 		steps := j.Steps
 		if recover {

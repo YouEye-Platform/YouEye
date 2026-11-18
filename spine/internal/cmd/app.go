@@ -3,8 +3,10 @@ package cmd
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
@@ -35,11 +37,11 @@ var appListCmd = &cobra.Command{
 			if !ok {
 				continue
 			}
-			id := firstOf(app, "id", "name", "appId")
-			displayName := firstOf(app, "displayName", "name")
-			ver := firstOf(app, "version", "installedVersion")
-			health := firstOf(app, "status", "healthStatus", "health")
-			category := firstOf(app, "category")
+			id := textOf(app, "id", "name", "appId")
+			displayName := textOf(app, "displayName", "name")
+			ver := textOf(app, "version", "installedVersion")
+			health := textOf(app, "status", "healthStatus", "health")
+			category := textOf(app, "category")
 			rows = append(rows, []string{id, displayName, ver, health, category})
 		}
 		// Cross-reference with Incus to find untracked containers and group as apps
@@ -80,14 +82,14 @@ var appInfoCmd = &cobra.Command{
 			return fmt.Errorf("app '%s' not found", args[0])
 		}
 
-		displayName := firstOf(app, "displayName", "name", "id")
+		displayName := textOf(app, "displayName", "name", "id")
 		output.Section("App: " + displayName)
-		output.StatusLine("ID", firstOf(app, "id"), "")
-		output.StatusLine("Category", firstOf(app, "category"), "")
-		output.StatusLine("Type", firstOf(app, "type"), "")
-		output.StatusLine("Version", firstOf(app, "version"), "")
-		output.StatusLine("Status", firstOf(app, "status"), statusColor(firstOf(app, "status")))
-		output.StatusLine("Updated By", firstOf(app, "updatedBy"), "")
+		output.StatusLine("ID", textOf(app, "id"), "")
+		output.StatusLine("Category", textOf(app, "category"), "")
+		output.StatusLine("Type", textOf(app, "type"), "")
+		output.StatusLine("Version", textOf(app, "version"), "")
+		output.StatusLine("Status", textOf(app, "status"), statusColor(firstOf(app, "status")))
+		output.StatusLine("Updated By", textOf(app, "updatedBy"), "")
 
 		if updateAvail, ok := app["updateAvailable"].(bool); ok && updateAvail {
 			output.StatusLine("Update", "available", output.Yellow)
@@ -98,9 +100,9 @@ var appInfoCmd = &cobra.Command{
 			output.StatusLine("Containers", fmt.Sprintf("%d", len(containers)), "")
 			for _, c := range containers {
 				if ctr, ok := c.(map[string]interface{}); ok {
-					name := firstOf(ctr, "name")
-					status := firstOf(ctr, "status")
-					ip := firstOf(ctr, "ip")
+					name := textOf(ctr, "name")
+					status := textOf(ctr, "status")
+					ip := textOf(ctr, "ip")
 					fmt.Printf("  %-25s %-10s %s\n", name, status, ip)
 				}
 			}
@@ -128,7 +130,7 @@ func installAccessFields(cmd *cobra.Command, body map[string]interface{}) map[st
 
 var appInstallCmd = &cobra.Command{
 	Use:   "install <name>",
-	Short: "Install an app from Market",
+	Short: "Install an app from a market",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateAppInstallArgs(args, appInstallURL, appInstallTrusted, appInstallAllowSet, appInstallSource); err != nil {
@@ -146,20 +148,20 @@ var appInstallCmd = &cobra.Command{
 				return fmt.Errorf("an app from a URL is not reviewed by YouEye; add --i-trust-this-publisher to install it")
 			}
 			output.Info("Installing from URL: " + appInstallURL)
-			return controlClient.PostSSE("/api/market/install-url", installAccessFields(cmd, map[string]interface{}{
+			return cleanServerError(controlClient.PostSSE("/api/market/install-url", installAccessFields(cmd, map[string]interface{}{
 				"url":                       appInstallURL,
 				"acceptUnverifiedPublisher": true,
 				"allowSetup":                appInstallAllowSet,
-			}), sseHandler)
+			}), terminalSSE))
 		}
 
 		output.Info("Installing " + args[0] + "...")
-		return controlClient.PostSSE("/api/market/install", installRequest(cmd, args[0], appInstallSource), sseHandler)
+		return newerYouEyeRefusal(controlClient.PostSSE("/api/market/install", installRequest(cmd, args[0], appInstallSource), terminalSSE))
 	},
 }
 
 // installRequest is the body of a Market install. Without --source the Control Panel installs from the official
-// Market; a named custom source must have been accepted by the owner (youeye market source accept <id>).
+// Market; a market named by --source must have been accepted by the owner (youeye market accept <id>).
 func installRequest(cmd *cobra.Command, appID, source string) map[string]interface{} {
 	body := map[string]interface{}{"appId": appID}
 	if source != "" {
@@ -181,7 +183,7 @@ func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool,
 		return nil
 	}
 	if source != "" {
-		return fmt.Errorf("--source names a Market source; a --url app is its own source")
+		return fmt.Errorf("--source names a market; a --url app comes from its own address")
 	}
 	if len(args) > 0 {
 		return fmt.Errorf("give either an app name or --url, not both")
@@ -244,9 +246,10 @@ var appUpdateCmd = &cobra.Command{
 					if app, ok := a.(map[string]interface{}); ok {
 						if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
 							name := firstOf(app, "appId", "name")
-							output.Info("Updating " + name + "...")
-							if err := controlClient.PostSSE("/api/apps/"+name+"/update", nil, sseHandler); err != nil {
-								output.Error("Failed to update " + name + ": " + err.Error())
+							shown := terminalText(name, false)
+							output.Info("Updating " + shown + "...")
+							if err := controlClient.PostSSE("/api/apps/"+name+"/update", nil, terminalSSE); err != nil {
+								output.Error("Failed to update " + shown + ": " + cleanServerError(err).Error())
 							}
 							count++
 						}
@@ -262,7 +265,7 @@ var appUpdateCmd = &cobra.Command{
 		output.Info("Updating " + args[0] + "...")
 		// Canonical CP route; /api/market/update remains as a CP-side alias for
 		// older CLIs.
-		return controlClient.PostSSE("/api/apps/"+args[0]+"/update", appUpdatePayload(appUpdateAssumeYes, appUpdateAllowSetup), sseHandler)
+		return newerYouEyeRefusal(controlClient.PostSSE("/api/apps/"+args[0]+"/update", appUpdatePayload(appUpdateAssumeYes, appUpdateAllowSetup), terminalSSE))
 	},
 }
 
@@ -284,6 +287,7 @@ var appRemoveCmd = &cobra.Command{
 		}
 		result, err := controlClient.Post("/api/market/uninstall", payload)
 		if err != nil {
+			err = cleanServerError(err)
 			if !appRemoveForce {
 				return fmt.Errorf("%w\nIf the app's install is broken (a container or record missing), 'youeye app remove %s --force' removes what carries its id", err, args[0])
 			}
@@ -291,7 +295,7 @@ var appRemoveCmd = &cobra.Command{
 		}
 		if removed, ok := result["removed"].([]interface{}); ok {
 			for _, item := range removed {
-				output.Info(fmt.Sprint("removed ", item))
+				output.Info("removed " + terminalText(fmt.Sprint(item), false))
 			}
 		}
 		message, err := appRemoveMessage(args[0], result)
@@ -311,7 +315,7 @@ func appRemoveMessage(appName string, result map[string]interface{}) (string, er
 	if !success {
 		return "", fmt.Errorf("removal of %s did not complete; some cleanup may have succeeded -- check 'youeye logs control' before retrying", appName)
 	}
-	if msg := str(result, "message"); msg != "" {
+	if msg := terminalText(str(result, "message"), true); msg != "" {
 		return msg, nil
 	}
 	return appName + " removed", nil
@@ -334,9 +338,9 @@ func newAppControlCmd(action string) *cobra.Command {
 				"action": action,
 			})
 			if err != nil {
-				return err
+				return cleanServerError(err)
 			}
-			if msg := str(result, "message"); msg != "" {
+			if msg := terminalText(str(result, "message"), true); msg != "" {
 				output.Success(msg)
 			} else {
 				output.Success(args[0] + " " + action + "ed")
@@ -364,7 +368,7 @@ var appCredentialsCmd = &cobra.Command{
 			output.Info("This app has no default credentials.")
 		}
 		for _, entry := range entries {
-			output.StatusLine(entry.Label, entry.Username+"  "+entry.Password, "")
+			output.StatusLine(terminalText(entry.Label, false), printableSecret(entry.Username)+"  "+printableSecret(entry.Password), "")
 		}
 		return nil
 	},
@@ -439,6 +443,60 @@ func appCredentialEntries(data map[string]interface{}) []appCredentialEntry {
 	return entries
 }
 
+// printableSecret is a user name or password as it must be typed. It is printed exactly; one that holds control
+// characters or escape sequences (the app's manifest names it, so a market does) is printed quoted instead, with
+// those characters visible and inert.
+func printableSecret(value string) string {
+	if terminalText(value, false) == value {
+		return value
+	}
+	return strconv.Quote(value)
+}
+
+// blockedUpdateLines is one line per installed app whose update check is blocked (its record's `updateBlocked`:
+// the market is gone or not accepted, the app needs a newer YouEye, ...): "<app>: <reason>".
+func blockedUpdateLines(apps []interface{}) []string {
+	lines := []string{}
+	for _, a := range apps {
+		app, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		blocked, ok := app["updateBlocked"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		reason := textOf(blocked, "message", "code")
+		if reason == "" {
+			reason = "no reason given"
+		}
+		lines = append(lines, textOf(app, "appId", "name")+": "+reason)
+	}
+	return lines
+}
+
+var appSourceCmd = &cobra.Command{
+	Use:   "source <name> <market id>",
+	Short: "Choose the market an installed app gets its updates from",
+	Long: `Point an installed app at a market that has the same app (see youeye market list). Its next update comes
+from there, so the market must be one you have accepted. Nothing is installed or changed until that update.
+This is also how an app whose market was removed gets an update source again.`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireCP(); err != nil {
+			return err
+		}
+		answer, err := controlClient.Patch("/api/market/app/"+url.PathEscape(args[0])+"/source",
+			map[string]interface{}{"sourceId": args[1]})
+		if err != nil {
+			return cpPlainError(err)
+		}
+		output.Success(fmt.Sprintf("%s now gets its updates from %s (%s)", terminalText(args[0], false),
+			textOf(answer, "sourceName", "sourceId"), textOf(answer, "sourceId")))
+		return nil
+	},
+}
+
 var appCheckUpdatesCmd = &cobra.Command{
 	Use:   "check-updates",
 	Short: "Check all apps for available updates",
@@ -456,17 +514,29 @@ var appCheckUpdatesCmd = &cobra.Command{
 			for _, a := range apps {
 				if app, ok := a.(map[string]interface{}); ok {
 					if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
-						name := firstOf(app, "appId", "name")
-						current := firstOf(app, "installedVersion")
-						available := firstOf(app, "catalogVersion", "latestVersion")
+						name := textOf(app, "appId", "name")
+						current := textOf(app, "installedVersion")
+						available := textOf(app, "catalogVersion", "latestVersion")
 						rows = append(rows, []string{name, current, available})
 					}
 				}
 			}
-			if len(rows) > 0 {
+			blocked := blockedUpdateLines(apps)
+			switch {
+			case len(rows) > 0:
 				output.Table([]string{"APP", "CURRENT", "AVAILABLE"}, rows)
-			} else {
+			case len(blocked) == 0:
 				output.Success("All apps are up to date")
+			default:
+				output.Success("No updates for the apps that could be checked")
+			}
+			if len(blocked) > 0 {
+				fmt.Println()
+				output.Warn(fmt.Sprintf("%d of the installed apps could not be checked for updates:", len(blocked)))
+				for _, line := range blocked {
+					fmt.Println("  " + line)
+				}
+				fmt.Println("  An app whose market is gone gets a source again with: youeye app source <app> <market id>")
 			}
 		} else {
 			output.Success("Update check complete")
@@ -479,7 +549,7 @@ func init() {
 	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install the youeye-app.yaml at this HTTPS URL")
 	appInstallCmd.Flags().BoolVar(&appInstallTrusted, "i-trust-this-publisher", false, "Confirm you trust the publisher of a --url app (required with --url)")
 	appInstallCmd.Flags().BoolVar(&appInstallAllowSet, "allow-setup", false, "Allow the --url app's setup files to run (required when it has any)")
-	appInstallCmd.Flags().StringVar(&appInstallSource, "source", "", "Install from this Market source (an id from 'youeye market source list'); default: the official Market")
+	appInstallCmd.Flags().StringVar(&appInstallSource, "source", "", "Install from this market (an id from 'youeye market list'); default: the official Market")
 	appInstallCmd.Flags().BoolVar(&appInstallPublic, "public-access", false, "Open the app to anyone who can reach its address (--public-access=false keeps it household-only); default: the app's Market listing decides, off for --url apps")
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
 	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
@@ -498,4 +568,14 @@ func init() {
 	appCmd.AddCommand(appCredentialsCmd)
 	appCmd.AddCommand(appRecoverCmd)
 	appCmd.AddCommand(appCheckUpdatesCmd)
+	appCmd.AddCommand(appSourceCmd)
+}
+
+// terminalSSE prints a Control Panel progress event (sseHandler) with its text cleaned for the terminal.
+func terminalSSE(event controlapi.SSEEvent) {
+	event.Status = terminalText(event.Status, false)
+	event.Stage = terminalText(event.Stage, false)
+	event.Message = terminalText(event.Message, false)
+	event.Detail = terminalText(event.Detail, true)
+	sseHandler(event)
 }

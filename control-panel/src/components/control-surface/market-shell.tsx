@@ -1,10 +1,15 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ControlHeader } from "@/components/control-surface/control-header";
+import { SignInRedirect } from "@/components/market/sign-in-redirect";
+import { getAuthModeForHost } from "@/lib/auth/mode";
 import { getSession } from "@/lib/auth/session";
 
 export async function MarketShell({ children }: { children: React.ReactNode }) {
   const session = await getSession();
-  if (!session) redirect("/settings/login");
+  // Signed out (or the sign-in has expired): sign in and come back to this exact page, query included, so an
+  // "Add to YouEye" link survives the round trip. A server redirect here cannot know the page's address.
+  if (!session) return <SignInRedirect sso={getAuthModeForHost((await headers()).get("host") || "") === "sso"} />;
   if (!session.isAdmin) redirect("/settings");
   const hasUserContext = session.authMethod !== "pam" && session.authMethod !== "cli";
 

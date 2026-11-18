@@ -231,7 +231,13 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		return coreActionPassed("inactive host and boot artifacts staged under exact core membership", nil)
 	case "checkpoint":
 		barrier := CoreLifecycleBarrier{Root: filepath.Join(r.Checkpoint.DataRoot, "state", "app-updates")}
-		if err := barrier.Begin(j); err != nil {
+		if err := barrier.BeginAdmitted(ctx, j); err != nil {
+			if errors.Is(err, errCoreLifecycleUnsettled) {
+				// The locks stayed busy for the whole wait. Nothing was read, stopped or written by this
+				// child, so this is a refusal before any effect, like a refused preflight: the coordinator
+				// ends the request by verified cancellation instead of leaving it uncertain.
+				return coreCheckpointPreflightFailure(err), nil
+			}
 			return CoreActionObservation{}, err
 		}
 		if _, _, err := r.Services.PreflightCheckpoint(ctx, j.RequestID); err != nil {
@@ -293,6 +299,14 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		}
 		return r.waitSchema(ctx, j, role)
 	case "authenticated-health":
+		if j.MetadataOnly {
+			// A promotion installs nothing; its one effect is that the Control Panel
+			// records the promoted document. The health checks below then run
+			// against a Control Panel that reads it.
+			if err := r.Services.RecordPromotedSelection(ctx, j.RequestID); err != nil {
+				return CoreActionObservation{}, err
+			}
+		}
 		if err := r.Checkpoint.PrepareHealth(ctx, j.RequestID, false, false); err != nil {
 			return CoreActionObservation{}, err
 		}

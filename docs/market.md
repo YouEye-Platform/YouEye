@@ -1,114 +1,230 @@
 # Market
 
-How apps get from the Market catalog onto a box, and what the Control Panel (CP) does with them afterwards. The app
-format itself is in [app-manifest.md](app-manifest.md); the `${…}` variables are in
-[app-environment.md](app-environment.md); who may open an app is in [app-admission.md](app-admission.md).
+How apps get from a market onto a box, and what the Control Panel (CP) does with them afterwards. The published
+format of a market, how to build and host one and the "Add to YouEye" links are in
+[market-format.md](market-format.md); the app format itself is in [app-manifest.md](app-manifest.md); the `${…}`
+variables are in [app-environment.md](app-environment.md); who may open an app is in
+[app-admission.md](app-admission.md).
 
 | Piece | Where |
 |---|---|
-| Catalog | repository `YE-AppMarket`: `catalog.yaml`, `apps/<id>/`, `bundles/<id>/` |
+| Official catalog | repository `YE-AppMarket`: `store.yaml`, `catalog.yaml`, `apps/<id>/`, `bundles/<id>/`; published at `https://market.youeye.me` |
 | Parser and validator | `control-panel/src/lib/market/app-format/` (`parseApp`, `parseSetup`, compile to the internal model) |
-| Catalog reader, sources and consent | `catalog.ts`, `catalog-release.ts`, `source.ts`, `direct-apps.ts` (apps added by URL) |
+| Format, fetcher, store | `market-format.ts`, `market-fetch.ts`, `market-store.ts` |
+| Market reader, sources and consent | `catalog.ts`, `source.ts`, `update-routing.ts`, `direct-apps.ts` (apps added by URL) |
 | Install, update, uninstall | `engine.ts`, `updater.ts`, `uninstaller.ts`, `install-tracker.ts`, `instance-ownership.ts` |
 | Setup files and connections | `setup-runner.ts`, `setup-context.ts`, `wire-runner.ts`, `bundle-installer.ts`, `src/lib/bridges/` |
 | HTTP API | `control-panel/src/app/api/market/**`, `/api/apps/<id>/{update,control}`, `/api/suggestions` |
 | CLI | `youeye app …` and `youeye market …` in `spine/internal/cmd/app.go`, `market.go` (they call the CP API) |
 
-## Where the catalog comes from
+## Where the apps come from
 
-The official Market is the `market` product of the box's channel (see [releases.md](releases.md)).
+Every market, the official one included, is a folder of static files at an HTTPS address
+([market-format.md](market-format.md)). There are no Market releases, versions or promotions, and the Market is not
+a product of the channel index.
 
-1. The CP asks Spine for the channel index (`GET /api/releases/index`). It never lists releases or calls a release API.
-2. It downloads the `market` entry's `product-release.json` and refuses it unless its SHA-256 matches the index.
-3. It downloads two assets of that release: `catalog-snapshot.json` (the path and SHA-256 of every catalog file) and
-   `catalog.tar` (exactly those files). Both are checked against the release document, and every file in the tar
-   against the snapshot. The tar may hold only regular files and directories.
-4. The accepted release is kept in `/var/lib/youeye/market-releases/` (`official.json` plus
-   `catalog-<sha256>.tar`, mode 0600) and checked again when the CP reads it. A channel that offers an older
-   Market release is refused (no downgrade); the same release is kept as is.
+- **The official Market** (source id `official`) follows the box's channel, which the CP asks Spine for
+  (`GET /api/releases/channel`): dev and alpha read `https://market.youeye.me/dev/` (branch `dev` of the catalog),
+  beta and stable read `https://market.youeye.me/` (branch `main`). When Spine cannot be asked or names an unknown
+  channel, the lane last used stays; with none, the `main` lane. Its address is not stored in the source list.
+- **Custom markets** (`kind: url`) are addresses the owner added (see [Markets and consent](#markets-and-consent)).
+- **Native apps** are listed when the official Market's index names their id in `native` (`nativeIdsOf` in
+  `catalog.ts`); a custom market's `native` list is ignored, so it neither lists nor installs them. Their manifest,
+  listing and files always come from their own product release on the box's channel
+  ([native-apps.md](native-apps.md)); the listing is cached by the channel index entry's digest, so a page view
+  downloads nothing.
+- **Apps added by URL** are their own source (`direct:<hash>`; see Installing).
 
-The catalog is re-read when the in-memory copy is older than 5 minutes. If the refresh fails, the CP keeps the
-accepted release (or `/var/lib/youeye/catalog-cache.json`) and shows the error on the source.
+**What is in the official catalog.** `store.yaml` (the market's name, publisher and homepage), `catalog.yaml`
+(`youeye.catalog.v1`: categories, curation (`spotlight`, `collections`) and `native: [ids]`), container apps in
+`apps/<id>/youeye-app.yaml` (`youeye.app.v1`) with `setup/*.yaml`, icon and screenshots, and bundles in
+`bundles/<id>/bundle.yaml` (`youeye.bundle.v1`). The generator finds apps and bundles from the folders and checks
+every one with the CP's parser; how the official Market is published is in
+[market-format.md](market-format.md#the-official-market).
 
-**What is in the catalog.** `catalog.yaml` (`youeye.catalog.v1`) holds only what cannot be discovered: categories,
-curation (`spotlight`, `collections`) and `native: [ids]`. Everything else is found from the folders:
+### The store on the box
 
-- `apps/<id>/youeye-app.yaml` (`youeye.app.v1`): a container app, with its `setup/*.yaml`, icon and screenshots.
-- `bundles/<id>/bundle.yaml` (`youeye.bundle.v1`): a list of member apps and the connections between them.
-- Native apps named in `native:` come from their own product release on the same channel (its `youeye-app.yaml`
-  asset). The catalog never names a repository or branch for them.
+The box keeps an accepted copy of each market in `/var/lib/youeye/markets/<sourceId>/` (directories 0700, files
+0600; `market-store.ts`):
 
-**Publishing.** `Tools/release/app-release YE-AppMarket` runs `scripts/catalog-snapshot.mjs release` on the commit
-and publishes release `catalog-v<X.Y.Z>-dev.N`; `Tools/release/promote` moves it through the channels. The snapshot
-and tar carry no version, branch or host, so the same commit gives the same bytes. The catalog repository's own
-tests (`npm test`) are structural only; the full check is the CP's validator (see Tests).
+| File | What |
+|---|---|
+| `state.json` | the accepted state: the market's address, its `sequence` (the floor for that address), the exact bytes of the accepted `market.json` and their SHA-256, its ETag, `accepted_at` |
+| `refresh.json` | `checked_at` (last attempt), `refreshed_at` (last success), `error` (why the last attempt failed) |
+| `h/index/<sha256>.json` | the accepted index |
+| `h/apps/<id>/<sha256>.json` | **every** bundle the index names (the connections route reads every manifest; about 180 KB for the official Market) |
+| `h/files/<sha256>.<ext>` | the pictures fetched so far (at most 512 MiB per market) |
+| `attempt-<pid>-<random>/` | the bundles a running refresh has fetched; removed when the refresh ends |
 
-## Other sources and consent
+- **Accepting** a new state: `market.json` (sent with `If-None-Match`; a `304` costs nothing) → refuse a `sequence`
+  more than a day ahead of the box's clock or below the floor of the same address
+  ([market-format.md](market-format.md#rules-that-keep-every-box-working)) → the index (size and SHA-256) → each
+  bundle not already in the store (size and SHA-256, four at a time over one connection pool) into the attempt's
+  own directory → the commit, under a lock per source: the fetched files move under `h/`, then `state.json` last,
+  in one rename → remove hashed files the new state no longer names. Until that rename the store holds the old
+  state, after it the new one. Nothing under `h/` changes before the commit, so after a failed attempt `h/` holds
+  only what the accepted state names (nothing when there is none). An attempt directory older than 10 minutes that
+  no running refresh owns (a process that ended under it) is removed by the next refresh.
+- **One refresh at a time** per source id **and** address. One refresh ends within 3 minutes
+  (`MARKET_REFRESH_DEADLINE_MS`), successful or not. A refresh whose source was removed, or whose source id now
+  names another address, commits nothing. Removing a source stops its running refresh and waits for it (5 s at
+  most) before its store is deleted.
+- **Reading** checks every stored file against its hash once per accepted state. A damaged file is fetched again by
+  the next refresh.
+- **When a market is asked.** At most once per source every 5 minutes plus 0–10 % jitter, in the background, and
+  whenever something asks for a fresh answer: "Check for updates" (`youeye app check-updates`, also the 6-hourly
+  check), Refresh on the sources page (`youeye market refresh`), adding, accepting or editing a source, and an app
+  update (which refreshes only that app's source first). A reader waits for the network only then, or when the
+  store is still empty, and for 20 s at most (`MARKET_READER_WAIT_MS`; for an empty store counted from the start of
+  the refresh). Then it gets the store, or the message "The market is still being read; this box keeps reading it
+  in the background", and the refresh goes on to its deadline. A failing first read is retried 30 s after the end of
+  the failed attempt at the earliest; after a failed attempt that took longer than 20 s, an empty store is read
+  again in the background only, so a market that never answers costs readers one wait, not one per page. The 30 s
+  rule holds across a Control Panel restart too (counted from `checked_at` in `refresh.json`). An attempt dated
+  in the future (made while the box's clock was ahead, since corrected) counts as never made: the market is
+  asked at the next read. Market
+  pages, `/api/apps/unified` and `/api/ui-bridge/apps` read the store.
+- **Offline or broken.** A market that cannot be reached, is not valid, is too slow, or offers a lower or
+  future-dated `sequence` keeps its accepted state: the Market keeps listing it, and the failure is recorded in
+  `refresh.json`, shown on the sources page ("Last refreshed …" and the error) and by `youeye market list`. A store
+  that cannot be read at all never breaks the source list: that source is listed with `market: null` and the reason
+  in `refresh_error`, so it can still be turned off or removed.
+- **Address changes.** When a source's address changes (the official Market after a channel change, a custom
+  market whose address was edited), the store's state no longer counts for it; the next successful accept starts a
+  new `sequence` floor and replaces the store. A removed source's store is deleted.
+- **Files of the old catalog.** Once the official store has an accepted index, the CP deletes
+  `/var/lib/youeye/market-releases/` and `/var/lib/youeye/catalog-cache.json`, which boxes up to 0.6.10 used.
 
-**The rule** (since 0.6.10, `source.ts`). Wherever no source is named, the official Market is used; a custom source
-is used only after the owner accepted it, and an app added by URL only with its own confirmation. An installed app
-stays with the source it was installed from: nothing moves it to another source by itself.
+**What an install records** (install metadata and the installed-apps record): `catalogKey` `<sourceId>:app:<id>`;
+`manifestPath` `apps/<id>/youeye-app.yaml`; `manifestRepo` the market's address; `manifestBranch` the market's
+commit; `manifestDigest` the frozen digest; `sourceRepoUrl` the market address for a custom market (none for the
+official Market).
 
-**Custom sources.** The owner can add a Git repository as a custom Market source (Market → Manage sources,
-`/market/sources`; stored in `/var/lib/youeye/market-sources.json`). It is read as raw files from a branch, so it
-cannot list folders: it needs a `catalog.json` (`youeye.catalog-index.v1`) that names its app and bundle ids. A
-`system` list in it is accepted and ignored, and so are `system/` files: no source supplies the core containers.
+### What the Market shows
 
-- **Acceptance.** A custom source carries `accepted_at`, which only the CP sets: when the source is added with the
-  tick "I trust this source" (`acceptRisk: true`), or by the accept call for a source that already exists (one
-  added before 0.6.10 has none). Changing a source's address or branch clears it.
+- **One card per app.** The Market home shows one entry per id, the official Market's first. An app's page lists the
+  other enabled markets (and apps added by URL) that carry the same id ("Also available from …", with their
+  version), and for an installed app where it takes its updates from ("Updates from: …") with **Change**: the guarded
+  source switch below. Nothing switches by itself. `GET /api/market/app/<id>[?source=<id>]` answers
+  `{app, variants, installed}`: `app` is the app in the named market (else the first enabled market that has it),
+  `variants` the other markets' entries, `installed` the source the install recorded (id, name, address, version,
+  `updateBlocked`), or null.
+- **Needs a newer YouEye.** An index entry whose `requires.youeye` is above the box, or whose `kind` this box does
+  not know, is listed from the index alone with "Needs YouEye X.Y.Z or newer" (or "Needs a newer YouEye")
+  instead of Install (`MarketApp.installBlocked`, `needsYouEye`); its bundle is never parsed. Install and switch
+  answer 409 `{error, code: "requires-newer-youeye", needsYouEye}`. An entry this box should understand but whose
+  manifest fails the strict parse is left out with the parser's own reason on the Market page and in the log; so is
+  an entry whose bundle holds another app's manifest (the id is checked on every read, also of a cached manifest).
+- **Listing.** Cards of apps that are not from the official Market show the source's name ("Added" for an app added
+  by URL). A bundle id found in several markets is shown once, the official Market's first.
+
+## Markets and consent
+
+**The rule** (`source.ts`). Wherever no source is named, the official Market is used; a custom market is used only
+after the owner accepted it, and an app added by URL only with its own confirmation. An installed app stays with
+the source it was installed from: nothing moves it to another source by itself.
+
+**Custom markets** are listed in `/var/lib/youeye/market-sources.json` and managed on Market → Sources
+(`/market/sources`). Adding one previews it first: the market's own name and publisher (shown as its words), its
+commit and date, its number of apps and how many run setup steps. Without a name from the owner a custom market is
+named by its host. The sources page shows, per market, its address, commit and date, the last refresh and its
+error, Refresh now, and Accept for a market that is not accepted.
+
+- **Acceptance.** A custom market carries `accepted_at`, which only the CP sets: when it is added with the trust
+  tick (`acceptRisk: true`), or by the accept call. Changing its address clears it.
 - **Not accepted.** Its apps and bundles are still listed, marked `sourceNotAccepted` ("Not accepted"), but they are
-  never installed, updated or switched to.
+  never installed, updated or switched to, and its pictures are not served.
 - **Turned off or missing.** A source that is turned off or no longer configured is never used. With the official
   Market turned off, an install that names no source is refused.
-- **Listing.** Cards of apps that are not from the official Market show the source's name ("Added" for an app added
-  by URL). When several sources have the same app id, the official one is listed first. A bundle id found in several
-  sources is shown once, the official Market's first.
+- **Source ids.** `official` and `direct` (the prefix of apps added by URL) are reserved. Without an `id` a market
+  gets the first `custom-N` (from 1) that no source has and no installed app records. A chosen id that an installed
+  app records for another address is refused (400). Two sources with the same address are refused.
+- **Official lanes.** `https://market.youeye.me/` and `https://market.youeye.me/dev/` are never a custom market:
+  adding one or re-pointing a market at one is refused (400, "This is the official YouEye Market; your YouEye
+  already follows it") before anything is fetched ([market-format.md](market-format.md#the-official-market)).
+- **Writes.** Every change to `market-sources.json` runs on one write chain per CP process, shared by the API routes
+  and the background jobs, and reads the file inside it, so no write reverts another.
+
+**Git sources are gone.** Boxes up to 0.6.10 could add a Git repository read as raw files. Such an entry
+(`repo_url`) is removed from the list the first time 0.6.11 reads it and remembered under `removed_sources` in the
+same file; the sources page and `youeye market list` name them until the owner dismisses the note. Apps installed
+from one keep running; their update check says "no update source" (`source-unavailable`) and offers nothing. To
+take updates again, add the market's address (if its publisher has one), which gives it a new id, then choose
+**Change** on each app's page, or run `youeye app source <app> <market id>`.
 
 | Call | Does |
 |---|---|
-| `GET /api/market/source` | `{ sources }`: the official source and every custom one, in priority order, with `accepted_at` |
-| `POST /api/market/source` | `{ repo_url, branch?, name?, id?, acceptRisk: true }` adds a custom source, accepted at once; without `acceptRisk: true` the answer is 400 `source-not-accepted` |
-| `POST /api/market/source/accept` | `{ id }` accepts an existing custom source (404 when there is none) |
-| `PATCH /api/market/source` | `{ active_sources: [...] }` turns sources on or off, renames, reorders and removes them. It cannot add a source or set `accepted_at`; a changed `repo_url` or `branch` clears it |
+| `GET /api/market/source` | `{ sources, removed_sources }`. Each source: `id, name, kind, url, enabled, priority, accepted_at`, `address` (where its copy was read from; the official Market's lane), `market` (`{address, name, publisher, homepage?, commit?, sequence, sequence_date, apps, apps_with_setup, native, bundles}`, null while the box has no copy or cannot read it), `accepted_market_at`, `refreshed_at`, `checked_at`, `refresh_error`. `apps` counts container apps; `native` is 0 for any market but the official one; `sequence_date` is an empty string when `sequence` is no time |
+| `POST /api/market/source` | `{ url, name?, id?, acceptRisk: true }` reads the market first (20 s at most; an address that is not a market adds nothing, 400), then adds it, accepted, and waits up to 20 s for its first copy; a larger or slower market is read on in the background, so the new source may answer with `market: null`. Without `acceptRisk: true` the answer is 400 `source-not-accepted` |
+| `PATCH /api/market/source` | `{ active_sources: [{id, name?, url?, enabled?, priority?}] }` turns markets on or off, renames, reorders, re-points and removes them; it cannot add one or set `accepted_at`, and a changed `url` clears it. `{ dismiss_removed_sources: true }` clears the note about removed git sources |
+| `POST /api/market/source/accept` | `{ id }` accepts an existing custom market (404 when there is none) |
+| `POST /api/market/source/refresh` | `{ id? }` asks that market (or every enabled one) now and waits up to 20 s: `{ results: [{id, ok, sequence?, commit?, error?}], sources, removed_sources }`. A market not done by then is `ok: false` with "The market is still being read; …", and the box reads on in the background |
+| `POST /api/market/add/preview` | `?market=<address>` or `?app=<manifest URL>`, no body: what an "Add to YouEye" link would add; writes nothing; at most two at once (429 otherwise) ([market-format.md](market-format.md#add-to-youeye-links)) |
 
-All four need an admin: a session (with the CSRF token for `POST` and `PATCH`) or the CLI token. On the box:
-`youeye market source list` (id, name, address, branch, enabled, accepted) and `youeye market source accept <id>`.
-Adding a source has no CLI command. `youeye market repo get|set` no longer exist.
+All of them need an admin: a session (with the CSRF token for `POST` and `PATCH`) or the CLI token.
 
-- **Source ids.** `official` and `direct` (the prefix of apps added by URL) are reserved. Without an `id` the source
-  gets the first `custom-N` (from 1) that no source has and no installed app records. A chosen id that an installed
-  app records for another repository is refused (400).
-- **Writes.** Every change to `market-sources.json` (owner edits and the refresh times the catalog fetch records)
-  runs on one write chain per CP process, shared by the API routes and the background jobs, and reads the file
-  inside it, so no write reverts another.
+**CLI** (`spine/internal/cmd/market.go`):
+
+| Command | Does |
+|---|---|
+| `youeye market list` | every market: ID, NAME, ADDRESS, MARKET SAYS (its own name and publisher), COMMIT, DATE, APPS, ENABLED, ACCEPTED, LAST REFRESH; then each failed refresh with its reason, and removed git sources |
+| `youeye market add <address> --i-trust-this-market [--name <name>]` | add and accept a market (refused without the flag) |
+| `youeye market remove <id>` | remove a custom market (the official one cannot be removed); its apps keep running without updates |
+| `youeye market accept <id>` | accept a market that lost its acceptance |
+| `youeye market refresh [id]` | ask one or every market now; exits 1 when one failed |
+| `youeye market search <text>` | apps of all markets, with their market and a note (needs a newer YouEye, market not accepted) |
+| `youeye market info <app id> [--source <id>]` | one app: market, address, version, what blocks it; for an installed app "Installed" (version, the market it takes updates from, its address) and, when updates are blocked, "Updates" with the reason. An unknown `--source` says `there is no market "<id>" (see youeye market list)`, or that the market is turned off |
+
+`youeye app install <id> --source <market id>` installs from a named market. `youeye app source <app> <market id>`
+points an installed app at a market that has the same app (the page's **Change**; the market must be accepted;
+nothing changes until the app's next update). `youeye app check-updates` lists the apps whose check is blocked,
+with the reason, after the updates it found. `youeye market refresh` says for each market whether it was
+updated or is up to date. `youeye market source …` and
+`youeye market repo …` no longer exist. `youeye market …` and
+`youeye app list|info|install|update|check-updates|source|remove|start|stop|restart` remove control characters and
+terminal escape sequences from the text a market or the Control Panel sends before they print it.
+`youeye app credentials` prints a user name or password exactly as it must be typed; one that holds such
+characters is printed quoted, with them visible.
 
 **Apps added by URL.** A single app can be added by its `youeye-app.yaml` URL; it is listed as "Added" with a
 `direct:<hash>` source id and is its own source (see Installing). It needs `acceptUnverifiedPublisher: true`, and
 `allowSetup: true` when it has setup files, on every install and switch; an update asks again when its setup files
-changed.
+changed. A repository address (`https://<host>/<owner>/<repo>`) is read as `youeye-app.yaml` on its `main` branch
+(from `raw.githubusercontent.com` for GitHub); any other URL, including any address of a `.yaml`/`.yml` file, is
+used as given.
 
 **Refusals.** A refusal for lack of consent (`MarketSourceConsentError`) answers `{ error, code, setups? }`:
 
 | `code` | When | HTTP |
 |---|---|---|
 | `source-unavailable` | the named source is turned off or not configured, or a `direct:` id where a Market source is needed | 400 (install, bundle, switch); 403 (update) |
-| `source-not-accepted` | a custom source without `accepted_at` | 403 |
+| `source-not-accepted` | a custom market without `accepted_at` | 403 |
 | `publisher-not-trusted` | an app added by URL without `acceptUnverifiedPublisher: true` | 403 (install, switch) |
 | `setup-not-allowed` | an app added by URL with setup files, without `allowSetup: true`; `setups` lists them | 403 (install, switch); 400 (`install-url`) |
 | `setup-changed` | an update of an app added by URL whose setup files changed, without `allowSetup: true` | 409 JSON with `setups`, or an SSE `failed` event with `code` and `setups` |
-| `source-changed` | an update of an app whose source id now points at another repository than the app recorded (or, same repository, another branch when the app recorded one) | 403 JSON, or an SSE `failed` event with `code` |
+| `source-changed` | an update of an app whose source id now names another market address than the app recorded | 403 JSON, or an SSE `failed` event with `code` |
 
 On the SSE update routes a `source-not-accepted` or `source-unavailable` update ends with a `failed` event whose
-message names the cause.
+message names the cause. An update whose new version needs a newer YouEye fails with `requires-newer-youeye` and
+"Update YouEye in Settings, then update the app."
 
-**The source changed.** An app records the repository of its source at install (and, for a git source, the
-repository path and branch its manifest was read from). A source id can come to name another repository: a removed
-source's id taken again, or a source's address or branch edited. The app follows the repository it recorded, never
-just the id: its update is refused with `source-changed` (the message names both repositories), and the update check
-offers nothing and stores `updateBlocked: { code: "source-changed", message }` on the installed-app record
-(`/var/lib/youeye/state/installed-apps.json`). The official Market is never "changed". The remedy is an explicit
-switch of the app to that source on its page (`PATCH /api/market/app/<id>/source`), which records the new repository.
+**Why an installed app gets no updates.** The update check stores the reason on the installed-app record
+(`/var/lib/youeye/state/installed-apps.json`) as `updateBlocked: { code, message }`, offers nothing, and clears any
+stale offer. The app's page, Settings → Apps and the dashboard's Apps panel show it:
+
+| `updateBlocked.code` | Meaning | Remedy |
+|---|---|---|
+| `source-unavailable` | "No update source": its market is no longer on the box (removed, or a git source) or is turned off | turn it on, or add a market that has the app and choose Change |
+| `source-not-accepted` | its custom market is not accepted | `youeye market accept <id>` or Accept on the sources page |
+| `source-changed` | its source id now names another address than the app recorded | Change on the app's page, if you want its updates from there |
+| `requires-newer-youeye` | the market's new version needs a newer YouEye | update YouEye; the offer then appears |
+
+**The source changed.** An app records the market address of its source at install (custom markets only). A source
+id can come to name another address: a removed market's id taken again, or a market's address edited. The app
+follows the address it recorded, never just the id: its update is refused with `source-changed` (the message names
+both addresses) and the update check stores `updateBlocked` as above. The official Market's address follows the
+channel and is never "changed". The remedy is an explicit switch on the app's page
+(`PATCH /api/market/app/<id>/source`), which records the new address.
 
 **What can install, update or re-point an app, and how it is guarded**
 
@@ -116,42 +232,48 @@ switch of the app to that source on its page (`PATCH /api/market/app/<id>/source
 |---|---|---|
 | Install: `POST /api/market/install`, `youeye app install <id> [--source <id>]` | the named `sourceId`, else the official Market | the rule above; source, catalog key and manifest fields are set by the CP, never taken from the client |
 | Install by URL: `POST /api/market/install-url`, `youeye app install --url` | the URL | `acceptUnverifiedPublisher`, plus `allowSetup` when it has setup files |
-| Add to the Market by URL: `POST /api/market/validate-url` `{ manifestUrl, addToMarket: true, allowSetup? }` | the URL | `allowSetup` when it has setup files; the install from the "Added" entry asks again |
-| Bundle install: `POST /api/market/bundles/<id>/install[?source=<id>]` | the bundle's source, else the official Market | the rule above; every member installs from that source and is recorded with it |
-| App update: `POST /api/apps/<id>/update`, `POST /api/market/update`, `POST /settings/api/apps/<id>/update` (all `updateMarketApp`) | the app's recorded source, else the official Market | the rule above; `source-changed` when the source id now names another repository; an app added by URL: `setup-changed` without `allowSetup` |
-| Update check (every 6 hours, `youeye app check-updates`) | the app's recorded source, else the official Market | a refused source gives no offer; a changed repository gives no offer and `updateBlocked` (`source-changed`); it writes a source into an app only when it is the recorded one or the official one |
-| Source switch: `PATCH /api/market/app/<id>/source` `{ sourceId, acceptUnverifiedPublisher?, allowSetup? }` | the named source | admin with CSRF token; the rule above. The source is resolved first; the record is then changed inside the app's lifecycle lock: 409 `operation_in_progress` when the app is busy (after a 30 s wait), 409 `recovery_required` when it has an unfinished update. Only the source identity changes (id, name, repository, and for a git source the manifest repository and branch): the installed copy and its digest stay until the next update |
+| Add to the Market by URL: `POST /api/market/validate-url` `{ manifestUrl, addToMarket: true, allowSetup? }` (also from an "Add to YouEye" link) | the URL | `allowSetup` when it has setup files; the install from the "Added" entry asks again |
+| Add a market: `POST /api/market/source` (sources page, `youeye market add`, an "Add to YouEye" link) | the address | admin with CSRF token; `acceptRisk: true`; the market is read first |
+| Bundle install: `POST /api/market/bundles/<id>/install[?source=<id>]` | the bundle's market, else the official Market | the rule above; every member installs from that market and is recorded with it |
+| App update: `POST /api/apps/<id>/update`, `POST /api/market/update`, `POST /settings/api/apps/<id>/update` (all `updateMarketApp`) | the app's recorded source, else the official Market | the rule above; `source-changed` when the source id now names another address; an app added by URL: `setup-changed` without `allowSetup` |
+| Update check (every 6 hours plus jitter, `youeye app check-updates`) | the app's recorded source, else the official Market | a refused or missing source gives no offer and `updateBlocked`; a changed address gives no offer and `updateBlocked` (`source-changed`); it writes a source into an app only when it is the recorded one or the official one |
+| Source switch ("Change"): `PATCH /api/market/app/<id>/source` `{ sourceId, acceptUnverifiedPublisher?, allowSetup? }` | the named source | admin with CSRF token; the rule above; 409 `requires-newer-youeye` when that market's version needs a newer YouEye. The source is resolved first; the record is then changed inside the app's lifecycle lock: 409 `operation_in_progress` when the app is busy (after a 30 s wait), 409 `recovery_required` when it has an unfinished update. Only the source identity changes (id, name, market address): the installed copy and its digest stay until the next update |
 | Restore, independent copy | none | a restore rebuilds the app from its backed-up frozen manifest; a copy reads no source |
 
 ## Core containers are not Market apps
 
 Caddy, PostgreSQL and Pi-hole run images pinned by digest in the Control Panel
 (`control-panel/src/lib/infrastructure/system-images.ts`). They change only with a System release and are never
-read from any Market source, official or custom; first deployment does not need the Market for them. They are
-updated from Settings → System (or Settings → Apps), with a maintenance acknowledgement, onto the pinned image
-([control-panel.md](control-panel.md#updates)). The `system/*.yaml` files still in `YE-AppMarket` serve only boxes up
-to 0.6.9, which read them from the released catalog; the next plan removes them.
+read from any market, official or custom; first deployment does not need the Market. They are updated from
+Settings → System (or Settings → Apps), with a maintenance acknowledgement, onto the pinned image
+([control-panel.md](control-panel.md#updates)). The catalog has no `system/` files.
 
-## App icons (image proxy)
+## Pictures
 
-`GET /api/market/image` on the Control Panel (`control-panel/src/app/api/market/image/route.ts`) and its mirror on
-the dashboard (`ui/src/app/api/market/image/route.ts`) serve app icons and screenshots. They are public (no
-sign-in), so every answer is made inert in the box's origin:
+`GET /api/market/image?source=<source id>&file=<h/files/<sha256>.<ext>>` on the Control Panel
+(`control-panel/src/app/api/market/image/route.ts`) serves app icons and screenshots. It needs no sign-in, so it
+serves only what the owner already chose to read:
 
-- `?url=<https-url>` fetches from a fixed host list (`github.com`, `raw.githubusercontent.com`,
-  `avatars.githubusercontent.com`, `immich.app`, `usememos.com`, `i.ibb.co`, `jellyfin.org`, and their
-  subdomains; no `cdn.jsdelivr.net`), following at most five redirects within that list. The answer's type is one of
-  PNG, JPEG, WebP, GIF or SVG, taken from the upstream type, or from the file extension when the upstream type is
-  missing or generic (`text/plain`, `application/octet-stream`, `binary/octet-stream`). Anything else becomes a
-  placeholder icon on the Control Panel and a 502 on the dashboard.
-- The upstream body is capped at 5 MiB: an announced `Content-Length` above it is refused without reading, and a
-  longer stream is cut at the cap. A larger image also becomes the placeholder on the Control Panel and a 502
-  ("Upstream image is larger than 5 MiB") on the dashboard.
-- `?catalog=<path>` (Control Panel only) serves an image file from the accepted official `catalog.tar`.
+- Only a picture path that the accepted index or a stored bundle of an **enabled** market names, and for a custom
+  market only once it is accepted. Anything else (another path, an unknown, disabled or unaccepted source, a URL) is
+  404 and causes no outbound request.
+- A named picture is read from the store; the first time it is fetched from the market's own address (5 MiB limit,
+  checked against the hash in its path, one fetch shared by simultaneous requests) and kept. A named picture that
+  cannot be fetched is 502, and the failure is remembered for 60 s.
+- The box fetches at most 4 pictures from markets at once, 3 of them from one market, so requests for many pictures
+  it does not hold yet cannot fill its memory. A request beyond that waits for a place, 20 s at most and with at
+  most 200 waiting; then it is answered 503 with `Retry-After: 5`. That is not a failure of the picture and is not
+  remembered.
+- The type comes from the file extension (PNG, JPEG, WebP, GIF or SVG). The path names the content, so the answer is
+  `Cache-Control: public, max-age=31536000, immutable`.
 - Every answer carries `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and
-  `X-Content-Type-Options: nosniff`, so an SVG opened directly cannot run script. On the Control Panel the proxy
-  (`control-panel/src/proxy.ts`) sets this policy for `/api/market/image`, because a policy set in the proxy
-  replaces a route's own; the route sets the same headers itself.
+  `X-Content-Type-Options: nosniff`, so an SVG opened directly cannot run script. The proxy
+  (`control-panel/src/proxy.ts`) sets the same policy for this path, because a policy set in the proxy replaces a
+  route's own.
+
+The dashboard has no image route of its own. An installed app's dashboard icon is inlined as a data URI at install,
+read from the store of the market it is installed from (`app-icon.ts`); anything else falls back to the listing's
+Lucide icon name.
 
 ## Installing an app
 
@@ -161,7 +283,7 @@ Every install is admin-only and CSRF-checked and streams progress as server-sent
   (`["youeye-id"]` turns YouEye ID sign-in on for an app with `setup/sso.yaml`; on by default), `aiSettings`,
   `allowInternet`, `publicAccess`, `adoptRetainedData`, and for an "Added" (`direct:`) app
   `acceptUnverifiedPublisher` and `allowSetup`. Without `sourceId` the app comes from the official Market; a named
-  custom source must be accepted (see [Other sources and consent](#other-sources-and-consent)). The CP sets the
+  custom market must be accepted (see [Markets and consent](#markets-and-consent)). The CP sets the
   record's source, catalog key and manifest fields itself, and fills in the subdomain (the manifest's `subdomain:`,
   else the id). The domain is always the box's own; a client value is ignored. An install is refused (HTTP 423) while Health has a critical issue about that app (or about the box,
   such as the app-network or install-state issues); another app's critical issue doesn't block it. Each critical
@@ -172,7 +294,7 @@ Every install is admin-only and CSRF-checked and streams progress as server-sent
   data-ownership check, removes what carries the app's id and installation id, and never deletes a shared folder. `youeye app recover <id>` finishes an interrupted app update.
 - **`youeye app install <id> [--source <id>] [--public-access[=false]]`** sends `{ appId }` (plus `sourceId` with
   `--source`, and `publicAccess` when that flag is given) to the same endpoint. Without `--source` the app comes
-  from the official Market; the ids are in `youeye market source list`. The CLI has no YouEye ID user, so AI
+  from the official Market; the ids are in `youeye market list`. The CLI has no YouEye ID user, so AI
   Settings are off for CLI installs.
 - **`youeye app install --url <https-url> --i-trust-this-publisher [--allow-setup]`** calls
   `POST /api/market/install-url`. The manifest and its setup files are fetched from a public HTTPS server only (rules
@@ -318,20 +440,22 @@ only for one named app). `youeye app check-updates` calls `POST /api/apps/check-
 dashboard's Apps panel) end in the same `updateMarketApp`.
 
 - The new manifest comes from the app's recorded source, else the official Market (never another source): the same
-  Market source, which must still be on and accepted; the URL of an Added app; or the native app's product release
-  on the box's channel. The update check asks the same source and never re-points an app (see
-  [Other sources and consent](#other-sources-and-consent)). Apps added by URL get update offers too.
-- **An app whose source id now names another repository** (or branch) than it recorded is not updated: the answer is
-  403 `source-changed` (JSON) or an SSE `failed` event with `code: "source-changed"`, and the update check offers
+  market, which must still be on and accepted and is refreshed first; the URL of an Added app; or the native app's
+  product release on the box's channel. The update check asks the same source and never re-points an app (see
+  [Markets and consent](#markets-and-consent)). Apps added by URL get update offers too.
+- **An app whose source id now names another market address** than it recorded is not updated: the answer is 403
+  `source-changed` (JSON) or an SSE `failed` event with `code: "source-changed"`, and the update check offers
   nothing and stores `updateBlocked { code, message }` on the installed-app record. Only an explicit switch on the
-  app's page moves it to that source.
+  app's page moves it to that source. An app whose market is gone gets `updateBlocked` `source-unavailable` ("no
+  update source") the same way.
 - **An app added by URL whose setup files changed** is not updated without `allowSetup: true` (`--allow-setup`; the
   update panel says "Setup steps changed" and asks). Nothing is changed before that: the answer is 409
   `setup-changed` (JSON) or an SSE `failed` event with `code: "setup-changed"`, both listing `setups`. The Added
   entry's stored manifest is replaced only after a successful update.
 - Only a newer `version` is installed (`src/lib/version.ts`): a new image digest under the same version is never
-  offered. An update that needs a newer YouEye is refused and waits. Checks run 45 s after the CP starts and then
-  every 6 hours; nothing is applied automatically.
+  offered. An update that needs a newer YouEye is refused (`requires-newer-youeye`) and waits. Checks run 45 s after
+  the CP starts and then every 6 hours (plus up to 10 % jitter), and ask the markets first; nothing is applied
+  automatically.
 - Before the change the update takes a checkpoint: scoped metadata, a stopped runtime copy of each container,
   Incus volume snapshots and a logical dump of the app's PostgreSQL database. OCI images are pinned to the fetched
   digest, containers are stopped, rebuilt (env and `files:` written again) and health-checked. A failure restores
@@ -389,17 +513,51 @@ or cleanup retries.
   (after 5, 15, 30, 60 and 60 s) when the error looks like a network or registry hiccup (DNS timeout, connection reset,
   429, 5xx). A permanent answer (unknown manifest, denied, not found, digest mismatch) fails at once.
 
+## Backups
+
+The core backup carries the Market's own choices (`lib/backup/market-state.ts`): `market-sources.json` (the
+markets, with their acceptance and the note about removed sources) and `state/direct-market-apps.json` (the apps
+added by URL, with the manifest the owner agreed to), under `market/` in the core archive and listed in
+`backup-meta.json` as `marketFiles`. A platform restore puts them back in its step `restore-market-sources` (an
+empty list removes the target's files) and drops the copies of markets the restored list no longer names. Before
+the restore changes anything it checks the files: each must be a JSON object, and `direct-market-apps.json` must
+be `schemaVersion: 1` with an `entries` object of objects; otherwise the restore is refused. On the box, an empty
+`direct-market-apps.json`, or one without an `entries` object (`{}`), reads as holding no apps. The backup
+applies the same check when it takes the files, so it never holds one a restore would refuse: a store the box
+reads as holding no apps is backed up as the empty store, and any other file that fails the check fails the
+backup ("Refusing to back up <file>: …"). A backup
+made before 0.6.11 has no `marketFiles` and leaves the box's files as they are. The market copies themselves
+(`/var/lib/youeye/markets/`) are not backed up: a box reads them again. An installed app's frozen manifest is in its
+app archive, as before.
+
 ## Tests
 
 - **CP unit tests** in `control-panel/tests/`, run with `npm test` in `control-panel/`. Most relevant:
   `app-format.test.ts` (parser, validator, variables, digest, frozen copies), `setup-runner.test.ts` (step safety
-  rules), `catalog-release.spec.ts` (channel catalog), `market-system-apps.spec.ts` (the pinned core images; a
-  source that lists `system` changes nothing; validates the whole `YE-AppMarket` checkout with the CP parser, set
-  `MARKET_ROOT` if it is not next to `YouEye`), `market-image-proxy.spec.ts` (the image proxy's headers and types),
-  `market-source-consent.spec.ts` (source acceptance, the list edit, official by default, bundles, the source
-  switch, the update check, URL apps' changed setup files),
+  rules), `market-system-apps.spec.ts` (the pinned core images; a market that lists system items changes nothing;
+  validates the whole `YE-AppMarket` checkout with the CP parser, set `MARKET_ROOT` if it is not next to `YouEye`),
   `identity-role-claim.test.ts`, `install-tracker-durable.spec.ts`, `image-fetch-retry.spec.ts` and the
-  `market-*.spec.ts` files.
+  `market-*.spec.ts` files. For markets by address:
+  - `market-store.spec.ts` (accepting: hash mismatch refused at each level, a lower `sequence` refused for the same
+    address and accepted after an address change, an unreachable market keeps its state, a changed app fetches one
+    bundle, refresh timing), `pinned-https.spec.ts` (public addresses, pinned DNS, no redirects, size limits);
+  - `market-catalog.spec.ts` (the reader: too-new and unknown-kind entries listed, strict parse errors),
+    `market-native-listing.spec.ts`, `channel-index.spec.ts`, `product-release.spec.ts`;
+  - `market-image-proxy.spec.ts` (only named pictures, no fetch for anything else, headers and types);
+  - `market-source-consent.spec.ts` (acceptance, the list edit, official by default, bundles, the source switch, the
+    update check, removed sources and "no update source", URL apps' changed setup files),
+    `market-update-routing.spec.ts`, `market-detail-sources.spec.ts` (the app page's variants and installed source);
+  - `market-store-hardening.spec.ts` (the refresh deadline and the reader's wait, refreshes by source and address,
+    nothing left behind by a failed attempt, `sequence` bounds and a wrong clock, picture fetch limits),
+    `market-reader-hardening.spec.ts` (manifest id per entry, a custom market's `native` list ignored, official
+    lanes refused as custom markets, a store that cannot be shown, deadlines of apps added by URL);
+  - `market-add-link.spec.ts` (the preview is a POST with the CSRF token, writes nothing and refuses non-admins;
+    adding needs an admin session and the origin check; bad and over-long links; the sign-in redirect and its
+    loop guard), `market-backup.spec.ts` (backups carry the sources and Added apps; a malformed Added-app store is
+    refused, by the backup as by the restore);
+  - `market-build.spec.ts`, `app-format-since.spec.ts`, `market-site.spec.ts`, `my-site.spec.ts` (the generator,
+    the field-since table, the website and `sites/my`).
+- **CLI:** `spine/internal/cmd/market_test.go` (request bodies and output of `youeye market …`).
 - **Sign-in suite** `tests/market-sso/` (Playwright): signs in to each installed app once as a YouEye admin and once
   as a standard user and checks the app's own view of who is an admin. See its `README.md` for setup and saved
   sessions.

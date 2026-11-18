@@ -47,8 +47,9 @@ a selected Spine runs.
 Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
 `youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
 `youeye appliance health|ssh-key`, `youeye app …` (for example `app install <id> [--source <id>]`,
-`app update <id> [--allow-setup]`; see [market.md](market.md)), `youeye market search|info|source list|source accept`
-(`youeye market repo get|set` were removed in 0.6.10) and `youeye backup …`. `youeye --help` lists all of them;
+`app update <id> [--allow-setup]`; see [market.md](market.md)), `youeye market list|add|remove|accept|refresh|search|info`
+(markets by address, [market.md](market.md#markets-and-consent); `youeye market source …` and `repo …` no longer
+exist) and `youeye backup …`. `youeye --help` lists all of them;
 [troubleshooting.md](troubleshooting.md) shows them in use.
 
 ## The API
@@ -64,13 +65,20 @@ groups are:
 | `/api/health`, `/api/version`, `/api/status`, `/api/metrics`, `/api/spine/status` | status |
 | `/api/config` | the platform config (`/var/lib/youeye/config/youeye.yaml`) |
 | `/api/postgres/credentials`, `/api/pihole/credentials`, `/api/control/sso`, `/api/ui/sso` | credentials the Control Panel needs |
-| `/api/releases/index`, `/api/releases/channel` | the box's channel index (for apps, Pointer and the Market) and its channel |
+| `/api/releases/index`, `/api/releases/channel` | the box's channel index (for native apps and Pointer) and its channel (the Control Panel picks the official Market's lane from it) |
 | `/api/appliance/core-update/{status,check,stage,activate,resume,recover,cancel}` | System updates |
 | `/api/appliance/remote-access/keys`, `/api/console…` (console access), `/api/appliance/network` | host access and network |
 | `/api/backup/*` | backups and restore |
 
 Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi-hole
 (`spine/internal/cmd/hostipcheck.go`).
+
+**The channel index answer** (`spine/internal/api/releases.go`). `GET /api/releases/index` is answered from a copy
+kept for 5 minutes plus 0–10 % jitter. A refresh tries the index addresses in order and sends `If-None-Match` with
+the ETag of that address's last good copy; a `304` keeps the copy and counts as a refresh. After a failure the host
+is not asked again for 30 s, doubling up to 10 minutes, and meanwhile the last good index is answered; only with no
+good copy yet is the answer the error (502 with `code`). Changing the channel starts over. `youeye update core
+check` fetches the index separately and unconditionally.
 
 ## Host maintenance (API service)
 
@@ -88,6 +96,11 @@ Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi
   boxes, retrying up to 10 times 30 s apart because Incus may still be starting. The Debian base of the system
   containers is the local image `youeye-debian-12`, which does not refresh by itself either: it is downloaded and
   checked only when that alias is missing (`EnsureSystemBaseImage` in `spine/internal/incus/images.go`).
+- **Old service trees:** removes the `/opt/.youeye-core-<hash>` trees that finished System updates left in
+  `youeye-control` and `youeye-ui`, only while no System request is unfinished. Besides the start and daily runs it
+  runs once more 15 minutes after start (at boot the containers are not up yet, and a Spine update restarts the
+  service in the middle of its own request). Rules in
+  [core-release-contract.md](core-release-contract.md#checkpoint-and-recovery).
 
 ## Spine-only update (no reboot)
 
@@ -99,6 +112,15 @@ Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi
 4. Healthy: the trial becomes current (the old current becomes previous). Not healthy, or three crashed starts:
    the trial is dropped and the service restarts on the previous choice. Recovery of a failed System update also
    returns the slot to its previous Spine.
+
+In a System update this is the `apply-spine` step. Once it succeeded, the process coordinating the update asks the
+new Spine whether it can continue the request (`update core status --can-resume --request <id>`, 20 s at most)
+and, only when it answers yes for the same journal state, hands it the rest (`update core resume`, same process);
+otherwise the installed Spine finishes the request itself
+([core-release-contract.md](core-release-contract.md#the-hand-over-after-the-spine-step)). The API service checks
+when it starts and then once a minute for a service update whose coordinator was lost between two steps, or that
+finished without releasing its holds, and starts its continuation again (same page, "A lost continuation"). The
+hand-over decision is written to the system journal of the coordinator's unit.
 
 The selection survives reboots. An image update selects the release's Spine for the slot it writes, so after the
 reboot the new slot runs it.

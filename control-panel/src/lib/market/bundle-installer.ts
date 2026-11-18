@@ -108,7 +108,7 @@ export async function installBundle(
         catalogKey: `${source.id}:app:${memberId}`,
         sourceId: source.id,
         sourceName: source.name,
-        sourceRepoUrl: source.repo_url || undefined,
+        sourceRepoUrl: source.url || undefined,
         manifestPath: reference.path,
         manifestRepo: reference.repo,
         manifestBranch: reference.branch,

@@ -14,7 +14,7 @@ import { appSecretNameFromFile, appSecretStoreAt, appSecretFile } from '../src/l
 import { assertContainerNamesAvailable } from '../src/lib/market/instance-ownership';
 import { getContainerName, leftoverAppPaths } from '../src/lib/market/engine-helpers';
 import { caddyTrustAppDirectory, removeCaddyTrustBundle } from '../src/lib/market/caddy-ca';
-import { catalogIconPath, resolveAppIcon } from '../src/lib/market/app-icon';
+import { marketIconPicture, resolveAppIcon } from '../src/lib/market/app-icon';
 import type { InstallMetadata } from '../src/lib/market/types';
 import { routeServers } from '../src/lib/caddy/servers';
 import * as marketSource from '../src/lib/market/source';
@@ -372,28 +372,41 @@ test('a bad Node version or app directory is refused at the native deployer befo
 
 // ─── Icons ──────────────────────────────────────────────────
 
-test('app icons come only from the app folder in the official catalog, never a URL', async () => {
+test('app icons come only from a picture of the market the app installs from, never a URL', async () => {
   const reads: string[] = [];
-  const read = async (file: string) => { reads.push(file); return Buffer.from('<svg/>'); };
-  const base = { appId: 'mealie', lucide: 'utensils', manifestPath: 'apps/mealie/youeye-app.yaml' };
+  const read = async (sourceId: string, file: string) => { reads.push(`${sourceId} ${file}`); return Buffer.from('<svg/>'); };
+  const picture = `h/files/${'a'.repeat(64)}.svg`;
+  const named = `/api/market/image?source=official&file=${encodeURIComponent(picture)}`;
+  const base = { appId: 'mealie', lucide: 'utensils', sourceId: 'official' };
   for (const iconUrl of [
     'https://169.254.169.254/latest/meta-data',
     'http://youeye-postgres.youeye:5432/x.png',
     '/api/market/image?url=https%3A%2F%2Fraw.githubusercontent.com%2Fx%2Fy%2Fmain%2Ficon.png',
-    '/api/market/image?catalog=apps%2Fnotes%2Ficon.svg',
-    '/api/market/image?catalog=apps%2Fmealie%2F..%2Fnotes%2Ficon.svg',
-    '/api/market/image?catalog=apps%2Fmealie%2Fyoueye-app.yaml',
+    '/api/market/image?catalog=apps%2Fmealie%2Ficon.svg',
+    // Another source than the one the app installs from, and paths that are not a market picture.
+    `/api/market/image?source=custom-1&file=${encodeURIComponent(picture)}`,
+    '/api/market/image?source=official&file=apps%2Fmealie%2Ficon.svg',
+    `/api/market/image?source=official&file=${encodeURIComponent(`h/files/../apps/x/${'a'.repeat(64)}.json`)}`,
+    `/api/market/image?source=official&file=${encodeURIComponent(`h/files/${'a'.repeat(64)}.html`)}`,
+    `/api/market/image?source=official&file=${encodeURIComponent(`https://evil.example.org/${picture}`)}`,
   ]) {
     assert.equal(await resolveAppIcon({ ...base, iconUrl }, read), 'utensils', iconUrl);
   }
   for (const customIcon of ['https://example.com/x.png', 'http://10.0.0.1/', 'file:///etc/passwd']) {
     assert.equal(await resolveAppIcon({ ...base, customIcon }, read), 'utensils');
   }
+  // An app added by URL has no market: its icon is never read from one.
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named, sourceId: 'direct:abc' }, read), 'utensils');
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named, sourceId: undefined }, read), 'utensils');
   assert.deepEqual(reads, []);
-  assert.equal(catalogIconPath({ iconUrl: '/api/market/image?catalog=apps%2Fmealie%2Ficon.svg', manifestPath: undefined }), null);
-  assert.equal(await resolveAppIcon({ ...base, iconUrl: '/api/market/image?catalog=apps%2Fmealie%2Ficon.svg' }, read),
+  assert.equal(marketIconPicture({ iconUrl: named, sourceId: undefined }), null);
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named }, read),
     `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`);
-  assert.deepEqual(reads, ['apps/mealie/icon.svg']);
+  assert.deepEqual(reads, [`official ${picture}`]);
+  // A picture the market does not name (the reader answers null), an oversized one and a failed read fall back.
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named }, async () => null), 'utensils');
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named }, async () => Buffer.alloc(512 * 1024 + 1)), 'utensils');
+  assert.equal(await resolveAppIcon({ ...base, iconUrl: named }, async () => { throw new Error('offline'); }), 'utensils');
   assert.equal(await resolveAppIcon({ ...base, customIcon: 'book' }, read), 'book');
   const engine = readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
   assert.doesNotMatch(engine, /fetchIconAsDataUri|https\.request/);
@@ -411,6 +424,7 @@ function routeModule(file: string, setups: Array<{ name: string; for: string }>)
     '@/lib/market/engine': { installApp: async () => { started.push('install'); } },
     '@/lib/market/url-app': {
       fetchUrlApp: async () => manifest, validateAppUrl: () => null, isPrivateHostname: () => false,
+      resolveAppManifestUrl: (url: string) => url,
       UrlAppError: class extends Error { details: string[] = []; },
     },
     '@/lib/market/install-tracker': { startTracking: () => { started.push('tracking'); return new AbortController(); },

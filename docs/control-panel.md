@@ -47,7 +47,8 @@ Background jobs start in `src/instrumentation.ts`, only in the CP process (not i
 - DNS-provider and YouEye Names maintenance ([youeye-names.md](youeye-names.md));
 - health monitor every 60 s: service checks, container watchdog with crash-loop detection, disk every 5 min,
   certificate expiry every 6 h, notifications on state changes (`lib/health/monitor.ts`);
-- the Market version and health checkers, the backup scheduler;
+- the Market version checker (45 s after start, then every 6 hours plus jitter), the UI and Pointer update checks
+  (`lib/apps/update-cache.ts`, every 3 hours plus jitter), the health checkers, the backup scheduler;
 - admission reconciliation and the 20 s admission push to the dashboard ([app-admission.md](app-admission.md));
 - startup reconciliation of Incus containers.
 
@@ -101,8 +102,9 @@ re-checks the security posture; it never replaces running ones.
   500. Other failures are logged with their cause chain (`[Market] <operation> failed: …`) and answered with a fixed
   message.
 - **Market sources:** an install, bundle install, app update or source switch reads only the official Market, a
-  custom source the owner accepted, or an app added by URL with its own confirmation (`lib/market/source.ts`; see
-  [market.md](market.md#other-sources-and-consent)).
+  custom market the owner accepted, or an app added by URL with its own confirmation (`lib/market/source.ts`; see
+  [market.md](market.md#markets-and-consent)). Markets are read as static files from their HTTPS address and kept in
+  `/var/lib/youeye/markets/` ([market-format.md](market-format.md)); pages read that copy, never the network.
 - **Orphans** (`/api/admin/orphans`, `youeye orphans [clean]`): admin only. Only resources an install left behind are
   listed: installation-tagged containers no record names, Market app routes (id `app-route-<app>-…`, since 0.6.8) of
   apps with no install or kept-data record, app databases and YouEye app storage no record names. Platform routes,
@@ -203,8 +205,9 @@ key and the backups cannot be read.
 
 - a **core** archive (`core-backup.ts`): dumps of the `youeye`, `youeye_ui` and `pointer` databases, `youeye.yaml`,
   the installed-apps list, infrastructure secrets, Caddy and Pi-hole configuration, and the data of
-  `/var/lib/youeye/{caddy,pihole,config,networks,ui,ui-data,pointer}`. The system containers are frozen briefly
-  while their volumes are copied.
+  `/var/lib/youeye/{caddy,pihole,config,networks,ui,ui-data,pointer}`, and the Market's sources and apps added by
+  URL (`market/`, listed as `marketFiles` in `backup-meta.json`; see [market.md](market.md#backups)). The system
+  containers are frozen briefly while their volumes are copied.
 - one archive per selected app (`app-backup.ts`): its frozen manifest, `install.json`, secrets, database dump,
   volumes and admission metadata.
 

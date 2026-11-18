@@ -16,7 +16,7 @@ and the code disagree, the code wins: fix the page in the same change. The old Y
 | Spine (`youeye` CLI and API) | host | `spine/` | [Spine](spine.md) |
 | Control Panel and YouEye ID | Incus container `youeye-control` | `control-panel/` | [Control Panel](control-panel.md), [YouEye ID](youeye-id.md) |
 | Dashboard UI | Incus container `youeye-ui` | `ui/` | [Control Panel](control-panel.md) (dashboard section) |
-| Market apps | one network and container set per app | `YE-AppMarket` repo, `control-panel/src/lib/market/` | [Market](market.md) |
+| Market apps | one network and container set per app | `YE-AppMarket` repo (published at `market.youeye.me`), `control-panel/src/lib/market/` | [Market](market.md), [Market format](market-format.md) |
 | Native apps | Incus system containers | `YE-App-*` repos, `YouEye-Canvas` | [Native apps](native-apps.md) |
 | Pointer (AI) | Incus container `youeye-pointer` | `Pointer` repo | [Pointer runtime](pointer-runtime.md) |
 | YouEye Names | Control Panel, plus the Names service | `control-panel/src/lib/youeye-names/` | [YouEye Names](youeye-names.md) |
@@ -39,16 +39,17 @@ and the code disagree, the code wins: fix the page in the same change. The old Y
 
 | Page | What it covers |
 |---|---|
-| [Releases](releases.md) | Build versions and channel names, channel indexes, promotion, tree identity, signing (off) |
+| [Releases](releases.md) | Build versions and channel names, channel indexes (and the frozen Market entry), promotion, tree identity, signing (off) |
 | [System release contract](core-release-contract.md) | `core-release.json`: roles, update kinds and steps, checkpoints, recovery |
-| [Product release contract](product-release-contract.md) | Native app, Pointer and Market catalog releases |
+| [Product release contract](product-release-contract.md) | Native app and Pointer releases |
 | [App update transactions](app-update-transactions.md) | A Market app update as a journaled transaction: commit, or put back exactly |
 
 **Apps**
 
 | Page | What it covers |
 |---|---|
-| [Market](market.md) | The catalog, other sources and consent, install, sign-in, AI settings, public access, connections, updates, uninstall |
+| [Market](market.md) | Where apps come from, the store on the box, markets and consent, install, sign-in, AI settings, public access, connections, updates, uninstall |
+| [Market format](market-format.md) | `youeye.market.v1`: files and fields, limits and rules, building, hosting and adding a market, "Add to YouEye" links, how the official Market is published |
 | [App manifest](app-manifest.md) | `youeye.app.v1` and setup files (`youeye.setup.v1`), field by field |
 | [App environment](app-environment.md) | The `${…}` variables an app can use, and the doorways |
 | [App access](app-admission.md) | Admission: owner, users, groups, public access; ownership and restore |

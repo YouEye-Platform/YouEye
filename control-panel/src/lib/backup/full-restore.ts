@@ -7,7 +7,8 @@
  * 3. Restore infrastructure secrets
  * 4. Restore the YouEye database (including YouEye ID)
  * 5. Restore Caddy and Pi-Hole configuration
- * 6. For each app archive: restoreApp()
+ * 6. Restore the Market's sources and Added apps (when the backup carries them)
+ * 7. For each app archive: restoreApp()
  */
 
 import { chmod, readFile, mkdir, rm, writeFile } from 'fs/promises';
@@ -587,6 +588,10 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     }
     const missingDatabases = PLATFORM_DATABASES.filter(database => !databasesInArchive.has(database));
     if (missingDatabases.length > 0) throw new Error(`Core backup is missing required database dumps: ${missingDatabases.join(', ')}`);
+    // The Market's sources and Added apps (backups made before they were carried have no `marketFiles`: the target's
+    // Market files are then left as they are).
+    const marketState = coreMeta.marketFiles === undefined ? null
+      : await (await import('./market-state')).readMarketStateFromBackup(coreStagingDir, coreMeta.marketFiles);
 
     // Once removal is durably complete, the historical database may already
     // have replaced the target inventory. Do not reinterpret that inventory as
@@ -792,6 +797,19 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
         }
       }
     });
+
+    if (marketState) {
+      await runStep('restore-market-sources', 'replace', async () => {
+        emit('restore-market-sources', 'Restoring Market sources...');
+        const { restoreMarketState } = await import('./market-state');
+        await restoreMarketState(marketState);
+        // Copies of markets the restored list no longer names go; every market is read again on its next use.
+        const { getConfiguredMarketSources } = await import('@/lib/market/source');
+        const { removeMarketStoresExcept, requestMarketRefresh } = await import('@/lib/market/market-store');
+        await removeMarketStoresExcept((await getConfiguredMarketSources()).map(source => source.id));
+        requestMarketRefresh();
+      });
+    }
 
     // ── Restore each selected app ──────────────────────────
     for (const { appId, archivePath } of appArchives) {

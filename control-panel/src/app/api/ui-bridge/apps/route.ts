@@ -12,11 +12,7 @@ import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { incusRequest } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
 import { APP_DEFINITIONS } from '@/lib/apps/definitions';
-import {
-  getAllCachedUpdates,
-  getLastCheckedAt,
-  isCheckInProgress,
-} from '@/lib/apps/update-cache';
+import { getLastCheckedAt, isCheckInProgress } from '@/lib/apps/update-cache';
 import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
@@ -121,7 +117,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const ociUpdates = getAllCachedUpdates();
     const lxdUpdates = getAllCachedLxdUpdates();
 
     // Build unified list from APP_DEFINITIONS
@@ -198,6 +193,7 @@ export async function GET(request: NextRequest) {
           desiredState: 'running' as const,
           updateAvailable,
           updateInfo,
+          updateBlocked: dbEntry?.updateBlocked ?? null,
           // The update needs the maintenance acknowledgements (as in Settings → Apps).
           systemManaged: !!def.systemImageId,
         };
@@ -286,6 +282,7 @@ export async function GET(request: NextRequest) {
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: upd,
         updateInfo: upd && catV ? `${insV} → ${catV}` : undefined,
+        updateBlocked: dbEntry?.updateBlocked ?? null,
       };
     });
 

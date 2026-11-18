@@ -1,8 +1,10 @@
 /**
  * Unified Market catalog API.
- * Returns all available apps (Market-installed + native) from the Market GitHub repo.
  *
- * GET /api/market/catalog — all available apps
+ * GET /api/market/catalog — every app of the box's enabled markets (container and native apps) and the apps added
+ * by URL, with categories, curation, bundles and `warnings`. It reads the box's copy of each market
+ * (lib/market/market-store.ts) and waits for a market only when that copy is still empty or right after an explicit
+ * "check for updates". An app this box cannot install carries `installBlocked` (and `needsYouEye`).
  */
 
 import { NextResponse } from 'next/server';

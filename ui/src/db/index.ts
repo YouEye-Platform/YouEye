@@ -14,6 +14,7 @@ import postgres from "postgres";
 import * as schema from "./schema";
 import { isNextProductionBuild } from "@/lib/runtime-phase";
 import { runCoreSchemaOnce, runFreshCoreSchemaOnce } from "@/lib/core-schema";
+import { waitForDatabase } from "@/lib/database-wait";
 
 const connectionString = process.env.DATABASE_URL!;
 
@@ -47,7 +48,8 @@ export async function ensureSchema(freshOnly = false) {
     schemaInitInFlight = (async () => {
       // Connectivity is a read-only preflight, before durable migration intent.
       if (freshOnly) {
-        if (!await runFreshCoreSchemaOnce(initSchema, undefined, () => queryClient`SELECT 1`)) return;
+        // On a first boot the database may answer a little after this process starts: wait for it, bounded.
+        if (!await runFreshCoreSchemaOnce(initSchema, undefined, () => waitForDatabase(() => queryClient`SELECT 1`))) return;
       } else {
         await queryClient`SELECT 1`;
         await runCoreSchemaOnce('ui', initSchema);

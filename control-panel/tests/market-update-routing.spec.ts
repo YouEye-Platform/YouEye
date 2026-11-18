@@ -7,7 +7,8 @@ import {
   classifyAppUpdateRouting,
   projectUpdateAvailability,
   recordedCatalogSourceIds,
-  repositoriesMatch,
+  recordedSourceAddressChange,
+  sameMarketAddress,
 } from '../src/lib/market/update-routing';
 
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
@@ -15,8 +16,6 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8');
 
 const officialCatalog = {
   sourceId: 'official',
-  sourceRepoUrl: '',
-  sourceRepoUrls: ['https://forgejo.example.test/example/Community-Market'],
   entry: {
     path: 'apps/searxng',
     integration: 'basic' as const,
@@ -78,10 +77,26 @@ test('Market repository provenance is not mistaken for an app release repository
   });
 
   assert.equal(decision.kind, 'catalog');
-  assert.equal(repositoriesMatch(
-    'https://forgejo.example.test/owner/YE-AppMarket.git',
-    'https://forgejo.example.test/owner/YE-AppMarket/',
-  ), true);
+});
+
+test('an app follows the market address it recorded: one written form, and a repository URL matches no market', () => {
+  const friend = { kind: 'url', name: 'Friend', url: 'https://markets.example.org/friend/' };
+  assert.equal(sameMarketAddress('https://markets.example.org/friend', 'https://MARKETS.example.org/friend/'), true);
+  assert.equal(sameMarketAddress('https://markets.example.org/friend/market.json', 'https://markets.example.org/friend/'), true);
+  assert.equal(sameMarketAddress('https://markets.example.org/friend/', 'https://markets.example.org/friend/dev/'), false);
+  assert.equal(sameMarketAddress('', ''), false);
+  assert.equal(sameMarketAddress(undefined, 'https://markets.example.org/friend/'), false);
+  assert.equal(sameMarketAddress('http://markets.example.org/friend/', 'https://markets.example.org/friend/'), false, 'not a market address');
+
+  assert.equal(recordedSourceAddressChange({ sourceRepoUrl: 'https://markets.example.org/friend' }, friend), null);
+  assert.equal(recordedSourceAddressChange({ sourceRepoUrl: undefined }, friend), null, 'nothing recorded: nothing to compare');
+  const moved = recordedSourceAddressChange({ sourceRepoUrl: 'https://markets.example.org/other/' }, friend)!;
+  assert.equal(moved.recordedAddress, 'https://markets.example.org/other/');
+  assert.match(moved.message, /installed from https:\/\/markets\.example\.org\/other\/; the Market source "Friend" now points at https:\/\/markets\.example\.org\/friend\//);
+  // A git repository recorded before markets were read by address is another address than any market.
+  assert.match(recordedSourceAddressChange({ sourceRepoUrl: 'https://git.example.test/friend/market' }, friend)!.message, /installed from https:\/\/git\.example\.test\/friend\/market;/);
+  // The official Market's address follows the box's channel and is never "changed".
+  assert.equal(recordedSourceAddressChange({ sourceRepoUrl: 'https://market.youeye.me/dev/' }, { kind: 'official', name: 'Official YouEye Market', url: '' }), null);
 });
 
 test('a recorded release repository never turns a catalog app into a channel app', () => {

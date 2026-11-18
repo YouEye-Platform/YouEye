@@ -80,24 +80,6 @@ func TestAppUpdateArgsAndPayload(t *testing.T) {
 	}
 }
 
-func TestMarketSourceRows(t *testing.T) {
-	rows := marketSourceRows(map[string]interface{}{"sources": []interface{}{
-		map[string]interface{}{"id": "official", "name": "Official YouEye Market", "kind": "channel", "enabled": true},
-		map[string]interface{}{"id": "andrew-test", "name": "Andrew", "kind": "git", "repo_url": "https://git.example/a/M", "branch": "dev", "enabled": true},
-		map[string]interface{}{"id": "c", "name": "C", "kind": "git", "repo_url": "https://git.example/c/M", "branch": "main", "enabled": false, "accepted_at": "2026-11-18T10:00:00.000Z"},
-	}})
-	if len(rows) != 3 || rows[0][5] != "official" || rows[1][5] != "no" || rows[2][5] != "2026-11-18T10:00:00.000Z" || rows[2][4] != "no" {
-		t.Fatalf("rows: %v", rows)
-	}
-	// "market repo set" was an unguarded way to add a source; it is gone.
-	if c, _, _ := rootCmd.Find([]string{"market", "repo", "set"}); c != nil && c.Name() != "market" {
-		t.Errorf("youeye market repo still resolves to %q", c.CommandPath())
-	}
-	if c, _, _ := rootCmd.Find([]string{"market", "source", "accept"}); c == nil || c.Name() != "accept" {
-		t.Error("youeye market source accept is missing")
-	}
-}
-
 // An unreachable Control Panel (or a missing CLI token) must fail the command, not exit 0.
 func TestRequireCPFailsWithExitCode(t *testing.T) {
 	if _, err := os.Stat(controlapi.CLITokenPath); err == nil {

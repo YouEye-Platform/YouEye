@@ -16,7 +16,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { resolveCatalogApp } from '@/lib/market/catalog';
+import { isMarketAppUnavailable, resolveCatalogApp } from '@/lib/market/catalog';
 import { directAppRefusal, isMarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID } from '@/lib/market/source';
 import { installApp } from '@/lib/market/engine';
 import {
@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
       manifest = resolved.manifest;
       config.catalogKey = `${resolved.source.id}:app:${config.appId}`;
       config.sourceName = resolved.source.name;
-      config.sourceRepoUrl = resolved.source.repo_url || undefined;
+      config.sourceRepoUrl = resolved.source.url || undefined;
       config.manifestPath = resolved.reference.path;
       config.manifestRepo = resolved.reference.repo;
       config.manifestBranch = resolved.reference.branch;
@@ -159,7 +159,11 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: error.message, code: error.code, ...(error.setups ? { setups: error.setups } : {}) },
         { status: error.code === 'source-unavailable' ? 400 : 403 });
     }
-    // resolveCatalogApp's own messages name only the app, the source and a fixed reason.
+    // The app needs a newer YouEye than this box runs: refused with that reason and the version it needs.
+    if (isMarketAppUnavailable(error)) {
+      return Response.json({ error: error.message, code: error.code, ...(error.needsYouEye ? { needsYouEye: error.needsYouEye } : {}) }, { status: 409 });
+    }
+    // resolveCatalogApp's own messages name only the app, the source and the reason its market or manifest gave.
     const directError = error instanceof Error && (config.sourceId?.startsWith('direct:')
       || /^App "[^"]*" could not be resolved from Market source/.test(error.message))
       ? error.message

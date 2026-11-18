@@ -34,6 +34,10 @@ containers. This page says what lives where and how the parts talk. Install and 
   and Market apps (`control-panel/src/lib/infrastructure/`). The Caddy, PostgreSQL and Pi-hole images are pinned by
   digest in the Control Panel (`system-images.ts`): they change only with a System release, never come from a Market
   source, and first deployment needs no Market for them.
+- The Control Panel reads the Market as static files from each market's HTTPS address (the official one is
+  `https://market.youeye.me/`, or `/dev/` on the dev and alpha channels) and keeps a checked copy in
+  `/var/lib/youeye/markets/` ([market.md](market.md), [market-format.md](market-format.md)). Native apps and Pointer
+  come from the channel index through Spine. No box path calls a release-listing or GitHub API.
 - Both web apps are Next.js 16 and ship with their own Node runtime (Node 24.22.0, copied in by
   `scripts/bundle-node-runtime.mjs` in each app).
 - The Control Panel is served at `https://<domain>/settings`. YouEye ID has its own subdomain

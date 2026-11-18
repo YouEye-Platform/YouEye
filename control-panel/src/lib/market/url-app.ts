@@ -6,11 +6,13 @@
  * resolved first: every address it resolves to must be public (not private, loopback,
  * link-local, CGNAT, unique-local, multicast, reserved or a cloud metadata address). The request
  * connects to that checked address only (no second DNS lookup) and the connected peer address
- * is checked again. Redirects are refused, 1 MiB per file, short timeouts.
+ * is checked again. Redirects are refused, 1 MiB per file, 5 s of silence at most, 20 s per file and 60 s for the
+ * whole app (a server that sends a body slowly, or names many setup files, cannot hold a request open).
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { request as httpsRequest } from 'node:https';
+import type { IncomingHttpHeaders } from 'node:http';
+import { request as httpsRequest, type Agent as HttpsAgent } from 'node:https';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { CONTAINER_DOMAIN } from './constants';
 import { fetchApp } from './app-format/compile';
@@ -18,6 +20,11 @@ import { MAX_DOCUMENT_BYTES } from './app-format/parse';
 import type { AppManifest } from './types';
 
 const FETCH_TIMEOUT_MS = 5000;
+/** One file, headers to last byte: 1 MiB at 50 kB/s. */
+export const URL_APP_FILE_DEADLINE_MS = 20_000;
+/** The manifest and every setup file it names, together. */
+export const URL_APP_DEADLINE_MS = 60_000;
+const TOO_SLOW = 'The app could not be read in time: its server answers too slowly';
 
 const INTERNAL_NAMES = [/^localhost$/i, /\.local$/i, /\.internal$/i, /\.incus$/i, /\.test$/i, /\.localhost$/i];
 
@@ -107,6 +114,30 @@ export function validateAppUrl(url: string): string | null {
   return null;
 }
 
+/**
+ * The manifest URL an "add by URL" address stands for. A repository address is read as its `youeye-app.yaml`:
+ * `https://github.com/<owner>/<repo>` from raw.githubusercontent.com, `https://<forge>/<owner>/<repo>` (Forgejo, Gitea)
+ * from its `main` branch. Anything else, and any address of a `.yaml`/`.yml` file, is used as it is.
+ */
+export function resolveAppManifestUrl(input: string): string {
+  const github = input.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)\/?$/);
+  if (github && !/\.ya?ml$/i.test(github[2])) {
+    return `https://raw.githubusercontent.com/${github[1]}/${github[2]}/main/youeye-app.yaml`;
+  }
+  try {
+    const repository = new URL(input);
+    const parts = repository.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
+    if (repository.protocol === 'https:' && !repository.username && !repository.password &&
+        !repository.search && !repository.hash && parts.length === 2 && parts.every(Boolean) &&
+        !/\.ya?ml$/i.test(parts[1]) && !isPrivateHostname(repository.hostname)) {
+      return `${repository.origin}/${parts.map(encodeURIComponent).join('/')}/raw/branch/main/youeye-app.yaml`;
+    }
+  } catch {
+    // Not a URL: validateAppUrl says why.
+  }
+  return input;
+}
+
 export class UrlAppError extends Error {
   constructor(message: string, readonly details: string[] = []) {
     super(message);
@@ -120,8 +151,11 @@ export interface PinnedResponse {
   body: string;
 }
 
-/** One HTTPS GET to `url`, connecting only to `pinned` (TLS still verifies the host name). */
-export type PinnedGet = (url: URL, pinned: ResolvedHost) => Promise<PinnedResponse>;
+/**
+ * One HTTPS GET to `url`, connecting only to `pinned` (TLS still verifies the host name). `deadlineMs` is the time
+ * the whole request may take (the rest of the app's time when that is less than a file's).
+ */
+export type PinnedGet = (url: URL, pinned: ResolvedHost, deadlineMs?: number) => Promise<PinnedResponse>;
 
 /** A DNS lookup that always answers with the already checked address. */
 export function pinnedLookup(pinned: ResolvedHost): LookupFunction {
@@ -131,64 +165,129 @@ export function pinnedLookup(pinned: ResolvedHost): LookupFunction {
   }) as LookupFunction;
 }
 
-const pinnedHttpsGet: PinnedGet = (url, pinned) => new Promise((resolve, reject) => {
-  const request = httpsRequest(url, {
-    method: 'GET',
-    // A fresh connection per request: a pooled socket could belong to another resolution.
-    agent: false,
-    lookup: pinnedLookup(pinned),
-    ...(isIP(url.hostname.replace(/^\[|\]$/g, '')) ? {} : { servername: url.hostname }),
-    headers: { Accept: 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
-  }, (response) => {
-    const peer = response.socket.remoteAddress ?? '';
-    if (peer !== pinned.address || blockedAddress(peer)) {
-      response.destroy();
-      reject(new UrlAppError('The server connection did not go to the checked address'));
-      return;
-    }
-    const declared = Number(response.headers['content-length'] ?? '0');
-    if (declared > MAX_DOCUMENT_BYTES) {
-      response.destroy();
-      reject(new UrlAppError('A manifest file exceeds the 1 MiB limit'));
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    response.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_DOCUMENT_BYTES) {
-        response.destroy();
-        reject(new UrlAppError('A manifest file exceeds the 1 MiB limit'));
+export interface PinnedRequestOptions {
+  headers: Record<string, string>;
+  /** The body is refused when it is (or announces itself as) larger; reading stops at the limit. */
+  maxBytes: number;
+  /** Idle time on the connection. */
+  timeoutMs: number;
+  /** The whole request, headers to last byte; none when omitted. */
+  deadlineMs?: number;
+  /** Error texts: what the caller's file is called. */
+  messages: { tooLarge: string; timeout: string; failed: string };
+  /**
+   * A connection pool that is used for this one checked address only (the caller creates it for `pinned` and
+   * closes it). Without it every request opens a fresh connection: a pooled socket could belong to another resolution.
+   */
+  agent?: HttpsAgent;
+}
+
+export interface PinnedBytesResponse {
+  status: number;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}
+
+/**
+ * One HTTPS GET to `url` that connects only to `pinned` (no second DNS lookup; TLS still verifies the host name),
+ * checks the connected peer address again, never follows a redirect and never reads more than `maxBytes`.
+ */
+export function pinnedHttpsRequest(url: URL, pinned: ResolvedHost, options: PinnedRequestOptions): Promise<PinnedBytesResponse> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error: Error | null, value?: PinnedBytesResponse) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      if (error) reject(error); else resolve(value!);
+    };
+    const request = httpsRequest(url, {
+      method: 'GET',
+      agent: options.agent ?? false,
+      lookup: pinnedLookup(pinned),
+      ...(isIP(url.hostname.replace(/^\[|\]$/g, '')) ? {} : { servername: url.hostname }),
+      headers: options.headers,
+    }, (response) => {
+      const peer = response.socket.remoteAddress ?? '';
+      if (peer !== pinned.address || blockedAddress(peer)) {
+        request.destroy();
+        finish(new UrlAppError('The server connection did not go to the checked address'));
         return;
       }
-      chunks.push(chunk);
+      const declared = Number(response.headers['content-length'] ?? '0');
+      if (declared > options.maxBytes) {
+        request.destroy();
+        finish(new UrlAppError(options.messages.tooLarge));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > options.maxBytes) {
+          request.destroy();
+          finish(new UrlAppError(options.messages.tooLarge));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on('end', () => finish(null, { status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
+      response.on('error', (error) => finish(error));
     });
-    response.on('end', () => resolve({
-      status: response.statusCode ?? 0,
-      contentType: String(response.headers['content-type'] ?? ''),
-      body: Buffer.concat(chunks).toString('utf8'),
-    }));
-    response.on('error', reject);
+    request.setTimeout(options.timeoutMs, () => request.destroy(new UrlAppError(options.messages.timeout)));
+    if (options.deadlineMs) deadline = setTimeout(() => request.destroy(new UrlAppError(options.messages.timeout)), options.deadlineMs);
+    request.on('error', (error) => finish(error instanceof UrlAppError ? error : new UrlAppError(options.messages.failed)));
+    request.end();
   });
-  request.setTimeout(FETCH_TIMEOUT_MS, () => request.destroy(new UrlAppError('Request timed out (5s limit)')));
-  request.on('error', (error) => reject(error instanceof UrlAppError ? error : new UrlAppError('Failed to fetch the app manifest')));
-  request.end();
-});
+}
+
+const pinnedHttpsGet: PinnedGet = async (url, pinned, deadlineMs = URL_APP_FILE_DEADLINE_MS) => {
+  const response = await pinnedHttpsRequest(url, pinned, {
+    headers: { Accept: 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
+    maxBytes: MAX_DOCUMENT_BYTES,
+    timeoutMs: FETCH_TIMEOUT_MS,
+    deadlineMs: Math.max(1, Math.min(deadlineMs, URL_APP_FILE_DEADLINE_MS)),
+    messages: {
+      tooLarge: 'A manifest file exceeds the 1 MiB limit',
+      timeout: 'Request timed out (the server was silent for 5 s, or the file took longer than 20 s)',
+      failed: 'Failed to fetch the app manifest',
+    },
+  });
+  return { status: response.status, contentType: String(response.headers['content-type'] ?? ''), body: response.body.toString('utf8') };
+};
 
 export interface UrlFetchDeps {
   resolve: Resolver;
   get: PinnedGet;
+  /** Tests: other times than `URL_APP_FILE_DEADLINE_MS` and `URL_APP_DEADLINE_MS`. */
+  fileDeadlineMs?: number;
+  deadlineMs?: number;
 }
 
 const defaultDeps: UrlFetchDeps = { resolve: systemResolver, get: pinnedHttpsGet };
 
-/** One file; null when the server says it does not exist (404). */
-async function fetchText(url: string, required: boolean, deps: UrlFetchDeps): Promise<string | null> {
+/** `work`, or a `UrlAppError` once `ms` have passed (whatever the resolver or the transport does). */
+function inTime<T>(work: Promise<T>, ms: number): Promise<T> {
+  work.catch(() => {});
+  if (!(ms > 0)) return Promise.reject(new UrlAppError(TOO_SLOW));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new UrlAppError(TOO_SLOW)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** One file; null when the server says it does not exist (404). `deadlineAt` is when the whole app must have arrived. */
+async function fetchText(url: string, required: boolean, deps: UrlFetchDeps, deadlineAt: number): Promise<string | null> {
   const problem = validateAppUrl(url);
   if (problem) throw new UrlAppError(problem);
   const parsed = new URL(url);
-  const pinned = await resolvePublicHost(parsed.hostname, deps.resolve);
-  const response = await deps.get(parsed, pinned);
+  const left = Math.min(deps.fileDeadlineMs ?? URL_APP_FILE_DEADLINE_MS, deadlineAt - Date.now());
+  const response = await inTime((async () => {
+    const pinned = await resolvePublicHost(parsed.hostname, deps.resolve);
+    return deps.get(parsed, pinned, left);
+  })(), left);
   if (response.status === 404 && !required) return null;
   if (response.status >= 300 && response.status < 400) {
     throw new UrlAppError(`Failed to fetch ${parsed.pathname}: HTTP ${response.status} (redirects are not followed)`);
@@ -203,10 +302,11 @@ async function fetchText(url: string, required: boolean, deps: UrlFetchDeps): Pr
 
 /** Fetch and strictly parse an app (manifest + setup files) from its manifest URL. */
 export async function fetchUrlApp(manifestUrl: string, deps: UrlFetchDeps = defaultDeps): Promise<AppManifest> {
-  const manifest = await fetchText(manifestUrl, true, deps);
+  const deadlineAt = Date.now() + (deps.deadlineMs ?? URL_APP_DEADLINE_MS);
+  const manifest = await fetchText(manifestUrl, true, deps, deadlineAt);
   if (!manifest) throw new UrlAppError('The app manifest is empty');
   try {
-    return await fetchApp(manifest, (name) => fetchText(new URL(name, manifestUrl).toString(), false, deps));
+    return await fetchApp(manifest, (name) => fetchText(new URL(name, manifestUrl).toString(), false, deps, deadlineAt));
   } catch (error) {
     if (error instanceof UrlAppError) throw error;
     const issues = (error as { issues?: string[] }).issues;

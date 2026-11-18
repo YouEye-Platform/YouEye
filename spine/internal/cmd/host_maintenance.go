@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,12 +23,22 @@ const (
 	arcCeilingBytes     = 16 << 30
 )
 
+// stageTreeSweepDelay: see startHostMaintenance.
+const stageTreeSweepDelay = 15 * time.Minute
+
 func startHostMaintenance() {
 	go func() {
 		for {
 			runHostMaintenance()
 			time.Sleep(24 * time.Hour)
 		}
+	}()
+	// The run at start is usually too early for the old service trees: at boot the two containers are not running
+	// yet, and a Spine update restarts this service in the middle of its own request. Look once more when either
+	// has settled, so the sweep does not wait for a box that is restarted more often than once a day.
+	go func() {
+		time.Sleep(stageTreeSweepDelay)
+		sweepFinishedCoreStageTrees()
 	}()
 }
 
@@ -46,6 +57,26 @@ func runHostMaintenance() {
 	if err := disableIncusImageRefresh(incusConfig, incusImageRefreshAttempts, incusImageRefreshWait); err != nil {
 		util.LogError("Incus cached-image refresh not disabled: " + err.Error())
 	}
+	sweepFinishedCoreStageTrees()
+}
+
+func sweepFinishedCoreStageTrees() {
+	if removed := removeFinishedCoreStageTrees(); len(removed) > 0 {
+		util.LogSuccess(fmt.Sprintf("Removed %d old service trees left by finished System updates", len(removed)))
+	}
+}
+
+// removeFinishedCoreStageTrees deletes the old Control Panel and UI trees that finished System updates left under
+// their stage names (/opt/.youeye-core-<hash>) in youeye-control and youeye-ui. A finished request removes its own
+// when it ends; this catches what earlier versions left (they never removed any) and a container that was stopped
+// at that moment. It does nothing while a System request is unfinished, on a machine that is not an installed
+// appliance, or when a container is not running.
+func removeFinishedCoreStageTrees() []string {
+	runtime, err := installedCoreRuntime()
+	if err != nil {
+		return nil
+	}
+	return runtime.Services.RemoveFinishedStageTrees(context.Background())
 }
 
 const (

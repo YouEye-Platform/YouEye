@@ -8,11 +8,11 @@ import { productFixture, tree } from './fixtures/release-fixtures';
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 test('host-independent product releases bind assets by name and digest', async () => {
-  for (const product of ['pointer','market','canvas','cinema','notes','search','translate','weather','wiki']) {
+  for (const product of ['pointer','canvas','cinema','notes','search','translate','weather','wiki']) {
     const repository = `https://github.com/YouEye-Platform/${product}`;
     const payload = Buffer.from('immutable archive fixture');
     const f = productFixture(product,'0.6.1-dev.2',repository,{'standalone.tar':payload},{kind:'source'});
-    assert.equal(f.tag, product === 'market' ? 'catalog-v0.6.1-dev.2' : 'v0.6.1-dev.2');
+    assert.equal(f.tag, 'v0.6.1-dev.2');
     const selected = verifyProductRelease(f.raw,{product,repository,tag:f.tag});
     assert.equal(selected.manifestSHA256,sha(f.raw));
     assert.equal(selected.repository,repository);
@@ -26,7 +26,7 @@ test('host-independent product releases bind assets by name and digest', async (
     assert.throws(() => verifyProductRelease(f.raw,{product,repository:`${repository}/`,tag:f.tag}),/canonical/);
     // The same bytes are valid in any repository: documents carry no host.
     assert.equal(verifyProductRelease(f.raw,{product,repository:'https://git.example.test/team/X',tag:f.tag}).manifestSHA256,sha(f.raw));
-    const relabelled = {...f.release,version:'0.6.1-dev.3',tag:productTag(product,'0.6.1-dev.3'),sequence:1762950001};
+    const relabelled = {...f.release,version:'0.6.1-dev.3',tag:productTag('0.6.1-dev.3'),sequence:1762950001};
     assert.ok(identicalProductPayloads(selected,verifyProductRelease(Buffer.from(JSON.stringify(relabelled)),{product,repository,tag:relabelled.tag})));
     const rebuilt = productFixture(product,'0.6.1-dev.3',repository,{'standalone.tar':Buffer.from('other')},{kind:'source'});
     assert.equal(identicalProductPayloads(selected,verifyProductRelease(rebuilt.raw,{product,repository,tag:rebuilt.tag})),false);
@@ -86,4 +86,16 @@ test('replay floors are per product and order builds, never release names (no do
   assert.throws(() => acceptProductSequence(floors,hotfix),/older notes build/);
   // Floors from before builds were recorded are invalid (boxes are reinstalled).
   assert.throws(() => acceptProductSequence({notes:{version:'0.6.1-dev.2',sequence:20,manifestSHA256:current.manifestSHA256}} as never,current),/Invalid installed product sequence floor/);
+});
+
+test('the Market is not a product: a market release document and a catalog build are refused', () => {
+  const repository = 'https://github.com/YouEye-Platform/Market';
+  // As Market 0.6.4 was released (boxes up to 0.6.10 read it; this reader does not).
+  const market = productFixture('market','0.6.4',repository,{'catalog.tar':Buffer.from('tar')},{kind:'catalog' as never,primary:'catalog.tar'});
+  const asReleased = Buffer.from(JSON.stringify({...market.release,tag:'catalog-v0.6.4'}));
+  assert.throws(() => parseProductRelease(asReleased),/Invalid product release identity/);
+  assert.throws(() => verifyProductRelease(asReleased,{product:'market',repository,tag:'catalog-v0.6.4'}),/Invalid product release identity/);
+  const catalogKind = productFixture('notes','0.6.4',repository,{'catalog.tar':Buffer.from('tar')},{kind:'catalog' as never,primary:'catalog.tar'});
+  assert.throws(() => parseProductRelease(catalogKind.raw),/Invalid immutable product build/);
+  assert.equal(productTag('0.6.4'),'v0.6.4');
 });

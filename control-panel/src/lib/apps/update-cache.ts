@@ -1,161 +1,110 @@
 /**
  * Update Cache
  *
- * Background periodic checking for OCI image updates. Stores results in memory
- * and provides a fast-read interface for the API layer.
+ * Background periodic checking for updates of the UI and Pointer (their LXD checks, lxd-updates.ts). Market apps are
+ * checked by the Market's version checker; Caddy, Pi-Hole and PostgreSQL follow the images pinned by this release.
  *
- * - Checks every 3 hours automatically (via setInterval in the module scope)
+ * - Checks about every 3 hours (plus 0–10 % jitter) once `startBackgroundChecks()` runs; instrumentation.ts starts
+ *   it, never an import of this module.
  * - Manual refresh via refreshAllUpdates()
- * - Individual app refresh via refreshAppUpdate(appId)
  */
 
-import { APP_DEFINITIONS, getAppDefinition } from './definitions';
-import {
-  checkAllUpdates,
-  checkAppUpdate,
-  clearBaselineDigest,
-  type UpdateCheckResult,
-} from './registry';
 import { checkAllLxdUpdates, clearLxdUpdateCache } from './lxd-updates';
 import { isDeploymentInProgress } from '@/lib/infrastructure/deployer';
 
-/** Cached update results keyed by appId */
-const updateResults = new Map<string, UpdateCheckResult>();
-
-/** Whether a background check is currently running */
-let isChecking = false;
-
-/** Timestamp of the last completed check */
-let lastCheckedAt: string | null = null;
+/**
+ * The checker's state, shared by every copy of this module in the process: Next bundles `instrumentation` (which
+ * starts the checks) and the API routes (which report `lastCheckedAt` and `checkInProgress`) separately; module-level
+ * variables would give each copy its own. The results themselves are shared the same way in lxd-updates.ts.
+ */
+interface CheckerState {
+  /** Whether a check is currently running */
+  checking: boolean;
+  /** Timestamp of the last completed check */
+  lastCheckedAt: string | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+const CHECKER = Symbol.for('youeye.app-update-checker');
+const checkerHolder = globalThis as typeof globalThis & { [CHECKER]?: CheckerState };
+const checker = checkerHolder[CHECKER] ??= { checking: false, lastCheckedAt: null, timer: null };
 
 const CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
 
+/**
+ * `intervalMs` plus 0–10 % jitter, so boxes started together do not all ask at the same moment.
+ * `random` is a value in [0, 1).
+ */
+export function withJitter(intervalMs: number, random: number = Math.random()): number {
+  const fraction = Number.isFinite(random) ? Math.min(Math.max(random, 0), 1) : 0;
+  return Math.round(intervalMs * (1 + 0.1 * fraction));
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
-
-/** Get cached update status for a single app */
-export function getCachedUpdate(appId: string): UpdateCheckResult | null {
-  return updateResults.get(appId) ?? null;
-}
-
-/** Get all cached update results */
-export function getAllCachedUpdates(): Map<string, UpdateCheckResult> {
-  return new Map(updateResults);
-}
-
-/** Whether any app has an available update */
-export function hasAnyUpdate(): boolean {
-  for (const r of updateResults.values()) {
-    if (r.hasUpdate) return true;
-  }
-  return false;
-}
-
-/** Get IDs of apps with available updates */
-export function getAppsWithUpdates(): string[] {
-  const ids: string[] = [];
-  for (const [id, r] of updateResults) {
-    if (r.hasUpdate) ids.push(id);
-  }
-  return ids;
-}
 
 /** When the last check completed */
 export function getLastCheckedAt(): string | null {
-  return lastCheckedAt;
+  return checker.lastCheckedAt;
 }
 
 /** Whether a check is in progress */
 export function isCheckInProgress(): boolean {
-  return isChecking;
+  return checker.checking;
 }
 
 /**
- * Refresh update status for all OCI apps. Can be triggered manually from the UI.
- * Returns the fresh results.
+ * Check the UI and Pointer for updates now. Also triggered by the Market's "Check for updates". Their results are
+ * kept by lxd-updates.ts (`getAllCachedLxdUpdates`).
  */
-export async function refreshAllUpdates(): Promise<Map<string, UpdateCheckResult>> {
-  if (isChecking) {
-    return updateResults;
-  }
+export async function refreshAllUpdates(): Promise<void> {
+  if (checker.checking) return;
   if (isDeploymentInProgress()) {
     console.log('[update-cache] Skipping — infrastructure deployment in progress');
-    return updateResults;
+    return;
   }
 
-  isChecking = true;
+  checker.checking = true;
   try {
-    // Check OCI and LXD updates in parallel.
-    // OCI results go into updateResults (this cache).
-    // LXD results go into lxdCache (lxd-updates.ts) — read via getAllCachedLxdUpdates().
-    const [ociResults] = await Promise.allSettled([
-      checkAllUpdates(),
-      checkAllLxdUpdates(),
-    ]);
-
-    const results = ociResults.status === 'fulfilled' ? ociResults.value : new Map<string, UpdateCheckResult>();
-    for (const [id, result] of results) {
-      updateResults.set(id, result);
-    }
-    lastCheckedAt = new Date().toISOString();
-    return results;
+    await checkAllLxdUpdates();
+    checker.lastCheckedAt = new Date().toISOString();
   } finally {
-    isChecking = false;
+    checker.checking = false;
   }
 }
 
-/**
- * Refresh update status for a single app.
- */
-export async function refreshAppUpdate(appId: string): Promise<UpdateCheckResult | null> {
-  const appDef = getAppDefinition(appId);
-  if (!appDef || !appDef.imageRef) return null;
-
-  const result = await checkAppUpdate(appDef);
-  updateResults.set(appId, result);
-  return result;
-}
-
-/**
- * Call after a successful update to reset the baseline digest so subsequent
- * checks compare against the newly-deployed image.
- */
+/** Call after a successful update, so the next check compares against what was just deployed. */
 export function markAppUpdated(appId: string): void {
-  clearBaselineDigest(appId);
   clearLxdUpdateCache(appId);
-  updateResults.delete(appId);
 }
 
 // ─── Background Timer ─────────────────────────────────────────────────────────
 
-let backgroundTimer: ReturnType<typeof setInterval> | null = null;
-
-/** Start the background periodic checking (called once at module load) */
+/** Start the background periodic checking. Called once, by instrumentation.ts. */
 export function startBackgroundChecks(): void {
-  if (backgroundTimer) return;
+  if (checker.timer) return;
 
-  // Initial check after a short delay (let the server boot)
-  setTimeout(() => {
-    refreshAllUpdates().catch((err) => {
-      console.error('[update-cache] Initial check failed:', err);
-    });
-  }, 30_000); // 30 seconds after startup
+  const schedule = (delayMs: number) => {
+    checker.timer = setTimeout(() => {
+      refreshAllUpdates()
+        .catch((err) => {
+          console.error('[update-cache] Periodic check failed:', err);
+        })
+        .finally(() => {
+          if (checker.timer) schedule(withJitter(CHECK_INTERVAL_MS));
+        });
+    }, delayMs);
+  };
 
-  backgroundTimer = setInterval(() => {
-    refreshAllUpdates().catch((err) => {
-      console.error('[update-cache] Periodic check failed:', err);
-    });
-  }, CHECK_INTERVAL_MS);
+  // First check shortly after the server boots, then about every three hours.
+  schedule(30_000);
 }
 
 /** Stop background checking (for tests or shutdown) */
 export function stopBackgroundChecks(): void {
-  if (backgroundTimer) {
-    clearInterval(backgroundTimer);
-    backgroundTimer = null;
+  if (checker.timer) {
+    clearTimeout(checker.timer);
+    checker.timer = null;
   }
 }
 
-// Auto-start when module is imported in production
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  startBackgroundChecks();
-}
+// NO module-import auto-start: instrumentation.ts owns every background job (an import side effect started this
+// checker inside youeye-id.service too).

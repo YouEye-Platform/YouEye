@@ -12,13 +12,15 @@ import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProduct
 /**
  * The box's channel index (`youeye.channel.v1`) names the current release of
  * every product on its channel. The Control Panel gets it from Spine (which
- * downloads and caches it) and resolves native apps, Pointer and the official
- * Market catalog through it. Documents and assets are then plain HTTPS
+ * downloads and caches it) and resolves native apps and Pointer through it
+ * (the Market is not a product: boxes read it from its own address, see
+ * lib/market/market-store.ts). Documents and assets are then plain HTTPS
  * downloads (`releaseAssetURL`: the entry's download base when it names one,
  * else the repository's release-download layout), each checked by SHA-256. No
  * release-listing API is ever called. The index is read leniently, like
- * Spine's: unknown keys and products are ignored, and an invalid entry fails
- * only its own product (`invalid`).
+ * Spine's: unknown keys and products are ignored (an index still carries a
+ * `market` entry for boxes up to 0.6.10), and an invalid entry fails only its
+ * own product (`invalid`).
  */
 
 export const RELEASE_CHANNELS = ['dev', 'alpha', 'beta', 'stable'] as const;
@@ -26,7 +28,7 @@ export type ReleaseChannelName = (typeof RELEASE_CHANNELS)[number];
 export const isReleaseChannel = (value: unknown): value is ReleaseChannelName =>
   typeof value === 'string' && (RELEASE_CHANNELS as readonly string[]).includes(value);
 
-export const INDEX_PRODUCTS = ['youeye', 'pointer', 'market', 'notes', 'wiki', 'search', 'translate', 'weather', 'cinema'] as const;
+export const INDEX_PRODUCTS = ['youeye', 'pointer', 'notes', 'wiki', 'search', 'translate', 'weather', 'cinema'] as const;
 
 /**
  * `version` is the release name (display and tag); `build` is the build
@@ -90,7 +92,6 @@ function channelEntry(product: string, value: unknown): ChannelEntry {
     throw new Error(`Channel index entry ${product} is invalid`);
   }
   const [tag, documentName] = product === 'youeye' ? [`youeye-v${entry.version}`, 'core-release.json']
-    : product === 'market' ? [`catalog-v${entry.version}`, 'product-release.json']
     : [`v${entry.version}`, 'product-release.json'];
   if (entry.tag !== tag || entry.document !== documentName) throw new Error(`Channel index entry ${product} must name ${tag}/${documentName}`);
   return {
@@ -237,11 +238,10 @@ export type ProductResolver = {
 };
 
 /**
- * Resolve a product of the box's channel: download its release document,
- * check the index digest, then parse and bind it to the entry's repository
- * and tag. Null when the channel has no release of this product yet.
+ * The entry of a product in the box's channel index. Null when the channel
+ * has no release of this product yet; throws when its entry is unusable.
  */
-export async function resolveChannelProduct(product: string, options: ProductResolver = {}): Promise<VerifiedProductRelease | null> {
+export async function channelProductEntry(product: string, options: ProductResolver = {}): Promise<ChannelEntry | null> {
   if (product === 'youeye' || !(INDEX_PRODUCTS as readonly string[]).includes(product)) throw new Error(`${product} is not a channel product`);
   const box = await (options.index ?? readChannelIndex)();
   const entry = box.index.products[product];
@@ -249,11 +249,33 @@ export async function resolveChannelProduct(product: string, options: ProductRes
     if (box.index.invalid[product]) throw new Error(box.index.invalid[product]);
     return null;
   }
-  const raw = await downloadReleaseFile(channelEntryDocumentURL(entry), 1024 * 1024, options.fetch);
+  return entry;
+}
+
+/**
+ * The release an index entry names: download its release document, check
+ * the index digest, then parse and bind it to the entry's repository and tag.
+ */
+export async function resolveChannelEntry(product: string, entry: ChannelEntry, fetchImpl?: typeof fetch): Promise<VerifiedProductRelease> {
+  const raw = await downloadReleaseFile(channelEntryDocumentURL(entry), 1024 * 1024, fetchImpl);
+  return verifyChannelEntryDocument(product, entry, raw);
+}
+
+/** Check a release document against the index entry that names it (digest, repository, tag, versions). */
+export function verifyChannelEntryDocument(product: string, entry: ChannelEntry, raw: Buffer): VerifiedProductRelease {
   if (createHash('sha256').update(raw).digest('hex') !== entry.sha256) throw new Error(`${entry.document} of ${entry.tag} differs from the channel index digest`);
   const selected = verifyProductRelease(raw, { product, repository: entry.repository, tag: entry.tag, downloadBase: entry.download_base });
   if (selected.release.version !== entry.version || selected.build.build_version !== entry.build) throw new Error(`${product} release differs from its channel index version`);
   return selected;
+}
+
+/**
+ * Resolve a product of the box's channel (`channelProductEntry`, then
+ * `resolveChannelEntry`). Null when the channel has no release of it yet.
+ */
+export async function resolveChannelProduct(product: string, options: ProductResolver = {}): Promise<VerifiedProductRelease | null> {
+  const entry = await channelProductEntry(product, options);
+  return entry ? resolveChannelEntry(product, entry, options.fetch) : null;
 }
 
 /**

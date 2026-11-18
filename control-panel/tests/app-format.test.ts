@@ -5,7 +5,7 @@ import path from 'node:path';
 import { stringify } from 'yaml';
 
 import {
-  AppFormatError, parseApp, parseAppSource, parseBundle, parseCatalog, parseCatalogIndex, parseSetup,
+  AppFormatError, parseApp, parseAppSource, parseBundle, parseCatalog, parseSetup,
 } from '../src/lib/market/app-format/parse';
 import { loadApp, loadFrozenApp, quoteArgv } from '../src/lib/market/app-format/compile';
 import { manifestDigest } from '../src/lib/market/app-format/digest';
@@ -13,7 +13,7 @@ import { readYAML } from '../src/lib/market/app-format/parse';
 import { youeyeRequirementProblem } from '../src/lib/market/app-format/requires';
 import { APP_VARIABLES, checkVariable } from '../src/lib/market/app-format/variables';
 import { resolvePath, resolveVariables, hasVariables } from '../src/lib/market/variables';
-import { catalogFromFiles } from '../src/lib/market/catalog';
+import { catalogFromFiles } from '../src/lib/market/app-format/catalog-files';
 import { parseFrozenAppManifest } from '../src/lib/market/frozen-manifest';
 import { PIN, appDocument, appFixture, appYAML } from './fixtures/app-format';
 
@@ -410,12 +410,6 @@ test('the catalog app list is discovered from the folders', () => {
   assert.deepEqual(Object.keys(catalog).sort(), ['apps', 'bundles', 'categories', 'curation']);
   assert.deepEqual(catalog.curation, { spotlight: { title: undefined, apps: ['notes'] }, collections: [] });
   assert.throws(() => catalogFromFiles(stringify({ schema: 'youeye.catalog.v1', native: ['mealie'] }), ['apps/mealie/youeye-app.yaml']), /also has an app folder/);
-});
-
-test('a catalog.json may still list system ids; the list is accepted and ignored', () => {
-  const index = parseCatalogIndex(JSON.stringify({ schema: 'youeye.catalog-index.v1', apps: ['sonarr'], bundles: [], system: ['caddy', 'postgresql', 'pihole'] }));
-  assert.deepEqual(index.apps, ['sonarr']);
-  rejects(() => parseCatalogIndex(JSON.stringify({ schema: 'youeye.catalog-index.v1', apps: [], images: [] })), /unknown field "images"/);
 });
 
 // ─── Gaps found by the catalog conversion ─────────────────

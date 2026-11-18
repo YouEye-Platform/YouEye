@@ -7,7 +7,8 @@
  *  - Static definition (from definitions.ts)
  *  - Live container status (from Incus)
  *  - Version info for Spine-managed components (from Spine API)
- *  - OCI update availability (from digest cache)
+ *  - Update availability (Market apps: the installed-app records; UI and Pointer: the LXD check; core containers:
+ *    their pinned images)
  */
 
 import { NextResponse } from 'next/server';
@@ -15,11 +16,7 @@ import { getSession } from '@/lib/auth';
 import { incusRequest } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
 import { APP_DEFINITIONS } from '@/lib/apps/definitions';
-import {
-  getAllCachedUpdates,
-  getLastCheckedAt,
-  isCheckInProgress,
-} from '@/lib/apps/update-cache';
+import { getLastCheckedAt, isCheckInProgress } from '@/lib/apps/update-cache';
 import {
   checkLxdAppUpdate,
   type LxdUpdateResult,
@@ -28,6 +25,7 @@ import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps, latestHealthCheckedAt } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
+import type { UpdateBlocked } from '@/lib/market/types';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -56,10 +54,12 @@ export interface UnifiedApp {
   desiredState?: 'running' | 'stopped';
   serviceCredentialState?: 'pending' | 'ready' | 'revoked';
   databaseMode?: 'shared' | 'own' | 'none';
-  /** OCI update available */
+  /** An update is available */
   updateAvailable: boolean;
   /** Human-readable update info */
   updateInfo?: string;
+  /** A Market app that gets no updates, and why (its source is gone, not accepted, or the new version needs a newer YouEye). */
+  updateBlocked?: UpdateBlocked | null;
   /** True for Caddy/Pi-Hole/Postgres: tracked against the images pinned by this release */
   systemManaged?: boolean;
   /** Links to existing management pages */
@@ -190,9 +190,6 @@ export async function GET() {
       }
     }
 
-    // Build update info from cache
-    const ociUpdates = getAllCachedUpdates();
-
     // Fetch LXD app version + update info in parallel
     const lxdApps = APP_DEFINITIONS.filter(
       (d) => d.lxdConfig && d.containers.length > 0
@@ -256,15 +253,6 @@ export async function GET() {
         updateInfo = updateAvailable
           ? `${systemPlan.currentVersion ?? '?'} → ${systemPlan.desiredVersion}`
           : undefined;
-      }
-
-      // OCI update detection from digest cache (only for non-LXD, non-system apps)
-      if (def.updatedBy === 'control-panel' && !lxdResult && !def.systemImageId) {
-        const ociResult = ociUpdates.get(def.id);
-        if (ociResult?.hasUpdate) {
-          updateAvailable = true;
-          updateInfo = 'New image available';
-        }
       }
 
       return {
@@ -384,6 +372,7 @@ export async function GET() {
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
+        updateBlocked: dbEntry?.updateBlocked ?? null,
         healthStatus: dbEntry?.healthStatus,
         appHealthState: dbEntry?.appHealthState,
         failingLevel: dbEntry?.failingLevel,

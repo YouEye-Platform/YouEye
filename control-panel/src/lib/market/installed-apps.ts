@@ -16,7 +16,8 @@ import path from 'node:path';
 import { AppUpdateExecutorLock } from './update-executor-lock';
 import { isAppUpdateReserved } from './update-admission';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, resolveCatalogApp } from './catalog';
+import { fetchCatalog, isMarketAppUnavailable, resolveCatalogApp } from './catalog';
+import { isMarketSourceConsentError } from './source';
 import { youeyeRequirementProblem } from './app-format/requires';
 import {
   catalogUpdateState,
@@ -24,8 +25,7 @@ import {
   hasRecordedCatalogIdentity,
   projectUpdateAvailability,
   recordedCatalogSourceIds,
-  recordedSourceRepositoryChange,
-  repositoriesMatch,
+  recordedSourceAddressChange,
 } from './update-routing';
 import type { AppManifest, InstallMetadata } from './types';
 import { verifyInstalledProductReceipt } from '../releases/product-release';
@@ -92,10 +92,15 @@ export interface InstalledApp {
   candidateTag?: string | null;
   updatePath?: string | null;
   /**
-   * Why the last update check offers no update although the app's source id resolves: the id now names another
-   * repository than the app was installed from (`recordedSourceRepositoryChange`). Null when nothing blocks.
+   * Why the last update check offers no update, when the reason is not "nothing newer". Null when nothing blocks.
+   * - `source-changed`: the app's source id now names another market address than the app was installed from
+   *   (`recordedSourceAddressChange`).
+   * - `source-unavailable`: the app's source is not on this box any more (removed, or a git source from before
+   *   0.6.11) or is turned off: the app has no update source until it is switched to one on its page.
+   * - `source-not-accepted`: the owner has not accepted the app's custom market.
+   * - `requires-newer-youeye`: the market's version of the app needs a newer YouEye than this box runs.
    */
-  updateBlocked?: { code: 'source-changed'; message: string } | null;
+  updateBlocked?: { code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye'; message: string } | null;
   migrationsRequired?: number;
   migrationGates?: Array<{
     fromVersion: string;
@@ -454,22 +459,30 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       sourceManifest = await fetchUrlAppManifest(recordedSourceId);
       catalogVersion = sourceManifest?.version ?? null;
     } else if (recordedSourceId || hasRecordedCatalogIdentity(app, installMeta ?? {}) || defaultEntry) {
-      resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceId);
-      // The id may name another repository by now: offer nothing from it, and say why.
-      const change = recordedSourceRepositoryChange({
-        sourceRepoUrl: installMeta?.sourceRepoUrl ?? app.sourceRepoUrl,
-        manifestRepo: installMeta?.manifestRepo,
-        manifestBranch: installMeta?.manifestBranch,
-      }, resolvedCatalog.source);
-      if (change) {
-        console.warn(`[installed-apps] No update offered for ${app.appId}: ${change.message}`);
+      // Nothing is offered, and nothing stale stays on offer, when the app's source cannot be used; the reason is kept.
+      const blocked = (code: NonNullable<InstalledApp['updateBlocked']>['code'], message: string, version: string | null = null) => {
+        console.warn(`[installed-apps] No update offered for ${app.appId}: ${message}`);
         Object.assign(app, {
-          catalogVersion: null, updateAvailable: false, switchPending: false, candidateVersion: null, candidateBranch: null,
+          catalogVersion: version, updateAvailable: false, switchPending: false, candidateVersion: null, candidateBranch: null,
           candidateTag: null, updatePath: null, migrationsRequired: 0, migrationGates: [],
-          updateBlocked: { code: 'source-changed', message: change.message },
+          updateBlocked: { code, message },
         } satisfies Partial<InstalledApp>);
         return app;
+      };
+      try {
+        resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceId);
+      } catch (error) {
+        if (isMarketSourceConsentError(error) && (error.code === 'source-unavailable' || error.code === 'source-not-accepted')) {
+          return blocked(error.code, error.code === 'source-unavailable'
+            ? `${error.message}: this app has no update source. Choose one on the app's page.` : error.message);
+        }
+        // The market's version needs a newer YouEye: it is never offered as an update.
+        if (isMarketAppUnavailable(error)) return blocked('requires-newer-youeye', error.message, error.version ?? null);
+        throw error;
       }
+      // The id may name another market address by now: offer nothing from it, and say why.
+      const change = recordedSourceAddressChange({ sourceRepoUrl: installMeta?.sourceRepoUrl ?? app.sourceRepoUrl }, resolvedCatalog.source);
+      if (change) return blocked('source-changed', change.message);
       sourceManifest = resolvedCatalog.manifest;
       catalogVersion = sourceManifest.version ?? null;
     }
@@ -480,8 +493,6 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       installMetadata: installMeta ?? {},
       catalog: resolvedCatalog ? {
         sourceId: resolvedCatalog.source.id,
-        sourceRepoUrl: resolvedCatalog.source.repo_url,
-        sourceRepoUrls: resolvedCatalog.configuredSourceRepoUrls,
         entry: resolvedCatalog.entry,
         manifestIntegration: resolvedCatalog.manifest.integration,
       } : null,
@@ -490,11 +501,8 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     if (resolvedCatalog && (resolvedCatalog.source.id === recordedSourceId || !recordedSourceId)) {
       app.sourceId = resolvedCatalog.source.id;
       app.sourceName = resolvedCatalog.source.name;
-      if (!app.sourceRepoUrl || resolvedCatalog.configuredSourceRepoUrls.some(
-        (sourceUrl) => repositoriesMatch(app.sourceRepoUrl, sourceUrl),
-      )) {
-        app.sourceRepoUrl = resolvedCatalog.source.repo_url;
-      }
+      // A custom market's address is recorded once (the check above keeps the app on it); the official Market has none.
+      if (!app.sourceRepoUrl && resolvedCatalog.source.url) app.sourceRepoUrl = resolvedCatalog.source.url;
       app.catalogKey = `${resolvedCatalog.source.id}:app:${app.appId}`;
     }
 

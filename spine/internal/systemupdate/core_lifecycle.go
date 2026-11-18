@@ -26,6 +26,17 @@ type CoreLifecycleReservation struct {
 // reservation then keeps new work excluded across process loss and reboot.
 type CoreLifecycleBarrier struct{ Root string }
 
+// coreLifecycleSettleWait bounds how long a System action that follows admission waits for the lifecycle locks.
+// The reservation keeps ordinary work out, but every refused attempt still holds the admission gate and the
+// lifecycle lock in shared mode for the moment it takes to read the reservation (the Control Panel's app prober
+// does that for every installed app every 30 seconds), and Names requests hold the lifecycle lock through a
+// network call without reading the reservation at all. A single non-waiting attempt loses to any of them.
+var coreLifecycleSettleWait = 60 * time.Second
+
+// errCoreLifecycleUnsettled: the bounded wait ended before the lifecycle locks could be taken and the
+// reservation confirmed. Nothing was written under the lock by that attempt.
+var errCoreLifecycleUnsettled = errors.New("other app or platform work kept the lifecycle lock busy")
+
 func (b CoreLifecycleBarrier) lock() (func(), error) {
 	return b.lockMode(syscall.LOCK_EX)
 }
@@ -52,7 +63,7 @@ func (b CoreLifecycleBarrier) lockFile(ctx context.Context, name string, mode in
 	if !ok || !info.IsDir() || info.Mode().Perm() != 0700 || int(stat.Uid) != os.Geteuid() {
 		return nil, fmt.Errorf("unsafe app lifecycle directory")
 	}
-	fd, err := syscall.Open(filepath.Join(b.Root, name), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	fd, err := syscall.Open(filepath.Join(b.Root, name), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +159,21 @@ func (b CoreLifecycleBarrier) BeginContext(ctx context.Context, j CoreJournal, a
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	return b.begin(ctx, j, true, authorize)
+}
+
+// BeginAdmitted is Begin for the child of an action whose coordinator already took the reservation at admission
+// (checkpoint, recovery-fence): it confirms that reservation under the exclusive locks, waiting a bounded time
+// for them instead of failing on the first busy attempt. When the wait ends first it returns
+// errCoreLifecycleUnsettled; this call has then written nothing (begin writes the reservation as its last
+// statement, after its last context check).
+func (b CoreLifecycleBarrier) BeginAdmitted(ctx context.Context, j CoreJournal) error {
+	ctx, cancel := context.WithTimeout(ctx, coreLifecycleSettleWait)
+	defer cancel()
+	err := b.begin(ctx, j, true, nil)
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		return fmt.Errorf("%w for %s: %w", errCoreLifecycleUnsettled, coreLifecycleSettleWait, err)
+	}
+	return err
 }
 
 func (b CoreLifecycleBarrier) begin(ctx context.Context, j CoreJournal, wait bool, authorize func(context.Context) error) error {
@@ -266,7 +292,12 @@ func (b CoreLifecycleBarrier) ReleaseRecovered(m CoreManager, requestID string) 
 }
 
 func (b CoreLifecycleBarrier) releaseCompleted(m CoreManager, requestID string, recovered bool) error {
-	unlock, err := b.lock()
+	// Wait out ordinary readers, as ReleaseRefusedCheckpoint does: the Control Panel runs again by now, and each
+	// of its refused attempts holds the lock for a moment. A failure here would leave the finished request's
+	// reservation in place, with app work refused until someone resumes the request.
+	ctx, cancel := context.WithTimeout(context.Background(), coreLifecycleSettleWait)
+	defer cancel()
+	unlock, err := b.lockFile(ctx, "core-lifecycle.flock", syscall.LOCK_EX, true)
 	if err != nil {
 		return err
 	}

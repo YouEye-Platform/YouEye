@@ -108,6 +108,12 @@ type CoreManager struct {
 	Root     string
 	Executor CoreExecutor
 	Now      func() time.Time
+	// YieldAfterSpine makes Advance return once it has recorded apply-spine as
+	// succeeded, before it starts the next step. The journal is the same as if
+	// the coordinator had been lost at that point; the next Advance (by this or
+	// another process) continues with the next step. The continuation command
+	// uses the pause to hand the rest of the request to the new Spine.
+	YieldAfterSpine bool
 }
 
 func (m CoreManager) now() string {
@@ -528,6 +534,9 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 			if err := m.saveCore(&j); err != nil {
 				return j, err
 			}
+			if m.YieldAfterSpine && step.Name == "apply-spine" {
+				return j, nil
+			}
 		case "failed":
 			step.State = "failed"
 			step.Evidence = observation.Evidence
@@ -588,6 +597,32 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 	j.Phase = "committed"
 	j.Error = ""
 	return j, m.saveCore(&j)
+}
+
+// CoreSpineJustApplied reports that the pass between the two reads recorded
+// apply-spine as succeeded and that nothing after it has started: the one
+// point where the coordinator of a service update may be replaced by the new
+// Spine. It is false for a journal that already had the step succeeded (a
+// resumed request), so a continuation hands over at most once.
+func CoreSpineJustApplied(before, after CoreJournal) bool {
+	if before.RequestID != after.RequestID || before.ManifestSHA256 != after.ManifestSHA256 || after.Phase != "applying" || len(after.RecoverySteps) > 0 || len(before.Steps) != len(after.Steps) {
+		return false
+	}
+	for i, step := range after.Steps {
+		if step.Name != "apply-spine" {
+			continue
+		}
+		if step.State != "succeeded" || before.Steps[i].Name != "apply-spine" || before.Steps[i].State == "succeeded" {
+			return false
+		}
+		for _, later := range after.Steps[i+1:] {
+			if later.State != "pending" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // Cancel is permitted only before an effectful checkpoint/lifecycle step.

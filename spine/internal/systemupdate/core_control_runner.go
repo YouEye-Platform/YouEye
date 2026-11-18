@@ -94,7 +94,11 @@ func (r CoreControlRunner) Start(ctx context.Context, request, command string) (
 	if err = atomicWrite(path, raw, 0600); err != nil {
 		return unknown, err
 	}
-	args := []string{"--quiet", "--no-ask-password", "--unit=" + unit, "--description=YouEye core continuation " + unit, "--service-type=exec", "--remain-after-exit", "--uid=root", "--working-directory=/", "--property=KillMode=control-group", "--property=Restart=no", "--property=RuntimeMaxSec=4h", "--property=UMask=0077", "--property=StandardOutput=null", "--property=StandardError=null", "--", r.Executable, "update", "core", "resume", "--request", request}
+	// Standard error goes to the system journal, as in the boot unit: the coordinator writes there only what it
+	// decided at the hand-over and the error it ended with (and the launcher, why it does not run the selected
+	// Spine), a few lines for a whole request. Standard output is the whole journal document,
+	// printed when the command ends; nothing reads it here.
+	args := []string{"--quiet", "--no-ask-password", "--unit=" + unit, "--description=YouEye core continuation " + unit, "--service-type=exec", "--remain-after-exit", "--uid=root", "--working-directory=/", "--property=KillMode=control-group", "--property=Restart=no", "--property=RuntimeMaxSec=4h", "--property=UMask=0077", "--property=StandardOutput=null", "--property=StandardError=journal", "--", r.Executable, "update", "core", "resume", "--request", request}
 	_, launchErr := r.capture(ctx, "systemd-run", args...)
 	observed, err := r.observe(ctx, receipt)
 	if err != nil {

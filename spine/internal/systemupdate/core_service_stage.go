@@ -254,7 +254,7 @@ func (s NativeCoreServices) Stage(ctx context.Context, request, role string) (Co
 		if e != nil {
 			return stage, e
 		}
-		if e = installCoreServiceSelection(root, &stage, baseline, selection, s.saveStage); e != nil {
+		if e = installCoreServiceSelection(m, root, &stage, baseline, selection, s.saveStage); e != nil {
 			return stage, e
 		}
 	}

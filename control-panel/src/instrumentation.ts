@@ -79,6 +79,8 @@ export async function register() {
     startNamesMaintenanceLoop();
     const { startHealthMonitor } = await import("@/lib/health/monitor");
     startHealthMonitor();
+    const { startBackgroundChecks } = await import("@/lib/apps/update-cache");
+    startBackgroundChecks();
     const { startVersionChecker } = await import("@/lib/market/version-checker");
     startVersionChecker();
     const { startHealthChecker } = await import("@/lib/market/health-checker");

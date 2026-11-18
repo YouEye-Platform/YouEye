@@ -76,7 +76,13 @@ function defaultAccountLogin(app: MarketApp): boolean {
   return true;
 }
 
-export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onClose }: InstallDialogProps) {
+/** The install form. An app this box cannot install (it needs a newer YouEye) never gets one. */
+export function InstallDialog(props: InstallDialogProps) {
+  if (props.app.installBlocked) return null;
+  return <InstallDialogForm {...props} />;
+}
+
+function InstallDialogForm({ app, domain, siteName = 'YouEye', onInstall, onClose }: InstallDialogProps) {
   const translateInterface = useInterfaceTranslations("interface");
   const locale = useLocale();
 function formatBytes(value: number | null): string {

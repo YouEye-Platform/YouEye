@@ -1,229 +1,65 @@
 /**
- * GET /api/market/image?url=<encoded-url>
- * Proxies external images through the CP to avoid CORS issues.
- * Only allows URLs from trusted domains.
+ * GET /api/market/image?source=<source id>&file=<h/files/<sha256>.<ext>>
  *
- * GET /api/market/image?catalog=<path>
- * Serves an image from the accepted official catalog.tar (hash-checked).
+ * A picture (icon or screenshot) of a market this box reads. It needs no sign-in, so it serves only what an owner
+ * already chose to read: a picture path that the accepted index or a stored app bundle of an enabled, accepted
+ * market names. Any other request (another path, an unknown or disabled source, a custom market that is not
+ * accepted, a URL) is answered 404 and causes no outbound request.
+ *
+ * A named picture is read from the box's copy of the market; the first time, it is fetched from the market's own
+ * address (5 MiB limit, checked against the SHA-256 in its path, one fetch shared by simultaneous requests) and
+ * kept. The path names the content, so the answer never changes and may be cached for good.
+ *
+ * The box fetches at most four pictures from markets at a time (three from one market), so requests for many
+ * pictures it does not hold yet cannot fill its memory with 5 MiB bodies. A request beyond that waits its turn, 20
+ * seconds at most, and is then answered 503 with `Retry-After`; the picture is fetched when it is asked for again.
  */
 
-import { releaseCacheFetch } from '@/lib/releases/cache';
-import { officialCatalogFile } from '@/lib/market/catalog-release';
-import { NextResponse } from 'next/server';
+import { fileHashOf } from '@/lib/market/market-format';
+import { readMarketPicture } from '@/lib/market/market-store';
+import { getConfiguredMarketSources, marketSourceRefusal } from '@/lib/market/source';
 
 export const dynamic = 'force-dynamic';
 
-const ALLOWED_DOMAINS = [
-  'github.com',
-  'raw.githubusercontent.com',
-  'avatars.githubusercontent.com',
-  'immich.app',
-  'usememos.com',
-  'i.ibb.co',
-  'jellyfin.org',
-];
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-
-// Every answer is inert in the box's origin: an SVG opened directly cannot run
-// script, and the browser never sniffs a different type.
+// Every answer is inert in the box's origin: an SVG opened directly cannot run script, and the browser never
+// sniffs a different type. (The proxy sets the same policy for this path; this covers requests that bypass it.)
 const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
   'X-Content-Type-Options': 'nosniff',
 } as const;
 
-// The only types this proxy ever answers with.
-const IMAGE_TYPE_BY_EXTENSION: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  svg: 'image/svg+xml',
-};
-const IMAGE_TYPES = new Set(Object.values(IMAGE_TYPE_BY_EXTENSION));
-// Hosts such as raw.githubusercontent.com label every file like this; then the
-// extension decides.
-const GENERIC_TYPES = new Set(['', 'text/plain', 'application/octet-stream', 'binary/octet-stream']);
+const refused = (status: 404 | 502 | 503, headers: Record<string, string> = {}) =>
+  new Response(null, { status, headers: { ...SECURITY_HEADERS, 'Cache-Control': 'no-store', ...headers } });
 
-function imageContentType(upstreamType: string | null, imageUrl: string): string | null {
-  const type = (upstreamType ?? '').split(';')[0].trim().toLowerCase();
-  if (IMAGE_TYPES.has(type)) return type;
-  if (!GENERIC_TYPES.has(type)) return null;
-  const extension = /\.([a-z0-9]+)$/i.exec(new URL(imageUrl).pathname)?.[1]?.toLowerCase();
-  return (extension && IMAGE_TYPE_BY_EXTENSION[extension]) || null;
-}
+export async function GET(request: Request): Promise<Response> {
+  const { searchParams } = new URL(request.url);
+  const sourceId = searchParams.get('source') ?? '';
+  const file = searchParams.get('file') ?? '';
+  if (!sourceId || !fileHashOf(file)) return refused(404);
 
-/** The largest image this proxy passes on; it is reachable without sign-in, so nothing larger is ever buffered. */
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
-/** The body, or null when it is (or announces itself as) larger than MAX_IMAGE_BYTES: reading stops at the cap. */
-async function readCappedBody(res: Response): Promise<Uint8Array<ArrayBuffer> | null> {
-  const announced = Number(res.headers.get('content-length'));
-  if (Number.isFinite(announced) && announced > MAX_IMAGE_BYTES) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  if (!res.body) return new Uint8Array();
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_IMAGE_BYTES) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
-  return body;
-}
-
-function secured<T extends Response>(response: T): T {
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(name, value);
-  return response;
-}
-
-function isTrustedImageURL(raw: string): boolean {
+  let picture: Awaited<ReturnType<typeof readMarketPicture>>;
   try {
-    const parsed = new URL(raw);
-    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash
-      && (ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)));
-  } catch {
-    return false;
+    const source = (await getConfiguredMarketSources()).find((candidate) => candidate.id === sourceId);
+    // Only a source that apps may be installed from: enabled, and accepted when it is a custom market.
+    if (!source || marketSourceRefusal(source)) return refused(404);
+    picture = await readMarketPicture(source, file);
+  } catch (error) {
+    // By name: the store module is bundled more than once.
+    if (error instanceof Error && error.name === 'MarketBusyError') {
+      const seconds = Number((error as { retryAfterSeconds?: unknown }).retryAfterSeconds);
+      return refused(503, { 'Retry-After': String(Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : 5) });
+    }
+    console.warn(`[market/image] ${sourceId}/${file} is unavailable:`, error instanceof Error ? error.message : error);
+    return refused(502);
   }
-}
+  if (!picture) return refused(404);
 
-async function fetchTrustedImage(raw: string): Promise<Response> {
-  let current = raw;
-  for (let redirects = 0; redirects <= 5; redirects += 1) {
-    if (!isTrustedImageURL(current)) throw new Error('Image URL or redirect is not trusted');
-    const response = await releaseCacheFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
-    if (redirects === 5) throw new Error('Image download exceeded five redirects');
-    const location = response.headers.get('location');
-    if (!location) throw new Error('Image redirect omitted Location');
-    current = new URL(location, current).toString();
-  }
-  throw new Error('Image download did not terminate');
-}
-
-function placeholderImageResponse() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="App icon"><rect width="96" height="96" rx="20" fill="#eff6ff"/><path d="M28 30h24l16 16v20H28V30zm23 3v14h14" fill="none" stroke="#2563eb" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-
-  return new NextResponse(svg, {
+  return new Response(new Uint8Array(picture.bytes), {
     headers: {
-      'Content-Type': 'image/svg+xml',
-      'Cache-Control': 'public, max-age=3600',
+      ...SECURITY_HEADERS,
+      'Content-Type': picture.contentType,
+      'Content-Length': String(picture.bytes.byteLength),
+      'Cache-Control': 'public, max-age=31536000, immutable',
     },
   });
-}
-
-function defaultBranchFallbackUrl(imageUrl: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(imageUrl);
-  } catch {
-    return null;
-  }
-
-  if (parsed.hostname !== 'raw.githubusercontent.com') {
-    return null;
-  }
-
-  const parts = parsed.pathname.split('/').filter(Boolean);
-  if (parts.length < 4 || parts[2] === 'main') {
-    return null;
-  }
-
-  parts[2] = 'main';
-  parsed.pathname = `/${parts.join('/')}`;
-  return parsed.toString();
-}
-
-async function fetchImage(imageUrl: string): Promise<Response> {
-  const res = await fetchTrustedImage(imageUrl);
-  if (res.ok) {
-    return res;
-  }
-
-  const fallbackUrl = defaultBranchFallbackUrl(imageUrl);
-  if (fallbackUrl) {
-    const fallbackRes = await fetchTrustedImage(fallbackUrl);
-    if (fallbackRes.ok) {
-      return fallbackRes;
-    }
-  }
-
-  return res;
-}
-
-export async function GET(request: Request) {
-  return secured(await answer(request));
-}
-
-async function answer(request: Request): Promise<Response> {
-  const { searchParams } = new URL(request.url);
-  const catalogPath = searchParams.get('catalog');
-  if (catalogPath) {
-    const media = /\.(svg|png|jpe?g|webp|gif)$/i.exec(catalogPath)?.[1]?.toLowerCase();
-    if (!media) return NextResponse.json({ error: 'Not an image' }, { status: 400 });
-    try {
-      const bytes = await officialCatalogFile(catalogPath);
-      const contentType = media === 'svg' ? 'image/svg+xml' : media === 'jpg' || media === 'jpeg' ? 'image/jpeg' : `image/${media}`;
-      return new NextResponse(new Uint8Array(bytes), {
-        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400' },
-      });
-    } catch (err) {
-      console.warn('[market/image] Catalog image unavailable:', err);
-      return placeholderImageResponse();
-    }
-  }
-  const imageUrl = searchParams.get('url');
-
-  if (!imageUrl) {
-    return NextResponse.json({ error: 'url parameter required' }, { status: 400 });
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(imageUrl);
-  } catch {
-    return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
-  }
-
-  if (!isTrustedImageURL(parsed.toString())) {
-    return NextResponse.json({ error: 'Domain not allowed' }, { status: 403 });
-  }
-
-  try {
-    const res = await fetchImage(imageUrl);
-    if (!res.ok) {
-      return placeholderImageResponse();
-    }
-    const contentType = imageContentType(res.headers.get('content-type'), imageUrl);
-    if (!contentType) {
-      console.warn('[market/image] Upstream is not an allowed image type:', res.headers.get('content-type'));
-      return placeholderImageResponse();
-    }
-    const body = await readCappedBody(res);
-    if (!body) {
-      console.warn('[market/image] Upstream image is larger than 5 MiB:', imageUrl);
-      return placeholderImageResponse();
-    }
-
-    return new NextResponse(body, {
-      headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=86400',
-      },
-    });
-  } catch (err) {
-    console.warn('[market/image] Falling back to placeholder:', err);
-    return placeholderImageResponse();
-  }
 }

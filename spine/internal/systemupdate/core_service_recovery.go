@@ -173,13 +173,18 @@ func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, r
 		return err
 	}
 	defer root.Close()
+	stage.Component = marker
+	start := stage.StartState == ""
 	if role == "cp" {
-		if err = verifyRecoveredCoreSelection(root, selection); err != nil {
+		// Before the hold is released, and only by the pass that releases it.
+		repair := ""
+		if start && !observeOnly {
+			repair = coreSelectionTemp(j.RequestID, ".recovery")
+		}
+		if err = verifyRecoveredCoreSelection(CoreManager{Root: s.Checkpoint.Root}, root, selection, repair); err != nil {
 			return err
 		}
 	}
-	stage.Component = marker
-	start := stage.StartState == ""
 	if start {
 		if observeOnly {
 			return fmt.Errorf("recovery startup lacks a durable intent")
@@ -206,17 +211,27 @@ func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, r
 	return save(stage)
 }
 
-func verifyRecoveredCoreSelection(root *os.File, selection CoreHostSelection) error {
-	dir, err := openCorePayloadDirectory(int(root.Fd()), "var/lib/youeye-state/core-selection")
+// verifyRecoveredCoreSelection requires the restored Control Panel to record the
+// previous release: its exact document, or another retained document of the
+// same build (recordedSelectionStandsFor), which is what the checkpoint of a box
+// that took a promotion under a Spine before 0.6.11 holds. With repairTemp set,
+// such a document is replaced by the exact one, so the box leaves the recovery
+// recording its installed release and a Spine that compares the bytes accepts
+// it. Without it (observation) nothing is written.
+func verifyRecoveredCoreSelection(m CoreManager, root *os.File, selection CoreHostSelection, repairTemp string) error {
+	dir, err := openCorePayloadDirectory(int(root.Fd()), coreSelectionDirectory)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
 	actual, err := readCoreContainerStateAtLimit(dir, "core-release.json", 1<<20)
-	if err != nil || !bytes.Equal(actual, selection.Raw) {
+	if err != nil || !m.recordedSelectionStandsFor(actual, selection) {
 		return fmt.Errorf("restored CP selection is not the exact previous release")
 	}
-	return nil
+	if repairTemp == "" || bytes.Equal(actual, selection.Raw) {
+		return nil
+	}
+	return writeCoreContainerFileAt(dir, "core-release.json", repairTemp, selection.Raw, 1<<20)
 }
 
 // Once hold removal has a durable intent, observation can accept running units

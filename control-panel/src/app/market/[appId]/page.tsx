@@ -8,6 +8,7 @@ import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import {
   ArrowLeft,
   Loader2,
@@ -40,8 +41,9 @@ import { InstallDialog } from '@/components/market/install-dialog';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
 import { HealthDot } from '@/components/market/health-dot';
 import { AppAccessSettings } from '@/components/market/app-access-settings';
+import { InstallBlockedNotice, UpdateBlockedNote, installBlockedLabel } from '@/components/market/update-blocked';
 import { authenticatedFetch } from '@/lib/api-client';
-import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent } from '@/lib/market/types';
+import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent, MarketAppInstalledSource, MarketAppVariant } from '@/lib/market/types';
 
 const ICON_MAP: Record<string, typeof Search> = {
   search: Search,
@@ -86,6 +88,10 @@ const preparingInstallEvent: InstallEvent = {
   const sourceId = searchParams.get('source') || undefined;
 
   const [app, setApp] = useState<MarketApp | null>(null);
+  // Other markets (and apps added by URL) with the same app id, and where the installed app takes its updates from.
+  const [variants, setVariants] = useState<MarketAppVariant[]>([]);
+  const [installed, setInstalled] = useState<MarketAppInstalledSource | null>(null);
+  const [choosingSource, setChoosingSource] = useState(false);
   const [status, setStatus] = useState<AppStatusInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -100,10 +106,10 @@ const preparingInstallEvent: InstallEvent = {
   const [installError, setInstallError] = useState<string | null>(null);
   const [installOperationAppId, setInstallOperationAppId] = useState<string | null>(null);
   const [pollingAppId, setPollingAppId] = useState<string | null>(null);
-  const [switchingSource, setSwitchingSource] = useState(false);
+  const [switchingSource, setSwitchingSource] = useState<string | null>(null);
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
-  // Switching to an app added by URL needs the same consent as installing it.
-  const [switchConsent, setSwitchConsent] = useState(false);
+  // Switching to an app added by URL needs the same consent as installing it (per Added app).
+  const [switchConsent, setSwitchConsent] = useState<Record<string, boolean>>({});
   const [syncingManifest, setSyncingManifest] = useState(false);
   const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
 
@@ -125,9 +131,15 @@ const preparingInstallEvent: InstallEvent = {
         setError(translateInterface("mab1663c1b5b2"));
         return;
       }
-      if (!res.ok) throw new Error(translateInterface("m4a9b9269be54"));
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      // The API's reason (an app whose manifest does not load says why).
+      if (!res.ok) {
+        setError(typeof data.error === 'string' && data.error ? data.error : translateInterface("m49a2883cb71a"));
+        return;
+      }
       setApp(data.app);
+      setVariants(Array.isArray(data.variants) ? data.variants : []);
+      setInstalled(data.installed ?? null);
     } catch (err) {
       setError(translateInterface("m49a2883cb71a"));
     }
@@ -315,26 +327,29 @@ const preparingInstallEvent: InstallEvent = {
     setPollingAppId(config.appId);
   };
 
-  const handleSwitchSource = async () => {
-    if (!app?.sourceId) return;
-    setSwitchingSource(true);
+  // Change where the installed app takes its updates from: only on the owner's choice, with Plan 10's consent.
+  const handleSwitchSource = async (target: MarketAppVariant) => {
+    if (!app) return;
+    setSwitchingSource(target.sourceId);
     setSourceSwitchMessage(null);
     try {
+      const consent = switchConsent[target.sourceId] === true;
       const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/source`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(app.sourceId.startsWith('direct:')
-          ? { sourceId: app.sourceId, acceptUnverifiedPublisher: switchConsent, allowSetup: switchConsent }
-          : { sourceId: app.sourceId }),
+        body: JSON.stringify(target.sourceId.startsWith('direct:')
+          ? { sourceId: target.sourceId, acceptUnverifiedPublisher: consent, allowSetup: consent }
+          : { sourceId: target.sourceId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || translateInterface("m5aa40c1a8a54"));
-      setSourceSwitchMessage(translateInterface("me1c329162f46", {source: String(data.sourceName || app.sourceName || app.sourceId)}));
-      await fetchStatus();
+      setSourceSwitchMessage(translateInterface("me1c329162f46", {source: String(data.sourceName || target.sourceName || target.sourceId)}));
+      setChoosingSource(false);
+      await Promise.all([fetchApp(), fetchStatus()]);
     } catch (err) {
       setSourceSwitchMessage(err instanceof Error ? err.message : translateInterface("m5aa40c1a8a54"));
     } finally {
-      setSwitchingSource(false);
+      setSwitchingSource(null);
     }
   };
 
@@ -451,7 +466,18 @@ const preparingInstallEvent: InstallEvent = {
   const accessOneLiner = accessLevel === 'server-users'
     ? translateInterface("m2a2e0c73779e", {site: siteName})
     : translateInterface("m35b0d6f9bfd7");
-  const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
+  // Every market on this box that has this app (the one shown first), and the ones an installed app could switch to.
+  const shownVariant: MarketAppVariant | null = app.sourceId ? {
+    sourceId: app.sourceId, sourceName: app.sourceName || app.sourceId, version: app.version ?? null,
+    ...(app.sourceNotAccepted ? { sourceNotAccepted: true as const } : {}),
+    ...(app.installBlocked ? { installBlocked: true as const } : {}),
+    ...(app.needsYouEye ? { needsYouEye: app.needsYouEye } : {}),
+  } : null;
+  const switchTargets = [...(shownVariant ? [shownVariant] : []), ...variants]
+    .filter((variant) => variant.sourceId !== installed?.sourceId);
+  const variantBlock = (variant: MarketAppVariant) => variant.installBlocked
+    ? installBlockedLabel(translateInterface, { installBlocked: { code: 'requires-newer-youeye', message: '' }, needsYouEye: variant.needsYouEye })
+    : variant.sourceNotAccepted ? translateInterface("m8ba391628be0") : null;
   // Listed, but its custom source is not accepted: install and switch are refused until the owner accepts it.
   const sourceNotAccepted = app.sourceNotAccepted === true;
   const capabilityLabels = [
@@ -712,48 +738,84 @@ const preparingInstallEvent: InstallEvent = {
             </div>
           )}
 
-          {/* Market Source */}
-          {app.sourceName && (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("m7c881e90d93a")}</p>
-                <p className="text-sm font-medium text-foreground">
-                  {isInstalled && status?.sourceName ? status.sourceName : app.sourceName}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
 
-        {isDifferentSourceVariant && (
-          <div className="mt-5 rounded-lg border border-primary/30 bg-primary/10 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* Where this app comes from: other markets, and where an installed app takes its updates from */}
+        {((isInstalled && installed) || variants.length > 0) && (
+          <div className="mt-5 space-y-3 border-t border-border pt-4">
+            {isInstalled && installed && (
               <div>
-                <p className="text-sm font-medium text-foreground">
-                  {translateInterface("mdcab824ab1f8", {source: app.sourceName || app.sourceId || ""})}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {translateInterface("m14d6f9f6432e", {source: status?.sourceName || status?.sourceId || ""})}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">{translateInterface("m2c0729afc9a9")}</p>
+                    <p className="text-sm font-medium text-foreground">{installed.sourceName || '—'}</p>
+                    {installed.sourceAddress && (
+                      <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={installed.sourceAddress}>{installed.sourceAddress}</p>
+                    )}
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setChoosingSource((open) => !open)} aria-expanded={choosingSource}>
+                    {translateInterface("mc0bf75bd78bf")}</Button>
+                </div>
+                {installed.updateBlocked && (
+                  <UpdateBlockedNote blocked={installed.updateBlocked} appId={app.id} onAppPage className="mt-2" />
+                )}
+                {choosingSource && (
+                  <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
+                    <p className="text-[13px] text-muted-foreground">{translateInterface("m4a8878ba958d")}</p>
+                    {switchTargets.length === 0 ? (
+                      <p className="text-[13px] text-foreground">
+                        {translateInterface("m5eda0c99287d")}{" "}
+                        <Link href="/market/sources" className="font-medium text-primary hover:underline">{translateInterface("mbc5015d35cc2")}</Link>
+                      </p>
+                    ) : switchTargets.map((variant) => {
+                      const blocked = variantBlock(variant);
+                      const direct = variant.sourceId.startsWith('direct:');
+                      return (
+                        <div key={variant.sourceId} className="flex flex-wrap items-center gap-3 rounded-md border bg-card px-3 py-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-foreground">{variant.sourceName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {variant.version ? `v${variant.version}` : ''}
+                              {blocked ? `${variant.version ? ' · ' : ''}${blocked}` : ''}
+                            </p>
+                          </div>
+                          {direct && !blocked && (
+                            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={switchConsent[variant.sourceId] === true}
+                                onChange={(event) => setSwitchConsent((current) => ({ ...current, [variant.sourceId]: event.target.checked }))}
+                              />
+                              {translateInterface("m5ae862f2c24b")}</label>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSwitchSource(variant)}
+                            disabled={switchingSource !== null || !!blocked || (direct && switchConsent[variant.sourceId] !== true)}
+                            title={blocked ?? undefined}
+                          >
+                            {switchingSource === variant.sourceId ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
+                            {translateInterface("m9d19bd2659fc")}</Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              {isDirectEntry && (
-                <label className="flex cursor-pointer items-center gap-2 text-[13px] text-foreground">
-                  <input type="checkbox" checked={switchConsent} onChange={(event) => setSwitchConsent(event.target.checked)} />
-                  {translateInterface("m5ae862f2c24b")}</label>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSwitchSource}
-                disabled={switchingSource || sourceNotAccepted || (isDirectEntry && !switchConsent)}
-                className="border-primary/30 bg-card text-muted-foreground hover:bg-primary/15"
-              >
-                {switchingSource ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
-                {translateInterface("m9d19bd2659fc")}</Button>
-            </div>
+            )}
+            {variants.map((variant) => (
+              <div key={variant.sourceId} className="text-[13px]">
+                <p className="text-foreground">
+                  {translateInterface("mf1c107e6139e", { source: variant.sourceName })}{" · "}
+                  <Link href={`/market/${encodeURIComponent(app.id)}?source=${encodeURIComponent(variant.sourceId)}`} className="font-medium text-primary hover:underline">
+                    {translateInterface("mdcc839a4015c")}</Link>
+                </p>
+                {variant.version && app.version && variant.version !== app.version && (
+                  <p className="text-xs text-muted-foreground">{translateInterface("m3fdd7247b42c", { source: variant.sourceName, version: variant.version })}</p>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -958,9 +1020,14 @@ const preparingInstallEvent: InstallEvent = {
               <div className="grid gap-2">
                 {!isInstalled ? (
                   <>
-                    <Button onClick={() => setShowInstallDialog(true)} disabled={sourceNotAccepted}>
-                      {translateInterface("m569ca49f4aaf")}{" "}{app.name}
-                    </Button>
+                    {app.installBlocked ? (
+                      // This box cannot install it: what it needs instead of Install, and no install form.
+                      <InstallBlockedNotice app={app} />
+                    ) : (
+                      <Button onClick={() => setShowInstallDialog(true)} disabled={sourceNotAccepted}>
+                        {translateInterface("m569ca49f4aaf")}{" "}{app.name}
+                      </Button>
+                    )}
                     {isDirectEntry && (
                       <Button
                         variant="outline"
@@ -1023,7 +1090,7 @@ const preparingInstallEvent: InstallEvent = {
       </div>
 
       {/* Install dialog */}
-      {showInstallDialog && app && (
+      {showInstallDialog && app && !app.installBlocked && (
         <InstallDialog
           app={app}
           domain={domain || ''}

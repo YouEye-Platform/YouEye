@@ -440,18 +440,3 @@ export const CatalogSchema = xobject({
 });
 
 export type CatalogDocument = z.infer<typeof CatalogSchema>;
-
-/**
- * The generated index of a custom (git) Market source, which cannot list folders:
- * `catalog.json` lists the app and bundle ids found in its folders. Indexes written before
- * 0.6.10 also list `system` ids; the list is accepted and ignored (a source never supplies the
- * core containers).
- */
-export const CatalogIndexSchema = xobject({
-  schema: z.literal('youeye.catalog-index.v1'),
-  apps: z.array(AppId),
-  bundles: z.array(AppId).optional(),
-  system: z.array(z.unknown()).optional(),
-});
-
-export type CatalogIndexDocument = z.infer<typeof CatalogIndexSchema>;

@@ -16,7 +16,7 @@ test('Pointer release-only transaction commits and recovers without payload or e
     const base = productFixture('pointer','1.2.3-dev.1',repository,{'standalone.tar':Buffer.from('standalone.tar'),'pointer-build-contract.json':Buffer.from('contract')});
     // One build, renamed by its promotions (no rebuild).
     const release = (version: string, sequence: number) => {
-      const r = {...base.release,version,tag:productTag('pointer',version),sequence};
+      const r = {...base.release,version,tag:productTag(version),sequence};
       return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'pointer',repository,tag:r.tag});
     };
     const original = release('1.2.3-dev.1',3), next = release('1.2.3-alpha.1',4), later = release('1.2.3-beta.1',5);

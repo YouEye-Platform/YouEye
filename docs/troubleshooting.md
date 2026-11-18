@@ -137,8 +137,16 @@ installed release. Each update has a request ID (`--request`), shown in the jour
 - **A step failed.** Settings → System shows "This step failed: …", the reason (the step's `evidence` from the
   status API) and, while only preparation ran, Cancel. "Resume checks" is not offered for a failed step: a failed
   step is never run again, so resuming only records the same failure. Cancel, then check for updates again; after
-  the checkpoint, "Restore previous release" (`recover`). When the checkpoint preflight refused and Spine is already
-  `cancelling`, Cancel is still offered and finishes the cancellation.
+  the checkpoint, "Restore previous release" (`recover`). A refused checkpoint preflight is cancelled by Spine
+  itself; if that cancellation did not finish (the request stays `cancelling`), Cancel is still offered and finishes
+  it.
+- **The update stopped at the checkpoint because the box was busy** (a box running 0.6.11 or later; "checkpoint preflight refused
+  before any writer was stopped: other app or platform work kept the lifecycle lock busy …"). The checkpoint waits
+  up to 60 s for running app, backup or Names work to let go of the lifecycle locks; when it does not, nothing has
+  been stopped or captured, and Spine cancels the request by itself: Settings → System shows "The last update was
+  cancelled. The installed release is unchanged." with the checkpoint step and this reason. Start the update again
+  after a long app operation or Names maintenance has finished. Older Spines failed at once and left the request
+  in `needs-recovery`, which only `recover` ended.
 - **A step's outcome is uncertain** (`needs-recovery` with a step left `started`, for example after a crash). When
   the step's action recorded an error, the panel shows it next to the step as "Reason: …"; when the action left no
   result (a killed child), nothing is shown. Recover the request.
@@ -151,6 +159,33 @@ installed release. Each update has a request ID (`--request`), shown in the jour
   shipped, or a shipped file was changed or missing, and the update went on. `youeye update core observe` lists up
   to 20 of the paths. A tree the update wrote itself is checked strictly; see
   [core-release-contract.md](core-release-contract.md#installed-file-checks).
+- **`apply-cp` fails with "CP selection differs from retained transition", and `recover` stops in
+  `recovery-health` with "restored CP selection is not the exact previous release"** (a Spine before 0.6.11; the
+  phase stays `needs-recovery`, and only `youeye-control` and `youeye-postgres` run). The box once took a build on
+  one channel and then the promotion of the same build on another channel as an update (a metadata-only request).
+  The older Spine left the build's first document in the Control Panel and refuses it later
+  ([core-release-contract.md](core-release-contract.md#the-recorded-selection)). `resume`, `stage` and `activate`
+  only print "complete verified service stage required" then: the coordinator's observation of the unfinished
+  `apply-cp`. Run `recover` once if it has not run yet (it restores the databases, the files and both services and
+  stops in `recovery-health`), write the installed release's document into the Control Panel, and run `recover`
+  again:
+  ```sh
+  youeye update core recover --request <id>
+  d=$(youeye update core status | jq -r .installed.manifest_sha256)
+  incus file push --uid 0 --gid 0 --mode 0600 /var/lib/youeye-state/core-update/targets/$d.json \
+    youeye-control/var/lib/youeye-state/core-selection/core-release.json
+  youeye update core recover --request <id>
+  ```
+  The second `recover` ends with phase `rolled-back`: every container runs again and the box is on the previous
+  release, unchanged. Write the file only after the first `recover`: its restore brings the old file back.
+  - **Is a box affected?** `incus exec youeye-control -- sha256sum
+    /var/lib/youeye-state/core-selection/core-release.json` prints another digest than
+    `youeye update core status | jq -r .installed.manifest_sha256`. A box that always followed one channel is not.
+  - **Updating an affected box.** The update from 0.6.10 to 0.6.11 or later goes through as it is: `apply-cp` runs
+    in the new Spine, which accepts an earlier document of the installed build and replaces it. A box that is on
+    0.6.11 or later updates and recovers normally. Only a recovery that runs in a Spine before 0.6.11 from its
+    first step (the update failed in `checkpoint` or `apply-spine`, or it was a host update) stops as above; the
+    commands above finish it.
 - **Failed `youeye-core-*` units** in `systemctl --failed` belong to an update request. Since 0.6.10 they are reset
   when the request is committed, cancelled or rolled back; a request in `needs-recovery` keeps them until then.
   Units left failed by 0.6.9 or older go away at the next reboot.
@@ -230,6 +265,22 @@ incus exec youeye-ui -- systemctl restart youeye-ui             # dashboard
 `youeye services restart <name>` goes through the Control Panel API, so it does not help when the Control Panel
 itself is down.
 
+## The dashboard answers 500 after a reboot
+
+Before 0.6.11, on a box that was installed fresh and has not yet taken an update that replaces the dashboard, the
+dashboard's start-up asked the database once. After a reboot its container can start a few seconds before
+Postgres answers; the question then failed, and the dashboard answered every request with HTTP 500 until it was
+restarted, while `youeye appliance health` and `youeye app list` still showed it running (the Control Panel logs
+"UI projection pending" every 20 s). Restart it:
+
+```sh
+incus exec youeye-ui -- systemctl restart youeye-ui
+```
+
+From 0.6.11 a start-up that already finished its database work asks nothing; a first start waits up to two
+minutes for the database and, if it still does not answer, ends the process so that systemd starts it again
+(`journalctl` in the container shows "[startup] the database did not answer in time").
+
 ## A Market app update is stuck and the System update waits for it
 
 Before 0.6.9, every Market app update stuck after its commit ("Update committed; cleanup requires attention", the app
@@ -245,29 +296,79 @@ youeye update core check
 
 then `stage` and `activate` as usual. After the update, `youeye app recover <app>` reports the operation complete.
 
-## An app says its source is not accepted, or "setup steps changed"
+## The Market is empty or stale
 
-Since 0.6.10 apps from a custom Market source are installed and updated only after the owner accepted the source
-(see [market.md](market.md#other-sources-and-consent)). A source added before 0.6.10 is not accepted yet: its apps
-are listed with "Not accepted", and an install or update answers `source-not-accepted`. If you trust the source:
+The Market lists what the box last accepted from each market (`/var/lib/youeye/markets/<id>/`); it asks each market
+at most every 5 minutes, and at once on "Check for updates" or Refresh ([market.md](market.md#the-store-on-the-box)).
+To see when each market was last read and why the last attempt failed:
 
 ```
-youeye market source list              # the ACCEPTED column says "no"
-youeye market source accept <id>
+youeye market list          # LAST REFRESH per market; failed refreshes follow with their reason
+youeye market refresh       # ask every market now; prints commit and date, or the error; exits 1 on a failure
 ```
 
-A source whose address or branch was changed must be accepted again. `source-unavailable` means the source is turned
-off or gone: turn it on again (Market → Manage sources), or, for an install, name another source or none (the
-official Market).
+Market → Sources shows the same ("Last refreshed …", the error, Refresh now). Common reasons:
+
+- **The box cannot reach the market** (DNS, no internet, the host is down). The Market keeps showing the last
+  accepted state; a box that never read a market has nothing to show for it and asks again when the Market is
+  opened, at the earliest 30 s after the last failed attempt. Check from the box:
+  `curl -sI https://market.youeye.me/market.json` (or the market's address).
+- **"The market is still being read; this box keeps reading it in the background"** or **"The market did not
+  finish answering within 180 seconds"**: the market answers slowly. A page waits 20 s at most, and one refresh
+  may take 3 minutes before it is given up; open the page or Refresh again later.
+- **"market.json is dated …, more than a day ahead of this YouEye's clock …"**: either the market published a
+  `sequence` from the future, or this box's clock is behind. Check `date` on the box; once the clock is right, the
+  next refresh accepts the market. The box keeps its copy meanwhile.
+- **"… a market must not redirect"** or **"must point to a public server"**: the address answers with a redirect or
+  resolves to a private address. Use the address the files are really served at.
+- **"… has sequence N, lower than the M this box accepted from …"**: the market published an older state than the
+  box already has; the box keeps its copy. The publisher fixes it with a new commit.
+- **"… is not the file its hash names"**: the market's files do not match each other (an interrupted upload, a
+  cache serving an old file). The box keeps its copy; the next refresh tries again.
+- **The official Market shows the wrong lane:** it follows the box's channel (`youeye channel get`): dev and alpha
+  read `/dev/`, beta and stable read `/`. Boxes up to 0.6.10 do not read `market.youeye.me` at all; they keep the
+  0.6.4 catalog of their channel until they update YouEye.
+
+## An app says it has no update source
+
+"No update source: the market this app came from is no longer on this box" (`updateBlocked` `source-unavailable`):
+the app was installed from a market that was removed or turned off, or from a git source, which 0.6.11 removes
+(the sources page and `youeye market list` name the removed ones). The app keeps running; it just gets no updates.
+To take updates again: turn the market back on, or add a market that has the app (`youeye market add <address>
+--i-trust-this-market`) and choose **Change** on the app's page ("Updates from"), or run
+`youeye app source <app> <market id>`. Either records the new market; the installed version stays until the next
+update. A market that was removed and added again has a new id, so its apps must be pointed at it this way.
+`youeye app check-updates` names every app in this state.
+
+## An app says it needs a newer YouEye
+
+"Needs YouEye X.Y.Z or newer" instead of Install, or "the new version of this app needs a newer YouEye" on an
+update (`requires-newer-youeye`): the market's version of the app declares `requires.youeye` above this box, or is
+of a kind this YouEye does not know. Nothing is wrong with the box; update YouEye (Settings → System), and the app
+installs or the update is offered. An installed app keeps running at its current version meanwhile.
+
+## An app says its market is not accepted, or "setup steps changed"
+
+Apps from a custom market are installed and updated only after the owner accepted it (see
+[market.md](market.md#markets-and-consent)). A market whose address was changed must be accepted again; until then
+its apps are listed with "Not accepted", and an install or update answers `source-not-accepted`. If you trust it:
+
+```
+youeye market list              # the ACCEPTED column says "no"
+youeye market accept <id>
+```
+
+`source-unavailable` on an install means the market is turned off or gone: turn it on again (Market → Sources), or
+name another market or none (the official Market).
 
 "Setup steps changed" (`setup-changed`) on an update of an app added by URL: its new version runs different setup
 files inside its containers, and nothing was changed. Read them (the update panel lists them), then update with
 `youeye app update <app> --allow-setup` or "Allow and update", only if you trust the publisher.
 
-`source-changed` on an update: the app's source id now points at another repository (or branch) than the app was
-installed from, for example after the source's address was edited or a removed source's id was taken again. The
-message names both. Nothing was changed, and the update check offers this app nothing. If you want its updates from
-the new repository, switch the app to that source on its page.
+`source-changed` on an update: the app's source id now points at another market address than the app was installed
+from, for example after the market's address was edited or a removed market's id was taken again. The message names
+both. Nothing was changed, and the update check offers this app nothing. If you want its updates from the new
+address, choose Change on the app's page.
 
 ## A box with stopped apps still works hard
 

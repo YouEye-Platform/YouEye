@@ -10,7 +10,7 @@ export function productFixture(product: string, version: string, repository: str
   const build: ProductBuild = {schema:'youeye.product-build.v1',product,kind:options.kind ?? 'native',build_version:options.build ?? version,source_tree:tree,
     input_sha256:'b'.repeat(64),contract_sha256:sha(options.contract ?? Buffer.from('contract')),primary:options.primary ?? 'standalone.tar',
     assets:Object.entries(assets).map(([name, bytes]) => ({name,sha256:sha(bytes),size_bytes:bytes.length}))};
-  const release: ProductRelease = {schema:'youeye.product-release.v1',product,version,tag:productTag(product,version),source_tree:tree,
+  const release: ProductRelease = {schema:'youeye.product-release.v1',product,version,tag:productTag(version),source_tree:tree,
     sequence:options.sequence ?? 1762950000,minimum_reader:1,authority:'digest',build_manifest_base64:Buffer.from(JSON.stringify(build)).toString('base64')};
   return {build, release, raw: Buffer.from(JSON.stringify(release)), repository, tag: release.tag};
 }

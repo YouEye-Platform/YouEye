@@ -23,7 +23,36 @@ test('fresh UI becomes schema-complete before readiness and restarts do not repl
     assert.equal((await coreSchemaStatus('ui', paths)).state, 'completed');
     assert.equal(await runFreshCoreSchemaOnce(initialize, paths), true);
     assert.equal(effects, 1);
+    // A restart after the attempt completed never asks the database: after a reboot Postgres may answer later
+    // than this process starts, and a failed probe would fail the start-up hook for good.
+    const unreachable = async () => { throw Object.assign(new Error('connect EHOSTUNREACH'), { code: 'EHOSTUNREACH' }); };
+    assert.equal(await runFreshCoreSchemaOnce(initialize, paths, unreachable), true);
+    assert.equal(effects, 1);
   } finally { await rm(root, { recursive: true }); }
+});
+
+test('a first start waits for a database that answers a little later, and only for that', async () => {
+  const { waitForDatabase, isDatabaseUnreachable } = await import('../src/lib/database-wait');
+  const refused = () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+  let clock = 0, calls = 0;
+  const timing = { now: () => clock, sleep: async (ms: number) => { clock += ms; }, deadlineMs: 10_000, pauseMs: 2_000 };
+  await waitForDatabase(async () => { calls += 1; if (calls < 4) throw refused(); }, timing);
+  assert.equal(calls, 4);
+  assert.equal(clock, 6_000);
+  // Still unreachable at the deadline: the last failure is thrown, and it is recognisable.
+  clock = 0; calls = 0;
+  await assert.rejects(waitForDatabase(async () => { calls += 1; throw refused(); }, timing), (error) => isDatabaseUnreachable(error));
+  assert.equal(calls, 6);
+  // Any other failure is not waited on.
+  calls = 0;
+  await assert.rejects(waitForDatabase(async () => { calls += 1; throw new Error('password authentication failed'); }, timing), /password/);
+  assert.equal(calls, 1);
+  // Forms the errors take: a dual-stack connect (AggregateError), a wrapped cause, Postgres still starting.
+  assert.equal(isDatabaseUnreachable(new AggregateError([refused()], 'all attempts failed')), true);
+  assert.equal(isDatabaseUnreachable(new Error('hook failed', { cause: Object.assign(new Error('x'), { code: 'EHOSTUNREACH' }) })), true);
+  assert.equal(isDatabaseUnreachable(Object.assign(new Error('the database system is starting up'), { code: '57P03' })), true);
+  assert.equal(isDatabaseUnreachable(new Error('Core schema attempt is running or uncertain; native recovery required')), false);
+  assert.equal(isDatabaseUnreachable(null), false);
 });
 
 test('fresh startup rejects running and uncertain migration without replay', async () => {

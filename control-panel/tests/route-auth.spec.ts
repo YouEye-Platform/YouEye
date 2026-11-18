@@ -36,7 +36,7 @@ const PUBLIC_HANDLERS: Record<string, string> = {
   'POST /api/deploy/infrastructure/reconcile': 'Spine: X-Deploy-Secret',
   'POST /api/host-ip/migrate': 'Spine host IP change: X-Deploy-Secret',
   'POST /api/mail/send': 'SMTP relay for apps: UI bridge token or app service credential (validateAuth)',
-  'GET /api/market/image': 'catalog images from trusted catalog URLs only',
+  'GET /api/market/image': 'pictures an enabled, accepted market names, from the box\'s copy of it; anything else is 404 without a fetch',
   'GET /api/ping': 'liveness',
   'GET /api/setup/ca-cert': 'the box CA certificate, for trusting HTTPS during setup',
   'GET /api/setup/ca-fingerprint': 'the box CA fingerprint (local setup host only)',

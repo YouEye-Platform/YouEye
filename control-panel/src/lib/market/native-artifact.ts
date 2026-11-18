@@ -1,13 +1,17 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
 
-import { downloadProductAsset, downloadProductAssetTo, resolveChannelProduct } from '@/lib/releases/channel-index';
+import {
+  channelProductEntry, downloadProductAsset, downloadProductAssetTo, readChannelIndex, resolveChannelEntry, resolveChannelProduct,
+  verifyChannelEntryDocument, type BoxChannelIndex, type ChannelEntry,
+} from '@/lib/releases/channel-index';
 import { productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
+import { marketStateDir } from './source';
 import type { AppManifest, InstallConfig } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -87,6 +91,104 @@ export async function nativeManifestFromContract(contract: Buffer, selected: Ver
 export async function nativeManifestFromRelease(selected: VerifiedProductRelease): Promise<{ manifest: AppManifest; contract: Buffer }> {
   const contract = await downloadProductAsset(selected, 'youeye-app.yaml');
   return { manifest: await nativeManifestFromContract(contract, selected), contract };
+}
+
+// ─── The Market's listing of a native app ─────────────────
+
+/**
+ * A native app as the Market lists it: its release on the box's channel and the manifest of that release.
+ *
+ * Kept by the digest of the app's entry in the channel index (the SHA-256 of its `product-release.json`), in memory
+ * and in `/var/lib/youeye/markets/_native/<product>.json`, so listing the Market does not download the release
+ * document and `youeye-app.yaml` again while the channel still names the same release. The kept copy is the two
+ * downloaded files; reading it back checks the document against the index entry and the manifest against the
+ * document, exactly as after a download. Installs and updates do not use it: they resolve the release themselves.
+ */
+export interface NativeListing {
+  selected: VerifiedProductRelease;
+  manifest: AppManifest;
+}
+
+const NATIVE_LISTING_SCHEMA = 'youeye.native-listing.v1';
+/** The channel index is asked once for a whole listing (it has one entry per native app). */
+const INDEX_MEMO_MS = 10_000;
+const NATIVE_LISTINGS = Symbol.for('youeye.market-native-listings');
+const nativeHolder = globalThis as typeof globalThis & { [NATIVE_LISTINGS]?: {
+  listings: Map<string, { sha256: string; listing: NativeListing }>;
+  index: { at: number; value: Promise<BoxChannelIndex> } | null;
+} };
+const nativeListings = nativeHolder[NATIVE_LISTINGS] ??= { listings: new Map(), index: null };
+
+export function resetNativeListings(): void {
+  nativeListings.listings.clear();
+  nativeListings.index = null;
+}
+
+export interface NativeListingDeps {
+  index?: () => Promise<BoxChannelIndex>;
+  fetch?: typeof fetch;
+  now?: () => number;
+}
+
+function memoizedIndex(deps: NativeListingDeps): Promise<BoxChannelIndex> {
+  if (deps.index) return deps.index();
+  const now = (deps.now ?? Date.now)();
+  if (!nativeListings.index || now - nativeListings.index.at > INDEX_MEMO_MS) {
+    const value = readChannelIndex();
+    nativeListings.index = { at: now, value };
+    value.catch(() => { if (nativeListings.index?.value === value) nativeListings.index = null; });
+  }
+  return nativeListings.index.value;
+}
+
+const nativeListingFile = (product: string) => join(marketStateDir(), 'markets', '_native', `${product}.json`);
+
+async function storedNativeListing(product: string, entry: ChannelEntry): Promise<NativeListing | null> {
+  try {
+    const saved = JSON.parse(await readFile(nativeListingFile(product), 'utf8')) as { schema?: string; entry_sha256?: string; document_base64?: string; contract_base64?: string };
+    if (saved.schema !== NATIVE_LISTING_SCHEMA || saved.entry_sha256 !== entry.sha256
+      || typeof saved.document_base64 !== 'string' || typeof saved.contract_base64 !== 'string') return null;
+    const selected = verifyChannelEntryDocument(product, entry, Buffer.from(saved.document_base64, 'base64'));
+    if (selected.build.kind !== 'native') return null;
+    return { selected, manifest: await nativeManifestFromContract(Buffer.from(saved.contract_base64, 'base64'), selected) };
+  } catch {
+    return null;
+  }
+}
+
+async function keepNativeListing(product: string, entry: ChannelEntry, selected: VerifiedProductRelease, contract: Buffer): Promise<void> {
+  const file = nativeListingFile(product);
+  const temporary = `${file}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  try {
+    await mkdir(join(marketStateDir(), 'markets', '_native'), { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify({
+      schema: NATIVE_LISTING_SCHEMA, entry_sha256: entry.sha256,
+      document_base64: selected.raw.toString('base64'), contract_base64: contract.toString('base64'),
+    })}\n`, { mode: 0o600 });
+    await rename(temporary, file);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    console.warn(`[market] Could not keep the listing of ${product}:`, error);
+  }
+}
+
+/** The Market's listing of a native app on the box's channel (see `NativeListing`). */
+export async function nativeListing(product: string, deps: NativeListingDeps = {}): Promise<NativeListing> {
+  const entry = await channelProductEntry(product, { index: () => memoizedIndex(deps) });
+  if (!entry) throw new MarketNativeArtifactPolicyError(`This channel has no ${product} release yet`);
+  const copy = (listing: NativeListing): NativeListing => ({ selected: listing.selected, manifest: structuredClone(listing.manifest) });
+  const cached = nativeListings.listings.get(product);
+  if (cached?.sha256 === entry.sha256) return copy(cached.listing);
+  let listing = await storedNativeListing(product, entry);
+  if (!listing) {
+    const selected = await resolveChannelEntry(product, entry, deps.fetch);
+    if (selected.build.kind !== 'native') throw new MarketNativeArtifactPolicyError(`${product} release is not a native app`);
+    const contract = await downloadProductAsset(selected, 'youeye-app.yaml', undefined, deps.fetch);
+    listing = { selected, manifest: await nativeManifestFromContract(contract, selected) };
+    await keepNativeListing(product, entry, selected, contract);
+  }
+  nativeListings.listings.set(product, { sha256: entry.sha256, listing });
+  return copy(listing);
 }
 
 /**

@@ -14,13 +14,14 @@ directly (dashboard widgets, notifications, the UI gateway). Container apps from
 | Cinema | `YE-App-Cinema` | Movies and TV from TMDB, watchlists, reviews; can connect to Jellyfin |
 
 The template for new ones is **YouEye-Canvas**. The Market shows a native app when its id is listed in the
-catalog's `native:` list; the app itself comes from its own product release (see Releases below).
+official catalog's `native:` list (a custom market's list is ignored); the app itself comes from its own product
+release (see Releases below).
 
 | | Container app | Native app |
 |---|---|---|
 | Source | `YE-AppMarket/apps/<id>/` | its own repository |
 | Runs as | upstream OCI images, pinned by digest | `standalone.tar` in a Debian 12 system container, Node 22 or 24 |
-| Released as | part of the Market catalog release | its own product release (`standalone.tar` + `youeye-app.yaml`) |
+| Released as | published with its market (static files, [market-format.md](market-format.md)) | its own product release (`standalone.tar` + `youeye-app.yaml`) |
 | Platform access | doorways (YouEye ID, PostgreSQL, Pointer) | also the UI gateway with an app token |
 | Dashboard | a tile | widgets, timeline and info cards, notifications, a settings panel |
 
@@ -206,4 +207,4 @@ Canvas itself is released as source (`source.tar.gz` + `youeye-app.yaml`), not a
 fork installable, copy from an existing native app what Canvas does not carry: `output: "standalone"` in
 `next.config.ts`, the `.youeye/build/` directory, the `scripts/` used by its `build` script (including
 `write-release-manifest.mjs`, with the new id) and `THIRD_PARTY_NOTICES.txt`. Then add the repository and product
-key to the release tooling and the id to the catalog's `native:` list.
+key to the release tooling and the id to the official catalog's `native:` list.

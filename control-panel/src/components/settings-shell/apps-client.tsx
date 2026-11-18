@@ -17,6 +17,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
+import { UpdateBlockedNote } from "@/components/market/update-blocked";
+import type { UpdateBlocked } from "@/lib/market/types";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
 
@@ -51,6 +53,8 @@ interface UnifiedApp {
   databaseMode?: "shared" | "own" | "none";
   updateAvailable: boolean;
   updateInfo?: string;
+  /** A Market app that gets no updates, and why. */
+  updateBlocked?: UpdateBlocked | null;
   systemManaged?: boolean;
   healthStatus?: "healthy" | "unhealthy" | "unknown";
   appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown" | "maintenance";
@@ -305,6 +309,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const [maintAck, setMaintAck] = useState(false);
   const [dbAck, setDbAck] = useState(false);
   const updates = apps.filter((app) => app.updateAvailable || operations.get(app.id)?.pending);
+  // Market apps that get no updates, with the reason (their source is gone, not accepted, or needs a newer YouEye).
+  const blockedApps = apps.filter((app) => app.category === "user" && !!app.updateBlocked && !updates.includes(app));
   const systemApps = apps.filter((app) => app.category !== "user");
 
   const load = useCallback(async (initial = false) => {
@@ -708,6 +714,15 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             })}
           </div>
         )}
+        {blockedApps.map((app) => (
+          <div key={`blocked-${app.id}`} className="border-t px-[18px] py-3">
+            <button type="button" onClick={() => onOpen(app.id)} className="flex w-full min-w-0 items-center gap-3 text-left">
+              <AppIcon app={app} />
+              <p className="min-w-0 flex-1 truncate text-[13px] font-medium">{app.displayName}</p>
+            </button>
+            <UpdateBlockedNote blocked={app.updateBlocked!} appId={app.id} className="mt-2" />
+          </div>
+        ))}
       </section>
 
       <section className="overflow-hidden rounded-xl border bg-card">

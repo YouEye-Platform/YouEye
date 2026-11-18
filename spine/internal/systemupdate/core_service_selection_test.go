@@ -44,7 +44,8 @@ func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
 				retained = value
 				return nil
 			}
-			err = installCoreServiceSelection(rootFile, &r, old, next, save)
+			m := CoreManager{Root: t.TempDir()}
+			err = installCoreServiceSelection(m, rootFile, &r, old, next, save)
 			if mode == "foreign" {
 				if err == nil {
 					t.Fatal("overwrote foreign selection")
@@ -56,7 +57,7 @@ func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
 					t.Fatal("missing lost receipt")
 				}
 				r = retained
-				err = installCoreServiceSelection(rootFile, &r, old, next, save)
+				err = installCoreServiceSelection(m, rootFile, &r, old, next, save)
 			}
 			if err != nil || r.SelectionState != "installed" {
 				t.Fatal(r.SelectionState, err)
