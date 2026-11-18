@@ -42,6 +42,22 @@ stop() {
     wait "$1" 2>/dev/null || true
 }
 
+# stop_kiosk ends cage and cog. cage waits for cog after SIGTERM, and cog doesn't end when cage's display goes away
+# (seen on 0.6.6-dev.5: "Turning off" stayed on screen), so cage's children get the signal too, and anything still
+# running after 5 s is killed: the machine must always reach poweroff.
+stop_kiosk() {
+    local pid=$1 i
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    for i in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.25
+    done
+    pkill -KILL -P "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
 # graphics_wanted: a DRM device exists and the GRUB text-mode entry was not chosen. Trixie's kernel has no simpledrm,
 # so without a GPU driver (or with nomodeset) there is no DRM device and the text installer runs.
 graphics_wanted() {
@@ -103,14 +119,14 @@ graphical_installer() {
             fi
             if [ ! -e "$ui_ready" ] && [ ! -e "$interactive_answer" ] && [ $((SECONDS - started)) -ge "$ui_seconds" ]; then
                 log "the installer page did not appear within ${ui_seconds}s; using the text installer"
-                stop "$cog_pid"
+                stop_kiosk "$cog_pid"
                 stop "$serve_pid"
                 return 1
             fi
             sleep 0.5
         done
         if [ "$finished" = "$serve_pid" ]; then
-            stop "$cog_pid"
+            stop_kiosk "$cog_pid"
             if [ "$status" -eq 0 ] || [ -e "$interactive_answer" ]; then
                 return 0
             fi

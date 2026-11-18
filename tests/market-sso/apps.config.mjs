@@ -3,7 +3,7 @@
 // (whoami → { username, admin, ...extra }). whoami gets { page, context, signin, who } where signin is signIn()'s
 // result. Entries with `skip` are documented but not run (reason in the string). `expect: { admin|user: { admin } }`
 // overrides the expected admin flag where the app has a known gap, so a fix shows up as a failing test.
-import { pageFetch, psql, box } from './lib.mjs';
+import { pageFetch, psql, box, USERS } from './lib.mjs';
 
 export const apps = {
   'actual-budget': {
@@ -76,28 +76,34 @@ export const apps = {
   },
   memos: {
     sub: 'memos',
-    // Known gap (2026-11-13): Memos has no claim-to-role mapping; OIDC users are role USER.
+    // Known gap: Memos has no claim-to-role mapping; OIDC users are role USER (still true in 26.11).
     expect: { admin: { admin: false } },
-    start: { path: '/auth', click: / ID$/ },
-    // Memos keeps its access token in localStorage (memos_access_token); /api/v1/auth/me gives the role
-    // (HOST | ADMIN | USER).
+    // Memos 26 goes straight to its only identity provider when password sign-in is off; 0.30 showed a button.
+    start: { path: '/auth', click: [{ name: / ID$/, optional: true }] },
+    settle: 5000,
+    // Memos 26 dropped the /api/v1 prefix (/api/v1 answers 410); the access token may be in localStorage
+    // (memos_access_token) or only in the session cookie.
     whoami: async ({ page }) => {
       const token = await page.evaluate(() => localStorage.getItem('memos_access_token'));
-      const r = await pageFetch(page, '/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-      const u = r.body?.user ?? {};
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      let r = await pageFetch(page, '/api/auth/me', { headers });
+      if (r.status === 404) r = await pageFetch(page, '/api/v1/auth/me', { headers });
+      const u = r.body?.user ?? r.body ?? {};
       return { username: u.username, admin: ['HOST', 'ADMIN'].includes(u.role), role: u.role, status: r.status };
     },
   },
   miniflux: {
     sub: 'miniflux',
-    // Known gap (2026-11-13): Miniflux has no admin mapping for OIDC users.
-    expect: { admin: { admin: false } },
+    // 2.3.5+: admin follows YouEye ID's admin group at every sign-in (OAUTH2_ADMIN_GROUP).
     start: { path: '/', click: /Sign in with OpenID Connect/i },
-    // Miniflux's REST API does not take the web session, so ask the web UI: /settings shows the username, and
-    // /users (user management) is admin-only (403 for others).
+    // Miniflux's REST API does not take the web session, so ask the web UI: the logout button's title names the
+    // signed-in user ("Logged in as <name>", 2.3.5; older pages had a username field), and /users (user
+    // management) is admin-only (403 for others).
     whoami: async ({ page }) => {
       const settings = await pageFetch(page, '/settings');
-      const username = String(settings.body).match(/name="username"[^>]*value="([^"]*)"|value="([^"]*)"[^>]*name="username"/)?.slice(1).find(Boolean);
+      const html = String(settings.body);
+      const username = html.match(/title="Logged in as ([^"]+)"/)?.[1]
+        ?? html.match(/name="username"[^>]*value="([^"]*)"|value="([^"]*)"[^>]*name="username"/)?.slice(1).find(Boolean);
       const users = await pageFetch(page, '/users');
       return { username, admin: users.status === 200, usersStatus: users.status };
     },
@@ -210,6 +216,67 @@ export const apps = {
       const r = await pageFetch(page, '/api/v1/user', { headers: { Authorization: `Bearer ${token}` } });
       const u = r.body ?? {};
       return { username: u.username, admin: Boolean(u.is_admin ?? u.isAdmin), keys: Object.keys(u).join(','), status: r.status };
+    },
+  },
+  homebox: {
+    sub: 'homebox',
+    // Homebox has no admin role (each person owns their collections): "no mapping", so admin=false is expected.
+    expect: { admin: { admin: false } },
+    start: { path: '/' },
+    settle: 5000,
+    // /api/v1/users/self uses the session cookie the OIDC callback set.
+    whoami: async ({ page }) => {
+      const r = await pageFetch(page, '/api/v1/users/self');
+      const u = r.body?.item ?? r.body ?? {};
+      return { username: u.email ?? u.name, name: u.name, admin: Boolean(u.isSuperuser), status: r.status };
+    },
+  },
+  'gramps-web': {
+    sub: 'gramps-web',
+    // Role follows the per-app claim gramps_role (admin -> Gramps admin 5, everyone else editor 3) at every sign-in.
+    start: { path: '/' },
+    settle: 6000,
+    whoami: async ({ page }) => {
+      const token = await page.evaluate(() => localStorage.getItem('access_token') || localStorage.getItem('token'));
+      const r = await pageFetch(page, '/api/users/-/', { headers: { Authorization: `Bearer ${token}` } });
+      return { username: r.body?.name, admin: (r.body?.role ?? 0) >= 4, role: r.body?.role, status: r.status };
+    },
+  },
+  trek: {
+    sub: 'trek',
+    // OIDC_ADMIN_CLAIM=groups / OIDC_ADMIN_VALUE=admin promote and demote at every sign-in.
+    start: { path: '/login', click: [{ name: /ID$|YouEye|Sign in with/i, optional: true }] },
+    settle: 5000,
+    whoami: async ({ page }) => {
+      const r = await pageFetch(page, '/api/auth/me');
+      const u = r.body?.user ?? {};
+      return { username: u.username, email: u.email, admin: u.role === 'admin', role: u.role, status: r.status };
+    },
+  },
+  ghostfolio: {
+    sub: 'ghostfolio',
+    // Known limit: the FIRST person to sign in becomes ADMIN (no claim mapping upstream; the listing tells the owner
+    // to sign in first). Passes because admin runs before user.
+    start: { path: '/api/auth/oidc' },
+    settle: 6000,
+    // Ghostfolio stores no username or email (it keeps only the OIDC sub), so the signed-in name can't be read back:
+    // a 200 for this session's own account stands in for it, and the ids show the two people get separate accounts.
+    whoami: async ({ page, who }) => {
+      const token = await page.evaluate(() => localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token'));
+      const r = await pageFetch(page, '/api/v1/user', { headers: { Authorization: `Bearer ${token}` } });
+      return { username: r.status === 200 && r.body?.id ? USERS[who].username : undefined, id: r.body?.id, admin: (r.body?.permissions ?? []).includes('accessAdminControl'), status: r.status };
+    },
+  },
+  'calibre-web-automated': {
+    sub: 'calibre-web-automated',
+    // Admin follows YouEye ID's admin group at every sign-in (oauth_admin_group, exact match).
+    start: { path: '/login', click: /YouEye ID/i },
+    settle: 4000,
+    whoami: async ({ page }) => {
+      const me = await pageFetch(page, '/me');
+      const name = String(me.body).match(/id="top_user"[\s\S]*?<span class="hidden-sm">([^<]+)</)?.[1]?.trim();
+      const adm = await pageFetch(page, '/admin/view');
+      return { username: name, admin: adm.status === 200 && /admin/i.test(String(adm.body).slice(0, 4000)) && !/name="password"/.test(String(adm.body)), adminStatus: adm.status };
     },
   },
   // Native apps (YouEye-Canvas): opening the app without a session redirects to /api/auth/sso and YouEye ID.
