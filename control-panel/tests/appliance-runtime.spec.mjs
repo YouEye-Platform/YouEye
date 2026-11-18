@@ -17,15 +17,3 @@ test('system settings consumes Spine runtime capabilities and persistent state',
   assert.match(client, /Image-managed/);
   assert.match(client, /isAppliance &&/);
 });
-
-test('unsupported host updates remain typed 409 product state', async () => {
-  const [spineClient, updateRoute] = await Promise.all([
-    read('src/lib/spine/client.ts'),
-    read('src/app/api/updates/[component]/route.ts'),
-  ]);
-  assert.match(spineClient, /class SpineAPIError/);
-  assert.match(spineClient, /public readonly statusCode: number/);
-  assert.match(updateRoute, /capability_not_supported/);
-  assert.match(updateRoute, /error\.statusCode === 409/);
-  assert.match(updateRoute, /\{ status: 409 \}/);
-});

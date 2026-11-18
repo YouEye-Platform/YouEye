@@ -10,13 +10,13 @@ function readControl(path: string): string {
   return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(controlRoot, path), "utf8")) : readFileSync(join(controlRoot, path), "utf8");
 }
 
-test('settings system page surfaces Market system update plans safely', () => {
+test('settings system page surfaces the pinned core image plans safely', () => {
   const client = readControl('src/components/settings-shell/system-client.tsx');
   const api = readControl('src/app/api/deploy/infrastructure/system-updates/route.ts');
   const settingsApi = readControl('src/app/settings/api/deploy/infrastructure/system-updates/route.ts');
   const updater = readControl('src/lib/infrastructure/system-updater.ts');
 
-  assert.match(client, /Market System Manifests/);
+  assert.match(client, /Core container images/);
   assert.ok(client.includes('/settings/api/deploy/infrastructure/system-updates'));
   assert.match(client, /"untracked"/);
   assert.match(client, /adoptUntracked: plan\.trackingStatus !== "tracked"/);
@@ -30,7 +30,7 @@ test('settings system page surfaces Market system update plans safely', () => {
   assert.match(client, /I have a maintenance window/);
 
   assert.match(api, /planSystemUpdates/);
-  assert.match(api, /updateSystemFromMarket/);
+  assert.match(api, /updateSystemContainer/);
   assert.match(api, /process\.env\.HOST_IP/);
   assert.match(updater, /confirmMaintenanceWindow/);
   assert.match(updater, /confirmContainerName !== plan\.containerName/);

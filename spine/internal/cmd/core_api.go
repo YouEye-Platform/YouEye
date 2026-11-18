@@ -92,6 +92,7 @@ func (o coreAPIOperations) Submit(ctx context.Context, action string, request ap
 	}
 	out = api.CoreUpdateActionResult{RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256, Phase: j.Phase, Control: systemupdate.CoreControlObservation{RequestID: j.RequestID, CommandID: request.CommandID, State: "settled"}}
 	if j.Phase == "cancelled" {
+		runtime.Runner.ResetFailedUnits(ctx, j)
 		return out, nil
 	}
 	current, err := m.Read()

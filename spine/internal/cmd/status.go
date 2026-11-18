@@ -32,7 +32,12 @@ func runStatus() error {
 	// image-owned components.
 	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
 		fmt.Printf("System Image:    v%s (image-managed)\n", runtimeStatus.ImageVersion)
-		fmt.Printf("Spine:           v%s (system image)\n", Version)
+		// The running Spine is the one selected on State for this slot; the image only carries the seed.
+		where := "system image"
+		if report, err := readSpineStatus(); err == nil && report.Running.Role != "" && report.Running.Role != "seed" {
+			where = "on State, " + report.Running.Role
+		}
+		fmt.Printf("Spine:           v%s (%s)\n", Version, where)
 	} else {
 		fmt.Printf("Spine:           v%s\n", Version)
 	}

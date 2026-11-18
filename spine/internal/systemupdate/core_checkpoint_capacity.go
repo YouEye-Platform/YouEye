@@ -127,9 +127,30 @@ func coreDataTreeBytes(root string) (int64, error) {
 	return total, err
 }
 
+// coreCheckpointPreflightRefused marks a checkpoint that ended in its read-only preflight. It is set only below,
+// before Quiesce is called, so it proves that no ingress gate, power hold, stop or snapshot was made.
+const coreCheckpointPreflightRefused = "checkpoint_preflight_refused"
+
+// coreCheckpointPreflightFailure turns a refused checkpoint preflight into a definite failure with no effect. The
+// preflight only reads; the lifecycle reservation taken at admission is its one effect. "unknown" here would hold
+// the box in needs-recovery for good (an unknown step is never re-run), and paired recovery would run the same
+// refused inspection in its fence. The coordinator instead ends the request through verified cancellation, which
+// also releases the reservation (CoreManager.Cancel, NativeCoreRuntime's CancelPreparationAction).
+func coreCheckpointPreflightFailure(err error) CoreActionObservation {
+	msg := err.Error()
+	if len(msg) > 1024 {
+		msg = msg[:1024] + "…"
+	}
+	return CoreActionObservation{State: "failed", Stage: "execute", Code: coreCheckpointPreflightRefused, EffectState: "not-started",
+		Evidence: "checkpoint preflight refused before any writer was stopped: " + msg}
+}
+
 // PreflightCheckpoint runs after lifecycle admission but before closing ingress
-// or stopping writers. Actual target cache/member authority and old installed
-// files are checked here so an owner overlay is rejected without downtime.
+// or stopping writers. It checks the target cache/member authority and the
+// capacity for the paired checkpoint. The installed files are about to be
+// replaced: they are walked in record mode, so an owner overlay, a changed or a
+// missing file never refuses the checkpoint (verify-members put the counts in
+// its evidence). Only a container whose tree cannot be reached refuses here.
 func (s NativeCoreServices) PreflightCheckpoint(ctx context.Context, request string) (CoreCheckpointInventory, int64, error) {
 	var empty CoreCheckpointInventory
 	m := CoreManager{Root: s.Checkpoint.Root}
@@ -176,7 +197,7 @@ func (s NativeCoreServices) PreflightCheckpoint(ctx context.Context, request str
 		if role == "ui" {
 			name, appDir = "youeye-ui", s.UIAppDir
 		}
-		if err = VerifyCoreContainerPayload(ctx, name, appDir, baseline); err != nil {
+		if _, err = VerifyCoreContainerPayload(ctx, name, appDir, baseline, CorePayloadRecord); err != nil {
 			return empty, 0, err
 		}
 	}

@@ -35,7 +35,7 @@ test('direct entries install through the normal engine and remain removable only
   const detailPage = await source('src/app/market/[appId]/page.tsx');
 
   assert.match(install, /getDirectMarketApp/);
-  assert.match(install, /acceptUnverifiedPublisher !== true/);
+  assert.match(install, /directAppRefusal\(direct\.manifest\.setups, config\)/);
   assert.match(install, /updateInstalledAppSource\(config\.appId, 'url'/);
   assert.match(remove, /Uninstall this app before removing it from Market/);
   assert.match(detailPage, /Remove from Market/);
@@ -52,4 +52,6 @@ test('Market preflight precedes app-network mutation and core LXD keeps mandator
   assert.match(deployer, /export async function deployMarketLXDContainer/);
   assert.match(deployer, /releaseArtifactVerificationShell\('\/tmp\/app\.tar', expected\)/);
   assert.doesNotMatch(deployer, /skipVerification/);
+  // Next exits 143 on SIGTERM; the UI, native app and Pointer units count that as a clean stop.
+  assert.match(deployer, /Restart=always\nRestartSec=5\nSuccessExitStatus=143\n/);
 });

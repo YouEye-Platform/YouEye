@@ -4,14 +4,15 @@
  */
 
 import { OCIManifest, LXDContainerSpec } from './types';
+import { SYSTEM_IMAGES } from './system-images';
 
 /** `adminAddress` is Caddy's static incusbr0 address (`caddyAdminAddress`), never 0.0.0.0. */
 export function caddyManifest(adminAddress: string): OCIManifest {
   return {
     name: 'caddy',
     displayName: 'Caddy',
-    image: 'docker.io/library/caddy',
-    containerName: 'youeye-caddy',
+    image: SYSTEM_IMAGES.caddy.image,
+    containerName: SYSTEM_IMAGES.caddy.containerName,
     // --resume: auto-loads last config pushed via Admin API (saved to /config/caddy/autosave.json).
     // Falls back to default Caddyfile on first boot.
     // Both /data (TLS certs) and /config (autosave) are persisted on the host
@@ -42,8 +43,8 @@ export function piholeManifest(hostIP: string): OCIManifest {
   return {
     name: 'pihole',
     displayName: 'Pi-Hole',
-    image: 'docker.io/pihole/pihole:latest',
-    containerName: 'youeye-pihole',
+    image: SYSTEM_IMAGES.pihole.image,
+    containerName: SYSTEM_IMAGES.pihole.containerName,
     ports: [
       { host: 53, container: 53, protocol: 'tcp' },
       { host: 53, container: 53, protocol: 'udp' },
@@ -81,8 +82,8 @@ export function postgresManifest(password: string): OCIManifest {
   return {
     name: 'postgres',
     displayName: 'PostgreSQL',
-    image: 'docker.io/library/postgres:17-alpine',
-    containerName: 'youeye-postgres',
+    image: SYSTEM_IMAGES.postgresql.image,
+    containerName: SYSTEM_IMAGES.postgresql.containerName,
     ports: [], // Internal only — no host exposure
     environment: {
       POSTGRES_USER: 'youeye',

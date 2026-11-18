@@ -204,14 +204,16 @@ func extractCorePayload(ctx context.Context, archive *os.File, destination *os.F
 		return err
 	}
 	// A fresh descriptor resets the directory cursor and verifies every result,
-	// including implicit directories and flattened hardlinks.
+	// including implicit directories and flattened hardlinks. This request wrote
+	// the tree, so the check is strict.
 	fd, err := unix.Openat(int(destination.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
 	verify := os.NewFile(uintptr(fd), "core-stage")
 	defer verify.Close()
-	return verifyCorePayloadDescriptor(ctx, verify, index)
+	_, err = verifyCorePayloadDescriptor(ctx, verify, index, CorePayloadStrict)
+	return err
 }
 
 func corePayloadParent(root *os.File, name string) (*os.File, string, error) {

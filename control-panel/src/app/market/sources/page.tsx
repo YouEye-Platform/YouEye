@@ -7,7 +7,7 @@
 import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Check, ChevronLeft, Loader2, Plus, Store, Trash2 } from 'lucide-react';
+import { Check, ChevronLeft, Loader2, Plus, Store, Trash2, TriangleAlert } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,8 @@ interface MarketSourceConfig {
   enabled: boolean;
   priority: number;
   trust: 'official' | 'community' | 'custom';
+  /** Set by the Control Panel when the owner accepted this custom source; without it its apps are not installed. */
+  accepted_at?: string;
 }
 
 export default function MarketSourcesPage() {
@@ -40,6 +42,7 @@ export default function MarketSourcesPage() {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  const [acceptRisk, setAcceptRisk] = useState(false);
   const [showInstall, setShowInstall] = useState(false);
 
   const load = useCallback(async () => {
@@ -53,7 +56,7 @@ export default function MarketSourcesPage() {
       const srcRes = await fetch('/api/market/source');
       if (srcRes.ok) {
         const d = await srcRes.json();
-        setSources(d.sources?.length ? d.sources : d.source ? [d.source] : []);
+        setSources(Array.isArray(d.sources) ? d.sources : []);
       } else {
         console.error('[Market sources] source load failed', srcRes.status);
         setError(translateInterface("mc496d50c849a"));
@@ -128,25 +131,31 @@ export default function MarketSourcesPage() {
     persist(next);
   };
 
-  const addSource = () => {
-    if (!newUrl.trim()) return;
-    const next: MarketSourceConfig[] = [
-      ...sources,
-      {
-        id: `custom-${sources.length + 1}`,
-        name: newName.trim() || translateInterface("m417034ecb3c3"),
-        repo_url: newUrl.trim(),
-        branch: 'main',
-        enabled: true,
-        priority: sources.length,
-        trust: 'custom',
-      },
-    ];
-    setSources(next);
-    persist(next);
-    setNewName('');
-    setNewUrl('');
-    setAdding(false);
+  // Adding is its own request: the server records the owner's consent (the tick) and accepts the source.
+  const addSource = async () => {
+    if (!newUrl.trim() || !acceptRisk) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await authenticatedFetch('/api/market/source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: newUrl.trim(), name: newName.trim() || translateInterface("m417034ecb3c3"), acceptRisk: true }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof d.error === 'string' ? d.error : translateInterface("m3a1797265a2e"));
+      setSources(Array.isArray(d.sources) ? d.sources : sources);
+      setNewName('');
+      setNewUrl('');
+      setAcceptRisk(false);
+      setAdding(false);
+      load();
+    } catch (e) {
+      console.error('[Market sources] add failed', e);
+      setError(e instanceof Error ? e.message : translateInterface("m3a1797265a2e"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -179,13 +188,20 @@ export default function MarketSourcesPage() {
         </div>
 
         {adding && (
-          <div className="flex flex-wrap items-center gap-2 border-t bg-muted/30 px-[18px] py-3">
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={translateInterface("me09b37bcc4f3")} className="h-9 w-44" />
-            <Input value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://…/Market" className="h-9 min-w-[220px] flex-1" />
-            <Button size="sm" className="h-9" disabled={!newUrl.trim() || saving} onClick={addSource}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {" "}{translateInterface("m9fd728c66c9a")}</Button>
-            <Button size="sm" variant="ghost" className="h-9" onClick={() => { setAdding(false); setNewName(''); setNewUrl(''); }}>
-              {translateInterface("m19766ed6ccb2")}</Button>
+          <div className="space-y-2 border-t bg-muted/30 px-[18px] py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={translateInterface("me09b37bcc4f3")} className="h-9 w-44" />
+              <Input value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://…/Market" className="h-9 min-w-[220px] flex-1" />
+              <Button size="sm" className="h-9" disabled={!newUrl.trim() || !acceptRisk || saving} onClick={addSource}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {" "}{translateInterface("m9fd728c66c9a")}</Button>
+              <Button size="sm" variant="ghost" className="h-9" onClick={() => { setAdding(false); setNewName(''); setNewUrl(''); setAcceptRisk(false); }}>
+                {translateInterface("m19766ed6ccb2")}</Button>
+            </div>
+            <p className="flex items-start gap-2 text-[12.5px] text-amber-700 dark:text-amber-500">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{translateInterface("mbfa5007b34bb")}</p>
+            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-foreground">
+              <input type="checkbox" checked={acceptRisk} onChange={(e) => setAcceptRisk(e.target.checked)} />
+              {translateInterface("m2dca61bd9de2")}</label>
           </div>
         )}
 
@@ -195,6 +211,7 @@ export default function MarketSourcesPage() {
           sources.map((s, i) => {
             const count = counts[s.id] ?? counts[s.name] ?? null;
             const official = s.trust === 'official';
+            const notAccepted = !official && !s.accepted_at;
             return (
               <div key={`${s.id}-${i}`} className={`flex items-center gap-3 border-t px-[18px] py-3 ${s.enabled ? '' : 'opacity-60'}`}>
                 <div className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${official ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
@@ -204,6 +221,7 @@ export default function MarketSourcesPage() {
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <span className="truncate">{s.name}</span>
                     {official && <Badge variant="secondary" className="bg-primary/10 text-[10px] text-primary">{translateInterface("m4f7838402f37")}</Badge>}
+                    {notAccepted && <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700 dark:text-amber-500">{translateInterface("m8ba391628be0")}</Badge>}
                   </div>
                   <div className="truncate text-[12.5px] text-muted-foreground">
                     {s.repo_url}
@@ -215,6 +233,7 @@ export default function MarketSourcesPage() {
                     {s.release && s.release.build_version !== s.release.version ? translateInterface("mfc726829e740", { value0: String(s.release.build_version) }) : ''}
                   </div>
                   {s.refresh_error && <div className="truncate text-[11px] text-destructive">{translateInterface("mef30471405f6")}{s.refresh_error}</div>}
+                  {notAccepted && <div className="text-[11.5px] text-amber-700 dark:text-amber-500">{translateInterface("m3df14c1d19d7", { id: s.id })}</div>}
                 </div>
                 <Switch checked={s.enabled} disabled={saving} onCheckedChange={(v) => toggle(i, v)} aria-label={translateInterface("me6e7a76be787", { value0: String(s.name) })} />
                 {!official && (

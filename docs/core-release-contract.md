@@ -164,6 +164,62 @@ Downloads go to `/var/lib/youeye/cache/core-update/` (on Data) and are checked b
 document digest (`--manifest-sha256`). Repeating a command with the same ID observes the same request; it never
 starts a second one. API calls also carry a delivery ID, so a lost HTTP response can be retried safely.
 
+A failed step is never run again: resuming a request with a failed step keeps it in `needs-recovery`. Cancel it (see
+Cancel) or recover it. When a request is committed, cancelled or rolled back, Spine runs `systemctl reset-failed` on
+its own transient units (`youeye-core-<hash>.service` and `youeye-core-control-<hash>.service`;
+`CoreSystemdRunner.ResetFailedUnits`), so they don't stay in `systemctl --failed`. A request in `needs-recovery`
+keeps its failed units until it ends.
+
+### Installed-file checks
+
+The CP and UI trees in `youeye-control` (`/opt/app`) and `youeye-ui` are checked against the file index of their
+archive (`VerifyCoreContainerPayload`, `spine/internal/systemupdate/core_payload*.go`). Every check walks the whole
+tree and counts three things: **unrecorded** paths (not shipped), **changed** recorded paths (bytes, mode, link,
+type; an unreadable path or one that changes during the read counts as changed) and **missing** recorded paths.
+Runtime directories are skipped by every check: `.env`, `.next/cache/` and `.next/server/route-cache/`; an archive
+that contains them is refused when it is indexed.
+
+**The rule.** A check that runs in the installed Spine never refuses an update, a recovery or a boot because of the
+state of a tree this request did not write. Such a tree (about to be replaced, reused, restored or merely
+installed) is checked in **record** mode: the counts go into the evidence, nothing is refused. A tree this request
+wrote is checked in **strict** mode: a changed or missing recorded file is refused. Unrecorded paths are counted and
+never refused in either mode. In both modes the identity checks stay hard failures: marker, schema receipt,
+selection, machine and process identity, a container that is not running, a missing or linked application
+directory, a tree that cannot be listed, a container or process that changed during the walk.
+
+| Mode | Where |
+|---|---|
+| record | `verify-members` (every request); the checkpoint preflight; the installed tree before the exchange and the old tree under the stage name after it; a reused member (its artifact did not change); the restored tree in recovery; `observe` and the status API's observation |
+| strict | the freshly extracted stage; the application directory after the exchange; `update core initialize` on a fresh install; the destination of an independent copy |
+| strict only for a member this request replaced | `apply-cp`/`apply-ui` start and schema checks (the stage receipt says `swapped` and the artifact changed); `authenticated-health` (not for no-op or metadata-only requests); `recovery-health` is always record |
+
+`TestCorePayloadCheckSitesUseTheDecidedMode` (`core_payload_sites_test.go`) parses the non-test files of
+`systemupdate`, `cmd` and `api` and pins the literal mode argument of each payload-check call, per function in source
+order: a new call site, a flipped mode or two calls of one function that swap modes fails the test. A call that
+passes a computed mode (a `mode` variable, `coreStagePayloadMode(stage)`) is pinned only as that expression; what the
+mode functions return is pinned by `TestCoreStageModeFollowsTheStageReceipt`,
+`TestCoreHealthIsStrictOnlyForATreeThisRequestWrote` and `TestCoreInstalledHealthModeTable` (in `cmd`).
+
+**What a check reports.** One of three states per member: `verified`, `verified, N extra files` (unrecorded paths
+only), or `modified (N changed, M missing)`. Evidence carries counts and reasons, never paths, for example
+`verify-members`: `complete scoped membership/cache and previous running host verified; installed cp differs: 3
+unrecorded, 1 changed, 0 missing (changed-bytes 1); installed ui verified; continuing`. `authenticated-health`
+appends `; installed <role> differs: …` the same way.
+
+**What gates on it.**
+
+- `youeye appliance health` walks the CP and UI files only until `first-deploy/complete` exists (the fresh-install
+  gate; strict). On a set-up box it does not look at them, so boot blessing and the health call of an update, a
+  recovery or a copy never fail on installed files. The file gate of `authenticated-health` and `recovery-health`
+  is `NativeCoreServices.Health`, with the modes above.
+- **Lost acknowledgement.** When the exchange of the old and new tree was requested but its result was not
+  recorded, the exchange counts as done only when the application directory passes strict against the new index
+  **and** (the stage fails strict against the new index, **or** the application directory has no unrecorded
+  paths). The old tree is never checked strictly, because it may hold all of the new files.
+- **Independent copies** ([independent-copy.md](independent-copy.md)): inventory and `reserve-source` refuse a
+  source that is `modified` (extra files are fine) and say so with the counts; `release-source` accepts `verified`
+  and `modified`, so a source can always release its hold; `commit` checks the destination strictly.
+
 ### Checkpoint and recovery
 
 The checkpoint lets a failed update return to the previous release:
@@ -174,9 +230,14 @@ The checkpoint lets a failed update return to the previous release:
 3. **Capture:** root snapshots of `youeye-control` and `youeye-ui`, ZFS snapshots of the datasets that hold platform
    files, and logical PostgreSQL archives on Data. Capacity is checked first.
 
+The preflight only reads. It walks the installed trees in record mode, so it refuses only when a container's tree
+cannot be reached, never because of what the tree holds.
+
 `youeye update core recover --request <id>` restores the databases first, then the UI data, then the two core
-service roots, recovers the host slot if needed, and checks the previous release's health. Live configuration,
-credentials and Pointer's own data are kept as they are; old secrets are not copied back.
+service roots, recovers the host slot if needed, and checks the previous release's health. The restored trees are
+checked in record mode (their identity is bound by the component marker): whatever differences they had before the
+update, they have again, and these never refuse a recovery. Live configuration, credentials and Pointer's own data
+are kept as they are; old secrets are not copied back.
 
 Rules that hold throughout:
 
@@ -190,7 +251,11 @@ Rules that hold throughout:
 
 `youeye update core cancel --request <id>` works while only `verify-members` and `stage-host` ran, or when the
 checkpoint's read-only preflight refused (then nothing was stopped or captured). It removes only the inactive-slot
-boot entries and candidate data it created. Once the checkpoint started, use `recover`.
+boot entries and candidate data it created. Once the checkpoint started, use `recover`. A failed preparation step
+can be cancelled even when activation was already requested; the update panel then shows the failed step, its
+reason and Cancel, and no "Resume checks". Spine publishes `cancelling` over a failed checkpoint only after proving
+that its preflight refused before any effect; the panel offers Cancel in that state too, and Cancel finishes the
+cancellation. Anywhere else a failed checkpoint needs `recover`.
 
 ## Commands and API
 
@@ -209,15 +274,39 @@ After a reboot `youeye-core-update.service` runs `youeye update core resume --bo
 retained request. The Control Panel reaches these routes through its own
 `/settings/api/appliance/core-update/{status,[action]}` routes (`control-panel/src/app/settings/api/appliance/`).
 
+The status answer lists the request's `steps[]` (`name`, `state`, `action_state`, `stage`, `code`,
+`effect_state`); once recovery owns the request, these are the recovery steps. Some steps also carry `evidence`, as
+one line of printable text of at most 600 characters, with absolute paths (words starting with `/`) replaced by "…"
+(`coreStepEvidence` in `spine/internal/api/core_update.go`):
+
+- a `failed` step, in every phase: the reason it failed;
+- a `started` step while the phase is `needs-recovery` (its outcome is uncertain): the error its action recorded, if
+  any. `CoreSystemdRunner.RetainedEvidence` reads it from the runner's result file only (no systemd query, no lock);
+  when there is no result, for example because the child was killed, nothing is shown.
+
+Other steps' evidence is not shown. Once recovery owns the request, `transaction.stopped_step`
+(`{ name, state, evidence? }`) names the apply step that stopped the update: the first one that `failed` or was left
+`started` (uncertain), with its reason as above. So a rolled-back update still says which step stopped it and why.
+
+The update panel (Settings → System, `core-system-update.tsx`) shows the reason next to an uncertain step and below
+a failed one. After a request ended `rolled-back`, or `cancelled` with a failed step, it shows a notice that the
+installed release is unchanged, with the step that stopped the update and its reason (`stopped_step`, else the
+failed step).
+
 ## Read-only observation
 
 `youeye update core observe` checks, without changing anything, that the machine still runs the installed release:
-the running image and seed Spine, the CP and UI files against their archives, and the completed schema markers. It
-reports `unverified` or `pending` when it cannot prove that. It creates no users, sessions, migrations or jobs.
+the running image and seed Spine, the CP and UI files against their archives (record mode, see Installed-file
+checks), and the completed schema markers. It creates no users, sessions, migrations or jobs. The `state` is:
 
-Installed-file checks ignore runtime files that are not code: `.env` and `.next/cache`, and Next.js's cached
-`manifest.webmanifest` response under `.next/server/route-cache/` (only that exact route, only regular non-executable
-files; `core_response_cache.go`).
+- `verified`: every shipped file is present and unchanged (extra files are allowed and counted);
+- `modified`: a shipped file is changed or missing; `reason` names the counts per member. A modified box still
+  updates;
+- `pending` (a System request is running) or `unverified` (the installation could not be observed).
+
+`members[]` gives each role's `summary` and `findings` (`unrecorded`, `changed`, `missing`, `reasons`). Only
+`observe` prints `findings.paths` (a sample of up to 20 paths, for the operator's terminal; not stored anywhere).
+The status API's observation (`?observe=1`, as `installed.observation`) has the same members without paths.
 
 ## Older readers and stepping stones
 

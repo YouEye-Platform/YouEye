@@ -172,6 +172,10 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		if err = BindCoreImage(j.Previous.Release, current); err != nil {
 			return CoreActionObservation{}, err
 		}
+		// The installed service trees are replaced, reused or left alone by
+		// this request; none was written by it. They are walked in record mode:
+		// what they hold goes into the evidence and never refuses the update.
+		found := map[string]CorePayloadFindings{}
 		for _, role := range []string{"cp", "ui"} {
 			index, err := r.Cache.IndexSelected(m, j, role)
 			if err != nil {
@@ -192,14 +196,11 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 			if role == "ui" {
 				name, appDir = "youeye-ui", r.Services.UIAppDir
 			}
-			if err = VerifyCoreContainerPayload(ctx, name, appDir, index); err != nil {
-				if failed, known := corePayloadVerificationFailure(role, err); known {
-					return failed, nil
-				}
+			if found[role], err = VerifyCoreContainerPayload(ctx, name, appDir, index, CorePayloadRecord); err != nil {
 				return CoreActionObservation{}, err
 			}
 		}
-		return coreActionPassed("complete scoped membership/cache and previous running host/static payloads verified", nil)
+		return coreActionPassed(coreVerifyMembersEvidence(found), nil)
 	case "stage-host":
 		selection, _, err := m.Selection(j.ManifestSHA256)
 		if err != nil {
@@ -336,6 +337,28 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		return coreActionPassed(evidence, nil)
 	}
 	return CoreActionObservation{}, fmt.Errorf("unsupported exact native action")
+}
+
+// coreVerifyMembersEvidence says what the installed service trees held, in
+// counts and reasons only: no path reaches the journal.
+func coreVerifyMembersEvidence(found map[string]CorePayloadFindings) string {
+	differs := false
+	for _, f := range found {
+		differs = differs || f.Differs() || f.Unrecorded > 0
+	}
+	if !differs {
+		return "complete scoped membership/cache and previous running host/static payloads verified"
+	}
+	evidence := "complete scoped membership/cache and previous running host verified"
+	for _, role := range []string{"cp", "ui"} {
+		f := found[role]
+		if f.Differs() || f.Unrecorded > 0 {
+			evidence += "; installed " + role + " differs: " + f.Counts()
+		} else {
+			evidence += "; installed " + role + " verified"
+		}
+	}
+	return evidence + "; continuing"
 }
 
 func (r NativeCoreRuntime) waitSchema(ctx context.Context, j CoreJournal, role string) (CoreActionObservation, error) {

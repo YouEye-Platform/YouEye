@@ -71,7 +71,8 @@ test('market install resolves subdomain and source server-side for thin clients'
   // appId is the only hard-required field (CLI sends {appId} alone).
   assert.doesNotMatch(route, /Missing required fields: appId, subdomain/);
   assert.match(route, /manifest\.metadata\?\.defaultSubdomain \|\| config\.appId/);
-  assert.match(route, /getMarketSource\(\)/);
+  // Without a named source the official Market is used, never "the first enabled source".
+  assert.match(route, /config\.sourceId\?\.trim\(\) \|\| OFFICIAL_MARKET_SOURCE_ID/);
 });
 
 test('install persists catalogVersion at install time (no null baseline)', () => {

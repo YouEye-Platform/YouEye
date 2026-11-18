@@ -117,8 +117,12 @@ func (s NativeCoreServices) Schema(ctx context.Context, request, role string, be
 	if err != nil {
 		return CoreActionObservation{}, err
 	}
-	if err = VerifyCoreContainerPayload(ctx, name, stage.AppDir, index); err != nil {
-		return CoreActionObservation{}, err
+	// The service is running by now: its runtime directories are skipped and
+	// files it adds are only counted. Strict for the tree this request swapped
+	// in; a reused member keeps whatever differences it had.
+	mode := coreStagePayloadMode(stage)
+	if _, err = VerifyCoreContainerPayload(ctx, name, stage.AppDir, index, mode); err != nil {
+		return CoreActionObservation{}, fmt.Errorf("%s payload before schema: %w", role, err)
 	}
 	ip, err := s.componentAddress(ctx, "youeye-control", record.Inventory.Bridge)
 	if err != nil {
@@ -165,8 +169,8 @@ func (s NativeCoreServices) Schema(ctx context.Context, request, role string, be
 		if err = verifyNativeCoreSchemaReceipt(pid, marker); err != nil {
 			return CoreActionObservation{State: "unknown"}, err
 		}
-		if err = VerifyCoreContainerPayload(ctx, name, stage.AppDir, index); err != nil {
-			return CoreActionObservation{State: "unknown"}, err
+		if _, err = VerifyCoreContainerPayload(ctx, name, stage.AppDir, index, mode); err != nil {
+			return CoreActionObservation{State: "unknown"}, fmt.Errorf("%s payload after schema: %w", role, err)
 		}
 	}
 	return coreSchemaActionObservation(observed), nil

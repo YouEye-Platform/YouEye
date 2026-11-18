@@ -12,10 +12,13 @@ contract is reviewed. Ordinary local UI/native builds keep Next's normal keys.
 Independent comparison still checks paths, modes and bytes with only the
 declared Next build-ID exception; no new comparison exemptions are introduced.
 
-The Control Panel and dashboard use Next.js 16.4.2, React/React DOM 19.3.1,
-Serwist 9.5.13, next-intl 4.14.9, TypeScript 5.9.3 and pnpm 10.6.2. Node is
-pinned to the public Linux x64 24.22.0 LTS distribution. The six native Web apps
-and Canvas share this framework baseline. Canvas is a source template, so its
+The Control Panel and the dashboard use Next.js 16.4.6; Wiki, Search, Translate,
+Weather, Cinema and Canvas are still on 16.4.2 (Pointer has its own stack: Next.js 15.5), and Notes is on 16.4.6.
+Next's own build refuses 16.4.2 (two moderate advisories about `'use cache'` with
+root params, which none of these apps uses), so each moves to 16.4.6 before its
+next build. All use React/React DOM 19.3.1, Serwist 9.5.13, next-intl 4.14.9,
+TypeScript 5.9.3 and pnpm 10.6.2. Node is pinned to the public Linux x64 24.22.0
+LTS distribution. The six native Web apps and Canvas share this framework baseline. Canvas is a source template, so its
 generated host must provide the declared Node version.
 
 Install CP/UI from the repository root using the root lockfile. Native apps
@@ -33,6 +36,12 @@ it starts the bundled runtime before application code and forwards termination
 signals. Updating or recovering an application switches its runtime with its
 digest-bound payload. No guest-wide Node replacement is required. Docker builds use
 the same pinned upstream runtime and frozen pnpm lockfile.
+
+The CP and UI never write into their installed trees: both set
+`experimental.isrFlushToDisk: false`, and the build guard fails a build whose
+server adds or changes a file there ([releases.md](releases.md#build-guard-control-panel-and-ui)).
+The System update's file check skips only `.env`, `.next/cache/` and
+`.next/server/route-cache/`.
 
 ## Private data and offline behavior
 

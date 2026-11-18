@@ -40,11 +40,15 @@ selected Spine.
 | `youeye boot first-deploy\|bless\|setup-gate\|network\|setup-page` | the boot steps (systemd units call these; `setup-page` is Go, the others embedded scripts) |
 | `youeye mdns run` / `youeye mdns name` | run Avahi for the LAN adapter (`youeye-mdns.service`) / print the published name |
 
-`youeye version` shows the running Spine and the seed; the Spine API has `GET /api/spine/status`.
+`youeye version` shows the running Spine and the seed; the Spine API has `GET /api/spine/status`. `youeye status`
+prints the Spine line as `(system image)` when the seed runs, or `(on State, current)` (`trial`, `previous`) when
+a selected Spine runs.
 
 Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
 `youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
-`youeye appliance health|ssh-key`, `youeye app …` and `youeye backup …`. `youeye --help` lists all of them;
+`youeye appliance health|ssh-key`, `youeye app …` (for example `app install <id> [--source <id>]`,
+`app update <id> [--allow-setup]`; see [market.md](market.md)), `youeye market search|info|source list|source accept`
+(`youeye market repo get|set` were removed in 0.6.10) and `youeye backup …`. `youeye --help` lists all of them;
 [troubleshooting.md](troubleshooting.md) shows them in use.
 
 ## The API
@@ -78,6 +82,12 @@ Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi
 - **Exec output sweep:** deletes `incus exec` output files older than a day (longer than any exec) under
   `/var/lib/incus/containers/*/exec-output/` (running containers; a stopped one's dataset is unmounted). Incus keeps
   them for ever; the Control Panel deletes what it reads since 0.6.9, the sweep removes what older versions left.
+- **Incus cached-image refresh off:** `images.auto_update_interval` is `0`. Every app and core image is pinned by
+  digest, so Incus's periodic refresh of cached images (by default every 6 hours) only costs registry requests. New
+  boxes get it from the Incus preseed (`spine/internal/incus/install.go`); host maintenance sets it on existing
+  boxes, retrying up to 10 times 30 s apart because Incus may still be starting. The Debian base of the system
+  containers is the local image `youeye-debian-12`, which does not refresh by itself either: it is downloaded and
+  checked only when that alias is missing (`EnsureSystemBaseImage` in `spine/internal/incus/images.go`).
 
 ## Spine-only update (no reboot)
 

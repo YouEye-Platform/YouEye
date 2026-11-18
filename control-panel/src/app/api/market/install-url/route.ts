@@ -26,6 +26,7 @@ import { verifyCSRFToken } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
 import type { AppManifest, InstallConfig, InstallEvent } from '@/lib/market/types';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
+import { directAppRefusal } from '@/lib/market/source';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,11 +123,10 @@ export async function POST(request: NextRequest) {
     }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
-  if (manifest.setups.length > 0 && body.allowSetup !== true) {
-    return new Response(JSON.stringify({
-      error: 'This app runs setup files inside its containers; confirm them before installing (allowSetup)',
-      setups: manifest.setups.map((setup) => ({ name: setup.name, for: setup.for })),
-    }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  const refusal = directAppRefusal(manifest.setups, body);
+  if (refusal) {
+    return Response.json({ error: refusal.message, code: refusal.code, ...(refusal.setups ? { setups: refusal.setups } : {}) },
+      { status: 400 });
   }
 
   const subdomain = requestedSubdomain

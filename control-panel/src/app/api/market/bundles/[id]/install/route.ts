@@ -5,6 +5,9 @@
  * already-installed ones) and auto-approve its declared connections. Streams progress as
  * Server-Sent Events (InstallEvent), with a final `done` event carrying the structured
  * BundleInstallResult in `detail`. Admin-gated by middleware (not in the public path list).
+ *
+ * `?source=<id>` names the bundle's Market source; without it the official Market's bundle is used. A custom source
+ * must be accepted by the owner (403 otherwise); every member installs from that source.
  */
 
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
@@ -12,20 +15,30 @@ import { NextRequest } from 'next/server';
 import { fetchBundle } from '@/lib/market/catalog';
 import { installBundle } from '@/lib/market/bundle-installer';
 import { requireAdmin } from '@/lib/auth/rbac';
+import { isMarketSourceConsentError, usableMarketSource } from '@/lib/market/source';
 import type { InstallEvent } from '@/lib/market/types';
 import { logOperationFailure, sensitivitySafeInstallError } from '@/lib/market/install-tracker';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
   const { id } = await params;
+  const sourceId = request.nextUrl?.searchParams.get('source') || undefined;
+  try {
+    await usableMarketSource(sourceId);
+  } catch (err) {
+    if (isMarketSourceConsentError(err)) {
+      return Response.json({ error: err.message, code: err.code }, { status: err.code === 'source-unavailable' ? 400 : 403 });
+    }
+    throw err;
+  }
 
   let bundle;
   try {
-    bundle = await fetchBundle(id);
+    bundle = await fetchBundle(id, sourceId);
   } catch (err) {
     logOperationFailure(`Loading bundle ${id}`, err);
     return new Response(JSON.stringify({ error: 'The bundle could not be loaded' }), {

@@ -359,3 +359,54 @@ func TestCorePreparationCancellationSettlesOnlyOwnedChildren(t *testing.T) {
 		t.Fatal("fence stopped foreign unit", err, stops)
 	}
 }
+
+// The status answer shows why an action ended unknown: the child's own error,
+// read from its result file without systemd and without the generic prefix.
+func TestCoreRunnerRetainedEvidenceIsTheEffectError(t *testing.T) {
+	f := newCoreRunnerFixture(t, "apply-cp")
+	if got := f.runner.RetainedEvidence(f.journal, f.step); got != "" {
+		t.Fatalf("evidence before any launch: %q", got)
+	}
+	if _, err := f.runner.Start(context.Background(), f.journal, f.step); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.runner.RetainedEvidence(f.journal, f.step); got != "" {
+		t.Fatalf("evidence before the child ran: %q", got)
+	}
+	refusal := &CorePayloadDifferenceError{Findings: CorePayloadFindings{Changed: 2, Missing: 1}}
+	authorize := func(context.Context, CoreJournal, CoreStep) error { return nil }
+	execute := func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error) {
+		return CoreActionObservation{}, fmt.Errorf("cp payload before start: %w", refusal)
+	}
+	if _, err := f.runner.RunAction(context.Background(), f.journal.RequestID, f.step.Name, f.journal.ManifestSHA256, authorize, execute); err == nil {
+		t.Fatal("refused effect reported success")
+	}
+	// Status reads need no systemd: with every command failing, the evidence is still read.
+	f.runner.Capture = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, fmt.Errorf("no systemd in a status read")
+	}
+	want := "cp payload before start: installed payload differs from its recorded files: 0 unrecorded, 2 changed, 1 missing"
+	if got := f.runner.RetainedEvidence(f.journal, f.step); got != want {
+		t.Fatalf("%q", got)
+	}
+	other := f.journal.Steps[0]
+	if got := f.runner.RetainedEvidence(f.journal, other); got != "" {
+		t.Fatalf("another action's evidence: %q", got)
+	}
+	if got := (CoreSystemdRunner{Root: "relative"}).RetainedEvidence(f.journal, f.step); got != "" {
+		t.Fatalf("relative root read: %q", got)
+	}
+	// Acceptance evidence is not a reason.
+	done := newCoreRunnerFixture(t, "apply-cp")
+	if _, err := done.runner.Start(context.Background(), done.journal, done.step); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := done.runner.RunAction(context.Background(), done.journal.RequestID, done.step.Name, done.journal.ManifestSHA256, authorize, func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error) {
+		return CoreActionObservation{State: "succeeded", Evidence: "exact fixture effect readback"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := done.runner.RetainedEvidence(done.journal, done.step); got != "" {
+		t.Fatalf("succeeded action reported a reason: %q", got)
+	}
+}

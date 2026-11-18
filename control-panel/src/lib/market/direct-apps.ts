@@ -93,19 +93,23 @@ export async function removeDirectMarketApp(sourceId: string): Promise<boolean> 
   return true;
 }
 
-export async function refreshDirectMarketApp(sourceId: string): Promise<DirectMarketApp> {
-  const current = await getDirectMarketApp(sourceId);
-  if (!current) throw new Error('Added app source no longer exists');
+/**
+ * The current manifest at an Added app's URL, checked but NOT saved: an update asks again before it runs changed
+ * setup files, so the stored copy (what the owner agreed to) is replaced only after the update (`saveDirectMarketApp`).
+ */
+export async function fetchDirectMarketAppUpdate(sourceId: string): Promise<{ entry: DirectMarketApp; manifest: AppManifest }> {
+  const entry = await getDirectMarketApp(sourceId);
+  if (!entry) throw new Error('Added app source no longer exists');
   let manifest: AppManifest;
   try {
-    manifest = await fetchUrlApp(current.manifestUrl);
+    manifest = await fetchUrlApp(entry.manifestUrl);
   } catch (error) {
     throw new Error(`Added app manifest no longer validates: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (manifest.metadata.id !== current.manifest.metadata.id) {
+  if (manifest.metadata.id !== entry.manifest.metadata.id) {
     throw new Error('Added app source changed its app identity');
   }
-  return saveDirectMarketApp({ manifestUrl: current.manifestUrl, manifest });
+  return { entry, manifest };
 }
 
 export function directMarketAppToMarketApp(entry: DirectMarketApp): MarketApp {
@@ -117,6 +121,8 @@ export function directMarketAppToMarketApp(entry: DirectMarketApp): MarketApp {
     sourceRepoUrl: entry.manifestUrl,
     manifestPath: entry.manifestUrl,
     manifestDigest: entry.manifestDigest,
+    // The one install confirmation names where the app comes from and what it runs.
+    images: entry.manifest.containers.filter((container) => container.type === 'oci').map((container) => container.image),
   };
 }
 

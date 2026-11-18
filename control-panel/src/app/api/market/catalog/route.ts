@@ -6,7 +6,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { fetchAvailableApps, fetchAvailableSystemApps, fetchBundles, fetchCategories, fetchCuration } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchBundles, fetchCategories, fetchCuration } from '@/lib/market/catalog';
 import { listDirectMarketAppViews } from '@/lib/market/direct-apps';
 import type { CatalogWarning } from '@/lib/market/partial-catalog';
 
@@ -15,15 +15,14 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const warnings: CatalogWarning[] = [];
-    const [catalogApps, directApps, systemApps, categories, curation, bundles] = await Promise.all([
+    const [catalogApps, directApps, categories, curation, bundles] = await Promise.all([
       fetchAvailableApps((warning) => warnings.push(warning)),
       listDirectMarketAppViews(),
-      fetchAvailableSystemApps(),
       fetchCategories(),
       fetchCuration(),
       fetchBundles(),
     ]);
-    return NextResponse.json({ apps: [...directApps, ...catalogApps], systemApps, categories, curation, bundles, warnings });
+    return NextResponse.json({ apps: [...directApps, ...catalogApps], categories, curation, bundles, warnings });
   } catch (err) {
     return NextResponse.json(
       { error: `Failed to fetch catalog: ${err}` },

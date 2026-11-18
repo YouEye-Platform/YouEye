@@ -102,7 +102,9 @@ func verifyFreshCorePayloads(ctx context.Context, m systemupdate.CoreManager, se
 		if member.Role == "ui" {
 			name, appDir = configuration.Deployment.UI.ContainerName, configuration.Deployment.UI.AppDir
 		}
-		if err := systemupdate.VerifyCoreContainerPayload(ctx, name, appDir, index); err != nil {
+		// A fresh install: first deploy wrote this tree moments ago, so a missing
+		// or changed shipped file refuses the installation.
+		if _, err := systemupdate.VerifyCoreContainerPayload(ctx, name, appDir, index, systemupdate.CorePayloadStrict); err != nil {
 			return fmt.Errorf("verify installed %s: %w", member.Role, err)
 		}
 		if err := m.SavePayloadIndex(index); err != nil {

@@ -6,6 +6,8 @@
  * hardcoded for the existing infrastructure apps.
  */
 
+import type { SystemImageId } from '@/lib/infrastructure/system-images';
+
 /**
  * Static definition of an app — metadata that never changes at runtime.
  * This will later be populated by parsing YouEye-file.yaml manifests.
@@ -28,12 +30,11 @@ export interface AppDefinition {
   /** OCI image reference for update detection (optional) */
   imageRef?: string;
   /**
-   * Market system-app id. When set, update detection AND the update action flow
-   * through the Market system manifests (lib/infrastructure/system-updater) with
-   * pinned versions — NOT the moving-tag OCI digest checker. Mutually exclusive
-   * with imageRef for the three infra containers.
+   * Core container whose image is pinned by the Control Panel (lib/infrastructure/system-images).
+   * When set, update detection AND the update action go through lib/infrastructure/system-updater,
+   * never the moving-tag OCI digest checker. Mutually exclusive with imageRef.
    */
-  marketSystemId?: 'postgresql' | 'caddy' | 'pihole';
+  systemImageId?: SystemImageId;
   /** Who performs the update */
   updatedBy: 'control-panel' | 'spine';
   /** Web UI port inside the container (if applicable) */
@@ -112,7 +113,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-postgres', canControl: true }],
-    marketSystemId: 'postgresql',
+    systemImageId: 'postgresql',
     updatedBy: 'control-panel',
   },
   {
@@ -123,7 +124,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-caddy', canControl: true }],
-    marketSystemId: 'caddy',
+    systemImageId: 'caddy',
     updatedBy: 'control-panel',
     managementLinks: [{ label: 'Reverse Proxy', href: '/proxy' }],
   },
@@ -135,7 +136,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-pihole', canControl: true }],
-    marketSystemId: 'pihole',
+    systemImageId: 'pihole',
     webPort: 80,
     updatedBy: 'control-panel',
     managementLinks: [{ label: 'DNS Management', href: '/dns' }],

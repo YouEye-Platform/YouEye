@@ -194,14 +194,12 @@ test('all supported update routes converge on the shared Market updater', () => 
   const settings = read('src/app/settings/api/apps/[appId]/update/route.ts');
   const appRoute = read('src/app/api/apps/[name]/update/route.ts');
   const compatibility = read('src/app/api/market/update/route.ts');
-  const uiBridgeUpdate = read('src/app/api/ui-bridge/updates/[component]/route.ts');
   const marketUpdates = read('src/app/api/market/updates/route.ts');
   const uiBridgeApps = read('src/app/api/ui-bridge/apps/route.ts');
 
   assert.match(settings, /handleMarketUpdate\(request, appId, 'json'\)/);
   assert.match(appRoute, /handleMarketUpdate\(req, name\)/);
   assert.match(compatibility, /handleMarketUpdate\(req\)/);
-  assert.match(uiBridgeUpdate, /handleMarketUpdate\(request, component, 'json'\)/);
   assert.match(marketUpdates, /getAppsWithUpdatesAvailable/);
   assert.match(uiBridgeApps, /getAllInstalledApps/);
   assert.match(uiBridgeApps, /dbEntry\?\.catalogVersion/);

@@ -5,7 +5,8 @@ import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { updateOCIApp } from '@/lib/apps/updater';
-import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
+import { updateSystemContainer } from '@/lib/infrastructure/system-updater';
+import { assertNoCriticalIssues, CriticalIssueBlockedError } from '@/lib/health/issues';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { handleMarketUpdate } from '@/lib/market/update-http';
 import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
@@ -107,15 +108,19 @@ export async function POST(
       return NextResponse.json({ status: 'success', message: lastMessage || `${appDef.displayName} updated` });
     }
 
-    // Market system apps (Caddy/Pi-Hole/Postgres) update through the pinned
-    // Market system manifests, NOT the moving-tag OCI rebuild. Confirmations
+    // Caddy, Pi-Hole and PostgreSQL move to the image pinned by this release
+    // (lib/infrastructure/system-images), never a moving tag. Confirmations
     // come from the client dialog; the guards below are a safety net.
-    if (appDef?.marketSystemId) {
+    if (appDef?.systemImageId) {
+      // The update may repair the container itself: its own "down" (or crash-loop) issue does not block it.
+      await assertNoCriticalIssues('Pool/system operation', undefined, [
+        `service.${appId}.down`, ...appDef.containers.map((container) => `container.${container.name}.crash-loop`),
+      ]);
       const body = await request.json().catch(() => ({} as Record<string, unknown>));
       let lastMessage = '';
-      const result = await updateSystemFromMarket(
+      const result = await updateSystemContainer(
         {
-          systemId: appDef.marketSystemId,
+          systemId: appDef.systemImageId,
           hostIP: process.env.HOST_IP || '',
           confirmMaintenanceWindow: body.confirmMaintenanceWindow === true,
           confirmContainerName:
@@ -166,6 +171,7 @@ export async function POST(
         result = await spineClient.updateIncus();
         break;
       case 'host-system':
+        await assertNoCriticalIssues('Platform update');
         await recordStatus(component, 'installing', 30, 'Updating system packages...');
         result = await spineClient.updateSystem();
         break;
@@ -182,6 +188,8 @@ export async function POST(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markFailed(component, message);
+    // Refused for an open critical issue, as the system-updates route answers it.
+    if (error instanceof CriticalIssueBlockedError) return NextResponse.json({ error: message, code: error.code }, { status: 423 });
     console.error(`[settings-app-update] Failed to update ${appId}:`, error);
     return NextResponse.json({ error: `Failed to update ${appId}: ${message}` }, { status: 500 });
   }

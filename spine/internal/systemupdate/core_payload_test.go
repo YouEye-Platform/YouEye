@@ -3,9 +3,7 @@ package systemupdate
 import (
 	"archive/tar"
 	"bytes"
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -43,6 +41,7 @@ func TestCorePayloadRejectsUnsafeArchiveBeforeExtraction(t *testing.T) {
 		{Name: "server.js", Typeflag: tar.TypeReg, Mode: 0644},
 		{Name: ".env", Typeflag: tar.TypeReg, Mode: 0600},
 		{Name: ".next/cache/code.js", Typeflag: tar.TypeReg, Mode: 0644},
+		{Name: ".next/server/route-cache/code.js", Typeflag: tar.TypeReg, Mode: 0644},
 		{Name: "root-shell", Typeflag: tar.TypeReg, Mode: 04755},
 		{Name: "escape", Typeflag: tar.TypeSymlink, Linkname: "../../outside"},
 		{Name: "pipe", Typeflag: tar.TypeFifo, Mode: 0600},
@@ -88,47 +87,35 @@ func TestCorePayloadTruthDetectsOverlaysWithoutTreatingRuntimeDataAsCode(t *test
 	if err := os.Symlink("lib/module.js", filepath.Join(root, "module")); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyCorePayload(root, index); err != nil {
-		t.Fatal(err)
+	strict := func() (CorePayloadFindings, error) { return VerifyCorePayload(root, index, CorePayloadStrict) }
+	if found, err := strict(); err != nil || found.Summary() != "verified" {
+		t.Fatal(found, err)
 	}
-	verifyNode := func(want bool) {
-		t.Helper()
-		if _, err := exec.LookPath("node"); err != nil {
-			t.Skip("native Node runtime not installed")
-		}
-		raw, _ := json.Marshal(index)
-		cmd := exec.Command("node", "-e", corePayloadVerifier, root)
-		cmd.Stdin = bytes.NewReader(raw)
-		out, err := cmd.Output()
-		if want != (err == nil && string(out) == "verified\n") {
-			t.Fatalf("Node verifier result=%q error=%v wanted=%v", out, err, want)
-		}
-	}
-	verifyNode(true)
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("fixture runtime config"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// The parent directory belongs to the payload; a cache can only appear
-	// inside that recorded directory, never replace executable structure.
-	if err := VerifyCorePayload(root, index); err != nil {
-		t.Fatal(err)
+	// Runtime configuration is not part of the payload.
+	if found, err := strict(); err != nil || found.Summary() != "verified" {
+		t.Fatal(found, err)
 	}
+	// A file we did not ship is counted and reported, never refused: the strict
+	// check is about the files this release wrote.
 	overlay := filepath.Join(root, "extra.js")
 	if err := os.WriteFile(overlay, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyCorePayload(root, index); err == nil {
-		t.Fatal("extra executable not detected")
+	if found, err := strict(); err != nil || found.Unrecorded != 1 || found.Summary() != "verified, 1 extra file" {
+		t.Fatal("extra file not counted, or refused", found, err)
 	}
-	verifyNode(false)
 	if err := os.Remove(overlay); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(filepath.Join(root, "server.js"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyCorePayload(root, index); err == nil {
-		t.Fatal("executable mode change not detected")
+	// server.js and its hardlink share one inode, so both recorded paths changed.
+	if found, err := strict(); err == nil || found.Changed != 2 || found.Reasons["changed-mode"] != 2 {
+		t.Fatal("executable mode change not detected", found, err)
 	}
 	if err := os.Chmod(filepath.Join(root, "server.js"), 0644); err != nil {
 		t.Fatal(err)
@@ -136,8 +123,10 @@ func TestCorePayloadTruthDetectsOverlaysWithoutTreatingRuntimeDataAsCode(t *test
 	if err := os.WriteFile(filepath.Join(root, "server.js"), []byte("tampered"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyCorePayload(root, index); err == nil {
-		t.Fatal("modified code not detected")
+	if found, err := strict(); err == nil || found.Changed != 2 || found.Reasons["changed-bytes"] != 2 {
+		t.Fatal("modified code not detected", found, err)
 	}
-	verifyNode(false)
+	if found, err := VerifyCorePayload(root, index, CorePayloadRecord); err != nil || found.Summary() != "modified (2 changed, 0 missing)" {
+		t.Fatal("record mode refused or miscounted a modified tree", found, err)
+	}
 }

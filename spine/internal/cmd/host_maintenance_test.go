@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,5 +86,33 @@ func TestSweepExecOutputRemovesOnlyOldExecFiles(t *testing.T) {
 	}
 	if n, err := sweepExecOutput(filepath.Join(root, "missing"), time.Now()); n != 0 || err != nil {
 		t.Fatal(n, err)
+	}
+}
+
+func TestDisableIncusImageRefresh(t *testing.T) {
+	var calls []string
+	value, failures := "", 2
+	config := func(args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if failures > 0 {
+			failures--
+			return "", errors.New("incus is not ready")
+		}
+		if args[0] == "set" {
+			value = args[2]
+			return "", nil
+		}
+		return value + "\n", nil
+	}
+	if err := disableIncusImageRefresh(config, 5, 0); err != nil || value != "0" {
+		t.Fatalf("unset key after two failed attempts: value=%q err=%v calls=%v", value, err, calls)
+	}
+	calls = nil
+	if err := disableIncusImageRefresh(config, 5, 0); err != nil || len(calls) != 1 {
+		t.Fatalf("an already disabled refresh must only be read: err=%v calls=%v", err, calls)
+	}
+	failures = 99
+	if err := disableIncusImageRefresh(config, 3, 0); err == nil {
+		t.Fatal("an Incus that never answers must be reported")
 	}
 }

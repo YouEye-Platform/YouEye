@@ -84,14 +84,13 @@ function fixture() {
     '@/lib/apps/definitions': { getAppDefinition: () => null },
     '@/lib/apps/updater': {}, '@/lib/apps/lxd-updater': {}, '@/lib/apps/lxd-updates': {},
     '@/lib/spine/client': {}, '@/lib/updates/state': {}, '@/lib/infrastructure/system-updater': {},
-    '@/lib/ui-bridge/auth': { requireEmbedAdmin: async () => null },
+    '@/lib/health/issues': { assertNoCriticalIssues: async () => {} },
   });
   dependencies['@/lib/auth/session'].getSession = async () => state.session;
   return {
     state,
     canonical: load('src/app/api/apps/[name]/update/route.ts', dependencies).POST,
     settings: load('src/app/settings/api/apps/[appId]/update/route.ts', dependencies).POST,
-    bridge: load('src/app/api/ui-bridge/updates/[component]/route.ts', dependencies).POST,
     http: dependencies['@/lib/market/update-http'] as any,
     status: load('src/app/api/market/update/status/route.ts', dependencies).GET,
     recovery: load('src/app/api/market/update/recovery/route.ts', dependencies).POST,
@@ -464,7 +463,7 @@ test('the Market update UI handles a truncated SSE stream as interrupted and ref
   assert.match(ui.html(), /Retry recovery/);
 });
 
-for (const [route, parameter] of [['canonical', 'name'], ['settings', 'appId'], ['bridge', 'component']] as const) {
+for (const [route, parameter] of [['canonical', 'name'], ['settings', 'appId']] as const) {
   test(`${route} Market updates require admin and CSRF on every route`, async () => {
     const f = fixture();
     const params = { params: Promise.resolve({ [parameter]: 'wiki' }) };

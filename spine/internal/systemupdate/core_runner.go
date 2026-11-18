@@ -337,7 +337,7 @@ func (r CoreSystemdRunner) RunAction(ctx context.Context, request, name, digest 
 	}
 	outcome, effectErr := execute(ctx, j, s)
 	if effectErr != nil || validateNativeResult(outcome) != nil {
-		evidence := "native action entered effect execution; reconcile retained effect evidence before recovery"
+		evidence := coreRunnerEffectEvidence
 		if effectErr != nil {
 			msg := effectErr.Error()
 			if len(msg) > 4096 { // evidence is limited to 32 KiB (validateNativeResult)
@@ -352,6 +352,37 @@ func (r CoreSystemdRunner) RunAction(ctx context.Context, request, name, digest 
 		return unknown, err
 	}
 	return outcome, effectErr
+}
+
+// coreRunnerEffectEvidence begins the retained evidence of a child whose effect
+// returned an error (or an invalid result); ": " and the error text follow.
+const coreRunnerEffectEvidence = "native action entered effect execution; reconcile retained effect evidence before recovery"
+
+// RetainedEvidence returns the reason a child recorded for an action that ended
+// unknown or failed: for a refused effect, the effect's own error (for example a
+// strict payload refusal, which carries counts only), without the generic prefix.
+// It reads the child's result file only: no systemd observation, no lock, no
+// launch. The text is for the status answer; it never decides anything. A
+// missing, foreign or non-terminal result gives "".
+func (r CoreSystemdRunner) RetainedEvidence(j CoreJournal, s CoreStep) string {
+	if !filepath.IsAbs(r.Root) || validateNativeIdentity(j, s) != nil {
+		return ""
+	}
+	raw, err := ReadCoreState(r.path(j, s)+".result", 64<<10)
+	if err != nil {
+		return ""
+	}
+	var result coreRunnerResult
+	if json.Unmarshal(raw, &result) != nil || result.Launch.RequestID != s.RequestID || result.Launch.ManifestSHA256 != j.ManifestSHA256 || result.Launch.Unit != r.unit(j, s) || validateNativeResult(result.Result) != nil {
+		return ""
+	}
+	if result.Result.State != "unknown" && result.Result.State != "failed" {
+		return ""
+	}
+	if cause, ok := strings.CutPrefix(result.Result.Evidence, coreRunnerEffectEvidence+": "); ok {
+		return cause
+	}
+	return result.Result.Evidence
 }
 
 func coreNativeFailureCode(err error) string {

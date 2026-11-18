@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/rbac';
-import { planSystemUpdates, updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
+import { planSystemUpdates, updateSystemContainer } from '@/lib/infrastructure/system-updater';
 import { assertNoCriticalIssues } from '@/lib/health/issues';
 import type { DeploymentEvent } from '@/lib/infrastructure/types';
 
@@ -12,11 +12,7 @@ export async function GET() {
 
   try {
     const systems = await planSystemUpdates();
-    return NextResponse.json({
-      systems,
-      source: 'market-system-manifests',
-      managedBy: 'control-panel',
-    });
+    return NextResponse.json({ systems, managedBy: 'control-panel' });
   } catch (error) {
     console.error('[infrastructure/system-updates] plan failed:', error);
     return NextResponse.json(
@@ -83,7 +79,7 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        const result = await updateSystemFromMarket(
+        const result = await updateSystemContainer(
           {
             systemId: body.systemId!,
             hostIP,

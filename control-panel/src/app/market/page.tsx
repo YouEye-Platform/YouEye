@@ -77,6 +77,16 @@ function StatusDot({ status, health }: { status?: string; health?: string }) {
   return <span title={title} className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
+/** The source of an app that is not from the official Market (a custom source, or "Added" for a URL app). */
+function SourceTag({ app }: { app: MarketApp }) {
+  if (!app.sourceId || app.sourceId === 'official') return null;
+  return (
+    <span className="shrink-0 truncate rounded border border-amber-500/40 px-1.5 py-px text-[10.5px] font-medium text-amber-700 dark:text-amber-500">
+      {app.sourceName || app.sourceId}
+    </span>
+  );
+}
+
 function variantHref(app: MarketApp): string {
   return app.sourceId ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}` : `/market/${app.id}`;
 }
@@ -152,12 +162,16 @@ export default function MarketPage() {
   }, []);
 
   // Install + wire a bundle: POST and stream the SSE progress, showing the latest message.
-  const handleInstallBundle = useCallback(async (bundleId: string) => {
+  const handleInstallBundle = useCallback(async (bundleId: string, sourceId?: string) => {
     setInstallingBundle(bundleId);
     setBundleMsg('Starting…');
     try {
-      const res = await fetch(`/api/market/bundles/${bundleId}/install`, { method: 'POST' });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const query = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
+      const res = await fetch(`/api/market/bundles/${bundleId}/install${query}`, { method: 'POST' });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -218,7 +232,9 @@ export default function MarketPage() {
       .includes(q);
   };
 
-  const visible = apps.filter(matchesSearch);
+  // The official Market's variant of an app comes first, so it is the one shown when another source has the same id.
+  const visible = apps.filter(matchesSearch)
+    .sort((a, b) => Number(a.sourceId !== 'official') - Number(b.sourceId !== 'official'));
   const realApps = visible;
 
   const counts = {
@@ -436,7 +452,11 @@ export default function MarketPage() {
                       <BIcon className="h-5 w-5" />
                     </span>
                     <div className="min-w-0">
-                      <div className="text-[15px] font-bold">{b.name}</div>
+                      <div className="flex items-center gap-2 text-[15px] font-bold">{b.name}
+                        {b.sourceId && b.sourceId !== 'official' && (
+                          <span className="rounded border border-amber-500/40 px-1.5 py-px text-[10.5px] font-medium text-amber-700 dark:text-amber-500">{b.sourceName || b.sourceId}</span>
+                        )}
+                      </div>
                       <div className="text-[12.5px] text-muted-foreground">{b.setupSummary || b.description}</div>
                     </div>
                   </div>
@@ -454,8 +474,9 @@ export default function MarketPage() {
                   <div className="flex items-center gap-3 pt-1">
                     <button
                       type="button"
-                      onClick={() => handleInstallBundle(b.id)}
-                      disabled={installingBundle !== null}
+                      onClick={() => handleInstallBundle(b.id, b.sourceId)}
+                      disabled={installingBundle !== null || b.sourceNotAccepted === true}
+                      title={b.sourceNotAccepted ? translateInterface("m8ba391628be0") : undefined}
                       className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                     >
                       {installingBundle === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -485,7 +506,7 @@ export default function MarketPage() {
               >
                 <MarketIcon app={app} size={44} tile={catTile(app.category)} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">{app.name}</div>
+                  <div className="flex items-center gap-2 text-sm font-semibold"><span className="truncate">{app.name}</span><SourceTag app={app} /></div>
                   <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                 </div>
                 {hasUpdate(app) ? (
@@ -544,6 +565,7 @@ export default function MarketPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <span className="truncate">{app.name}</span>
+                      <SourceTag app={app} />
                     </div>
                     <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                   </div>

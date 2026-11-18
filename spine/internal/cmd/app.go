@@ -114,6 +114,7 @@ var (
 	appInstallTrusted  bool
 	appInstallAllowSet bool
 	appInstallPublic   bool
+	appInstallSource   string
 )
 
 // installAccessFields adds the public-access choice to an install request only when --public-access was given, so
@@ -130,7 +131,7 @@ var appInstallCmd = &cobra.Command{
 	Short: "Install an app from Market",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := validateAppInstallArgs(args, appInstallURL, appInstallTrusted, appInstallAllowSet); err != nil {
+		if err := validateAppInstallArgs(args, appInstallURL, appInstallTrusted, appInstallAllowSet, appInstallSource); err != nil {
 			return err
 		}
 		if err := requireCP(); err != nil {
@@ -153,15 +154,23 @@ var appInstallCmd = &cobra.Command{
 		}
 
 		output.Info("Installing " + args[0] + "...")
-		return controlClient.PostSSE("/api/market/install", installAccessFields(cmd, map[string]interface{}{
-			"appId": args[0],
-		}), sseHandler)
+		return controlClient.PostSSE("/api/market/install", installRequest(cmd, args[0], appInstallSource), sseHandler)
 	},
 }
 
+// installRequest is the body of a Market install. Without --source the Control Panel installs from the official
+// Market; a named custom source must have been accepted by the owner (youeye market source accept <id>).
+func installRequest(cmd *cobra.Command, appID, source string) map[string]interface{} {
+	body := map[string]interface{}{"appId": appID}
+	if source != "" {
+		body["sourceId"] = source
+	}
+	return installAccessFields(cmd, body)
+}
+
 // validateAppInstallArgs refuses combinations that would otherwise be silently ignored: a Market name together
-// with --url (the URL wins), and the URL-only flags without --url.
-func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool) error {
+// with --url (the URL wins), the URL-only flags without --url, and --source with --url.
+func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool, source string) error {
 	if url == "" {
 		if allowSetup || trusted {
 			return fmt.Errorf("--allow-setup and --i-trust-this-publisher apply only to --url installs")
@@ -171,6 +180,9 @@ func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool)
 		}
 		return nil
 	}
+	if source != "" {
+		return fmt.Errorf("--source names a Market source; a --url app is its own source")
+	}
 	if len(args) > 0 {
 		return fmt.Errorf("give either an app name or --url, not both")
 	}
@@ -179,12 +191,43 @@ func validateAppInstallArgs(args []string, url string, trusted, allowSetup bool)
 
 var appUpdateAll bool
 var appUpdateAssumeYes bool
+var appUpdateAllowSetup bool
+
+// appUpdatePayload is the body of a single app update: -y confirms a channel switch or downgrade, --allow-setup
+// allows the changed setup files of an app added by URL (the Control Panel refuses such an update without it).
+func appUpdatePayload(assumeYes, allowSetup bool) interface{} {
+	if !assumeYes && !allowSetup {
+		return nil
+	}
+	payload := map[string]bool{}
+	if assumeYes {
+		payload["confirm_switch"] = true
+	}
+	if allowSetup {
+		payload["allowSetup"] = true
+	}
+	return payload
+}
+
+// validateAppUpdateArgs refuses --allow-setup for --all: changed setup steps are allowed per app, after reading them.
+func validateAppUpdateArgs(args []string, all, allowSetup bool) error {
+	if all && allowSetup {
+		return fmt.Errorf("--allow-setup applies to one named app, not --all")
+	}
+	if !all && len(args) == 0 {
+		return fmt.Errorf("specify an app name or use --all")
+	}
+	return nil
+}
 
 var appUpdateCmd = &cobra.Command{
 	Use:   "update <name>",
 	Short: "Update an installed app",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateAppUpdateArgs(args, appUpdateAll, appUpdateAllowSetup); err != nil {
+			return err
+		}
 		if err := requireCP(); err != nil {
 			return err
 		}
@@ -216,19 +259,10 @@ var appUpdateCmd = &cobra.Command{
 			return nil
 		}
 
-		if len(args) == 0 {
-			return fmt.Errorf("specify an app name or use --all")
-		}
-
 		output.Info("Updating " + args[0] + "...")
 		// Canonical CP route; /api/market/update remains as a CP-side alias for
-		// older CLIs. -y confirms installing a not-newer candidate after a
-		// channel change (downgrade/sidegrade).
-		var payload interface{}
-		if appUpdateAssumeYes {
-			payload = map[string]bool{"confirm_switch": true}
-		}
-		return controlClient.PostSSE("/api/apps/"+args[0]+"/update", payload, sseHandler)
+		// older CLIs.
+		return controlClient.PostSSE("/api/apps/"+args[0]+"/update", appUpdatePayload(appUpdateAssumeYes, appUpdateAllowSetup), sseHandler)
 	},
 }
 
@@ -445,9 +479,11 @@ func init() {
 	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install the youeye-app.yaml at this HTTPS URL")
 	appInstallCmd.Flags().BoolVar(&appInstallTrusted, "i-trust-this-publisher", false, "Confirm you trust the publisher of a --url app (required with --url)")
 	appInstallCmd.Flags().BoolVar(&appInstallAllowSet, "allow-setup", false, "Allow the --url app's setup files to run (required when it has any)")
+	appInstallCmd.Flags().StringVar(&appInstallSource, "source", "", "Install from this Market source (an id from 'youeye market source list'); default: the official Market")
 	appInstallCmd.Flags().BoolVar(&appInstallPublic, "public-access", false, "Open the app to anyone who can reach its address (--public-access=false keeps it household-only); default: the app's Market listing decides, off for --url apps")
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
 	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
+	appUpdateCmd.Flags().BoolVar(&appUpdateAllowSetup, "allow-setup", false, "Allow the changed setup files of an app added by URL (the update is refused without it when they changed)")
 	appRemoveCmd.Flags().BoolVar(&appRemoveKeepData, "keep-data", false, "Preserve app data volumes")
 	appRemoveCmd.Flags().BoolVar(&appRemoveForce, "force", false, "remove what the normal removal refuses (a broken install record): everything that carries this app's id and installation id")
 

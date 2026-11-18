@@ -1,5 +1,5 @@
 import { englishInterfaceSource } from "./helpers/localized-source.mjs";
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +55,7 @@ test('setup defers the Control Panel restart until the durable transaction is co
 test('fallback favicon is the transparent blue Y used during initial setup', () => {
   const favicon = read('src/app/api/branding/favicon/route.ts');
   const middleware = read('src/lib/auth/setup-host-paths.ts');
-  const staticFavicon = readFileSync(join(root, 'src/app/favicon.ico'));
+  const staticFavicon = readFileSync(join(root, 'public/favicon.ico'));
 
   assert.match(favicon, /fill="#2563eb"/);
   assert.doesNotMatch(favicon, /fill="#111827"/);
@@ -64,6 +64,8 @@ test('fallback favicon is the transparent blue Y used during initial setup', () 
   assert.match(middleware, /AFTER_SETUP_READ[\s\S]*'\/api\/branding\/favicon'/);
   assert.match(middleware, /BEFORE_SETUP[\s\S]*'\/api\/dns-providers\/cloudflare\/validate'/);
   assert.ok(staticFavicon.length > 1000);
+  // A static file, not an app route: Next caches app-route favicons into the installed tree.
+  assert.equal(existsSync(join(root, 'src/app/favicon.ico')), false);
 });
 
 test('IP setup-complete routing uses IPv4 loopback and completed login handoff', () => {

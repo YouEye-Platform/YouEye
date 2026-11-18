@@ -60,7 +60,7 @@ export interface UnifiedApp {
   updateAvailable: boolean;
   /** Human-readable update info */
   updateInfo?: string;
-  /** True when updates are tracked via the Market system manifests (Caddy/Pi-Hole/Postgres) */
+  /** True for Caddy/Pi-Hole/Postgres: tracked against the images pinned by this release */
   systemManaged?: boolean;
   /** Links to existing management pages */
   managementLinks?: Array<{ label: string; href: string }>;
@@ -145,9 +145,9 @@ export async function GET() {
     const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
     const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
 
-    // System apps (Caddy/Pi-Hole/Postgres) are tracked via the Market system
-    // manifests, not the moving-tag OCI checker. Degrade gracefully if the
-    // market source is unreachable — never 500 the Apps page.
+    // Caddy/Pi-Hole/Postgres are tracked against the images pinned by this
+    // release, not the moving-tag OCI checker. Degrade gracefully if Incus
+    // cannot be read — never 500 the Apps page.
     const systemPlanById = new Map<string, SystemUpdatePlan>();
     if (systemPlansResult.status === 'fulfilled') {
       for (const p of systemPlansResult.value) systemPlanById.set(p.id, p);
@@ -247,9 +247,9 @@ export async function GET() {
 
       // Spine, the Control Panel and the UI update with the System release (Settings → System).
 
-      // Market system apps (Caddy/Pi-Hole/Postgres): version + update come from
-      // the Market system manifest plan (pinned), never the moving-tag checker.
-      const systemPlan = def.marketSystemId ? systemPlanById.get(def.marketSystemId) : undefined;
+      // Caddy/Pi-Hole/Postgres: version + update come from the pinned-image
+      // plan, never the moving-tag checker.
+      const systemPlan = def.systemImageId ? systemPlanById.get(def.systemImageId) : undefined;
       if (systemPlan) {
         version = systemPlan.currentVersion ?? systemPlan.recordedVersion ?? version;
         updateAvailable = systemPlan.updateAvailable && systemPlan.trackingStatus === 'tracked';
@@ -259,7 +259,7 @@ export async function GET() {
       }
 
       // OCI update detection from digest cache (only for non-LXD, non-system apps)
-      if (def.updatedBy === 'control-panel' && !lxdResult && !def.marketSystemId) {
+      if (def.updatedBy === 'control-panel' && !lxdResult && !def.systemImageId) {
         const ociResult = ociUpdates.get(def.id);
         if (ociResult?.hasUpdate) {
           updateAvailable = true;
@@ -282,7 +282,7 @@ export async function GET() {
         desiredState: 'running',
         updateAvailable,
         updateInfo,
-        systemManaged: !!def.marketSystemId,
+        systemManaged: !!def.systemImageId,
         managementLinks: def.managementLinks,
         healthStatus: installedApp?.healthStatus,
         appHealthState: installedApp?.appHealthState,

@@ -146,9 +146,9 @@ export async function GET(request: NextRequest) {
         let updateAvailable = false;
         let updateInfo: string | undefined;
 
-        // Market system apps (Caddy/Pi-Hole/Postgres): tracked via the pinned
-        // Market system manifests, not the moving-tag OCI checker.
-        const systemPlan = def.marketSystemId ? systemPlanById.get(def.marketSystemId) : undefined;
+        // Caddy/Pi-Hole/Postgres: tracked against the images pinned by this
+        // release, not the moving-tag OCI checker.
+        const systemPlan = def.systemImageId ? systemPlanById.get(def.systemImageId) : undefined;
         if (systemPlan) {
           version = systemPlan.currentVersion ?? systemPlan.recordedVersion ?? version;
           if (systemPlan.updateAvailable && systemPlan.trackingStatus === 'tracked') {
@@ -198,6 +198,8 @@ export async function GET(request: NextRequest) {
           desiredState: 'running' as const,
           updateAvailable,
           updateInfo,
+          // The update needs the maintenance acknowledgements (as in Settings → Apps).
+          systemManaged: !!def.systemImageId,
         };
       })
       // Filter out user-category apps that are not installed (all containers not-found)

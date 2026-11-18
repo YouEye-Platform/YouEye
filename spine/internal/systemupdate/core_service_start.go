@@ -91,8 +91,9 @@ func (s NativeCoreServices) Start(ctx context.Context, request, role string) (Co
 	if err != nil {
 		return stage, err
 	}
-	if err = VerifyCoreContainerPayload(ctx, container, stage.AppDir, index); err != nil {
-		return stage, err
+	// Strict for the tree this request swapped in; a reused member is started as it is.
+	if _, err = VerifyCoreContainerPayload(ctx, container, stage.AppDir, index, coreStagePayloadMode(stage)); err != nil {
+		return stage, fmt.Errorf("%s payload before start: %w", role, err)
 	}
 	pid, err := nativeCoreContainerPID(ctx, container)
 	if err != nil {

@@ -13,9 +13,42 @@ import (
 	"time"
 )
 
+// coreHealthPayloadMode decides how the final health gate checks one service
+// tree. Strict only for a tree this request wrote: the request replaces the
+// member (its artifact differs from the installed one), which the journal's
+// step order guarantees happened before authenticated-health may start. Every
+// other tree is one this request did not write and is only recorded: a reused
+// member, both members of a no-op or metadata-only request (their graph has no
+// apply steps), and the restored trees of a recovery.
+func coreHealthPayloadMode(j CoreJournal, role string, recovery bool) (CorePayloadMode, error) {
+	target, err := coreServiceMember(j.Target, role)
+	if err != nil {
+		return CorePayloadRecord, err
+	}
+	previous, err := coreServiceMember(j.Previous.Release, role)
+	if err != nil {
+		return CorePayloadRecord, err
+	}
+	if recovery || j.NoOp || j.MetadataOnly || target.Artifact.SHA256 == previous.Artifact.SHA256 {
+		return CorePayloadRecord, nil
+	}
+	return CorePayloadStrict, nil
+}
+
+// coreHealthPayloadEvidence names what the walk found, in counts only.
+func coreHealthPayloadEvidence(base string, found map[string]CorePayloadFindings) string {
+	for _, role := range []string{"cp", "ui"} {
+		if f, ok := found[role]; ok && (f.Differs() || f.Unrecorded > 0) {
+			base += "; installed " + role + " differs: " + f.Counts()
+		}
+	}
+	return base
+}
+
 // Health checks the installed static payloads, completed schema receipts and
 // current authenticated CP -> UI bridge against live database reads. It never
 // starts migrations or creates a user/session to manufacture sign-in evidence.
+// A tree this request did not write never fails it; see coreHealthPayloadMode.
 func (s NativeCoreServices) Health(ctx context.Context, request string, recovery bool) (string, error) {
 	m := CoreManager{Root: s.Checkpoint.Root}
 	j, err := m.Read()
@@ -89,8 +122,13 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	found := map[string]CorePayloadFindings{}
 	for _, role := range []string{"cp", "ui"} {
 		member, err := coreServiceMember(release, role)
+		if err != nil {
+			return "", err
+		}
+		mode, err := coreHealthPayloadMode(j, role, recovery)
 		if err != nil {
 			return "", err
 		}
@@ -114,8 +152,8 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 		if err != nil {
 			return "", err
 		}
-		if err = VerifyCoreContainerPayload(ctx, container, appDir, index); err != nil {
-			return "", err
+		if found[role], err = VerifyCoreContainerPayload(ctx, container, appDir, index, mode); err != nil {
+			return "", fmt.Errorf("%s payload health: %w", role, err)
 		}
 		if err = verifyNativeCoreSchemaReceipt(pid, marker); err != nil {
 			return "", err
@@ -142,7 +180,7 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 			return "", err
 		}
 	}
-	return "exact CP/UI static payloads and schema receipts; authenticated native CP/UI bridge and live database reads", nil
+	return coreHealthPayloadEvidence("CP/UI static payloads and schema receipts; authenticated native CP/UI bridge and live database reads", found), nil
 }
 
 func coreAuthenticatedHealthRequest(ctx context.Context, client *http.Client, endpoint, token string, marker coreComponentMarker) error {

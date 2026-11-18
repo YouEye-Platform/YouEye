@@ -21,6 +21,10 @@ const COMMITTED_CLEANUP_PENDING = 'The new version is installed and the app is o
 const ROLLED_BACK = 'The update failed and was rolled back: the app runs its previous version. The cause is in the '
   + 'Control Panel journal.';
 
+const SETUP_CHANGED = 'Setup steps changed: the new version of this app, added by URL, runs different setup files inside '
+  + 'its containers. Nothing was changed. Update again and allow them (allowSetup; youeye app update <app> --allow-setup) '
+  + 'only if you trust its publisher.';
+
 function completedMessage(sharedFolders: string[] | undefined): string {
   return sharedFolders?.length
     ? `Update complete. Shared folders (${sharedFolders.join(', ')}) are used in place and never rolled back.`
@@ -39,7 +43,16 @@ function publicUpdateFailure(code: unknown): string {
   if (code === 'committed-post-update-failed') return 'The new version is installed and the app is open, but a step after the update failed; the cause is in the Control Panel journal.';
   if (code === 'own-postgres-update-unsupported') return 'Update not possible in place: this app\'s own PostgreSQL (a superuser login or extensions) can\'t be checkpointed yet. Nothing was changed.';
   if (code === 'connection-interface-missing') return 'Update blocked: a connection of this app lost its network interface. Re-activate the connection, then update.';
+  if (code === 'setup-changed') return SETUP_CHANGED;
+  if (code === 'source-not-accepted') return 'Update blocked: this app comes from a Market source you have not accepted. Accept the source first (youeye market source accept <source>).';
+  if (code === 'source-unavailable') return 'Update blocked: this app\'s Market source is turned off or no longer configured.';
+  if (code === 'source-changed') return 'Update blocked: this app\'s Market source now points at another repository than the app was installed from. Switch the app to that source on its page if you want its updates from there.';
   return 'Update failed. Check the operation status.';
+}
+
+/** A `source-changed` refusal's own message names the repositories (the owner's own settings); other errors get fixed copy. */
+function failureMessage(code: unknown, error: unknown): string {
+  return code === 'source-changed' && error instanceof Error && error.name === 'MarketSourceConsentError' ? error.message : publicUpdateFailure(code);
 }
 
 export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, format: 'sse' | 'json' = 'sse') {
@@ -57,6 +70,10 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
     return NextResponse.json({ error: 'Invalid update request' }, { status: 400 });
   }
   const appId: string = body.appId;
+  if (body.allowSetup !== undefined && typeof body.allowSetup !== 'boolean') {
+    return NextResponse.json({ error: 'Invalid update request' }, { status: 400 });
+  }
+  const config = { appId, allowSetup: body.allowSetup === true };
   try {
     if (getAppUpdateOperation(appId)?.pending) {
       return NextResponse.json({
@@ -74,7 +91,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
 
   if (format === 'json') {
     try {
-      const result = await withUserOperationLockWait(() => updateMarketApp({ appId }, () => {}));
+      const result = await withUserOperationLockWait(() => updateMarketApp(config, () => {}));
       const operation = getAppUpdateOperation(appId);
       if (operation?.pending) {
         return NextResponse.json({ status: 'pending', code: 'operation_pending',
@@ -82,6 +99,10 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
             : 'Update pending. Check its status or retry recovery.' }, { status: 409 });
       }
       if (!result.success) console.error(`[Market] Update of ${appId} did not succeed: ${result.errorCode ?? 'no code'}: ${result.error ?? ''}`);
+      if (result.errorCode === 'setup-changed') {
+        return NextResponse.json({ status: 'error', code: 'setup-changed', error: SETUP_CHANGED, message: SETUP_CHANGED,
+          setups: result.setups ?? [] }, { status: 409 });
+      }
       return NextResponse.json({ status: result.success ? 'success' : 'error',
         message: result.success ? completedMessage(result.sharedFolders)
           : operation?.rolledBack && operation.id === result.operationId ? ROLLED_BACK : publicUpdateFailure(result.errorCode),
@@ -91,24 +112,25 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
       logOperationFailure(`Update of ${appId}`, error);
       const code = isLifecycleBusy(error) ? 'operation_in_progress'
         : error && typeof error === 'object' && 'code' in error ? error.code : null;
-      return NextResponse.json({ status: 'error', code: code ?? undefined, message: publicUpdateFailure(code) },
-        { status: code === 'operation_in_progress' ? 409 : 500 });
+      return NextResponse.json({ status: 'error', code: code ?? undefined, message: failureMessage(code, error) },
+        { status: code === 'operation_in_progress' ? 409
+          : code === 'source-not-accepted' || code === 'source-unavailable' || code === 'source-changed' ? 403 : 500 });
     }
   }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const emit = (stage: string, message: string, progress?: number) => {
+      const emit = (stage: string, message: string, progress?: number, extra?: Record<string, unknown>) => {
         try {
           controller.enqueue(encoder.encode(
-            `event: update\ndata: ${JSON.stringify({ stage, message, progress })}\n\n`,
+            `event: update\ndata: ${JSON.stringify({ stage, message, progress, ...extra })}\n\n`,
           ));
         } catch { /* The durable operation continues after a client disconnect. */ }
       };
       try {
         const result = await withUserOperationLockWait(() => updateMarketApp(
-          { appId },
+          config,
           (event) => {
             // Provider messages can contain command output, paths or secrets.
             emit('rebuilding', 'Updating application...', event.totalSteps > 0
@@ -123,6 +145,10 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
             : 'Update pending. Check its status or retry recovery.');
         } else {
           if (!result.success) console.error(`[Market] Update of ${appId} did not succeed: ${result.errorCode ?? 'no code'}: ${result.error ?? ''}`);
+          if (result.errorCode === 'setup-changed') {
+            emit('failed', SETUP_CHANGED, 100, { code: 'setup-changed', setups: result.setups ?? [] });
+            return;
+          }
           emit(result.success ? 'completed' : 'failed',
             result.success ? completedMessage(result.sharedFolders)
               : operation?.rolledBack && operation.id === result.operationId ? ROLLED_BACK : publicUpdateFailure(result.errorCode), 100);
@@ -132,7 +158,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
         // Only known public codes select copy; never serialize an exception.
         const code = isLifecycleBusy(error) ? 'operation_in_progress'
           : error && typeof error === 'object' && 'code' in error ? error.code : null;
-        emit('failed', publicUpdateFailure(code));
+        emit('failed', failureMessage(code, error), undefined, code === 'source-changed' ? { code } : undefined);
       } finally {
         try { controller.close(); } catch { /* already closed */ }
       }

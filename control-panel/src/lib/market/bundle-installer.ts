@@ -13,7 +13,7 @@
 
 import { installApp } from './engine';
 import { logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError } from './install-tracker';
-import { fetchManifest, fetchManifestReferenceFromSource } from './catalog';
+import { resolveCatalogApp } from './catalog';
 import { readFrozenUpdateManifest } from './frozen-manifest';
 import { listInstalledApps, readInstallMetadata } from './metadata';
 import { createBridge, resolveBridgeMappings, activateBridge } from '../bridges/manager';
@@ -89,6 +89,8 @@ export async function installBundle(
 
   // 1. Install missing members in order (providers before consumers). Shared storage
   //    groups are realized by each member's `storageGroup` volume during its install.
+  // Every member comes from the bundle's own source (the official Market when it names none), and is recorded with it.
+  // resolveCatalogApp refuses a custom source the owner has not accepted.
   for (const memberId of bundle.members) {
     step++;
     if (installed.has(memberId)) {
@@ -97,20 +99,22 @@ export async function installBundle(
       continue;
     }
     try {
-      const manifest = await fetchManifest(memberId);
-      const reference = await fetchManifestReferenceFromSource(memberId).catch(() => null);
+      const resolved = await resolveCatalogApp(memberId, bundle.sourceId);
+      const { manifest, reference, source } = resolved;
       const config: InstallConfig = {
         appId: memberId,
         subdomain: (manifest.metadata.defaultSubdomain || memberId).toLowerCase(),
         domain,
-        ...(reference
-          ? {
-              manifestPath: reference.path,
-              manifestRepo: reference.repo,
-              manifestBranch: reference.branch,
-              manifestDigest: reference.digest,
-            }
-          : {}),
+        catalogKey: `${source.id}:app:${memberId}`,
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceRepoUrl: source.repo_url || undefined,
+        manifestPath: reference.path,
+        manifestRepo: reference.repo,
+        manifestBranch: reference.branch,
+        manifestDigest: reference.digest,
+        // Bundle members stay household-only (the owner is not asked per member).
+        publicAccess: false,
       };
       onEvent({ step, totalSteps, status: 'running', message: `Installing ${manifest.metadata.name}…`, phase: 'install' });
       await installApp(manifest, config, (e) => onEvent(sanitiseInstallEvent({ ...e, step, totalSteps })), signal);

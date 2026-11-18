@@ -17,13 +17,76 @@ const ALLOWED_DOMAINS = [
   'github.com',
   'raw.githubusercontent.com',
   'avatars.githubusercontent.com',
-  'cdn.jsdelivr.net',
   'immich.app',
   'usememos.com',
   'i.ibb.co',
   'jellyfin.org',
 ];
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+// Every answer is inert in the box's origin: an SVG opened directly cannot run
+// script, and the browser never sniffs a different type.
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  'X-Content-Type-Options': 'nosniff',
+} as const;
+
+// The only types this proxy ever answers with.
+const IMAGE_TYPE_BY_EXTENSION: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+};
+const IMAGE_TYPES = new Set(Object.values(IMAGE_TYPE_BY_EXTENSION));
+// Hosts such as raw.githubusercontent.com label every file like this; then the
+// extension decides.
+const GENERIC_TYPES = new Set(['', 'text/plain', 'application/octet-stream', 'binary/octet-stream']);
+
+function imageContentType(upstreamType: string | null, imageUrl: string): string | null {
+  const type = (upstreamType ?? '').split(';')[0].trim().toLowerCase();
+  if (IMAGE_TYPES.has(type)) return type;
+  if (!GENERIC_TYPES.has(type)) return null;
+  const extension = /\.([a-z0-9]+)$/i.exec(new URL(imageUrl).pathname)?.[1]?.toLowerCase();
+  return (extension && IMAGE_TYPE_BY_EXTENSION[extension]) || null;
+}
+
+/** The largest image this proxy passes on; it is reachable without sign-in, so nothing larger is ever buffered. */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** The body, or null when it is (or announces itself as) larger than MAX_IMAGE_BYTES: reading stops at the cap. */
+async function readCappedBody(res: Response): Promise<Uint8Array<ArrayBuffer> | null> {
+  const announced = Number(res.headers.get('content-length'));
+  if (Number.isFinite(announced) && announced > MAX_IMAGE_BYTES) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return new Uint8Array();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IMAGE_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return body;
+}
+
+function secured<T extends Response>(response: T): T {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(name, value);
+  return response;
+}
 
 function isTrustedImageURL(raw: string): boolean {
   try {
@@ -100,6 +163,10 @@ async function fetchImage(imageUrl: string): Promise<Response> {
 }
 
 export async function GET(request: Request) {
+  return secured(await answer(request));
+}
+
+async function answer(request: Request): Promise<Response> {
   const { searchParams } = new URL(request.url);
   const catalogPath = searchParams.get('catalog');
   if (catalogPath) {
@@ -109,7 +176,7 @@ export async function GET(request: Request) {
       const bytes = await officialCatalogFile(catalogPath);
       const contentType = media === 'svg' ? 'image/svg+xml' : media === 'jpg' || media === 'jpeg' ? 'image/jpeg' : `image/${media}`;
       return new NextResponse(new Uint8Array(bytes), {
-        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" },
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400' },
       });
     } catch (err) {
       console.warn('[market/image] Catalog image unavailable:', err);
@@ -138,10 +205,18 @@ export async function GET(request: Request) {
     if (!res.ok) {
       return placeholderImageResponse();
     }
-    const contentType = res.headers.get('content-type') || 'application/octet-stream';
-    const buffer = await res.arrayBuffer();
+    const contentType = imageContentType(res.headers.get('content-type'), imageUrl);
+    if (!contentType) {
+      console.warn('[market/image] Upstream is not an allowed image type:', res.headers.get('content-type'));
+      return placeholderImageResponse();
+    }
+    const body = await readCappedBody(res);
+    if (!body) {
+      console.warn('[market/image] Upstream image is larger than 5 MiB:', imageUrl);
+      return placeholderImageResponse();
+    }
 
-    return new NextResponse(Buffer.from(buffer), {
+    return new NextResponse(body, {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=86400',

@@ -300,6 +300,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const [recovering, setRecovering] = useState<Set<string>>(new Set());
   const activeRequests = useRef(new Set<string>());
   const [confirmApp, setConfirmApp] = useState<UnifiedApp | null>(null);
+  // An app added by URL whose new version changes its setup files: the update was refused and asks again.
+  const [setupConsent, setSetupConsent] = useState<{ app: UnifiedApp; setups: { name: string; for: string }[] } | null>(null);
   const [maintAck, setMaintAck] = useState(false);
   const [dbAck, setDbAck] = useState(false);
   const updates = apps.filter((app) => app.updateAvailable || operations.get(app.id)?.pending);
@@ -390,6 +392,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   async function updateApp(
     appId: string,
     confirm?: { confirmMaintenanceWindow: boolean; confirmContainerName: string; allowDatabaseUpdate?: boolean },
+    allowSetup = false,
   ) {
     if (activeRequests.current.has(appId) || operations.get(appId)?.pending) return;
     const marketApp = apps.find((app) => app.id === appId)?.category === "user";
@@ -438,7 +441,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         const res = await fetch("/api/market/update", {
           method: "POST",
           headers: { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" },
-          body: JSON.stringify({ appId }),
+          body: JSON.stringify(allowSetup ? { appId, allowSetup: true } : { appId }),
         });
         if (!res.ok || !res.body) throw new Error(translateInterface("m149776b4fc95"));
         const reader = res.body.getReader();
@@ -464,6 +467,10 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             if (["pending", "completed", "failed"].includes(event.stage)) {
               terminal = true;
               finalStatus = nextStatus;
+            }
+            if (event.code === "setup-changed") {
+              const app = apps.find((candidate) => candidate.id === appId);
+              if (app) setSetupConsent({ app, setups: Array.isArray(event.setups) ? event.setups : [] });
             }
             setStatuses((prev) => new Map(prev).set(component, nextStatus));
           }
@@ -564,11 +571,34 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
   return (
     <>
+      {setupConsent && (
+        <ConfirmDialog
+          open
+          title={translateInterface("mb94851be3547")}
+          description={translateInterface("m5315fd906595", { app: setupConsent.app.displayName })}
+          confirmLabel={translateInterface("ma4a46c8cbe85")}
+          onCancel={() => setSetupConsent(null)}
+          onConfirm={() => {
+            const { app } = setupConsent;
+            setSetupConsent(null);
+            updateApp(app.id, undefined, true);
+          }}
+        >
+          <ul className="space-y-1 rounded-lg border bg-muted/30 p-3 text-[13px]">
+            {setupConsent.setups.map((setup) => (
+              <li key={setup.name} className="flex items-center justify-between gap-3">
+                <span className="font-mono text-xs">{setup.name}</span>
+                <span className="text-muted-foreground">{setup.for}</span>
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
+      )}
       {confirmApp && (
         <ConfirmDialog
           open
           title={translateInterface("me0624c9267e4", { value0: String(confirmApp.displayName) })}
-          description={translateInterface("m7f548d42d37f", { value0: String(confirmApp.displayName), value1: String(confirmApp.containers[0]?.name ?? translateInterface("m7dddf9085fdd")) })}
+          description={translateInterface("m0bb71c644117", { value0: String(confirmApp.displayName), value1: String(confirmApp.containers[0]?.name ?? translateInterface("m7dddf9085fdd")) })}
           confirmLabel={translateInterface("m63bf045213ce")}
           confirmDisabled={!maintAck || (confirmApp.id === "postgres" && !dbAck)}
           onCancel={() => setConfirmApp(null)}

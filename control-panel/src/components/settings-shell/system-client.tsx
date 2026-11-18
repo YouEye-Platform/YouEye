@@ -69,9 +69,6 @@ interface SystemUpdatePlan {
   containerName: string;
   desiredImage: string;
   desiredVersion: string;
-  sourceId?: string;
-  manifestPath?: string;
-  manifestDigest?: string;
   exists: boolean;
   running: boolean;
   trackingStatus: TrackingStatus;
@@ -514,12 +511,12 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
         )}
       </Card>
 
-      {/* Market System Manifests (admin) — image tracking + maintenance-window update flow (unchanged). */}
+      {/* Core container images (admin): pinned by this release; maintenance-window update flow. */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="flex items-center gap-2 text-[15px] font-semibold"><Database className="h-4 w-4" />{translateInterface("m44f668d33a33")}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("mc5d2e899b371")}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("me6725578efa8")}</p>
           </div>
           <Button variant="outline" size="sm" onClick={loadSystemPlans} disabled={plansLoading}>
             {plansLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -550,7 +547,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
                       <p className="break-words font-mono">{plan.currentVersion || plan.currentImage || translateInterface("mb23a6a8439c0")}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">{translateInterface("m5238d9bd03d5")}</span>
+                      <span className="text-muted-foreground">{translateInterface("m978354db0c00")}</span>
                       <p className="break-words font-mono">{plan.desiredVersion} · {plan.desiredImage}</p>
                     </div>
                   </div>

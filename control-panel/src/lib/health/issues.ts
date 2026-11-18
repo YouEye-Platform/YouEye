@@ -104,20 +104,28 @@ export async function recordTimelineEvent(input: {
   return issue!;
 }
 
-export async function hasOpenCriticalIssue(appId?: string): Promise<HealthIssue | null> {
+export async function hasOpenCriticalIssue(appId?: string, except: readonly string[] = []): Promise<HealthIssue | null> {
   const issues = await listIssues(false);
-  return findOpenCriticalIssue(issues, appId);
+  return findOpenCriticalIssue(issues, appId, except);
+}
+
+/** The refusal of `assertNoCriticalIssues`; routes answer it with 423 (its message names the issue). */
+export class CriticalIssueBlockedError extends Error {
+  readonly code = 'critical-issue-open';
+  constructor(operation: string, readonly issue: HealthIssue) {
+    super(`${operation} blocked while critical health issue is open: ${issue.title}`);
+    this.name = 'CriticalIssueBlockedError';
+  }
 }
 
 /**
  * Refuse an operation while a critical issue that concerns it is open: any box-level issue, or (with appId) an issue
- * of that same app. Another app's problem (a failed install, a stuck update) never blocks this one.
+ * of that same app. Another app's problem (a failed install, a stuck update) never blocks this one. `except` names
+ * issues the operation itself repairs (a core container's update is not refused because that container is down).
  */
-export async function assertNoCriticalIssues(operation: string, appId?: string): Promise<void> {
-  const issue = await hasOpenCriticalIssue(appId);
-  if (issue) {
-    throw new Error(`${operation} blocked while critical health issue is open: ${issue.title}`);
-  }
+export async function assertNoCriticalIssues(operation: string, appId?: string, except: readonly string[] = []): Promise<void> {
+  const issue = await hasOpenCriticalIssue(appId, except);
+  if (issue) throw new CriticalIssueBlockedError(operation, issue);
 }
 
 /** The app a per-app issue belongs to, from its id; null for a box-level issue (and for any unknown id format). */
@@ -210,9 +218,9 @@ function severityRank(severity: IssueSeverity): number {
   }
 }
 
-export function findOpenCriticalIssue(issues: HealthIssue[], appId?: string): HealthIssue | null {
+export function findOpenCriticalIssue(issues: HealthIssue[], appId?: string, except: readonly string[] = []): HealthIssue | null {
   return issues.find((issue) => {
-    if (issue.state !== 'open' || issue.severity !== 'critical') return false;
+    if (issue.state !== 'open' || issue.severity !== 'critical' || except.includes(issue.id)) return false;
     const owner = issueAppId(issue.id);
     return owner === null || owner === appId;
   }) ?? null;

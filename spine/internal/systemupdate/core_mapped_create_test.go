@@ -131,10 +131,10 @@ func TestCoreMappedFilesystemIntegration(t *testing.T) {
 	if stage.Phase != "swapped" {
 		t.Fatal(stage.Phase)
 	}
-	if err = VerifyCorePayload(filepath.Join(probePath, "app"), next); err != nil {
+	if _, err = VerifyCorePayload(filepath.Join(probePath, "app"), next, CorePayloadStrict); err != nil {
 		t.Fatal(err)
 	}
-	if err = VerifyCorePayload(filepath.Join(probePath, stage.StageName), old); err != nil {
+	if _, err = VerifyCorePayload(filepath.Join(probePath, stage.StageName), old, CorePayloadStrict); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("mapped uid=%d gid=%d; verified %d target entries and preserved previous tree", owner.Uid, owner.Gid, len(next.Entries))
