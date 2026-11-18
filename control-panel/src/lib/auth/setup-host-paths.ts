@@ -1,7 +1,7 @@
 /**
  * What the local setup surface (box IP or `youeye.local`, over HTTP or HTTPS) serves. It is onboarding only:
  * claim and setup before setup completes; afterwards just the setup-complete hand-off and the owner password
- * reset. Never YouEye ID sign-in, Settings, the dashboard or apps. Edge-safe (used by the middleware).
+ * reset. Never YouEye ID sign-in, Settings, the dashboard or apps. Dependency-free (used by the proxy).
  *
  * An entry ending in `/` is a prefix; any other entry matches itself and the paths below it.
  */

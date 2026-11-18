@@ -476,6 +476,7 @@ async function restoreAppOnce(
             path: String(candidate.path ?? ''),
             upstream: String(candidate.upstream ?? ''),
             port: Number(candidate.port),
+            appId,
           });
         } catch (err) {
           if (!(err instanceof Error && err.message.includes('already exists'))) throw err;

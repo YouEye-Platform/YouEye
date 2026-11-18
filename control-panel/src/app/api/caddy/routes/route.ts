@@ -85,7 +85,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Caddy] Adding route: ${body.hostname || '*'}${body.path} -> ${body.upstream}:${body.port}`);
 
-    const route = await caddy.addRoute(body);
+    // Hand-made routes never carry an app id (only Market app routes may be offered as orphans).
+    const route = await caddy.addRoute({ ...body, appId: undefined });
 
     return NextResponse.json({
       success: true,

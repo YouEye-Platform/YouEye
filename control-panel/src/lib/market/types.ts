@@ -860,7 +860,7 @@ export interface UninstallVerification {
 
 // ─── Orphan Resource ──────────────────────────────────────
 
-export type OrphanType = 'caddy-route' | 'postgres-db' | 'dns-entry' | 'storage-volume' | 'container';
+export type OrphanType = 'caddy-route' | 'postgres-db' | 'storage-volume' | 'container';
 
 export interface OrphanResource {
   type: OrphanType;

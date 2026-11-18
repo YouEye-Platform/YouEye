@@ -192,6 +192,8 @@ export interface RouteFormData {
   path: string;
   upstream: string;
   port: number;
+  /** Set only by the Market for an app's own route: the route gets an `app-route-<appId>-…` id (appRouteId). */
+  appId?: string;
   forwardAuth?: {
     upstreamDial: string;
     uri: string;

@@ -13,7 +13,7 @@ import {
   getBridgesForApp,
 } from '@/lib/bridges/manager';
 import { SYSTEM_APP_IDS } from '@/lib/incus/app-network';
-import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
 
 export async function GET(request: Request) {
   const auth = await requireAuth();
@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const body = await request.json();

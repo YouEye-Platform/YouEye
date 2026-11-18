@@ -5,13 +5,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { dismissSuggestion } from '@/lib/bridges/suggestions';
-import { requireAdmin } from '@/lib/auth/rbac';
+import { requireAdminCsrf } from '@/lib/auth/rbac';
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   const { id } = await params;

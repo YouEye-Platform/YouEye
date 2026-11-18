@@ -34,7 +34,7 @@ The CP serves its pages on the box's main domain and on `control.<domain>`:
 - `https://<domain>/settings` and `/market` are routed by Caddy to the CP (`ensureControlSettingsRoute` in
   `lib/caddy/client.ts`). Everything else on the main domain is the dashboard (`youeye-ui`).
 - Settings is the only admin surface. `control.<domain>/` and the old shell paths (`/apps`, `/health`, `/people`,
-  …) redirect to `/settings` (`middleware.ts`).
+  …) redirect to `/settings` (`proxy.ts`).
 - On a bare IP (setup, recovery) the CP signs people in with host PAM through Spine; on a domain it uses YouEye ID
   (`lib/auth/mode.ts`). See [youeye-id.md](youeye-id.md).
 
@@ -74,6 +74,23 @@ Image references for PostgreSQL, Caddy and Pi-hole come from the Market's `syste
 
 `POST /api/deploy/infrastructure/reconcile` (used by `youeye deploy --resume`) creates only missing containers and
 re-checks the security posture; it never replaces running ones.
+
+## Who may call what
+
+- **The proxy** (`src/proxy.ts`, Next 16's name for middleware; Node.js runtime) runs before every page and API
+  route. Outside its `PUBLIC_ROUTES` and `/embed`, it needs a valid session cookie, or, for `/api/*`, the CLI token:
+  an `X-CLI-Token` header passes only when it equals `/etc/youeye/cli-token` (`lib/auth/cli-token.ts`), else 401.
+  Without `JWT_SECRET` it refuses everything non-public (503).
+- **Same-origin writes:** a cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` must carry an `Origin` equal to the
+  request's own origin (scheme from `X-Forwarded-Proto`), or no `Origin` and no cross-site `Sec-Fetch-Site`; else 403.
+  The session cookie is `SameSite=None` on HTTPS names, so this is what stops other sites posting with it.
+- **In the handler:** admin routes call `requireAdmin()`, and admin writes `requireAdminCsrf(request)`
+  (`lib/auth/rbac.ts`; the CLI token passes both). `tests/route-auth.spec.ts` walks every `route.ts`: each handler
+  calls an auth helper, or is listed there as public or signed-in-only with the reason.
+- **Orphans** (`/api/admin/orphans`, `youeye orphans [clean]`): admin only. Only resources an install left behind are
+  listed: installation-tagged containers no record names, Market app routes (id `app-route-<app>-…`, since 0.6.8) of
+  apps with no install or kept-data record, app databases and YouEye app storage no record names. Platform routes,
+  hand-made routes and platform databases are never listed; cleanup re-checks each item before removing it.
 
 ## Setup hosts and cookies
 

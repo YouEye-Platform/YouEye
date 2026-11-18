@@ -10,9 +10,9 @@ import (
 var orphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find untracked containers, routes, and databases",
-	Long: `Scan the platform for resources that exist but aren't tracked by any known app.
-This includes containers running in Incus that aren't associated with any installed
-app, Caddy routes pointing to unknown upstreams, and orphaned database entries.`,
+	Long: `List resources an app install left behind: containers tagged by an install that no app record
+names, app routes and databases of apps that are no longer installed, and YouEye app storage no record
+names. Platform resources and data kept by a keep-data uninstall are never listed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireCP(); err != nil {
 			return err
@@ -67,17 +67,31 @@ var orphansCleanCmd = &cobra.Command{
 		if err := requireCP(); err != nil {
 			return err
 		}
-		result, err := controlClient.Post("/api/admin/orphans", nil)
+		result, err := controlClient.Post("/api/admin/orphans", map[string]string{"action": "cleanup-all"})
 		if err != nil {
 			return err
 		}
-		if msg := str(result, "message"); msg != "" {
-			output.Success(msg)
-		} else {
-			output.Success("Orphaned resources cleaned up")
+		cleaned, failed := intOf(result["cleaned"]), intOf(result["failed"])
+		if errs, ok := result["errors"].([]interface{}); ok {
+			for _, e := range errs {
+				if text, ok := e.(string); ok {
+					output.Warn(text)
+				}
+			}
 		}
+		if failed > 0 {
+			return fmt.Errorf("removed %d orphaned resource(s); %d could not be removed", cleaned, failed)
+		}
+		output.Success(fmt.Sprintf("Removed %d orphaned resource(s)", cleaned))
 		return nil
 	},
+}
+
+func intOf(value interface{}) int {
+	if number, ok := value.(float64); ok {
+		return int(number)
+	}
+	return 0
 }
 
 func init() {

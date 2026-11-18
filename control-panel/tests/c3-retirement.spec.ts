@@ -39,7 +39,7 @@ test('(dashboard) shell is deleted', () => {
 });
 
 test('middleware redirects shell routes to Settings (host-aware, precise)', () => {
-  const m = read('src/middleware.ts');
+  const m = read('src/proxy.ts');
   assert.match(m, /Send the control\.<domain> \/ \(dashboard\) shell paths to Settings/);
   assert.match(m, /SHELL_PREFIXES = \['\/apps', '\/dns', '\/health', '\/people', '\/proxy', '\/updates'\]/);
   // subdomain → base-domain Settings; direct/PAM → same-origin /settings
@@ -51,7 +51,7 @@ test('middleware redirects shell routes to Settings (host-aware, precise)', () =
 });
 
 test('Local setup handoff (IP or youeye.local) wins before Settings shell redirects', () => {
-  const m = read('src/middleware.ts');
+  const m = read('src/proxy.ts');
   const ipBlock = m.indexOf('Local setup surface (box IP or youeye.local');
   const shellBlock = m.indexOf('Send the control.<domain> / (dashboard) shell paths to Settings');
 

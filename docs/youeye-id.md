@@ -9,7 +9,7 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
 - The Control Panel bundle (`/opt/app` in the `youeye-control` container) runs twice:
   - `youeye-control.service` on port 3000 (the Control Panel);
   - `youeye-id.service` on port 3001 with `IDENTITY_SERVICE=true` (YouEye ID).
-- In identity mode, `middleware.ts` allows only the identity routes (`/identity/*`, `/application/o/*`, `/oauth/*`,
+- In identity mode, `proxy.ts` allows only the identity routes (`/identity/*`, `/application/o/*`, `/oauth/*`,
   `/forward-auth/caddy`, the favicon). `instrumentation.ts` starts only the back-channel logout sender there; the
   platform jobs (health monitor, update queue, …) run in the Control Panel process only.
 - The public host is `<subdomains.identity>.<domain>` from `youeye.yaml` (setup proposes `id`). It must differ from

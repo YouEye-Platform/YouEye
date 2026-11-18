@@ -25,11 +25,12 @@ test('Market and app-network mutations require an administrator session', async 
   for (const route of adminMutationRoutes) {
     const contents = await source(route);
     assert.match(contents, /import \{[^}]*requireAdmin[^}]*\} from '@\/lib\/auth\/rbac';/, route);
-    assert.match(contents, /const auth = await requireAdmin\(\);\s*if \(auth\.error\) return auth\.error;/, route);
+    // Admin, plus CSRF for these writes (requireAdminCsrf); the install routes check CSRF after requireAdmin.
+    assert.match(contents, /const auth = await requireAdmin(?:Csrf\(request\)|\(\));\s*if \(auth\.error\) return auth\.error;/, route);
   }
 });
 
-test('middleware-public app-network reads still require an authenticated session', async () => {
+test('app-network reads require an authenticated session in the handler too', async () => {
   for (const route of [
     'src/app/api/bridges/route.ts',
     'src/app/api/bridges/[bridgeId]/route.ts',

@@ -85,20 +85,6 @@ export async function generateAppToken(appId: string): Promise<string> {
   });
 }
 
-export async function validateAppToken(token: string, appId: string): Promise<{ appId: string } | null> {
-  try {
-    const { appServiceCredentials } = await import('../apps/service-credential-store');
-    const { readInstallMetadata } = await import('./metadata');
-    const metadata = await readInstallMetadata(appId);
-    if (!metadata || metadata.enabled !== true || metadata.lifecycleState !== 'active'
-      || metadata.serviceCredentialState !== 'ready') return null;
-    const credential = await appServiceCredentials.authenticate(appId, token);
-    return credential ? { appId: credential.appId } : null;
-  } catch {
-    return null;
-  }
-}
-
 // ─── Platform requirement ─────────────────────────────────
 
 /** Refuse an app whose `requires.youeye` is newer than this box's YouEye build. */

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, verifyCSRFToken } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { requireAdminCsrf } from "@/lib/auth/rbac";
 import { piholeRequest } from "@/lib/apps/pihole-api";
 
 // Pi-Hole adlists (blocklists). Session-authed sibling of the other apps/pihole/*
@@ -13,16 +14,6 @@ interface Adlist {
   number?: number;
   status?: number;
   id?: number;
-}
-
-async function requireAdminCsrf(request: NextRequest) {
-  const session = await getSession();
-  if (!session) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  if (!session.isAdmin) return { error: NextResponse.json({ error: "Admin access required" }, { status: 403 }) };
-  const csrfToken = request.headers.get("X-CSRF-Token");
-  if (!csrfToken || !(await verifyCSRFToken(csrfToken)))
-    return { error: NextResponse.json({ error: "Invalid CSRF token" }, { status: 403 }) };
-  return { error: null };
 }
 
 // GET — list adlists (auth only, like stats/queries/domains GET)

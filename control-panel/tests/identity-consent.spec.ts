@@ -81,7 +81,7 @@ test('OAuth consent presents a simple account handoff without technical scope UI
 
 test('YouEye ID allows branded favicon and root-domain account avatar images', () => {
   const favicon = read('src/lib/identity/favicon.ts');
-  const middleware = read('src/middleware.ts');
+  const middleware = read('src/proxy.ts');
 
   assert.match(favicon, /\/api\/branding\/favicon\?size=32/);
   assert.match(favicon, /\/api\/branding\/favicon\?size=16/);

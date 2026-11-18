@@ -5,7 +5,7 @@ the trackers only write a local JSON file, and nothing sends them anywhere. Both
 
 ## Control Panel
 
-- Code: `control-panel/src/lib/telemetry/` (`counter.ts` counts routes in the middleware, `tracker.ts` saves them).
+- Code: `control-panel/src/lib/telemetry/` (the proxy, `src/proxy.ts`, posts each route to `/api/telemetry/record`; `tracker.ts` counts and saves them).
 - Off until an admin turns on **Local usage statistics** on the Privacy settings page
   (`components/settings-shell/privacy-client.tsx`). The saved file keeps it on only with an explicit opt-in time
   (`explicit_opt_in_at`).
