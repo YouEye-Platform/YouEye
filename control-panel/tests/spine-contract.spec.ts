@@ -22,13 +22,23 @@ test('backup identity is built from the status Spine marshals', () => {
 
 test('the backup store request matches the body Spine decodes strictly', () => {
   const status = JSON.parse(readFileSync(fixture('status-appliance.json'), 'utf8'));
+  // The releases the box runs: an old-shape (0.6.12) System release and Pointer's release. The request carries
+  // their keys (release, control_panel, ui, pointer) next to the older build names.
+  const tree = status.runtime.source_tree as string;
+  const core = { version: '0.6.12-beta.1', sequence: 1795100000, source_tree: tree, members: [
+    { role: 'cp', source_tree: tree, build_version: '0.6.12-dev.3' },
+    { role: 'ui', source_tree: tree, build_version: '0.6.12-dev.3' },
+  ] } as never;
+  const pointer = { release: { version: '0.6.3', sequence: 1795000000, source_tree: '2'.repeat(40) }, build: { build_version: '0.6.3-dev.1' } } as never;
   const record: BackupSetRecord = {
     schema: 'youeye.backup.set.v1', id: 'backup-20261114T000000Z-0a1b2c3d', createdAt: '2026-11-14T00:00:00.000Z',
     status: 'completed', appCount: 1, apps: ['razzia'], reason: 'manual', sizeBytes: 4096,
-    source: backupSourceIdentityFromStatus(status, '0.6.3-dev.1'),
+    source: backupSourceIdentityFromStatus(status, undefined, { core, pointer }),
   };
   const body = JSON.stringify(backupStoreRequest(record, 'media-1', undefined, true), null, 2) + '\n';
   if (process.env.YOUEYE_UPDATE_CONTRACTS === '1') writeFileSync(fixture('backup-store-request.json'), body);
   assert.equal(body, readFileSync(fixture('backup-store-request.json'), 'utf8'),
     'store request changed; regenerate with YOUEYE_UPDATE_CONTRACTS=1 and run Spine\'s contract test');
+  const sent = JSON.parse(body).source;
+  for (const key of ['release', 'control_panel', 'ui', 'pointer']) assert.ok(sent[key], `the request carries ${key}`);
 });

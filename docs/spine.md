@@ -8,10 +8,18 @@ Spine is the host agent and the `youeye` CLI. An appliance has two kinds of Spin
 
   ```json
   {"schema":"youeye.spine-selection.v1","slots":{
-    "A":{"current":{"sha256":"…","version":"0.6.2-dev.3","helper_contract":1,"disk_layout":1},
+    "A":{"current":{"sha256":"…","version":"0.6.12-dev.4","line":"0.6.12","source_tree":"…","described_sha256":"…",
+                    "helper_contract":1,"disk_layout":1},
          "previous":{…},"trial":{…, "trial_starts":1}}},
    "updated_at":"…"}
   ```
+
+  An entry is identified by `sha256`: the payload is stored and checked under it, and nothing compares the other
+  fields with a running binary. `version` is the name the release gave this Spine (a build name up to 0.6.12),
+  else the line; it is never empty, because a Spine up to 0.6.11 in the other slot drops an entry without it.
+  `line` and `source_tree` (from 0.6.12) describe the binary for people; `described_sha256` says which binary they
+  describe, because an older Spine that replaces an entry keeps keys it does not know, and they are dropped unless
+  it equals the entry's `sha256`.
 
 ## Launching
 
@@ -26,23 +34,38 @@ choice untouched.
 A selected Spine is used only if its payload matches its digest, is not group- or world-writable, and declares the
 same `disk_layout` and `helper_contract` as the running source supports; otherwise the launcher logs why and falls
 back. Nothing else ties Spine to the image: a check that needs a trusted Spine accepts the seed or this slot's
-selected Spine.
+selected Spine. The image itself is tied to the installed release through an image binding on State
+(`core-update/image-bindings/<appliance sha256>.json`: the image's `image_version`, `build_id` and `source_tree`), not
+through any name ([core-release-contract.md](core-release-contract.md#the-update-transaction)).
 
 ## Commands
 
 | Command | Does |
 |---|---|
 | `youeye spine status` | seed, the Spine the booted slot runs, and both slots' selection |
-| `youeye spine install <file> --sha256 <d> --version <v>` | run a binary as a trial; keep it when healthy |
+| `youeye spine install <file> --sha256 <d> --version <v>` | run a binary as a trial; keep it when healthy (`--version` is the name in the selection record, shown and never compared) |
 | `youeye spine adopt` | run the installed release's Spine (first deployment calls this) |
 | `youeye spine rollback` | make the slot's previous Spine current |
 | `youeye spine use-seed` | clear the slot's selection; the seed runs |
 | `youeye boot first-deploy\|bless\|setup-gate\|network\|setup-page` | the boot steps (systemd units call these; `setup-page` is Go, the others embedded scripts) |
 | `youeye mdns run` / `youeye mdns name` | run Avahi for the LAN adapter (`youeye-mdns.service`) / print the published name |
 
-`youeye version` shows the running Spine and the seed; the Spine API has `GET /api/spine/status`. `youeye status`
-prints the Spine line as `(system image)` when the seed runs, or `(on State, current)` (`trial`, `previous`) when
-a selected Spine runs.
+`youeye version` shows the installed release's version (the release document's `version`; on dev that is the dev
+name) and, per part (System image, Spine, Control Panel, UI), the same version or `from <release>` when the part was
+reused from an earlier release (the full name on dev, only another line elsewhere). It never shows a build name.
+`youeye version --verbose` adds the release's tree and each member's tree and sha256; it shows no image identity
+(that is the image build's name). The Spine line says what runs: `0.6.13 (current on State, slot A)`, `(seed in the
+image, …)`, or "not the installed release's" with its sha256. The Control Panel line names the installed release
+when the container's `version.json` has the member's tree, else "not the installed release's: tree …". The
+installed release is the committed receipt's, or before the first commit the installer's selection, shown as
+`<version> (installing)`. `youeye status` and the console show the same release version. `youeye spine status`
+prints the same `release` line and, for the seed and each selected Spine, its line (`0.6.12`) and sha256; the record
+in `selection.json` keeps the stored names (build names up to 0.6.12), which a Spine up to 0.6.11 in the other slot
+reads. Messages about a selected Spine (a missing payload, a digest mismatch, an abandoned trial) name it by line and
+the start of its sha256. `youeye channel get` prints only the repository and channel. The Spine API has
+`GET /api/spine/status` (the same view); `GET /api/version` answers the binary's own `version` (unchanged, a 0.6.11
+Spine compares it during a Spine trial), the installed `release` (what callers show and compare) and the binary's
+`source_tree`. `GET /api/releases/channel` no longer has `installed_build`.
 
 Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
 `youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
@@ -107,8 +130,9 @@ check` fetches the index separately and unconditionally.
 1. The update downloads the release's Spine into the update cache and checks its SHA-256 against
    `core-release.json`.
 2. It stages the binary into the store and records it as the slot's trial.
-3. It restarts `youeye.service`. The trial is healthy when the service's main process runs exactly that binary, the
-   API socket reports its version, and Incus answers — within 60 seconds.
+3. It restarts `youeye.service`. The trial is healthy when the service's main process runs exactly that binary (by
+   SHA-256), the API socket answers `GET /api/version`, and Incus answers — within 60 seconds. What the binary calls
+   itself is not compared.
 4. Healthy: the trial becomes current (the old current becomes previous). Not healthy, or three crashed starts:
    the trial is dropped and the service restarts on the previous choice. Recovery of a failed System update also
    returns the slot to its previous Spine.
@@ -123,7 +147,10 @@ finished without releasing its holds, and starts its continuation again (same pa
 hand-over decision is written to the system journal of the coordinator's unit.
 
 The selection survives reboots. An image update selects the release's Spine for the slot it writes, so after the
-reboot the new slot runs it.
+reboot the new slot runs it. That is then the slot's whole record: what it held for the image that was there before
+is dropped, the previous Spine included, because an older Spine may not read what the new release writes. If the
+release's Spine cannot run, the slot runs the seed of its new image, and `youeye spine rollback` says the slot has
+no previous Spine until a Spine update on that slot leaves one.
 
 ## Compatibility
 

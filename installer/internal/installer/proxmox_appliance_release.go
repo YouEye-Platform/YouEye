@@ -80,7 +80,8 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, repositor
 		}
 	} else {
 		var choice releasecache.CoreChoice
-		choice, err = releasecache.ChooseCoreRelease(ctx, client, repository, channel, "")
+		// Nothing is installed yet: the channel head, whatever its minimum_release.
+		choice, err = releasecache.ChooseCoreRelease(ctx, client, repository, channel, releasecache.InstalledRelease{Fresh: true})
 		raw, manifest, digest, downloadBase = choice.Raw, choice.Release, choice.Digest, choice.Entry.DownloadBase
 	}
 	if err != nil {
@@ -112,8 +113,12 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	for _, member := range r.Members {
 		members[member.Role] = member
 	}
+	// The ISO and the image bundle come from one image build: the same tree
+	// here, and the ISO's own bundle manifest must be the appliance member by
+	// digest when it installs (bindCoreInstallBundle). Build names are not
+	// compared.
 	host, media := members["appliance"], members["media"]
-	if media.BuildVersion != host.BuildVersion || media.SourceTree != host.SourceTree {
+	if media.SourceTree != host.SourceTree {
 		return verifiedApplianceRelease{}, fmt.Errorf("core media differs from selected host build")
 	}
 	cacheDir := filepath.Join(cacheRoot, safeReleaseCacheName(release.TagName))
@@ -132,7 +137,9 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	if err != nil {
 		return verifiedApplianceRelease{}, err
 	}
-	if host.BuildVersion != manifest.ImageVersion || host.SourceTree != manifest.SourceTree {
+	// downloadCoreBlob checked the manifest against the appliance member's
+	// digest; the manifest names the image.
+	if host.SourceTree != manifest.SourceTree {
 		return verifiedApplianceRelease{}, fmt.Errorf("image differs from complete core selection")
 	}
 	isoSHA := media.Artifact.SHA256

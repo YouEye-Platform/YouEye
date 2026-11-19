@@ -77,14 +77,16 @@ func (m *Manager) verifyCoreHost(selection CoreHostSelection, verified VerifiedM
 	}
 	host := members["system-update"]
 	manifest := verified.Manifest
-	if host.Artifact.SHA256 != verified.SHA256 || host.Artifact.SizeBytes != int64(len(verified.Raw)) ||
-		host.BuildVersion != manifest.TargetImageVersion || host.SourceTree != manifest.SourceTree {
+	// The document binds the update manifest by digest, and the manifest binds
+	// every host payload by digest; the trees must agree. Build names are not
+	// compared: a document may carry none.
+	if host.Artifact.SHA256 != verified.SHA256 || host.Artifact.SizeBytes != int64(len(verified.Raw)) || host.SourceTree != manifest.SourceTree {
 		return r, "", fmt.Errorf("host update differs from core release membership")
 	}
 	for _, artifact := range manifest.Artifacts {
 		member, ok := members[artifact.Role]
 		if !ok || member.Artifact.Name != artifact.Path || member.Artifact.SHA256 != artifact.SHA256 || member.Artifact.SizeBytes != artifact.SizeBytes ||
-			member.BuildVersion != host.BuildVersion || member.SourceTree != host.SourceTree {
+			member.SourceTree != host.SourceTree {
 			return r, "", fmt.Errorf("host payload %s differs from core release membership", artifact.Role)
 		}
 	}
@@ -166,7 +168,7 @@ func (m *Manager) CheckCoreHostCommit() error {
 		if slot != journal.ActiveSlot || current.ImageVersion != journal.CurrentImage || state.Slots.Current != slot || state.Slots.CurrentImageVersion != current.ImageVersion || state.Slots.Candidate != "" || state.Transaction != (appliance.TransactionState{}) {
 			return fmt.Errorf("retained previous boot has not settled")
 		}
-		return BindCoreImage(receipt.Release, current)
+		return m.imageBinder().Bind(receipt.Release, current)
 	}
 	return m.requireCoreHostStep(journal, "commit-host")
 }

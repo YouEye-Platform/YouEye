@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireEmbedAdmin } from '@/lib/ui-bridge/auth';
 import { incusRequest } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
+import { installedRelease, releasePartVersion } from '@/lib/releases/installed-release';
 import { APP_DEFINITIONS } from '@/lib/apps/definitions';
 import { getLastCheckedAt, isCheckInProgress } from '@/lib/apps/update-cache';
 import { listReadableInstalledApps } from '@/lib/market/metadata';
@@ -60,13 +61,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
+    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult, releaseResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
       listReadableInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
+      installedRelease(),
     ]);
+    const release = releaseResult.status === 'fulfilled' ? releaseResult.value : null;
 
     const instancePaths =
       instancesResp.status === 'fulfilled' ? instancesResp.value.metadata ?? [] : [];
@@ -132,11 +135,9 @@ export async function GET(request: NextRequest) {
           };
         });
 
-        let version: string | undefined;
-        if (def.id === 'spine' && status) version = status.spine?.version;
+        // Spine, the Control Panel and the UI: the installed release's version, never a build name baked into them.
+        let version: string | undefined = releasePartVersion(def.id, release);
         if (def.id === 'incus' && status) version = status.incus?.version;
-        if (def.id === 'control-panel' && status) version = status.control_panel?.version;
-        if (def.id === 'ui' && status) version = status.ui?.version;
 
         let updateAvailable = false;
         let updateInfo: string | undefined;

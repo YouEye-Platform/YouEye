@@ -9,7 +9,7 @@
  * apps now talk to YE-UI, never to the Control Panel.
  */
 
-import { uiVersion } from "@/lib/build-version";
+import { youeyeVersion } from "@/lib/build-version";
 import { NextResponse } from "next/server";
 import { validateAppToken } from "@/lib/auth/app-token";
 import { db, ensureSchema } from "@/db";
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   const externalUrl = process.env.UI_EXTERNAL_URL || "https://localhost";
   const domain = externalUrl.replace(/^https?:\/\//, "");
 
-  const version = uiVersion();
+  const version = youeyeVersion();
 
 
   const [siteName, language] = await Promise.all([

@@ -58,11 +58,16 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 	return input, nil
 }
 
+// bindCoreInstallBundle ties the media to the selected release. The document
+// binds the bundle's appliance-manifest.json by SHA-256; that manifest names
+// the image (image_version, build_id, source_tree) and every media file. No
+// build name in the document is compared with the image version: a document
+// may carry none, and the image keeps its own identity.
 func bindCoreInstallBundle(release releasecache.CoreRelease, bundle verifiedApplianceBundle) error {
 	for _, member := range release.Members {
 		switch member.Role {
 		case "appliance":
-			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.BuildVersion != bundle.Manifest.ImageVersion || member.SourceTree != bundle.Manifest.SourceTree {
+			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.SourceTree != bundle.Manifest.SourceTree {
 				return fmt.Errorf("selected System does not contain this appliance media; use its matching ISO or an exact selection that contains this media")
 			}
 		}

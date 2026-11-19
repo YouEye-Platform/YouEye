@@ -45,7 +45,7 @@ func (m *Manager) CancelCoreHost(ctx context.Context, request string) error {
 		if state.Transaction != (appliance.TransactionState{}) || state.Slots.Candidate != "" {
 			return fmt.Errorf("unowned host preparation requires reconciliation")
 		}
-		return BindCoreImage(j.Previous.Release, current)
+		return m.imageBinder().Bind(j.Previous.Release, current)
 	}
 	if err != nil {
 		return err

@@ -66,6 +66,10 @@ export async function refreshAllUpdates(): Promise<void> {
   try {
     await checkAllLxdUpdates();
     checker.lastCheckedAt = new Date().toISOString();
+    // The UI reports the installed release. The publisher (installed-release.ts) writes it when the release changes;
+    // this pass also restores it when the UI container was replaced without a release change.
+    void import('@/lib/releases/installed-release').then(({ publishUIRelease }) => publishUIRelease())
+      .catch((error) => console.warn('[update-cache] The UI release version was not published:', error));
   } finally {
     checker.checking = false;
   }

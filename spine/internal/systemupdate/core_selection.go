@@ -111,23 +111,6 @@ func ValidateCorePolicy(policy ReleasePolicy, r releasecache.CoreRelease, digest
 	return nil
 }
 
-// BindCoreImage checks immutable media identity independently of the complete
-// installed release. Service-only selections may keep an older host version.
-func BindCoreImage(r releasecache.CoreRelease, image appliance.Manifest) error {
-	if image.ReleaseSet == nil {
-		return fmt.Errorf("core selection requires sealed image provenance")
-	}
-	for _, member := range r.Members {
-		switch member.Role {
-		case "appliance":
-			if member.BuildVersion != image.ImageVersion || member.SourceTree != image.SourceTree {
-				return fmt.Errorf("core host member differs from running immutable image")
-			}
-		}
-	}
-	return nil
-}
-
 // VerifyCoreInstalledMedia is the exact fresh-media gate, before service
 // deployment. It checks the digest-bound bundle and running immutable image
 // against the selected release without claiming that CP/UI are installed.
@@ -147,15 +130,15 @@ func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath 
 	if err != nil {
 		return ConvergenceResult{}, err
 	}
-	if err := BindCoreImage(r, image); err != nil {
+	if image.ReleaseSet == nil {
+		return ConvergenceResult{}, fmt.Errorf("core selection requires sealed image provenance")
+	}
+	member, err := coreApplianceMember(r)
+	if err != nil {
 		return ConvergenceResult{}, err
 	}
-	var member releasecache.CoreMember
-	for _, m := range r.Members {
-		if m.Role == "appliance" {
-			member = m
-		}
-	}
+	// The document binds the installed bundle manifest by digest; the bundle
+	// names the image; the running image's own marker must name the same one.
 	bundleRaw, err := ReadCoreState(bundlePath, 1<<20)
 	if err != nil {
 		return ConvergenceResult{}, err
@@ -164,10 +147,18 @@ func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath 
 	if member.Artifact.SHA256 != bundleDigest || member.Artifact.SizeBytes != int64(len(bundleRaw)) {
 		return ConvergenceResult{}, fmt.Errorf("core selection differs from installed bundle")
 	}
+	binding, err := parseCoreImageBundle(bundleRaw, member)
+	if err != nil {
+		return ConvergenceResult{}, fmt.Errorf("core selection differs from installed bundle: %w", err)
+	}
 	var bundle exactBundleManifest
-	if json.Unmarshal(bundleRaw, &bundle) != nil || bundle.Schema != "youeye.appliance.manifest.v1" || bundle.ImageVersion != image.ImageVersion || bundle.SourceTree != image.SourceTree || !reflect.DeepEqual(bundle.ReleaseSet, *image.ReleaseSet) {
+	if json.Unmarshal(bundleRaw, &bundle) != nil || binding.ImageVersion != image.ImageVersion || binding.BuildID != image.BuildID || binding.SourceTree != image.SourceTree || !reflect.DeepEqual(bundle.ReleaseSet, *image.ReleaseSet) {
 		return ConvergenceResult{}, fmt.Errorf("installed bundle differs from sealed image provenance")
 	}
+	// Keep the binding next to the release records (core-update is the sibling
+	// of the bootstrap directory). Later checks derive it from the same bundle
+	// when this write did not happen.
+	_ = coreImageBinder(filepath.Join(filepath.Dir(root), "core-update"), "").save(binding)
 	status := Status{Schema: StatusSchema, State: PhaseHealthy, CurrentImage: image.ImageVersion, RunningImage: image.ImageVersion, TargetImage: image.ImageVersion}
 	return ConvergenceResult{Schema: "youeye.first-boot-convergence.v1", Action: "core-media-current", SelectedTag: r.Tag, ManifestSHA256: digest, CurrentImage: image.ImageVersion, TargetImage: image.ImageVersion, Status: status}, nil
 }

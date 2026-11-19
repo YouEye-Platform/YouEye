@@ -115,13 +115,22 @@ is removed afterwards.
    - An answer disk (`YOUEYE_ANSWER`, Proxmox mode) still installs silently with NDJSON progress on the serial
      console.
 4. In the installer: pick the installation drive (it shows the drive's identity and what is on it), set networking,
-   optional SSH public keys and, under console access, an optional root password, and confirm erasure. The installer downloads the same release's
-   `core-release.json` over HTTPS and refuses to continue unless the ISO's image manifest matches its `appliance`
-   member.
+   optional SSH public keys and, under console access, an optional root password, and confirm erasure. The installer
+   reads the chosen channel's index, downloads the current release's `core-release.json` over HTTPS and refuses to
+   continue unless the ISO's image manifest is that document's `appliance` member (by SHA-256).
 5. The completion screen says the written images and boot files passed read-back ("Remove the USB stick after the
    machine turns off" in the graphical installer). Press Enter: the machine turns off. Then remove the USB drive and turn the machine on. Do not remove the drive before pressing Enter: the
    installer runs from it, and without it the machine cannot finish turning off. (Leaving the installer any other
    way, such as Esc on the first page, also turns the machine off.)
+
+### Old ISOs
+
+An ISO installs only a channel whose current release has the ISO's own image. Once a channel's head is 0.6.13, ISOs
+up to 0.6.11 also cannot read its release document (reader 1, "release needs a newer reader"), and every ISO with an
+older image stops with "selected System does not contain this appliance media". Nothing is written in either case.
+Download the ISO of the channel's current release, or install on Proxmox with `install.sh`, which runs the installer
+of the release it installs and so is never too old
+([troubleshooting.md](troubleshooting.md#an-older-installer-iso-stops)).
 
 ## What the installer writes
 
@@ -198,6 +207,12 @@ While installing: "Installing YouEye…", the current step, `Watch at http://you
 code of `http://<box IP>` (the IP always works on phones). Once ready and not yet claimed: `Set up at …` with the same
 QR code. After the claim it shows `Setup https://<box IP>` as before. The `.local` name is the one the box actually
 publishes (`youeye mdns name`): a second unclaimed box on the same LAN becomes `youeye-2.local`.
+
+The System line shows the installed release's version and the booted slot, `YouEye 0.6.13 · slot A`: the committed
+receipt's version, or before first deployment records one the version being installed, `YouEye 0.6.13
+(installing)`. On dev it is the dev name (`0.6.13-dev.5`). It never shows the image's build name
+(`appliance/scripts/youeye-console-status` in the image, from the 0.6.12 image on, and the installer's console in
+`installer/internal/installer/appliance_console.go`).
 
 ### youeye.local and HTTP
 

@@ -15,6 +15,7 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
 	"github.com/youeye-platform/YouEye/spine/internal/spineselect"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
@@ -30,6 +31,34 @@ type coreDeploymentFixture struct {
 }
 
 func coreTestHash(raw []byte) string { return fmt.Sprintf("%x", sha256.Sum256(raw)) }
+
+// useFixtureImageBindings makes root the installed box's record of which image
+// each accepted release stands for (core-update/image-bindings on State).
+func useFixtureImageBindings(t *testing.T, root string) {
+	t.Helper()
+	old := systemupdate.InstalledCoreImageBinder
+	systemupdate.InstalledCoreImageBinder = func() systemupdate.CoreImageBinder { return systemupdate.CoreImageBinder{Root: root} }
+	t.Cleanup(func() { systemupdate.InstalledCoreImageBinder = old })
+}
+
+// bindFixtureImage records that release's appliance member stands for image,
+// as a box does once it has seen the release's bundle manifest.
+func bindFixtureImage(t *testing.T, release releasecache.CoreRelease, image appliance.Manifest) {
+	t.Helper()
+	member, ok := release.Member("appliance")
+	if !ok {
+		t.Fatal("release has no appliance member")
+	}
+	raw, _ := json.Marshal(map[string]string{"schema": "youeye.core-image-binding.v1", "appliance_sha256": member.Artifact.SHA256,
+		"image_version": image.ImageVersion, "build_id": image.BuildID, "source_tree": image.SourceTree})
+	dir := filepath.Join(systemupdate.InstalledCoreImageBinder().Root, "image-bindings")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, member.Artifact.SHA256+".json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // newCoreDeploymentFixture installs the shared core-release.json as the
 // accepted release. The image carries an older CP/UI (reused media): first
@@ -60,11 +89,14 @@ func newCoreDeploymentFixture(t *testing.T) *coreDeploymentFixture {
 		}
 	}
 	oldPolicy, oldSelection, oldExecutable, oldCfg, oldVersion, oldReader := deploymentPolicyPath, coreSelectionRoot, applianceExecutablePath, cfg, Version, coreInstalledReaderHost
-	oldVerifyRunning := verifyRunningSpine
+	oldVerifyRunning, oldReceipts := verifyRunningSpine, coreReceiptRoot
 	t.Cleanup(func() {
 		deploymentPolicyPath, coreSelectionRoot, applianceExecutablePath, cfg, Version = oldPolicy, oldSelection, oldExecutable, oldCfg, oldVersion
-		coreInstalledReaderHost, verifyRunningSpine = oldReader, oldVerifyRunning
+		coreInstalledReaderHost, verifyRunningSpine, coreReceiptRoot = oldReader, oldVerifyRunning, oldReceipts
 	})
+	// No release is committed yet: the fixture is a box in first deployment.
+	coreReceiptRoot = filepath.Join(f.root, "core-update")
+	useFixtureImageBindings(t, coreReceiptRoot)
 	// The fixture binary is the seed baked into the image; the running Spine
 	// must be it or a Spine selected for the booted slot (none here).
 	verifyRunningSpine = func(executable string) error {
@@ -113,10 +145,12 @@ func (f *coreDeploymentFixture) writeSelection(t *testing.T) {
 	spine, _ := f.release.Member("spine")
 	Version = spine.BuildVersion
 	older := appliance.ComponentRelease{Version: "0.6.0-dev.3", SourceTree: strings.Repeat("2", 40), ArtifactSHA256: strings.Repeat("b", 64)}
-	f.image = appliance.Manifest{ImageVersion: media.BuildVersion, SourceTree: media.SourceTree, ReleaseSet: &appliance.ReleaseSet{
+	// The image's own identity is not a name the document repeats.
+	f.image = appliance.Manifest{ImageVersion: "0.6.0-dev.7", BuildID: "appliance-111111111111-1", SourceTree: media.SourceTree, ReleaseSet: &appliance.ReleaseSet{
 		Spine:        appliance.ComponentRelease{Version: spine.BuildVersion, SourceTree: spine.SourceTree, ArtifactSHA256: spine.Artifact.SHA256},
 		ControlPanel: older, UI: older,
 	}}
+	bindFixtureImage(t, f.release, f.image)
 }
 
 func TestCoreFirstDeploymentKeepsSealedImage(t *testing.T) {
@@ -206,8 +240,8 @@ func TestCoreDeploymentRejectsChangedSelection(t *testing.T) {
 
 func TestCoreFirstDeploymentHealthChecksReleaseMembers(t *testing.T) {
 	f := newCoreDeploymentFixture(t)
-	oldRoot, oldVersion := coreInstalledHealthStateRoot, firstDeployPackageVersion
-	t.Cleanup(func() { coreInstalledHealthStateRoot, firstDeployPackageVersion = oldRoot, oldVersion })
+	oldRoot, oldIdentity := coreInstalledHealthStateRoot, firstDeployPackageIdentity
+	t.Cleanup(func() { coreInstalledHealthStateRoot, firstDeployPackageIdentity = oldRoot, oldIdentity })
 	coreInstalledHealthStateRoot = filepath.Join(f.root, "core-state")
 	t.Cleanup(update.SetProvenanceDir(filepath.Join(f.root, "provenance")))
 	versions := map[string]string{}
@@ -224,7 +258,12 @@ func TestCoreFirstDeploymentHealthChecksReleaseMembers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	firstDeployPackageVersion = func(container, _ string) string { return versions[container] }
+	// Trees built before 0.6.12 say only a version (compared with the member's
+	// build name); later ones say their git tree, which decides.
+	trees := map[string]string{}
+	firstDeployPackageIdentity = func(name, _ string) container.InstalledIdentity {
+		return container.InstalledIdentity{Version: versions[name], SourceTree: trees[name]}
+	}
 	checks := map[string]string{}
 	observe := func() {
 		checks = map[string]string{}
@@ -260,6 +299,20 @@ func TestCoreFirstDeploymentHealthChecksReleaseMembers(t *testing.T) {
 	if checks["Server interface provenance"] != "pass" || checks["YouEye interface provenance"] != "fail" {
 		t.Fatal("changed installed digest passed health", checks)
 	}
+	// A tree that says what it was built from is judged by that: the member's
+	// tree passes whatever version the tree shows; another tree fails even
+	// under the member's build name.
+	cp, _ := f.release.Member("cp")
+	versions["youeye-control"], trees["youeye-control"] = "0.6.99", cp.SourceTree
+	observe()
+	if checks["Server interface provenance"] != "pass" {
+		t.Fatal("the member's own tree failed health", checks)
+	}
+	versions["youeye-control"], trees["youeye-control"] = cp.BuildVersion, strings.Repeat("9", 40)
+	observe()
+	if checks["Server interface provenance"] != "fail" {
+		t.Fatal("another tree passed under the member's build name", checks)
+	}
 }
 
 // The System update source is host-owned: currentCoreSelection reads only the
@@ -267,7 +320,8 @@ func TestCoreFirstDeploymentHealthChecksReleaseMembers(t *testing.T) {
 func TestCoreSelectionFollowsProtectedPolicy(t *testing.T) {
 	f := newCoreDeploymentFixture(t)
 	selection, err := currentCoreSelection()
-	want := systemupdate.CoreReleaseSelection{Repository: f.policy.Repository, Channel: "dev"}
+	// The fixture box has no committed receipt yet: a fresh install, said so.
+	want := systemupdate.CoreReleaseSelection{Repository: f.policy.Repository, Channel: "dev", FreshInstall: true}
 	if err != nil || selection != want {
 		t.Fatalf("selection = %+v, %v; want %+v", selection, err, want)
 	}

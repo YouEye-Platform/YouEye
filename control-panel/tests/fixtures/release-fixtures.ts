@@ -5,13 +5,16 @@ export const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes
 export const tree = 'a'.repeat(40);
 
 /** A host-independent product release document over the given assets. */
-export function productFixture(product: string, version: string, repository: string, assets: Record<string, Buffer>, options: { kind?: ProductBuild['kind']; primary?: string; sequence?: number; contract?: Buffer; build?: string } = {}) {
-  // `build` defaults to `version` (a dev release); a promoted release passes the build it renames.
-  const build: ProductBuild = {schema:'youeye.product-build.v1',product,kind:options.kind ?? 'native',build_version:options.build ?? version,source_tree:tree,
+export function productFixture(product: string, version: string, repository: string, assets: Record<string, Buffer>, options: { kind?: ProductBuild['kind']; primary?: string; sequence?: number; contract?: Buffer; build?: string; clean?: boolean } = {}) {
+  // The old shape (up to 0.6.12): the build manifest names its `build_version`, which defaults to `version` (a dev
+  // release; a promoted release passes the build it renames), and the document says reader 1. `clean` is the new
+  // shape (from 0.6.13): no build name, reader 2.
+  const build: ProductBuild = {schema:'youeye.product-build.v1',product,kind:options.kind ?? 'native',
+    ...(options.clean ? {} : {build_version:options.build ?? version}),source_tree:tree,
     input_sha256:'b'.repeat(64),contract_sha256:sha(options.contract ?? Buffer.from('contract')),primary:options.primary ?? 'standalone.tar',
     assets:Object.entries(assets).map(([name, bytes]) => ({name,sha256:sha(bytes),size_bytes:bytes.length}))};
   const release: ProductRelease = {schema:'youeye.product-release.v1',product,version,tag:productTag(version),source_tree:tree,
-    sequence:options.sequence ?? 1762950000,minimum_reader:1,authority:'digest',build_manifest_base64:Buffer.from(JSON.stringify(build)).toString('base64')};
+    sequence:options.sequence ?? 1762950000,minimum_reader:options.clean ? 2 : 1,authority:'digest',build_manifest_base64:Buffer.from(JSON.stringify(build)).toString('base64')};
   return {build, release, raw: Buffer.from(JSON.stringify(release)), repository, tag: release.tag};
 }
 
@@ -38,6 +41,7 @@ export function fakeReleaseHost(files: Map<string, Buffer>, status: Record<strin
 }
 
 /** The Spine answer for GET /api/releases/index over the given entries. */
+/** `build` is the temporary entry field for readers up to 0.6.11 (it equals `version` unless given); this reader ignores it. */
 export function spineIndex(repository: string, channel: string, entries: Record<string, { repository: string; tag: string; version: string; build?: string; raw: Buffer; document?: string }>) {
   const products = Object.fromEntries(Object.entries(entries).map(([product, e]) => [product, {
     repository: e.repository, tag: e.tag, version: e.version, build: e.build ?? e.version, document: e.document ?? 'product-release.json', sha256: sha(e.raw),

@@ -69,7 +69,7 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${selected.release.version})`, progress: 100 });
     return;
   }
-  acceptProductSequence(before.floors, selected);
+  acceptProductSequence(before.floors, selected, installed);
   if (await updateIdenticalPointerRelease(appUpdateJournalStore(), selected)) {
     markAppUpdated(appDef.id);
     emit({ stage: 'completed', message: `${appDef.displayName} release label updated to ${selected.release.version}`, progress: 100 });
@@ -134,7 +134,7 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     const receipt = productReceipt(selected);
     const runtimeUUID = await publishProductProjection(containerName, receipt);
     await verifyProductProjection(containerName, receipt, runtimeUUID);
-    await savePointerReleaseState({ schema: 'youeye.installed-pointer.v1', installed: { receipt, runtimeUUID, acceptedAt: new Date().toISOString() }, floors: acceptProductSequence(before.floors, selected) });
+    await savePointerReleaseState({ schema: 'youeye.installed-pointer.v1', installed: { receipt, runtimeUUID, acceptedAt: new Date().toISOString() }, floors: acceptProductSequence(before.floors, selected, installed) });
 
     await deleteSnapshot(containerName, SNAPSHOT_NAME);
     markAppUpdated(appDef.id);

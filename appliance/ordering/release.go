@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
-// ReleaseVersion is the public release identity, separate from source/channel
-// authority. CompareVersion must only be used after the caller selects a source.
-// ParseVersion orders any dotted version (3-10 components); release producers
-// use ParseReleaseVersion and never encode channel identity as numeric depth.
+// ReleaseVersion is a release name: X.Y.Z or X.Y.Z-token.N. It is a label and
+// is never ordered: releases are ordered by line and build sequence
+// (releasecache.CompareReleases). This package orders image identities only
+// (ParseVersion, CompareVersion); ParseReleaseVersion reads a name for display.
 type ReleaseVersion struct {
 	Core    [3]uint64
 	Token   string
@@ -52,31 +51,4 @@ func (v ReleaseVersion) String() string {
 		return fmt.Sprintf("%s-%s.%d", base, v.Token, v.Counter)
 	}
 	return base
-}
-
-func CompareReleaseVersion(a, b ReleaseVersion) int {
-	for i := range a.Core {
-		if a.Core[i] < b.Core[i] {
-			return -1
-		}
-		if a.Core[i] > b.Core[i] {
-			return 1
-		}
-	}
-	if a.Token != b.Token {
-		if a.Token == "" {
-			return 1
-		}
-		if b.Token == "" {
-			return -1
-		}
-		return strings.Compare(a.Token, b.Token)
-	}
-	if a.Counter < b.Counter {
-		return -1
-	}
-	if a.Counter > b.Counter {
-		return 1
-	}
-	return 0
 }

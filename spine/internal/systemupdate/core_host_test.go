@@ -158,6 +158,9 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 			image.ReleaseSet.Spine = appliance.ComponentRelease{Version: member.BuildVersion, SourceTree: member.SourceTree, ArtifactSHA256: member.Artifact.SHA256}
 		}
 	}
+	// The box saw the target's bundle manifest at verify-members: its image
+	// (here an image an earlier release built) is on record for the release.
+	bindImageForTest(t, cm.Root, r, image)
 	imageRaw, _ := json.Marshal(image)
 	// The installed image manifest is read-only (0444); root overwrites it on a box, a test user replaces it.
 	_ = os.Remove(f.manager.config.CurrentManifestPath)

@@ -45,13 +45,42 @@ const (
 
 var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// Entry identifies one Spine runtime and what it was built for.
+// Entry identifies one Spine runtime and what it was built for. SHA256 is its
+// identity: the payload is stored and checked under it, and nothing compares
+// the other fields with a running binary.
+//
+// Version, Line and SourceTree describe it for people. Version is never
+// empty, because every Spine that may run on this box reads the record, and
+// one up to 0.6.11 skips an entry without it: it holds the name the release
+// gave this Spine (a build name up to 0.6.12), else what the binary reports,
+// else the line. Line (X.Y.Z) and SourceTree (the git tree it was built from)
+// are written from 0.6.12 on and absent in older entries.
+//
+// DescribedSHA256 says which binary Line and SourceTree describe. An older
+// Spine that replaces an entry keeps the keys it does not know in place
+// (jsonkeep), so they could end up next to another binary's digest; Load
+// drops them unless DescribedSHA256 is the entry's own SHA256.
 type Entry struct {
-	SHA256         string `json:"sha256"`
-	Version        string `json:"version"`
-	HelperContract int    `json:"helper_contract"`
-	DiskLayout     int    `json:"disk_layout"`
-	TrialStarts    int    `json:"trial_starts,omitempty"`
+	SHA256          string `json:"sha256"`
+	Version         string `json:"version"`
+	Line            string `json:"line,omitempty"`
+	SourceTree      string `json:"source_tree,omitempty"`
+	DescribedSHA256 string `json:"described_sha256,omitempty"`
+	HelperContract  int    `json:"helper_contract"`
+	DiskLayout      int    `json:"disk_layout"`
+	TrialStarts     int    `json:"trial_starts,omitempty"`
+}
+
+// describe keeps Line and SourceTree only for the binary they were written
+// for, and marks them as this entry's.
+func (e *Entry) describe(trusted bool) {
+	if !trusted && e.DescribedSHA256 != e.SHA256 {
+		e.Line, e.SourceTree = "", ""
+	}
+	e.DescribedSHA256 = ""
+	if e.Line != "" || e.SourceTree != "" {
+		e.DescribedSHA256 = e.SHA256
+	}
 }
 
 // Slot is the selection of one System slot.
@@ -133,6 +162,9 @@ func Load(root string) (Selection, error) {
 			if *e != nil && (*e).valid() != nil {
 				*e = nil
 			}
+			if *e != nil {
+				(*e).describe(false)
+			}
 		}
 	}
 	return s, nil
@@ -150,14 +182,30 @@ func (s *Selection) slot(name string) *Slot {
 
 // Save atomically replaces the selection record.
 func Save(root string, s Selection, now time.Time) error {
+	return save(root, s, now, "")
+}
+
+// save is Save; replaced names a slot whose record is written whole (an image
+// update wrote the slot), so nothing the old record held for it is kept.
+func save(root string, s Selection, now time.Time, replaced string) error {
 	s.Schema = selectionSchema
 	s.UpdatedAt = now.UTC()
 	for name, slot := range s.Slots {
 		if slot == nil || slot.Current == nil && slot.Previous == nil && slot.Trial == nil {
 			delete(s.Slots, name)
+			continue
+		}
+		// Entries in memory came from Load (checked) or from this Spine.
+		for _, e := range []*Entry{slot.Current, slot.Previous, slot.Trial} {
+			if e != nil {
+				e.describe(true)
+			}
 		}
 	}
 	previous, _ := os.ReadFile(filepath.Join(root, selectionFile))
+	if replaced != "" {
+		previous = withoutSlot(previous, replaced)
+	}
 	raw, err := jsonkeep.Marshal(s, previous)
 	if err != nil {
 		return err
@@ -193,6 +241,32 @@ func Save(root string, s Selection, now time.Time) error {
 		return err
 	}
 	return syncDir(root)
+}
+
+// withoutSlot is the record without what it holds for one slot: neither keys
+// this Spine doesn't know nor entries it can't read are carried over from it.
+// A record that can't be taken apart is not carried over at all.
+func withoutSlot(record []byte, name string) []byte {
+	var fields map[string]json.RawMessage
+	if len(record) == 0 || json.Unmarshal(record, &fields) != nil {
+		return nil
+	}
+	var slots map[string]json.RawMessage
+	if len(fields["slots"]) > 0 && json.Unmarshal(fields["slots"], &slots) != nil {
+		return nil
+	}
+	if _, held := slots[name]; !held {
+		return record
+	}
+	delete(slots, name)
+	var err error
+	if fields["slots"], err = json.Marshal(slots); err != nil {
+		return nil
+	}
+	if record, err = json.Marshal(fields); err != nil {
+		return nil
+	}
+	return record
 }
 
 // keepUnreadable puts back the slots and entries of previous that Load
@@ -253,10 +327,10 @@ func syncDir(dir string) error {
 // Compatible reports whether e can run on host.
 func Compatible(e Entry, host Host) error {
 	if e.DiskLayout != host.DiskLayout {
-		return fmt.Errorf("selected Spine %s targets disk layout %d, host is %d", e.Version, e.DiskLayout, host.DiskLayout)
+		return fmt.Errorf("selected Spine %s targets disk layout %d, host is %d", e.label(), e.DiskLayout, host.DiskLayout)
 	}
 	if e.HelperContract != host.HelperContract {
-		return fmt.Errorf("selected Spine %s needs helper contract %d, host provides %d", e.Version, e.HelperContract, host.HelperContract)
+		return fmt.Errorf("selected Spine %s needs helper contract %d, host provides %d", e.label(), e.HelperContract, host.HelperContract)
 	}
 	return nil
 }
@@ -272,17 +346,17 @@ func Verify(root string, e Entry, host Host) (string, error) {
 	path := PayloadPath(root, e.SHA256)
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("selected Spine %s payload is missing", e.Version)
+		return "", fmt.Errorf("selected Spine %s payload is missing", e.label())
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
-		return "", fmt.Errorf("selected Spine %s payload has unsafe type or permissions", e.Version)
+		return "", fmt.Errorf("selected Spine %s payload has unsafe type or permissions", e.label())
 	}
 	got, err := FileDigest(path)
 	if err != nil {
 		return "", err
 	}
 	if got != e.SHA256 {
-		return "", fmt.Errorf("selected Spine %s payload digest mismatch", e.Version)
+		return "", fmt.Errorf("selected Spine %s payload digest mismatch", e.label())
 	}
 	return path, nil
 }
@@ -329,7 +403,7 @@ func Resolve(root, slotName string, host Host, countTrialStart bool, now time.Ti
 	var res Resolution
 	if slot.Trial != nil {
 		if slot.Trial.TrialStarts >= MaxTrialStarts {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("trial Spine %s abandoned after %d unconfirmed starts", slot.Trial.Version, slot.Trial.TrialStarts))
+			res.Skipped = append(res.Skipped, fmt.Sprintf("trial Spine %s abandoned after %d unconfirmed starts", slot.Trial.label(), slot.Trial.TrialStarts))
 			slot.Trial = nil
 			if err := Save(root, s, now); err != nil {
 				return res, err
@@ -400,7 +474,7 @@ func Stage(root, src string, e Entry) error {
 	}
 	if hex.EncodeToString(h.Sum(nil)) != e.SHA256 {
 		tmp.Close()
-		return fmt.Errorf("staged Spine %s digest mismatch", e.Version)
+		return fmt.Errorf("staged Spine %s digest mismatch", e.label())
 	}
 	if err := tmp.Chmod(0o500); err != nil {
 		tmp.Close()
@@ -473,9 +547,13 @@ func Abort(root, slotName string, now time.Time) error {
 	return Save(root, s, now)
 }
 
-// Select makes e the slot's current Spine directly (used when an image update
-// writes a slot: the new slot boots with its release's Spine). The previous
-// current becomes previous.
+// Select makes e the only selected Spine of a slot an image update just
+// wrote: the new slot boots with its release's Spine. What the record held for
+// the slot belonged to the image that was there before, so none of it stays,
+// not as previous either: an older Spine may not read what the new release
+// writes (the installed receipt, the records on State). When e cannot run, the
+// slot falls back to the seed of its own image, which is the release's Spine
+// or the one its image was built with.
 func Select(root, slotName string, e Entry, host Host, now time.Time) error {
 	if !validSlot(slotName) {
 		return fmt.Errorf("unknown System slot %q", slotName)
@@ -487,14 +565,9 @@ func Select(root, slotName string, e Entry, host Host, now time.Time) error {
 	if err != nil && !errors.Is(err, ErrNoSelection) {
 		return err
 	}
-	slot := s.slot(slotName)
 	e.TrialStarts = 0
-	if slot.Current != nil && slot.Current.SHA256 != e.SHA256 {
-		prev := *slot.Current
-		slot.Previous = &prev
-	}
-	slot.Current, slot.Trial = &e, nil
-	return Save(root, s, now)
+	s.Slots[slotName] = &Slot{Current: &e}
+	return save(root, s, now, slotName)
 }
 
 // Rollback makes the slot's previous Spine current again.
@@ -505,7 +578,7 @@ func Rollback(root, slotName string, now time.Time) error {
 	}
 	slot := s.Slots[slotName]
 	if slot == nil || slot.Previous == nil {
-		return fmt.Errorf("slot %s has no previous Spine", slotName)
+		return fmt.Errorf("slot %s has no previous Spine (`youeye spine use-seed` runs the seed of its image)", slotName)
 	}
 	slot.Current, slot.Previous, slot.Trial = slot.Previous, slot.Current, nil
 	return Save(root, s, now)

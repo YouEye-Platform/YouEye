@@ -1,0 +1,28 @@
+{
+  "schema": "youeye.release-order-vectors",
+  "about": "Plan 12: releases are ordered by line (X.Y.Z, numeric), then by the build's sequence. Names (dev/alpha/beta/none) are labels and never decide. 'build' is the old-shape field and is ignored. Read by releasecache tests (Go) and control-panel/tests/version-vectors.spec.ts.",
+  "compare": [
+    {"name": "dev builds of one line by sequence", "a": {"version": "0.6.13-dev.5", "sequence": 100}, "b": {"version": "0.6.13-dev.6", "sequence": 200}, "want": -1},
+    {"name": "promoted older than a newer dev build of its line", "a": {"version": "0.6.13", "sequence": 100}, "b": {"version": "0.6.13-dev.6", "sequence": 200}, "want": -1},
+    {"name": "dev build newer than the promoted one", "a": {"version": "0.6.13-dev.6", "sequence": 200}, "b": {"version": "0.6.13", "sequence": 100}, "want": 1},
+    {"name": "promoted newer than an older dev build", "a": {"version": "0.6.13-beta.1", "sequence": 300}, "b": {"version": "0.6.13-dev.6", "sequence": 200}, "want": 1},
+    {"name": "alpha and beta of one build are equal", "a": {"version": "0.6.13-alpha.1", "sequence": 100}, "b": {"version": "0.6.13-beta.1", "sequence": 100}, "want": 0},
+    {"name": "final and alpha of one build are equal", "a": {"version": "0.6.13", "sequence": 100}, "b": {"version": "0.6.13-alpha.1", "sequence": 100}, "want": 0},
+    {"name": "final and dev of one build are equal", "a": {"version": "0.6.13", "sequence": 100}, "b": {"version": "0.6.13-dev.5", "sequence": 100}, "want": 0},
+    {"name": "labels never decide (alpha.2 vs dev.1)", "a": {"version": "0.6.13-alpha.2", "sequence": 100}, "b": {"version": "0.6.13-dev.1", "sequence": 200}, "want": -1},
+    {"name": "line first, even with a higher sequence", "a": {"version": "0.6.12", "sequence": 500}, "b": {"version": "0.6.13-dev.1", "sequence": 400}, "want": -1},
+    {"name": "lines compare numerically (patch)", "a": {"version": "0.6.9", "sequence": 900}, "b": {"version": "0.6.10-dev.1", "sequence": 100}, "want": -1},
+    {"name": "lines compare numerically (minor)", "a": {"version": "0.10.0-dev.1", "sequence": 1}, "b": {"version": "0.9.9", "sequence": 2}, "want": 1},
+    {"name": "lines compare numerically (major)", "a": {"version": "1.0.0", "sequence": 1}, "b": {"version": "0.99.0", "sequence": 2}, "want": 1},
+    {"name": "old shape equals new shape of one build (build ignored)", "a": {"version": "0.6.12-beta.1", "build": "0.6.12-dev.4", "sequence": 1795100000}, "b": {"version": "0.6.12-dev.4", "sequence": 1795100000}, "want": 0},
+    {"name": "old shape: build does not decide", "a": {"version": "0.6.11", "build": "0.6.11-dev.6", "sequence": 1795042574}, "b": {"version": "0.6.11-dev.7", "sequence": 1795050000}, "want": -1}
+  ],
+  "minimum_release": [
+    {"name": "line floor met by a dev build of the line", "installed": "0.6.12-dev.3", "minimum": "0.6.12", "ok": true},
+    {"name": "line floor met by a promoted release of the line", "installed": "0.6.12", "minimum": "0.6.12", "ok": true},
+    {"name": "line floor not met by an older line", "installed": "0.6.11", "minimum": "0.6.12", "ok": false},
+    {"name": "old-shape floor is read as its line", "installed": "0.6.12", "minimum": "0.6.5-dev.2", "ok": true},
+    {"name": "old-shape floor: any release of the line passes", "installed": "0.6.5-alpha.1", "minimum": "0.6.5-dev.2", "ok": true},
+    {"name": "old-shape floor not met by an older line", "installed": "0.6.4", "minimum": "0.6.5-dev.2", "ok": false}
+  ]
+}

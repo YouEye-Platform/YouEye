@@ -15,6 +15,7 @@ function updateCache(checks: { count: number }) {
   return load('src/lib/apps/update-cache.ts', {
     './lxd-updates': { checkAllLxdUpdates: async () => { checks.count++; return new Map(); }, clearLxdUpdateCache: () => {} },
     '@/lib/infrastructure/deployer': { isDeploymentInProgress: () => false },
+    '@/lib/releases/installed-release': { publishUIRelease: async () => {} },
   });
 }
 
@@ -92,12 +93,12 @@ test('the OCI digest check is gone; the UI and Pointer checks stay', () => {
   assert.doesNotMatch(builtIn, /imageRef:/);
 });
 
-/** lxd-updates.ts over fakes: the UI is a member of the System release at `version`. */
+/** lxd-updates.ts over fakes: the UI is a member of the System release `version`. */
 function lxdUpdates(version: { value: string }) {
   return load('src/lib/apps/lxd-updates.ts', {
-    '@/lib/version': { compareVersions: () => 0 },
+    '@/lib/version': { compareReleases: () => 0, releaseKey: () => ({ line: '0.6.11', sequence: 1 }) },
     '@/lib/releases/channel-index': { describeReleaseError: (error: unknown) => String(error), readChannelIndex: async () => ({ index: { products: {} } }) },
-    '@/lib/releases/core-release': { selectedCoreRole: () => ({ member: { build_version: version.value } }) },
+    '@/lib/releases/core-release': { loadSelectedCore: () => ({ version: version.value }) },
     '@/lib/updates/provenance': { getCoreProvenance: async () => null },
     './definitions': { APP_DEFINITIONS: [{ id: 'ui', lxdConfig: {}, containers: ['ui'] }] },
   });
@@ -109,13 +110,13 @@ test('the check that instrumentation runs is what the API routes read: every cop
   const clear = () => { for (const key of keys) delete (globalThis as Record<symbol, unknown>)[key]; };
   clear();
   t.after(clear);
-  const version = { value: '0.6.11-dev.3' };
+  const version = { value: '0.6.11-beta.1' };
   const instrumentationCopy = lxdUpdates(version);
   const routeCopy = lxdUpdates(version);
   assert.equal(routeCopy.getAllCachedLxdUpdates().size, 0);
   await instrumentationCopy.checkAllLxdUpdates();
-  assert.equal(routeCopy.getAllCachedLxdUpdates().get('ui')?.installedVersion, '0.6.11-dev.3', 'the route sees the result');
-  assert.equal(routeCopy.getCachedLxdUpdate('ui')?.installedVersion, '0.6.11-dev.3');
+  assert.equal(routeCopy.getAllCachedLxdUpdates().get('ui')?.installedVersion, '0.6.11-beta.1', 'the route sees the result');
+  assert.equal(routeCopy.getCachedLxdUpdate('ui')?.installedVersion, '0.6.11-beta.1');
   routeCopy.clearLxdUpdateCache('ui');
   assert.equal(instrumentationCopy.getCachedLxdUpdate('ui'), null, 'and a clear from an update route reaches the checker');
 
@@ -126,6 +127,7 @@ test('the check that instrumentation runs is what the API routes read: every cop
   const updateCacheCopy = () => load('src/lib/apps/update-cache.ts', {
     './lxd-updates': { checkAllLxdUpdates: async () => { runs.count++; await running; return instrumentationCopy.checkAllLxdUpdates(); }, clearLxdUpdateCache: () => {} },
     '@/lib/infrastructure/deployer': { isDeploymentInProgress: () => false },
+    '@/lib/releases/installed-release': { publishUIRelease: async () => {} },
   });
   const checker = updateCacheCopy();
   const route = updateCacheCopy();
@@ -138,7 +140,7 @@ test('the check that instrumentation runs is what the API routes read: every cop
   await check;
   assert.equal(route.isCheckInProgress(), false);
   assert.ok(route.getLastCheckedAt());
-  assert.equal(routeCopy.getCachedLxdUpdate('ui')?.installedVersion, '0.6.11-dev.3');
+  assert.equal(routeCopy.getCachedLxdUpdate('ui')?.installedVersion, '0.6.11-beta.1');
   // One timer for the process, whichever copy starts or stops it.
   mock.timers.enable({ apis: ['setTimeout'] });
   t.after(() => mock.timers.reset());

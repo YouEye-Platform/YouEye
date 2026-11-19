@@ -84,7 +84,10 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 			image.ReleaseSet.UI = c
 		}
 	}
-	bundle, _ := json.Marshal(exactBundleManifest{Schema: "youeye.appliance.manifest.v1", ImageVersion: image.ImageVersion, SourceTree: image.SourceTree, ReleaseSet: *image.ReleaseSet})
+	// The image has its own identity; the document's build names (here those
+	// of the fixture, another build) are not compared with it.
+	image.ImageVersion, image.BuildID = "0.6.0-dev.9", "appliance-0123456789ab-1"
+	bundle, _ := json.Marshal(exactBundleManifest{Schema: "youeye.appliance.manifest.v1", ImageVersion: image.ImageVersion, BuildID: image.BuildID, SourceTree: image.SourceTree, ReleaseSet: *image.ReleaseSet})
 	for i := range r.Members {
 		if r.Members[i].Role == "appliance" {
 			m := &r.Members[i]
@@ -96,7 +99,11 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	state := t.TempDir()
+	root := filepath.Join(state, "bootstrap")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
 	policy := ReleasePolicy{Schema: ReleasePolicySchema, Repository: "https://forge.example/owner/YouEye", Channel: "stable", CoreManifestSHA256: digest}
 	writeCoreSelectionFixture(t, root, raw, policy)
 	imageRaw, _ := json.Marshal(image)
@@ -109,8 +116,27 @@ func TestCoreFreshMediaSeparatesSharedReleaseFromReusedImage(t *testing.T) {
 		return VerifyCoreInstalledMedia(policy, root, filepath.Join(root, "image.json"), filepath.Join(root, "bundle.json"))
 	}
 	result, err := check()
-	if err != nil || result.SelectedTag != r.Tag || result.CurrentImage != media.BuildVersion {
+	if err != nil || result.SelectedTag != r.Tag || result.CurrentImage != "0.6.0-dev.9" {
 		t.Fatal(result, err)
+	}
+	// The verified media's image is kept for the release, next to the release
+	// records, so later checks need neither the bundle nor a build name.
+	if err := (CoreImageBinder{Root: filepath.Join(state, "core-update")}).Bind(r, image); err != nil {
+		t.Fatal("fresh media did not record its image binding:", err)
+	}
+	// A running image that is another build of the same version and tree is
+	// not the installed bundle's image.
+	other := image
+	other.BuildID = "appliance-0123456789ab-2"
+	otherRaw, _ := json.Marshal(other)
+	if err := os.WriteFile(filepath.Join(root, "image.json"), otherRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := check(); err == nil {
+		t.Fatal("another image build passed as the installed bundle's image")
+	}
+	if err := os.WriteFile(filepath.Join(root, "image.json"), imageRaw, 0600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "bundle.json"), append(bundle, ' '), 0600); err != nil {
 		t.Fatal(err)

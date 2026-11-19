@@ -22,19 +22,27 @@ Schema `youeye.core-release.v1`. Top-level fields:
 | Field | Meaning |
 |---|---|
 | `schema` | `youeye.core-release.v1` |
-| `version` | the release name: `X.Y.Z-dev.N` on dev, `X.Y.Z-alpha.N`, `X.Y.Z-beta.N` or `X.Y.Z` after promotion |
-| `build` | the build version `X.Y.Z-dev.N`; equal to `version` on dev. The only field used to order releases |
+| `version` | the release name: `X.Y.Z-dev.N` on dev, `X.Y.Z-alpha.N`, `X.Y.Z-beta.N` or `X.Y.Z` after promotion. What the box shows; never compared |
+| `build` | optional, old shape only (documents up to 0.6.12): the dev name of the build, equal to `version` on dev. Checked when present, used for nothing. Absent from 0.6.13 on |
 | `tag` | `youeye-v<version>` |
 | `source_tree` | the git tree the build came from (40 hex) |
-| `sequence` | publish time in Unix seconds |
-| `minimum_reader` | `1` |
+| `sequence` | the build's publish time in Unix seconds, written once and kept by every promotion. With the line of `version` it orders releases ([releases.md](releases.md#ordering-line-then-sequence)) |
+| `minimum_reader` | `1` in documents up to 0.6.12 (a 0.6.11 Control Panel accepts only 1); `2` from 0.6.13 |
 | `authority` | `"digest"`; nothing else is accepted |
 | `compatibility` | `state_min`/`state_max` (1), `data_min`/`data_max` (1), `minimum_release`, `capabilities` (must contain `core-release-v1`) |
 | `members` | exactly one member per role, in dependency order |
 
-Each member has `role`, `build_version`, `source_tree`, `input_sha256`, optional `depends_on`, and an `artifact`
-blob `{name, sha256, size_bytes, release?}`. The `appliance` member also has a `build_inputs` blob
-(`build-inputs.json`); no other member may. `input_sha256` is the SHA-256 of the text
+`minimum_release` is a line (`0.6.12`): a box may install the document when its installed release's line is that
+line or later (`MinimumReleaseMet` in `releasecache/order.go`). An old-shape value written as a build name
+(`0.6.5-dev.2`) is read as its line. It comes from `.youeye/minimum-release` in the repository. It is not the image
+floor: `appliance/recipe.json` `minimum_current_version` (written into `system-update.json` as
+`minimum_current_image_version`) is an image identity that the A/B engine compares with image identities, and it
+stays a build name.
+
+Each member has `role`, `source_tree`, `input_sha256`, optional `depends_on`, an `artifact` blob
+`{name, sha256, size_bytes, release?}`, and in the old shape `build_version` (the dev name of the build the member's
+file came from; optional, checked when present, used for nothing, absent from 0.6.13 on). The `appliance` member
+also has a `build_inputs` blob (`build-inputs.json`); no other member may. `input_sha256` is the SHA-256 of the text
 `youeye.core-member-input.v1\n<role>\n<source_tree>\n<artifact sha256>\n`.
 
 The 13 roles, in document order:
@@ -63,14 +71,18 @@ installed one needs a host restart.
 A reader must be able to read documents published years later, so `ParseCoreRelease` (Go) and `parseCoreRelease`
 (Control Panel) are lenient where a later release may add things and strict where a mistake would matter:
 
-- **Read first:** `schema` must be `youeye.core-release.v1`; a higher `minimum_reader` than this reader's (1)
-  returns `ErrNeedsNewerReader` / `ReleaseNeedsNewerReader` before anything else is read.
+- **Read first:** `schema` must be `youeye.core-release.v1`; a higher `minimum_reader` than this reader's
+  (`CoreReleaseReader` and `RELEASE_READER`, both 2 since 0.6.12) returns `ErrNeedsNewerReader` /
+  `ReleaseNeedsNewerReader` before anything else is read. Reader 2 reads both shapes: documents with `build` and
+  member `build_version` (`minimum_reader: 1`) and documents without them (`minimum_reader: 2`). Both parse the
+  fixtures `releasecache/testdata/core-release.json` (old shape) and `core-release-no-build.json` (new shape).
 - **Ignored:** unknown fields at any level (they are covered by the document digest but never interpreted).
 - **"Needs a newer reader":** a role this reader doesn't know (a later release added one).
 - **Refused, before any effect:** documents over 1 MiB, duplicate JSON keys at any depth, trailing data, a wrong
-  authority, a `tag` that is not `youeye-v<version>`, duplicate or missing roles, invalid versions, trees or
-  digests, `build_inputs` on the wrong member, and any dependency that is missing or not earlier in the list (CP
-  must depend on Spine, UI on CP).
+  authority, a `tag` that is not `youeye-v<version>`, duplicate or missing roles, invalid versions (including a
+  `build` or `build_version` that is present but invalid), trees or digests, a missing or invalid `sequence`,
+  `build_inputs` on the wrong member, and any dependency that is missing or not earlier in the list (CP must depend
+  on Spine, UI on CP).
 
 It returns the SHA-256 of the exact bytes; that digest is the release's identity. A box that gets "needs a newer
 reader" for the channel head takes a stepping stone (below).
@@ -87,7 +99,12 @@ bytes are published on every host a release is promoted to. Downloads follow HTT
 file is checked by SHA-256 and size); leaving HTTPS, credentials, fragments and release-listing APIs are refused.
 
 **Payload digest.** `PayloadSHA256()` hashes `schema`, `minimum_reader`, `compatibility` and the members with every
-blob's `release` cleared. All documents of one build (dev, alpha, beta, stable) have the same payload digest.
+blob's `release` cleared. All documents of one build (dev, alpha, beta, stable) have the same payload digest:
+promotion changes only `version`, `tag` and where the files live. Boxes keep this digest (the version floor) and
+compare it across Spines, so **the hashed JSON is frozen**: the field names, their order and which fields are left
+out when empty (`build_version` is, so a new-shape member hashes without it) must not change for a document that
+exists. `TestPayloadDigestIsFrozen` (`releasecache/core_release_test.go`) pins the digests of both fixtures and the
+exact text of an old-shape member and compatibility block.
 
 ## Install
 
@@ -111,21 +128,38 @@ blob's `release` cleared. All documents of one build (dev, alpha, beta, stable) 
 `youeye update core check` (and Spine `GET /api/appliance/core-update/check`):
 
 1. Reads the channel index of the box's repository and channel ([releases.md](releases.md)).
-2. Downloads the `youeye` entry's `core-release.json` and refuses it unless its SHA-256 equals the entry.
-3. If the box can't install it (its `minimum_release` is newer than the installed build, or it needs a newer
-   reader), takes the newest **stepping stone** of the entry that it can install instead
-   (`releasecache.ChooseCoreRelease`); with none, it reports that no release of the channel fits this build.
+2. Downloads the `youeye` entry's `core-release.json`, refuses it unless its SHA-256 equals the entry, and checks
+   that its `tag` and `version` are the entry's. A `build` in either is not compared.
+3. If the box can't install it (its `minimum_release` line is above the installed release's line, or it needs a
+   newer reader), takes the newest **stepping stone** of the entry that it can install and that is newer than the
+   installed release (`releasecache.ChooseCoreRelease`); with none, it reports that no release of the channel can be
+   installed from this version.
 4. Prints `release`, `manifest_sha256` and `channel`, plus `"stepping_stone": true`, `channel_head` and
-   `head_refused` for a stone, or `"behind": true` and a message when the channel's build is older than the
-   installed build.
+   `head_refused` for a stone, or `"behind": true` and a message when the channel's release is older than the
+   installed one (`channel stable offers 0.6.13; this box has 0.6.13-dev.7; waiting for it to catch up`).
 
-**Never downgrade.** Two checks enforce it:
+What the box holds comes from the committed receipt: its key (line and sequence) and its version, for messages.
+Only a box with no receipt yet is a fresh install, which considers the channel head alone and ignores its
+`minimum_release` (the installer and first boot say so explicitly, `InstalledRelease{Fresh: true}`). A receipt that
+cannot be read is an error, never "nothing installed".
 
-- Preparing an update refuses a target whose `build` is older than the installed build
-  ("a box never downgrades").
+**Never downgrade.** Releases are compared by key, line then sequence, never by name. Two checks enforce it:
+
+- Preparing an update refuses a target with an older key than the installed release
+  (`YouEye <target> is older than the installed <installed>; a box never downgrades`); the update check reports it
+  as `behind` instead.
 - The version floor `core-update/version-floor.json` (`youeye.core-version-floor.v1`) remembers the highest accepted
-  build and its payload digest. A release with the same build but a different payload is refused. Cancel, recovery
-  and channel changes never lower the floor.
+  release and its payload digest. A release with the same key but a different payload is refused. Cancel, recovery
+  and channel changes never lower the floor. The floor is written in both shapes (see below).
+
+**The version floor in both shapes.** Both System slots read this file, and the other slot may hold a Spine up to
+0.6.11, which reads only `build` and refuses a floor without it. So Spine from 0.6.12 writes `build` (the document's
+`build`, or its `version` when it has none) next to `line`, `sequence` and `version`, plus `payload_sha256` and
+`manifest_sha256` as before. A floor written by a Spine up to 0.6.11 has no sequence: Spine takes it from the
+floor's document in `core-update/targets/<manifest_sha256>.json`. When that document is gone, a release of the
+floor's line is placed by the floor's build name with the old rule (the number after the label; a name without a
+suffix last), and a release that names no build is judged by the installed receipt alone and never replaces the
+floor, so the floor is never lowered (`core_sequence.go`). The `build` field goes at the Release cleanup.
 
 ## The update transaction
 
@@ -137,8 +171,26 @@ State lives in `/var/lib/youeye-state/core-update/`:
 | `targets/<digest>.json` | the frozen target document; the journal must match it |
 | `committed.json` | the receipt of the installed release (`youeye update core status` shows it) |
 | `version-floor.json` | see above |
+| `image-bindings/<appliance sha256>.json` | the image a release's `appliance` member stands for (below) |
 
 Downloads go to `/var/lib/youeye/cache/core-update/` (on Data) and are checked by SHA-256 and size.
+
+**Binding the running image** (`core_image_binding.go`). The document binds the `appliance` member, the image
+bundle's `appliance-manifest.json`, by SHA-256. That manifest names the image: `image_version`, `build_id` and
+`source_tree`, and the running image's own sealed manifest must name the same three. No build name in the document
+takes part. A slot cannot hold the digest of its own bundle manifest, so Spine records the three values on State
+once, when the digest-checked manifest is at hand: the installer's bundle (`installer/appliance-manifest.json`) on a
+fresh install, or the update cache at `verify-members`. Releases that reuse an image share the record. A missing
+record is derived again from those two places only; when neither has it, the update downloads the appliance member
+into the cache again (checked against the retained document) before staging and after the reboot into a new image,
+because a Spine up to 0.6.11 that staged the release kept no record. The image keeps its own identity
+(`image_version`, the image build's dev name): the A/B engine orders images and names boot entries by it. It is
+never shown and no document repeats it; only `appliance-manifest.json` and `system-update.json` carry it.
+
+The Spine, Control Panel and UI members are identified the same way, by tree and SHA-256: the Spine trial checks
+that the service runs the member's binary by SHA-256 ([spine.md](spine.md#spine-only-update-no-reboot)), and the
+Control Panel and UI by the `source_tree` in their `version.json` (a build without one, before 0.6.12, by its baked
+name).
 
 **Kinds of update** (`coreJournalStepNames`):
 
@@ -399,7 +451,8 @@ timed out (the lifecycle lock was busy for 60 s before the checkpoint started) h
 is open, and the update panel offers "Retry update".
 
 A coordinator started by the API writes its standard error to the system journal (unit
-`youeye-core-control-<hash>.service`): the hand-over decision ("handing request <id> over to Spine <build>" or
+`youeye-core-control-<hash>.service`): the hand-over decision ("handing request <id> over to Spine of YouEye
+<version> (sha256 <prefix>)" or
 "this Spine keeps coordinating the request: <reason>") and a fatal error can be read there afterwards with
 `journalctl -u 'youeye-core-control-*'`. Progress is not written there.
 
@@ -474,16 +527,25 @@ The status API's observation (`?observe=1`, as `installed.observation`) has the 
 An update always starts in the installed Spine (only after its own Spine step does the new Spine take over), so
 there is no bridge that lets an older box run a newer release's checks. When the installed Spine cannot install the
 channel's head, the channel index offers a stepping stone: an intermediate release the box can install first, after
-which it updates again. Each stone repeats its document's `minimum_release` and `minimum_reader` so a box can choose
-without downloading every document; the document must agree. A box takes the newest stone it can install, so a
-chain of stones is walked in order and never skipped. Mark stones with `Tools/release/index stone add`.
+which it updates again. Each stone repeats its document's `minimum_release`, `minimum_reader` and (from 0.6.12)
+`sequence` so a box can choose without downloading every document; the document must agree. Stones are tried newest
+first (line, then sequence); a box takes the newest one whose reader and `minimum_release` it meets and that is
+newer than its installed release, so a chain of stones is walked in order and never skipped. A stone from an index
+written before 0.6.12 has no `sequence`; its document says it once fetched. Mark stones with
+`Tools/release/index stone add`, or make the outgoing head a stone as the new head is written (`--stone-previous`).
+
+The first real use is the walk 0.6.11 → 0.6.12 → 0.6.13
+([releases.md](releases.md#stepping-stones-from-0611-to-0613)): 0.6.13 documents need reader 2 and drop `build`,
+which a 0.6.11 reader requires, so 0.6.12 (reader 2, documents still in the old shape) is the stone on every
+channel.
 
 Rules for later releases:
 
 - Adding a field to the document, a role, or a capability is fine: old readers ignore the field and treat the role
   as "needs a newer reader" (so publish a stone when old boxes must still update).
 - Removing a role, renaming a field or changing a field's meaning needs a new `minimum_reader` and a stone.
-- Raising `minimum_release` (`appliance/recipe.json` `minimum_current_version`) needs a stone for boxes below it.
+- Raising `minimum_release` (`.youeye/minimum-release`, a line) needs a stone for boxes below it. Raising the image
+  floor (`appliance/recipe.json` `minimum_current_version`, an image identity) does too.
 - A State or Data schema bump (a release whose `state_min`/`data_min` excludes older boxes) must also raise
   `minimum_release` and publish a stone that migrates: stones are chosen by `minimum_release` and reader only, so
   a head that refuses a box's schema would otherwise be chosen and then refused at staging.

@@ -27,4 +27,12 @@ func TestStoreRequestContractFromControlPanel(t *testing.T) {
 	if request.Source.SourceTree == "" || !request.UseStoredPassphrase || len(request.Apps) == 0 {
 		t.Fatalf("store request lost fields: %+v", request)
 	}
+	// From 0.6.12 the CP sends the releases' keys, which Spine keeps with the
+	// recovery point.
+	source := request.Source
+	for name, release := range map[string]*BackupRelease{"release": source.Release, "control_panel": source.ControlPanel, "ui": source.UI, "pointer": source.Pointer} {
+		if release == nil || release.Line == "" || release.Sequence <= 0 {
+			t.Fatalf("store request has no %s release key: %+v", name, release)
+		}
+	}
 }

@@ -17,7 +17,7 @@ test('initial Pointer installation authenticates its channel release before effe
       const effects: string[] = [];
       let saved: PointerReleaseState | undefined;
       const before: PointerReleaseState = {schema:'youeye.installed-pointer.v1',installed:null,floors:{}};
-      if (mode === 'older') before.floors = acceptProductSequence({}, {...selected,build:{...selected.build,build_version:'0.6.1-dev.3'}});
+      if (mode === 'older') before.floors = acceptProductSequence({}, {...selected,release:{...selected.release,sequence:selected.release.sequence + 1}});
       const io: PointerInitialInstallIO = {
         read:async () => before,
         resolve:async () => {
@@ -47,7 +47,7 @@ test('initial Pointer installation authenticates its channel release before effe
         assert.deepEqual(effects,['resolve','stage','deploy','configure','health','publish','verify','save','cleanup']);
         assert.equal(saved?.installed?.receipt.manifestSHA256,selected.manifestSHA256);
         assert.equal(saved?.installed?.receipt.repository,repository);
-        assert.deepEqual(saved!.floors,{pointer:{build:'0.6.1-dev.2',buildSHA256:sha(Buffer.from(selected.release.build_manifest_base64,'base64')),manifestSHA256:selected.manifestSHA256}});
+        assert.deepEqual(saved!.floors,{pointer:{line:'0.6.1',sequence:12,build:'0.6.1-dev.2',buildSHA256:sha(Buffer.from(selected.release.build_manifest_base64,'base64')),manifestSHA256:selected.manifestSHA256}});
       } else {
         await assert.rejects(run);
         assert.equal(effects.at(-1),'cleanup');

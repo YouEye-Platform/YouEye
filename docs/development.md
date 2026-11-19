@@ -52,13 +52,16 @@ the UI each have their own inputs and update without a reboot.
    - `cp-standalone.tar`;
    - `ui-standalone.tar`.
 2. Run `scripts/assemble-core-release.py --version <X.Y.Z-dev.N> --source-tree <tree> --minimum-release <v>
-   --artifacts <dir>`. It writes `core-release.json` and `SHA256SUMS`. When the image did not change, add
+   --artifacts <dir>` (`<v>` from `.youeye/minimum-release`; `--sequence` defaults to now). It writes
+   `core-release.json` and `SHA256SUMS`. When the image did not change, add
    `--reuse <previous core-release.json>=image` (or `=spine`, `=cp`, `=ui`): those members are copied unchanged and
    their blobs name the earlier release that holds the file, so only the rebuilt files need to be in `<dir>`.
 3. Create release `youeye-v<version>` (prerelease) in the development repository, upload every file plus
    `installer/scripts/install.sh`, and point the `dev` channel index at it.
 4. Promote it to alpha, beta and stable without rebuilding: each promotion writes a new document for the same files
-   (copied to GitHub for beta and stable) and moves that channel's index (see [releases.md](releases.md)).
+   (copied to GitHub for beta and stable) and moves that channel's index (see [releases.md](releases.md)). Promote
+   `youeye` alone (`Tools/release/promote youeye <channel>`), not `all`, until the native apps and Pointer are
+   rebuilt in the new document shape: `all` would carry their old-shape dev heads to every channel.
 
 ## Installing a development build
 
@@ -119,17 +122,48 @@ audit, Plan 7):
   - Add fields freely; readers ignore unknown keys (index, core and product releases), skip unknown index products,
     and fail only the one entry that is invalid.
   - A new core role, a removed role, a renamed field or a changed meaning needs a higher `minimum_reader` and a
-    **stepping stone** in the index (`Tools/release/index stone add`), so old boxes install an intermediate release
-    first. The same for raising `appliance/recipe.json` `minimum_current_version`.
+    **stepping stone** in the index (`Tools/release/index stone add`, or `--stone-previous` on publish and
+    promote), so old boxes install an intermediate release first. The same for raising `minimum_release`
+    (`.youeye/minimum-release`, a line) or the image floor (`appliance/recipe.json` `minimum_current_version`, an
+    image identity that stays a build name).
+  - **Reader 2** (Go `CoreReleaseReader`, CP `RELEASE_READER`, since 0.6.12) reads both document shapes: the old
+    one with `build` and member `build_version` (`minimum_reader: 1`; 0.6.12 and earlier) and the new one without
+    them (`minimum_reader: 2`; 0.6.13 and later). Releases are ordered by line and `sequence` only; `build` is
+    checked when present and never used. Channel index entries keep a temporary `build` for 0.6.11 readers. The
+    old shape, the temporary entry field and the 0.6.12 stones go at the Release cleanup (Backlog).
   - Files may move to any HTTPS host: set `download_base` in the index entry. Never require a query string,
     credentials or a release-listing API on a box path.
 - **Code frozen on a box** (the seed Spine in each image, the other slot after a rollback, Recovery):
   - Records on State and Data: readers ignore unknown keys and writers keep them (`internal/jsonkeep`); add fields,
     don't bump `schema_version` unless old readers must refuse the file ([spine.md](spine.md)).
+  - **Dual-written records (0.6.12 until the Release cleanup).** The other slot may still hold a Spine up to 0.6.11
+    (reachable from the boot menu), and a 0.6.11 Control Panel may meet records a newer one wrote, so these records
+    carry the old fields next to the new ones:
+    - the version floor `core-update/version-floor.json`: `build` next to `line`, `sequence` and `version` (a 0.6.11
+      Spine refuses a floor without `build`;
+      [core-release-contract.md](core-release-contract.md#checking-for-an-update));
+    - the Spine selection `spine/selection.json`: every entry keeps a non-empty `version` (a 0.6.11 Spine drops an
+      entry without one) next to `line`, `source_tree` and `described_sha256` ([spine.md](spine.md));
+    - product floors (Market install records and Pointer state): `build` next to `line` and `sequence`
+      ([product-release-contract.md](product-release-contract.md#never-older-never-different));
+    - backup identities: `control_panel_version`, `ui_version` and `pointer_version` next to the release keys
+      `release`, `control_panel`, `ui` and `pointer` (below).
+
+    A record written by an older version, without the new fields, is read: its sequence comes from the release
+    document it names, and the old build rule is used only when that document is gone. Stop writing the old fields
+    only when no supported box can run a reader that needs them.
+  - Spine's `GET /api/version` keeps answering the binary's own `version`: a 0.6.11 Spine trial-runs the next Spine
+    and compares it. What callers show and compare is its `release` field.
   - Recovery reads only slots, ownership and digests. New Recovery actions are request kinds that the System image's
     `youeye-recovery-apply` implements; list them for the Recovery menu in `recovery/menu.json` on State.
 - **Backups:** the CP and Spine exchange `youeye.backup.source.v1` (fixtures in `contracts/spine-cp/`, tested from
-  both sides). A restore refuses a backup made by a newer CP, UI or Pointer build or a newer State/Data schema.
+  both sides). Since 0.6.12 a backup records the installed releases as `release`, `control_panel`, `ui` and
+  `pointer`, each `{version, line, sequence, source_tree}`, next to the old build-name fields. A restore refuses a
+  backup made by a newer Control Panel, UI or Pointer (compared by key; the same tree is the same software) or a
+  newer State/Data schema. An older backup with build names only is compared by line, and within one line by the
+  old build rule only when both sides are dev build names. A 0.6.11 Spine refuses the new fields, so the Control
+  Panel sends the store request once more with the old fields only when Spine answers "invalid repository store
+  request".
 - **Databases:** CP and UI tables change additively only (new columns nullable or defaulted) until they have a
   version table (Backlog).
 - **Markets** ([market-format.md](market-format.md)): `market.json` and the index may only grow; readers ignore

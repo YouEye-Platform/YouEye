@@ -17,8 +17,32 @@
     "data_schema_version": 1,
     "disk_layout_version": 1,
     "spine_version": "0.6.5-dev.1",
-    "control_panel_version": "0.6.5-dev.1",
-    "ui_version": "0.6.5-dev.1",
-    "pointer_version": "0.6.3-dev.1"
+    "control_panel_version": "0.6.12-dev.3",
+    "ui_version": "0.6.12-dev.3",
+    "pointer_version": "0.6.3-dev.1",
+    "release": {
+      "version": "0.6.12-beta.1",
+      "line": "0.6.12",
+      "sequence": 1795100000,
+      "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0"
+    },
+    "control_panel": {
+      "version": "0.6.12-beta.1",
+      "line": "0.6.12",
+      "sequence": 1795100000,
+      "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0"
+    },
+    "ui": {
+      "version": "0.6.12-beta.1",
+      "line": "0.6.12",
+      "sequence": 1795100000,
+      "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0"
+    },
+    "pointer": {
+      "version": "0.6.3",
+      "line": "0.6.3",
+      "sequence": 1795000000,
+      "source_tree": "2222222222222222222222222222222222222222"
+    }
   }
 }

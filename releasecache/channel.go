@@ -52,24 +52,31 @@ type ChannelIndex struct {
 // repository's <repository>/releases/download layout:
 // <download_base>/<tag>/<name>. SteppingStones are older releases a box takes
 // first when it cannot install the head directly (youeye only).
+//
+// Build is a temporary field for readers up to 0.6.11, which refuse an entry
+// without it. This reader neither checks nor uses it; it is kept only so the
+// index Spine hands to the Control Panel still carries what was published.
 type ChannelEntry struct {
 	Repository     string          `json:"repository"`
 	Tag            string          `json:"tag"`
 	Version        string          `json:"version"`
-	Build          string          `json:"build"`
+	Build          string          `json:"build,omitempty"`
 	Document       string          `json:"document"`
 	SHA256         string          `json:"sha256"`
 	DownloadBase   string          `json:"download_base,omitempty"`
 	SteppingStones []SteppingStone `json:"stepping_stones,omitempty"`
 }
 
-// SteppingStone is an intermediate core release. MinimumRelease and
-// MinimumReader repeat its document's values so a box can choose a stone
-// before downloading it; the document must agree.
+// SteppingStone is an intermediate core release. MinimumRelease,
+// MinimumReader and Sequence repeat its document's values so a box can choose
+// a stone before downloading it; the document must agree. Sequence is absent
+// in an index written before 0.6.12 (the document then says it). Build is the
+// same temporary field as in ChannelEntry: neither checked nor used.
 type SteppingStone struct {
 	Tag            string `json:"tag"`
 	Version        string `json:"version"`
-	Build          string `json:"build"`
+	Build          string `json:"build,omitempty"`
+	Sequence       int64  `json:"sequence,omitempty"`
 	Document       string `json:"document"`
 	SHA256         string `json:"sha256"`
 	MinimumRelease string `json:"minimum_release"`
@@ -79,7 +86,7 @@ type SteppingStone struct {
 
 // Locator returns where the stone's document lives, in the entry's repository.
 func (s SteppingStone) Locator(repository string) ChannelEntry {
-	return ChannelEntry{Repository: repository, Tag: s.Tag, Version: s.Version, Build: s.Build, Document: s.Document, SHA256: s.SHA256, DownloadBase: s.DownloadBase}
+	return ChannelEntry{Repository: repository, Tag: s.Tag, Version: s.Version, Document: s.Document, SHA256: s.SHA256, DownloadBase: s.DownloadBase}
 }
 
 // ReleaseFileURL locates a file of the release tag: under base when the index
@@ -112,7 +119,7 @@ func (e ChannelEntry) validate(product string) error {
 	if err != nil || repository != e.Repository {
 		return fmt.Errorf("index entry %s: repository must be canonical https://host/owner/repository", product)
 	}
-	if !ValidCoreVersion(e.Version) || !ValidCoreVersion(e.Build) || !validReleaseTag(e.Tag) || !installationHash.MatchString(e.SHA256) {
+	if !ValidCoreVersion(e.Version) || !validReleaseTag(e.Tag) || !installationHash.MatchString(e.SHA256) {
 		return fmt.Errorf("index entry %s: invalid tag, version or digest", product)
 	}
 	if e.DownloadBase != "" && !ValidDownloadBase(e.DownloadBase) {
@@ -136,7 +143,8 @@ func (e ChannelEntry) validate(product string) error {
 }
 
 func (s SteppingStone) valid() bool {
-	return ValidCoreVersion(s.Version) && ValidCoreVersion(s.Build) && s.Tag == "youeye-v"+s.Version &&
+	return ValidCoreVersion(s.Version) && s.Tag == "youeye-v"+s.Version &&
+		s.Sequence >= 0 && s.Sequence <= 9007199254740991 &&
 		s.Document == "core-release.json" && installationHash.MatchString(s.SHA256) &&
 		ValidCoreVersion(s.MinimumRelease) && s.MinimumReader >= 1 &&
 		(s.DownloadBase == "" || ValidDownloadBase(s.DownloadBase))
@@ -321,7 +329,7 @@ func FetchDocument(ctx context.Context, client *http.Client, entry ChannelEntry)
 }
 
 // CoreChoice is the core release a box should install next from its channel.
-// Stone is set when the head can't be installed from the box's build and an
+// Stone is set when the head can't be installed from the box's release and an
 // intermediate release was chosen; Head is then the channel head it leads to.
 type CoreChoice struct {
 	Raw     []byte
@@ -334,23 +342,43 @@ type CoreChoice struct {
 	HeadRefused string
 }
 
+// InstalledRelease is what a box holds when it chooses its next release.
+type InstalledRelease struct {
+	// Fresh means nothing is installed yet (an installer, a first boot):
+	// only the channel head is considered and its minimum_release does not
+	// apply. It is always said explicitly; an empty Key is not a fresh install.
+	Fresh bool
+	// Key orders the installed release: the line of its version and its
+	// document's sequence, from the committed receipt.
+	Key ReleaseKey
+	// Version is the installed release's name, for messages only.
+	Version string
+}
+
+func (i InstalledRelease) name() string {
+	if i.Version != "" {
+		return i.Version
+	}
+	return i.Key.Line
+}
+
 // ErrNoInstallableRelease means neither the head nor any stepping stone of the
-// channel can be installed from the box's build.
-var ErrNoInstallableRelease = errors.New("no release on this channel can be installed from this build")
+// channel can be installed from the box's release.
+var ErrNoInstallableRelease = errors.New("no release on this channel can be installed from this version")
 
 // FetchCoreRelease resolves the head of the youeye entry of a channel for
 // repository (fresh installs; boxes use ChooseCoreRelease).
 func FetchCoreRelease(ctx context.Context, client *http.Client, repository, channel string) ([]byte, CoreRelease, string, error) {
-	choice, err := ChooseCoreRelease(ctx, client, repository, channel, "")
+	choice, err := ChooseCoreRelease(ctx, client, repository, channel, InstalledRelease{Fresh: true})
 	return choice.Raw, choice.Release, choice.Digest, err
 }
 
-// ChooseCoreRelease picks what a box on installedBuild installs next: the
-// channel head when its minimum_release and reader allow it, otherwise the
-// newest stepping stone that does. A stone's own minimum_release names the
-// stone before it, so taking the newest acceptable one never skips a required
-// stone. With installedBuild empty only the head is considered.
-func ChooseCoreRelease(ctx context.Context, client *http.Client, repository, channel, installedBuild string) (CoreChoice, error) {
+// ChooseCoreRelease picks what a box installs next: the channel head when its
+// minimum_release (a line) and reader allow it, otherwise the newest stepping
+// stone that does and that is newer than the installed release. A stone's own
+// minimum_release names the line before it, so taking the newest acceptable
+// one never skips a required stone. A fresh install considers only the head.
+func ChooseCoreRelease(ctx context.Context, client *http.Client, repository, channel string, installed InstalledRelease) (CoreChoice, error) {
 	index, _, err := FetchChannelIndex(ctx, client, repository, channel)
 	if err != nil {
 		return CoreChoice{}, err
@@ -368,20 +396,30 @@ func ChooseCoreRelease(ctx context.Context, client *http.Client, repository, cha
 	raw, release, digest, err := fetchCoreEntry(ctx, client, entry)
 	refused := ""
 	switch {
-	case err == nil && (installedBuild == "" || CompareVersions(release.Compatibility.MinimumRelease, installedBuild) <= 0):
+	case err == nil && (installed.Fresh || MinimumReleaseMet(installed.Key.Line, release.Compatibility.MinimumRelease)):
 		return CoreChoice{Raw: raw, Release: release, Digest: digest, Entry: entry, Head: entry}, nil
 	case err == nil:
-		refused = fmt.Sprintf("%s needs build %s or later", entry.Version, release.Compatibility.MinimumRelease)
-	case errors.Is(err, ErrNeedsNewerReader) && installedBuild != "":
+		minimum, _ := LineOfVersion(release.Compatibility.MinimumRelease)
+		refused = fmt.Sprintf("%s needs YouEye %s or later", entry.Version, minimum)
+	case errors.Is(err, ErrNeedsNewerReader) && !installed.Fresh:
 		refused = fmt.Sprintf("%s: %v", entry.Version, err)
 	default:
 		return CoreChoice{}, err
 	}
+	// Newest first: by line, then by sequence. A stone of an older index has
+	// no sequence; its document says it once fetched.
 	stones := append([]SteppingStone{}, entry.SteppingStones...)
-	sort.SliceStable(stones, func(i, j int) bool { return CompareVersions(stones[i].Build, stones[j].Build) > 0 })
+	sort.SliceStable(stones, func(i, j int) bool {
+		if c := CompareLines(stones[i].Version, stones[j].Version); c != 0 {
+			return c > 0
+		}
+		return stones[i].Sequence > stones[j].Sequence
+	})
 	for _, stone := range stones {
-		if CompareVersions(stone.Build, installedBuild) <= 0 || stone.MinimumReader > CoreReleaseReader ||
-			CompareVersions(stone.MinimumRelease, installedBuild) > 0 {
+		line, _ := LineOfVersion(stone.Version)
+		if stone.MinimumReader > CoreReleaseReader || !MinimumReleaseMet(installed.Key.Line, stone.MinimumRelease) ||
+			CompareLines(line, installed.Key.Line) < 0 ||
+			(stone.Sequence > 0 && CompareReleases(ReleaseKey{Line: line, Sequence: stone.Sequence}, installed.Key) <= 0) {
 			continue
 		}
 		locator := stone.Locator(repository)
@@ -389,12 +427,16 @@ func ChooseCoreRelease(ctx context.Context, client *http.Client, repository, cha
 		if err != nil {
 			return CoreChoice{}, fmt.Errorf("stepping stone %s: %w", stone.Version, err)
 		}
-		if release.Compatibility.MinimumRelease != stone.MinimumRelease || release.MinimumReader != stone.MinimumReader {
+		if release.Compatibility.MinimumRelease != stone.MinimumRelease || release.MinimumReader != stone.MinimumReader ||
+			(stone.Sequence > 0 && release.Key().Sequence != stone.Sequence) {
 			return CoreChoice{}, fmt.Errorf("stepping stone %s differs from its channel index entry", stone.Version)
+		}
+		if CompareReleases(release.Key(), installed.Key) <= 0 {
+			continue // the box already has this stone, or a newer release of its line
 		}
 		return CoreChoice{Raw: raw, Release: release, Digest: digest, Entry: locator, Stone: true, Head: entry, HeadRefused: refused}, nil
 	}
-	return CoreChoice{}, fmt.Errorf("%w: channel %s offers %s, and no stepping stone fits build %s", ErrNoInstallableRelease, channel, refused, installedBuild)
+	return CoreChoice{}, fmt.Errorf("%w: channel %s offers %s, and no stepping stone fits %s", ErrNoInstallableRelease, channel, refused, installed.name())
 }
 
 // fetchCoreEntry downloads and verifies the core-release.json an entry names.
@@ -407,8 +449,10 @@ func fetchCoreEntry(ctx context.Context, client *http.Client, entry ChannelEntry
 	if err != nil {
 		return nil, CoreRelease{}, "", err
 	}
-	if release.Tag != entry.Tag || release.Build != entry.Build {
-		return nil, CoreRelease{}, "", fmt.Errorf("core-release.json of %s names tag %s build %s, the index build %s", entry.Tag, release.Tag, release.Build, entry.Build)
+	// The document matches its entry by tag, version and digest (FetchDocument
+	// checked the digest). A build name in either is not compared.
+	if release.Tag != entry.Tag || release.Version != entry.Version {
+		return nil, CoreRelease{}, "", fmt.Errorf("core-release.json of %s names %s (%s), the channel index %s", entry.Tag, release.Version, release.Tag, entry.Version)
 	}
 	return raw, release, digest, nil
 }

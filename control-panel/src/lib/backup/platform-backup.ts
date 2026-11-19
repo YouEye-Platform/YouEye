@@ -5,7 +5,7 @@ import path from 'node:path';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { backupApp } from './app-backup';
 import { backupCore } from './core-backup';
-import { spineClient } from '@/lib/spine/client';
+import { SpineAPIError, spineClient } from '@/lib/spine/client';
 import type { BackupEventCallback } from './types';
 import { BACKUP_ROOT } from './workspace';
 import { readCurrentBackupSourceIdentity, type BackupSourceIdentity } from './compatibility';
@@ -157,8 +157,36 @@ export function backupStoreRequest(record: BackupSetRecord, mediaId: string, pas
 		created_at: record.createdAt,
 		size_bytes: record.sizeBytes ?? 0,
 		reason: record.reason ?? 'manual',
+		// Spine (same build) stores the whole identity, release keys included.
 		source: record.source,
 	};
+}
+
+/** The source fields a 0.6.11 Spine knows (it decodes the store request strictly). */
+const OLD_SOURCE_FIELDS = ['schema', 'runtime_kind', 'image_version', 'source_tree', 'state_schema_version', 'data_schema_version',
+  'disk_layout_version', 'spine_version', 'control_panel_version', 'ui_version', 'pointer_version'] as const;
+
+type BackupStoreRequest = ReturnType<typeof backupStoreRequest>;
+
+/**
+ * Store a backup set through Spine. Spine normally ships with this Control
+ * Panel, but after booting the other slot from the boot menu a 0.6.11 Spine
+ * can run beside it: it refuses the release keys with 400 "invalid repository
+ * store request" (its strict decoder does not name the field). Then the
+ * request is sent once more with only the fields it knows.
+ */
+export async function storeBackupSet(request: BackupStoreRequest,
+  store: (request: BackupStoreRequest) => Promise<unknown> = body => spineClient.storeBackupSet(body)): Promise<void> {
+  try {
+    await store(request);
+  } catch (error) {
+    const refusedShape = error instanceof SpineAPIError && error.statusCode === 400
+      && /invalid repository store request|unknown field/i.test(error.message);
+    const source = request.source as unknown as Record<string, unknown>;
+    if (!refusedShape || !Object.keys(source).some(field => !(OLD_SOURCE_FIELDS as readonly string[]).includes(field))) throw error;
+    const older = Object.fromEntries(OLD_SOURCE_FIELDS.filter(field => source[field] !== undefined).map(field => [field, source[field]]));
+    await store({ ...request, source: older as unknown as BackupSourceIdentity });
+  }
 }
 
 export async function createPlatformBackup(input: unknown | CreatePlatformBackupOptions, onEvent: BackupEventCallback): Promise<BackupSetRecord> {
@@ -226,7 +254,7 @@ export async function createPlatformBackup(input: unknown | CreatePlatformBackup
 		await writeRecord(root, record);
 		if (options.mediaId) {
 			emit({ step: apps.length + 1, totalSteps: apps.length + 2, status: 'progress', stage: 'external-drive', message: 'Writing and verifying the encrypted recovery point', progress: 92 });
-			await spineClient.storeBackupSet(backupStoreRequest(record, options.mediaId, passphrase, useStoredPassphrase));
+			await storeBackupSet(backupStoreRequest(record, options.mediaId, passphrase, useStoredPassphrase));
 			record.verifiedAt = new Date().toISOString();
 			// The durable copy is now the checked external repository. Do not let
 			// recurring backups silently consume YE-DATA with duplicate full sets.

@@ -21,9 +21,10 @@ test('release-only adoption and ambiguous publication recovery use the durable j
     const r = {...base.release,version,tag:productTag(version),sequence};
     return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'notes',repository:source,tag:r.tag});
   }
-  const old = release('1.0.0',1), selected = release('1.0.1',2);
+  // One build (the same line and sequence) under two release names: adopting the other name changes metadata only.
+  const old = release('1.0.0',1), selected = release('1.0.0-alpha.1',1);
   const oldManifest = {metadata:{id:'notes'},version:'1.0.0',containers:[{name:'server',type:'lxd'}]} as AppManifest;
-  const manifest = {...oldManifest,version:'1.0.1'};
+  const manifest = {...oldManifest,version:'1.0.0-alpha.1'};
   {
     for (const fault of ['none','projection','manifest','metadata','provenance','verification']) await t.test(fault,async () => {
       const root = mkdtempSync(path.join(tmpdir(),'ye-product-adoption-'));
@@ -33,7 +34,7 @@ test('release-only adoption and ambiguous publication recovery use the durable j
         nativeArtifacts:[{containerName:'server',sourceRepo:source,releaseTag:'v1.0.0',version:'1.0.0',artifactName:'standalone.tar',sha256:hash('standalone.tar'),bytes:14,verification:'product-release',productReleaseSHA256:old.manifestSHA256,productRelease:productReceipt(old),runtimeUUID:'12345678-1234-1234-1234-123456789012'}],
         productReleaseFloors:acceptProductSequence(undefined,old)} as InstallMetadata;
       let metadata = structuredClone(before);
-      const installed = {installedVersion:'1.0.0',installedTag:'v1.0.0',installedBranch:'main',channelSource:source,updateAvailable:true, catalogVersion:'1.0.1', switchPending:false, candidateVersion:'1.0.1', candidateBranch:'main',candidateTag:'v1.0.1'} as InstalledApp;
+      const installed = {installedVersion:'1.0.0',installedTag:'v1.0.0',installedBranch:'main',channelSource:source,updateAvailable:true, catalogVersion:'1.0.0-alpha.1', switchPending:false, candidateVersion:'1.0.0-alpha.1', candidateBranch:'main',candidateTag:'v1.0.0-alpha.1'} as InstalledApp;
       const originalInstalled = structuredClone(installed);
       let registration = structuredClone(oldManifest), projection = productReceipt(old), faulted = false;
       const effects: string[] = [];
@@ -52,11 +53,11 @@ test('release-only adoption and ambiguous publication recovery use the durable j
       };
       try {
         const operation = updateIdenticalProductRelease(store,before,installed,manifest,selected,
-          {path:'youeye-app.yaml',repo:'YouEye-Platform/Notes',branch:'v1.0.1',digest:`sha256:${build.contract_sha256}`},io);
+          {path:'youeye-app.yaml',repo:'YouEye-Platform/Notes',branch:'v1.0.0-alpha.1',digest:`sha256:${build.contract_sha256}`},io);
         if (fault === 'none') {
-          assert.deepEqual(await operation,{success:true,previousVersion:'1.0.0',newVersion:'1.0.1',migrationsRun:0});
+          assert.deepEqual(await operation,{success:true,previousVersion:'1.0.0',newVersion:'1.0.0-alpha.1',migrationsRun:0});
           assert.deepEqual(projection,productReceipt(selected));
-          assert.equal(metadata.installedVersion,'1.0.1');
+          assert.equal(metadata.installedVersion,'1.0.0-alpha.1');
         } else {
           await assert.rejects(operation,/ambiguous/);
           assert.deepEqual(projection,productReceipt(old));

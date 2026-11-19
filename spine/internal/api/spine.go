@@ -34,5 +34,6 @@ func (s *Server) handleSpineStatus(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"version": s.version, "spine": report})
+	// Like `youeye spine status`: each Spine by its line, never a stored build name.
+	jsonResponse(w, map[string]any{"version": s.version, "spine": report.Shown()})
 }

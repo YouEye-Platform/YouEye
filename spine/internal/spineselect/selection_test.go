@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -36,6 +37,22 @@ func source(t *testing.T, content, version string) (Entry, string) {
 	}
 	sum := sha256.Sum256([]byte(content))
 	return Entry{SHA256: hex.EncodeToString(sum[:]), Version: version, HelperContract: HelperContract, DiskLayout: DiskLayout}, src
+}
+
+// selectThenCommit leaves the slot as an image update followed by a Spine
+// update does: first is what the image update selected, then current ran as a
+// trial and was committed, so first is the slot's previous Spine.
+func selectThenCommit(t *testing.T, root, slot string, first, current Entry) {
+	t.Helper()
+	if err := Select(root, slot, first, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := BeginTrial(root, slot, current, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(root, slot, current.SHA256, testNow); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func slotOf(t *testing.T, root, name string) *Slot {
@@ -192,30 +209,27 @@ func TestCommitAbortSelectRollbackUseSeed(t *testing.T) {
 		t.Fatalf("abort: %+v", got)
 	}
 
-	// Select replaces current directly, clears a trial.
-	if err := BeginTrial(root, "A", one, ThisHost(), testNow); err != nil {
-		t.Fatal(err)
-	}
-	if err := Select(root, "A", three, ThisHost(), testNow); err != nil {
-		t.Fatal(err)
-	}
-	if got := slotOf(t, root, "A"); digestOf(got.Current) != three.SHA256 || digestOf(got.Previous) != two.SHA256 || got.Trial != nil {
-		t.Fatalf("select over current: %+v", got)
-	}
-	// Selecting the current again keeps previous.
-	if err := Select(root, "A", three, ThisHost(), testNow); err != nil {
-		t.Fatal(err)
-	}
-	if got := slotOf(t, root, "A"); digestOf(got.Previous) != two.SHA256 {
-		t.Fatalf("reselect lost previous: %+v", got)
-	}
-
 	// Rollback swaps current and previous.
 	if err := Rollback(root, "A", testNow); err != nil {
 		t.Fatal(err)
 	}
-	if got := slotOf(t, root, "A"); digestOf(got.Current) != two.SHA256 || digestOf(got.Previous) != three.SHA256 {
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != one.SHA256 || digestOf(got.Previous) != two.SHA256 {
 		t.Fatalf("rollback: %+v", got)
+	}
+
+	// Select (an image update wrote the slot) leaves the slot with its
+	// release's Spine alone: no trial, and no previous of the image before.
+	if err := BeginTrial(root, "A", two, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Select(root, "A", three, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != three.SHA256 || got.Previous != nil || got.Trial != nil {
+		t.Fatalf("select over current: %+v", got)
+	}
+	if err := Rollback(root, "A", testNow); err == nil || !strings.Contains(err.Error(), "no previous Spine") {
+		t.Fatalf("rolled back to a Spine of the image before: %v", err)
 	}
 	if err := Rollback(root, "B", testNow); err == nil {
 		t.Fatal("rolled back a slot without a previous Spine")
@@ -307,11 +321,7 @@ func TestResolveSkipsBrokenCurrentForPrevious(t *testing.T) {
 	root := t.TempDir()
 	one := staged(t, root, "one", "1.0.0-dev.1")
 	two := staged(t, root, "two", "1.0.0-dev.2")
-	for _, e := range []Entry{one, two} {
-		if err := Select(root, "A", e, ThisHost(), testNow); err != nil {
-			t.Fatal(err)
-		}
-	}
+	selectThenCommit(t, root, "A", one, two)
 	if err := os.Remove(PayloadPath(root, two.SHA256)); err != nil {
 		t.Fatal(err)
 	}
@@ -334,12 +344,7 @@ func TestRunning(t *testing.T) {
 	cur := staged(t, root, "current", "1.0.0-dev.1")
 	prev := staged(t, root, "previous", "1.0.0-dev.0")
 	trial := staged(t, root, "trial", "1.0.0-dev.2")
-	if err := Select(root, "A", prev, ThisHost(), testNow); err != nil {
-		t.Fatal(err)
-	}
-	if err := Select(root, "A", cur, ThisHost(), testNow); err != nil {
-		t.Fatal(err)
-	}
+	selectThenCommit(t, root, "A", prev, cur)
 	if err := BeginTrial(root, "A", trial, ThisHost(), testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -581,5 +586,264 @@ func TestSelectForTargetSlotIgnoresRunningHelperContract(t *testing.T) {
 	other.DiskLayout = DiskLayout + 1
 	if err := Select(root, "B", other, TargetSlotHost(other), time.Now()); err == nil || !strings.Contains(err.Error(), "disk layout") {
 		t.Fatalf("disk layout must still be checked: %v", err)
+	}
+}
+
+// entry0611 is a selection entry as a Spine up to 0.6.11 reads it: it skips an
+// entry whose version is empty.
+type entry0611 struct {
+	SHA256         string `json:"sha256"`
+	Version        string `json:"version"`
+	HelperContract int    `json:"helper_contract"`
+	DiskLayout     int    `json:"disk_layout"`
+}
+
+// The selection record is shared by both slots, and the other slot may hold a
+// Spine up to 0.6.11. This Spine writes what that one needs (a version, never
+// empty) and adds the line and git tree; it reads entries without them.
+func TestSelectionIsReadableByOlderAndNewerSpines(t *testing.T) {
+	root := t.TempDir()
+	old := staged(t, root, "spine 0.6.11", "0.6.11-dev.5")
+	if err := Select(root, "A", old, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	next := staged(t, root, "spine 0.6.12", "0.6.12-dev.3")
+	next.Line, next.SourceTree = "0.6.12", strings.Repeat("c", 40)
+	if err := Select(root, "B", next, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, selectionFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older struct {
+		Slots map[string]map[string]entry0611 `json:"slots"`
+	}
+	if err := json.Unmarshal(raw, &older); err != nil {
+		t.Fatal(err)
+	}
+	for slot, want := range map[string]Entry{"A": old, "B": next} {
+		got := older.Slots[slot]["current"]
+		if got.SHA256 != want.SHA256 || got.Version == "" || got.Version != want.Version || got.HelperContract <= 0 || got.DiskLayout <= 0 {
+			t.Fatalf("a 0.6.11 Spine skips slot %s: %+v", slot, got)
+		}
+	}
+	if a, b := slotOf(t, root, "A").Current, slotOf(t, root, "B").Current; a.Line != "" || a.SourceTree != "" || a.DescribedSHA256 != "" || b.Line != "0.6.12" || b.SourceTree != strings.Repeat("c", 40) || b.DescribedSHA256 != b.SHA256 {
+		t.Fatalf("entries read back wrongly: %+v %+v", a, b)
+	}
+	// The slot keeps running the entry whatever its description says: the
+	// digest alone identifies it.
+	if res, err := Resolve(root, "B", ThisHost(), false, testNow); err != nil || res.Entry == nil || res.Entry.SHA256 != next.SHA256 {
+		t.Fatalf("resolve: %+v %v", res, err)
+	}
+}
+
+// An older Spine that replaces an entry (it stages the other slot for an image
+// update, or rolls back) keeps the keys it does not know where they were. The
+// line and tree of the binary that was there must not pass for the new one's.
+func TestSelectionDropsADescriptionOfAnotherBinary(t *testing.T) {
+	root := t.TempDir()
+	first := staged(t, root, "spine 0.6.12", "0.6.12-dev.3")
+	first.Line, first.SourceTree = "0.6.12", strings.Repeat("c", 40)
+	if err := Select(root, "B", first, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	second := staged(t, root, "spine 0.6.12 again", "0.6.12-dev.4")
+	raw, err := os.ReadFile(filepath.Join(root, selectionFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What jsonkeep leaves when a 0.6.11 Spine writes another entry there: its
+	// own fields are new, the keys it does not know stay.
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	current := record["slots"].(map[string]any)["B"].(map[string]any)["current"].(map[string]any)
+	current["sha256"], current["version"] = second.SHA256, second.Version
+	if current["line"] != "0.6.12" || current["described_sha256"] != first.SHA256 {
+		t.Fatalf("fixture: %v", current)
+	}
+	replaced, _ := json.Marshal(record)
+	if err := os.WriteFile(filepath.Join(root, selectionFile), replaced, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := slotOf(t, root, "B").Current
+	if got == nil || got.SHA256 != second.SHA256 || got.Version != "0.6.12-dev.4" || got.Line != "" || got.SourceTree != "" || got.DescribedSHA256 != "" {
+		t.Fatalf("another binary's description was kept: %+v", got)
+	}
+	// Rewriting the record clears it on disk too.
+	s, _ := Load(root)
+	if err := Save(root, s, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(root, selectionFile)); strings.Contains(string(raw), `"line"`) || strings.Contains(string(raw), "described_sha256") || strings.Contains(string(raw), "source_tree") {
+		t.Fatalf("stale description left on State: %s", raw)
+	}
+}
+
+// An image update writes a slot whose record still names the Spine of the
+// image that was there (0.6.12 → 0.6.13 writes slot A, last booted with
+// 0.6.11). That Spine must not stay as the slot's previous: it would run on
+// the new image when the release's Spine cannot, or on `youeye spine
+// rollback`, and it does not read what the new release writes. The fallback
+// of the written slot is the seed of its own image.
+func TestSelectLeavesNoSpineOfTheImageBefore(t *testing.T) {
+	root := t.TempDir()
+	older := staged(t, root, "spine 0.6.10", "0.6.10-dev.2")
+	old := staged(t, root, "spine 0.6.11", "0.6.11-dev.5")
+	stone := staged(t, root, "spine 0.6.12", "0.6.12-dev.3")
+	next := staged(t, root, "spine 0.6.13", "0.6.13")
+	// Slot A as a 0.6.11 box left it: its Spine, the one before it, and keys
+	// and an entry of some other Spine that this one does not read.
+	selectThenCommit(t, root, "A", older, old)
+	selectThenCommit(t, root, "B", old, stone)
+	raw, err := os.ReadFile(filepath.Join(root, selectionFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["future"] = map[string]any{"x": 1}
+	for _, name := range []string{"A", "B"} {
+		slot := record["slots"].(map[string]any)[name].(map[string]any)
+		slot["current"].(map[string]any)["pinned"] = true
+		slot["trial"] = map[string]any{"sha256": "unreadable-" + name}
+	}
+	raw, _ = json.Marshal(record)
+	if err := os.WriteFile(filepath.Join(root, selectionFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The 0.6.12 Spine on slot B stages the 0.6.13 image into slot A.
+	if err := Select(root, "A", next, TargetSlotHost(next), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != next.SHA256 || got.Previous != nil || got.Trial != nil {
+		t.Fatalf("slot A after the image update: %+v", got)
+	}
+	raw, _ = os.ReadFile(filepath.Join(root, selectionFile))
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	a := record["slots"].(map[string]any)["A"].(map[string]any)
+	if len(a) != 1 || a["current"].(map[string]any)["pinned"] != nil || strings.Contains(string(raw), "unreadable-A") {
+		t.Fatalf("slot A kept something of the image before: %s", raw)
+	}
+	// The rest of the record is untouched: the running slot, and what other
+	// Spines wrote outside slot A.
+	if got := slotOf(t, root, "B"); digestOf(got.Current) != stone.SHA256 || digestOf(got.Previous) != old.SHA256 {
+		t.Fatalf("slot B changed: %+v", got)
+	}
+	if record["future"] == nil || !strings.Contains(string(raw), "unreadable-B") || record["slots"].(map[string]any)["B"].(map[string]any)["current"].(map[string]any)["pinned"] != true {
+		t.Fatalf("the image update dropped another Spine's content outside slot A: %s", raw)
+	}
+
+	// On slot A the 0.6.11 Spine is no Spine the slot may run.
+	seed := strings.Repeat("5", 64)
+	if err := Running(root, "A", old.SHA256, seed); err == nil {
+		t.Fatal("the Spine of the image before still counts as slot A's")
+	}
+	// `youeye spine rollback` says there is nothing to go back to.
+	if err := Rollback(root, "A", testNow); err == nil || !strings.Contains(err.Error(), "no previous Spine") {
+		t.Fatalf("rollback on the written slot: %v", err)
+	}
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != next.SHA256 {
+		t.Fatalf("a refused rollback changed the slot: %+v", got)
+	}
+	// The release's Spine cannot run (its payload is damaged): the seed of the
+	// new image runs, not the 0.6.11 Spine, whose payload is still on State.
+	if err := os.WriteFile(PayloadPath(root, next.SHA256), []byte("damaged"), 0o500); err != nil {
+		if err = os.Remove(PayloadPath(root, next.SHA256)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Verify(root, old, ThisHost()); err != nil {
+		t.Fatalf("fixture: the older payload should still verify: %v", err)
+	}
+	res, err := Resolve(root, "A", ThisHost(), true, testNow)
+	if err != nil || res.Role != "seed" || res.Path != "" || res.Entry != nil || len(res.Skipped) != 1 {
+		t.Fatalf("broken release Spine on the written slot: %+v %v", res, err)
+	}
+
+	// Staging the same release again (a retry after a failed boot) leaves the
+	// slot the same; a Spine update on the slot later has a previous again.
+	next2 := staged(t, root, "spine 0.6.13 again", "0.6.13")
+	if err := Select(root, "A", next2, TargetSlotHost(next2), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Select(root, "A", next2, TargetSlotHost(next2), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != next2.SHA256 || got.Previous != nil {
+		t.Fatalf("restaged slot: %+v", got)
+	}
+	later := staged(t, root, "spine 0.6.14", "0.6.14")
+	if err := BeginTrial(root, "A", later, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(root, "A", later.SHA256, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rollback(root, "A", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := slotOf(t, root, "A"); digestOf(got.Current) != next2.SHA256 || digestOf(got.Previous) != later.SHA256 {
+		t.Fatalf("rollback after a Spine update on the slot: %+v", got)
+	}
+}
+
+// `youeye spine status` and the Spine API name every Spine by its line. The
+// record keeps the stored names (a 0.6.11 Spine in the other slot reads them).
+func TestReportShowsLinesNotStoredNames(t *testing.T) {
+	root := t.TempDir()
+	old := staged(t, root, "spine 0.6.11", "0.6.11-dev.5")
+	stone := staged(t, root, "spine 0.6.12", "0.6.12-dev.3")
+	stone.Line = "0.6.12"
+	selectThenCommit(t, root, "A", old, stone)
+	hand := staged(t, root, "spine by hand", "my-test-spine")
+	if err := BeginTrial(root, "A", hand, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	clean := staged(t, root, "spine 0.6.13", "0.6.13")
+	if err := Select(root, "B", clean, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Resolve(root, "A", ThisHost(), false, testNow)
+	if err != nil || res.Entry == nil {
+		t.Fatal(res, err)
+	}
+	report := Report{Slot: "A", Seed: Seed{Path: BakedPath, SHA256: strings.Repeat("5", 64), Version: "0.6.7-dev.1"}, Running: res, Selection: stored.Slots, Host: ThisHost()}
+	shown := report.Shown()
+	a, b := shown.Selection["A"], shown.Selection["B"]
+	if shown.Seed.Version != "0.6.7" || a.Current.Version != "0.6.12" || a.Previous.Version != "0.6.11" || a.Trial.Version != "my-test-spine" || b.Current.Version != "0.6.13" || shown.Running.Entry.Version != "my-test-spine" {
+		t.Fatalf("shown: seed %+v A %+v %+v %+v B %+v running %+v", shown.Seed, a.Current, a.Previous, a.Trial, b.Current, shown.Running.Entry)
+	}
+	if a.Current.SHA256 != stone.SHA256 || a.Previous.SHA256 != old.SHA256 || shown.Slot != "A" || shown.Running.Role != "trial" {
+		t.Fatalf("shown changed more than the names: %+v", shown)
+	}
+	raw, err := json.Marshal(shown)
+	if err != nil || strings.Contains(string(raw), "-dev.") {
+		t.Fatalf("a build name is printed: %s %v", raw, err)
+	}
+	// Showing changes neither the report it was made from nor the record.
+	if report.Seed.Version != "0.6.7-dev.1" || stored.Slots["A"].Previous.Version != "0.6.11-dev.5" || report.Running.Entry.Version != "my-test-spine" {
+		t.Fatalf("Shown changed its source: %+v", report)
+	}
+	if got := slotOf(t, root, "A"); got.Current.Version != "0.6.12-dev.3" || got.Previous.Version != "0.6.11-dev.5" {
+		t.Fatalf("record changed: %+v", got)
+	}
+	// Messages about a Spine name its line and digest, not the stored name.
+	if err := os.Remove(PayloadPath(root, old.SHA256)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(root, old, ThisHost()); err == nil || strings.Contains(err.Error(), "-dev.") || !strings.Contains(err.Error(), "0.6.11 (sha256 "+old.SHA256[:12]+")") {
+		t.Fatalf("message: %v", err)
 	}
 }

@@ -9,7 +9,7 @@ import { settingsService } from '@/lib/settings';
 import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getAppInternalIdentityBase } from '@/lib/identity/issuer';
-import { spineClient } from '@/lib/spine/client';
+import { installedRelease } from '@/lib/releases/installed-release';
 import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
 import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
@@ -44,12 +44,10 @@ export async function getPlatformContext(): Promise<PlatformContext> {
   let language = 'en';
   let timezone = 'UTC';
 
-  try {
-    const spineVersion = await spineClient.version();
-    version = spineVersion.version || version;
-  } catch (err) {
-    console.warn('[platform-env] Failed to fetch Spine version, using default:', err);
-  }
+  // The installed release's version (never a version baked into Spine, which may be a reused older build).
+  const release = await installedRelease();
+  if (release) version = release.version;
+  else console.warn('[platform-env] The installed release is unknown, using default version');
 
   try {
     const settings = await settingsService.getAll();

@@ -23,7 +23,10 @@ type consoleTick time.Time
 type consoleCommandFinished struct{ err error }
 
 type applianceConsoleSnapshot struct {
-	ImageVersion        string
+	// Release is the installed release's version (the committed receipt's);
+	// Installing says it is the version being installed (no receipt yet).
+	Release             string
+	Installing          bool
 	Slot                string
 	Stage               string
 	Detail              string
@@ -202,7 +205,7 @@ func (model applianceConsoleModel) View() string {
 	rows = append(rows, "")
 	rows = append(rows, setupRows...)
 	rows = append(rows,
-		fmt.Sprintf("System      slot %s · image %s", valueOr(snapshot.Slot, "?"), valueOr(snapshot.ImageVersion, "unknown")),
+		"System      "+consoleSystemLine(snapshot),
 		fmt.Sprintf("Network     %s", valueOr(snapshot.NetworkPhase, "starting")),
 	)
 	if snapshot.OverlayArtifact != "" {
@@ -248,14 +251,28 @@ func (model applianceConsoleModel) View() string {
 func readApplianceConsoleSnapshot() applianceConsoleSnapshot {
 	root := envOrDefault("YOUEYE_CONSOLE_STATE_ROOT", "/var/lib/youeye-state")
 	snapshot := applianceConsoleSnapshot{}
-	readConsoleJSON("/usr/lib/youeye/appliance-release", func(raw []byte) {
-		var release struct {
-			ImageVersion string `json:"image_version"`
+	// The box shows its release's version, never a build name: the committed
+	// receipt's, else (before the first commit) the version being installed.
+	readConsoleJSON(filepath.Join(root, "core-update/committed.json"), func(raw []byte) {
+		var receipt struct {
+			Release struct {
+				Version string `json:"version"`
+			} `json:"release"`
 		}
-		if json.Unmarshal(raw, &release) == nil {
-			snapshot.ImageVersion = safeConsoleText(release.ImageVersion, 64)
+		if json.Unmarshal(raw, &receipt) == nil {
+			snapshot.Release = safeConsoleText(receipt.Release.Version, 64)
 		}
 	})
+	if snapshot.Release == "" {
+		readConsoleJSON(filepath.Join(root, "bootstrap/core-release.json"), func(raw []byte) {
+			var release struct {
+				Version string `json:"version"`
+			}
+			if json.Unmarshal(raw, &release) == nil && release.Version != "" {
+				snapshot.Release, snapshot.Installing = safeConsoleText(release.Version, 64), true
+			}
+		})
+	}
 	readConsoleJSON(filepath.Join(root, "appliance-state.json"), func(raw []byte) {
 		var state struct {
 			Slots struct {
@@ -393,6 +410,20 @@ func netInterfaces() (string, error) {
 		}
 	}
 	return "", errors.New("no usable IPv4 address")
+}
+
+// consoleSystemLine is "YouEye 0.6.13 · slot A" ("YouEye 0.6.13 (installing)"
+// before the first commit).
+func consoleSystemLine(snapshot applianceConsoleSnapshot) string {
+	slot := "slot " + valueOr(snapshot.Slot, "?")
+	if snapshot.Release == "" {
+		return slot
+	}
+	release := "YouEye " + snapshot.Release
+	if snapshot.Installing {
+		release += " (installing)"
+	}
+	return release + " · " + slot
 }
 
 func readConsoleJSON(path string, apply func([]byte)) {

@@ -382,9 +382,10 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 	if err != nil {
 		return CoreJournal{}, fmt.Errorf("installed core receipt required: %w", err)
 	}
-	if previous.ManifestSHA256 != digest && releasecache.CompareVersions(target.Build, previous.Release.Build) < 0 {
-		return CoreJournal{}, fmt.Errorf("release %s (build %s) is older than the installed %s (build %s); a box never downgrades",
-			target.Version, target.Build, previous.Release.Version, previous.Release.Build)
+	// Line, then sequence; never the names. An equal key is the same build
+	// (the floor below then requires the same payload).
+	if previous.ManifestSHA256 != digest && releasecache.CompareReleases(target.Key(), previous.Release.Key()) < 0 {
+		return CoreJournal{}, fmt.Errorf("YouEye %s is older than the installed %s; a box never downgrades", target.Version, previous.Release.Version)
 	}
 	j := CoreJournal{Schema: CoreJournalSchema, RequestID: requestID, ManifestSHA256: digest, Target: target, Previous: previous, Phase: "prepared", NoOp: previous.ManifestSHA256 == digest}
 	j.MetadataOnly = !j.NoOp && sameCorePayloads(previous.Release, target)

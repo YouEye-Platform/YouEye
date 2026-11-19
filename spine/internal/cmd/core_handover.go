@@ -228,7 +228,7 @@ func coreHandOverToSelectedSpine(ctx context.Context, j systemupdate.CoreJournal
 	// Written before the exec, which leaves nobody to write it afterwards. Exec
 	// returns only on failure; the process image is unchanged then, and the
 	// caller says that this Spine keeps coordinating.
-	coreNotice(fmt.Sprintf("handing request %s over to Spine %s (sha256 %.12s)", j.RequestID, member.BuildVersion, member.Artifact.SHA256))
+	coreNotice(fmt.Sprintf("handing request %s over to Spine %s (sha256 %.12s)", j.RequestID, releaseSpineIdentity(j.Target, member).shown(), member.Artifact.SHA256))
 	if err := coreHandOverExec(coreBakedExecutable, []string{coreBakedExecutable, "update", "core", "resume", "--request", j.RequestID}, env); err != nil {
 		return fmt.Errorf("starting the new Spine's continuation failed: %w", err)
 	}

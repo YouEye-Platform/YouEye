@@ -31,9 +31,12 @@ type ReleasePolicy struct {
 	ServiceSelection   string `json:"service_selection,omitempty"`
 }
 
+// exactBundleManifest is what Spine reads of an image bundle's
+// appliance-manifest.json (the release's appliance member).
 type exactBundleManifest struct {
 	Schema       string               `json:"schema"`
 	ImageVersion string               `json:"image_version"`
+	BuildID      string               `json:"build_id"`
 	SourceTree   string               `json:"source_tree"`
 	ReleaseSet   appliance.ReleaseSet `json:"release_set"`
 }
@@ -174,7 +177,12 @@ func RecordDownloadBase(tag, base string) error {
 			tags = append(tags, t)
 		}
 		sort.Slice(tags, func(i, j int) bool {
-			return releasecache.CompareVersions(strings.TrimPrefix(tags[i], "youeye-v"), strings.TrimPrefix(tags[j], "youeye-v")) < 0
+			// Oldest lines first; within a line the names say nothing about
+			// age, so the order there is only stable.
+			if c := releasecache.CompareLines(strings.TrimPrefix(tags[i], "youeye-v"), strings.TrimPrefix(tags[j], "youeye-v")); c != 0 {
+				return c < 0
+			}
+			return tags[i] < tags[j]
 		})
 		for _, t := range tags[:len(tags)-16] {
 			if t != tag {

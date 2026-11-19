@@ -42,9 +42,12 @@ test('products resolve through the box channel index with plain downloads only',
   const tampered = spineIndex(youeye, 'dev', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', raw: Buffer.from('other') } });
   await assert.rejects(resolveChannelProduct('notes', { index: () => readChannelIndex({ getReleaseIndex: async () => tampered }), fetch: host.fetch }), /channel index digest/);
   await assert.rejects(resolveChannelProduct('youeye', { index, fetch: host.fetch }), /not a channel product/);
-  // The entry's build must be the document's build manifest version.
-  const wrongBuild = spineIndex(youeye, 'dev', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', build: '0.6.1-dev.3', raw: f.raw } });
-  await assert.rejects(resolveChannelProduct('notes', { index: () => readChannelIndex({ getReleaseIndex: async () => wrongBuild }), fetch: host.fetch }), /channel index version/);
+  // The entry's version must be the document's; its temporary `build` (for readers up to 0.6.11) is ignored.
+  const otherBuild = spineIndex(youeye, 'dev', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', build: '0.6.1-dev.3', raw: f.raw } });
+  assert.equal((await resolveChannelProduct('notes', { index: () => readChannelIndex({ getReleaseIndex: async () => otherBuild }), fetch: host.fetch }))!.release.version, '0.6.1-dev.2');
+  const wrongVersion = spineIndex(youeye, 'dev', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', raw: f.raw } });
+  (wrongVersion.index.products.notes as { version: string }).version = '0.6.1-dev.3';
+  await assert.rejects(resolveChannelProduct('notes', { index: () => readChannelIndex({ getReleaseIndex: async () => wrongVersion }), fetch: host.fetch }), /must name|channel index version/);
 });
 
 test('no code path reaches a release-listing API', async () => {
@@ -101,10 +104,10 @@ test('channel index entries follow the contract', () => {
   assert.match(invalid({ notes: { ...entry, repository: `${notesRepo}/` } }).invalid.notes, /invalid/);
   assert.match(invalid({ notes: { ...entry, download_base: 'https://m.test/f?sig=1' } }).invalid.notes, /invalid/);
   assert.equal(invalid({ notes: 7 }).products.wiki.version, '0.6.1-dev.2');
-  // `build` is required; a promoted entry names another release of the same build.
+  // `build` is optional and ignored (a temporary field for readers up to 0.6.11; entries from 0.6.13 have build = version).
   const { build: _omitted, ...withoutBuild } = entry;
-  assert.match(invalid({ notes: withoutBuild }).invalid.notes, /invalid/);
-  assert.match(invalid({ notes: { ...entry, build: 'dev.2' } }).invalid.notes, /invalid/);
+  assert.deepEqual(invalid({ notes: withoutBuild }).invalid, {});
+  assert.equal(Object.hasOwn(invalid({ notes: { ...entry, build: 'anything' } }).products.notes, 'build'), false);
   assert.doesNotThrow(() => parseChannelIndex({ ...base, extra: { future: true } }));
   assert.throws(() => parseChannelIndex({ ...base, schema: 'youeye.channel.v2' }), /Unsupported/);
   // A download base moves the document off the repository layout.

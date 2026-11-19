@@ -156,7 +156,27 @@ export interface BackupSourceIdentity {
   data_schema_version?: number;
   disk_layout_version?: number;
   spine_version: string;
+  /**
+   * Old shape (0.6.11): the build names of the Control Panel, UI and Pointer.
+   * Written alongside the release keys below until the Release cleanup (an
+   * older Control Panel orders backups by them); never shown.
+   */
   control_panel_version?: string;
   ui_version?: string;
   pointer_version?: string;
+  /** The installed YouEye release (from 0.6.12): what a backup shows, and its order. */
+  release?: BackupRelease;
+  /** The release that installed the Control Panel and UI, with each part's own git tree. */
+  control_panel?: BackupRelease;
+  ui?: BackupRelease;
+  /** Pointer's installed product release. */
+  pointer?: BackupRelease;
+}
+
+/** A release in a backup's identity: its version (display), order key (line, sequence) and git tree. */
+export interface BackupRelease {
+  version: string;
+  line: string;
+  sequence: number;
+  source_tree: string;
 }

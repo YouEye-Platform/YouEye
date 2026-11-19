@@ -6,7 +6,8 @@
  * Returns every YouEye service in a single response with:
  *  - Static definition (from definitions.ts)
  *  - Live container status (from Incus)
- *  - Version info for Spine-managed components (from Spine API)
+ *  - Version info: Spine, the Control Panel and the UI show the installed System release's version; Incus as Spine
+ *    reports it
  *  - Update availability (Market apps: the installed-app records; UI and Pointer: the LXD check; core containers:
  *    their pinned images)
  */
@@ -15,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { incusRequest } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
+import { installedRelease, releasePartVersion } from '@/lib/releases/installed-release';
 import { APP_DEFINITIONS } from '@/lib/apps/definitions';
 import { getLastCheckedAt, isCheckInProgress } from '@/lib/apps/update-cache';
 import {
@@ -126,13 +128,15 @@ export async function GET() {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
+    const [instancesResp, spineStatus, marketInstalled, dbInstalledApps, systemPlansResult, releaseResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
       listReadableInstalledApps(),
       getAllInstalledApps(),
       planSystemUpdates(),
+      installedRelease(),
     ]);
+    const release = releaseResult.status === 'fulfilled' ? releaseResult.value : null;
 
     const instancePaths =
       instancesResp.status === 'fulfilled' ? instancesResp.value.metadata ?? [] : [];
@@ -220,11 +224,9 @@ export async function GET() {
 
       const containerStatuses = containers.map((c) => c.status);
 
-      // Version info for Spine-managed components
-      let version: string | undefined;
-      if (def.id === 'spine' && status) version = status.spine?.version;
+      // Spine, the Control Panel and the UI: the installed release's version, never a build name baked into them.
+      let version: string | undefined = releasePartVersion(def.id, release);
       if (def.id === 'incus' && status) version = status.incus?.version;
-      if (def.id === 'control-panel' && status) version = status.control_panel?.version;
 
       // Update info
       let updateAvailable = false;

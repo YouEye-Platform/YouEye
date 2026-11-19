@@ -19,7 +19,7 @@ install -d -m 0755 "$GOCACHE" "$GOMODCACHE"
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/spine" build \
     -trimpath -buildvcs=false \
-    -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$build_date" \
+    -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$build_date -X github.com/youeye-platform/YouEye/spine/internal/cmd.SourceTree=$YOUEYE_SOURCE_TREE" \
     -o "$temporary" ./cmd/youeye
 # Capture first: grep -q stops reading at the match, and with pipefail the
 # writer's SIGPIPE would fail the check at random.

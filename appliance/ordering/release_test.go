@@ -15,23 +15,3 @@ func TestReleaseIdentity(t *testing.T) {
 		}
 	}
 }
-
-func TestReleaseOrdering(t *testing.T) {
-	values := []string{"0.5.36", "0.5.37-alpha.1", "0.5.37-beta.1", "0.5.37-dev.9", "0.5.37-dev.10", "0.5.37", "0.5.38-dev.1"}
-	for i, a := range values {
-		av, _ := ParseReleaseVersion(a)
-		for j, b := range values {
-			bv, _ := ParseReleaseVersion(b)
-			want := 0
-			if i < j {
-				want = -1
-			}
-			if i > j {
-				want = 1
-			}
-			if got := CompareReleaseVersion(av, bv); got != want {
-				t.Errorf("%s versus %s: %d != %d", a, b, got, want)
-			}
-		}
-	}
-}

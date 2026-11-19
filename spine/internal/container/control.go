@@ -77,8 +77,7 @@ func DeployControlPanel(cfg *config.Config) error {
 		// A preserved Incus state can hold an older complete application after
 		// reset. Never give that bundle the newly selected release provenance.
 		if status, manifest, detectErr := appliance.Detect(); detectErr == nil && status.Kind == appliance.RuntimeApplianceImage && manifest != nil && manifest.ReleaseSet != nil {
-			installedVersion := GetInstalledVersion(containerName, appDir)
-			if err := verifyExistingControlVersion(installedVersion, *manifest, systemupdate.CoreBootstrapPath); err != nil {
+			if err := verifyExistingControlVersion(GetInstalledIdentity(containerName, appDir), *manifest, systemupdate.CoreBootstrapPath); err != nil {
 				return err
 			}
 		}
@@ -807,20 +806,35 @@ func recordControlProvenance(cfg *config.Config, containerName, appDir string) {
 	}
 }
 
-// GetInstalledVersion reads version.json, which the build writes into the
-// package from YOUEYE_VERSION. package.json carries only a placeholder.
-func GetInstalledVersion(containerName, appDir string) string {
+// GetInstalledIdentity reads version.json, which the build writes into the
+// package (package.json carries only a placeholder). An unreadable file gives
+// an empty identity, which matches no release member.
+func GetInstalledIdentity(containerName, appDir string) InstalledIdentity {
 	out, err := exec.Command("incus", "exec", containerName, "--",
 		"cat", appDir+"/version.json").Output()
-	if err != nil {
-		return "unknown"
+	if err != nil || len(out) > 1<<20 {
+		return InstalledIdentity{}
 	}
+	return ParseInstalledIdentity(out)
+}
 
-	var pkg struct {
-		Version string `json:"version"`
+// ParseInstalledIdentity reads a version.json.
+func ParseInstalledIdentity(raw []byte) InstalledIdentity {
+	var identity InstalledIdentity
+	if json.Unmarshal(raw, &identity) != nil {
+		return InstalledIdentity{}
 	}
-	if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" {
-		return pkg.Version
+	identity.Version, identity.SourceTree = strings.TrimSpace(identity.Version), strings.ToLower(strings.TrimSpace(identity.SourceTree))
+	if !releasecache.ValidGitTree(identity.SourceTree) {
+		identity.SourceTree = ""
+	}
+	return identity
+}
+
+// GetInstalledVersion is the version in version.json, or "unknown".
+func GetInstalledVersion(containerName, appDir string) string {
+	if version := GetInstalledIdentity(containerName, appDir).Version; version != "" {
+		return version
 	}
 	return "unknown"
 }

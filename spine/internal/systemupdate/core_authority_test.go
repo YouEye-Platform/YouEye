@@ -100,3 +100,120 @@ func TestCoreCompatibilityBoundaries(t *testing.T) {
 		t.Fatal("unknown capability accepted")
 	}
 }
+
+// minimum_release is a line. A document up to 0.6.12 names a build there,
+// which is read as its line: any release of that line may install it.
+func TestCoreMinimumReleaseIsALine(t *testing.T) {
+	_, _, r := coreJournalFixture(t)
+	r.Compatibility.StateMin, r.Compatibility.StateMax = appliance.CurrentStateSchema, appliance.CurrentStateSchema
+	state := testState()
+	for _, c := range []struct {
+		minimum, installed string
+		ok                 bool
+	}{
+		{"0.6.12", "0.6.12", true},
+		{"0.6.12", "0.6.12-dev.3", true},
+		{"0.6.12", "0.6.12-alpha.1", true},
+		{"0.6.12", "0.6.13-dev.1", true},
+		{"0.6.12", "0.6.11", false},
+		{"0.6.12", "0.6.11-dev.6", false},
+		{"0.6.5-dev.2", "0.6.5-dev.1", true}, // the old rule refused this build of the minimum's own line
+		{"0.6.5-dev.2", "0.6.5-alpha.1", true},
+		{"0.6.5-dev.2", "0.6.11", true},
+		{"0.6.5-dev.2", "0.6.4", false},
+		{"0.6.12", "", false},
+		{"0.6.12", "unknown", false},
+	} {
+		r.Compatibility.MinimumRelease = c.minimum
+		err := validateCoreCompatibility(r, state, c.installed)
+		if (err == nil) != c.ok {
+			t.Errorf("minimum %s, installed %q: %v", c.minimum, c.installed, err)
+		}
+		if err != nil && c.installed == "0.6.11-dev.6" && err.Error() != "YouEye 0.5.38 needs YouEye 0.6.12 or later; this box has 0.6.11-dev.6" {
+			t.Errorf("message: %v", err)
+		}
+	}
+}
+
+// A document without build names (members carry no build_version) is bound to
+// the host update manifest by digests and trees alone.
+func TestCoreHostMembershipNeedsNoBuildNames(t *testing.T) {
+	f := newManagerFixture(t)
+	hostRaw, _ := json.Marshal(f.update)
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-no-build.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, err := releasecache.ParseCoreRelease(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range r.Members {
+		m := &r.Members[i]
+		m.SourceTree = targetCommit
+		if m.Role == "system-update" {
+			m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = "system-update-manifest.json", checksum(hostRaw), int64(len(hostRaw))
+		}
+		for _, a := range f.update.Artifacts {
+			if a.Role == m.Role {
+				m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = a.Path, a.SHA256, a.SizeBytes
+			}
+		}
+	}
+	verified := VerifiedManifest{Manifest: f.update, Raw: hostRaw, SHA256: checksum(hostRaw)}
+	encode := func(r releasecache.CoreRelease) CoreHostSelection {
+		raw, _ := json.Marshal(r)
+		return CoreHostSelection{Raw: raw}
+	}
+	if _, _, err := f.manager.verifyCoreHost(encode(r), verified); err != nil {
+		t.Fatal(err)
+	}
+	// The old shape still binds the same way; its build names are not compared
+	// with the image version or with each other.
+	old := r
+	old.Build, old.MinimumReader = "0.6.12-dev.4", 1
+	old.Members = append([]releasecache.CoreMember{}, r.Members...)
+	for i := range old.Members {
+		old.Members[i].BuildVersion = fmt.Sprintf("0.6.%d-dev.1", i+1)
+	}
+	if _, _, err := f.manager.verifyCoreHost(encode(old), verified); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*releasecache.CoreRelease){
+		"another update manifest": func(r *releasecache.CoreRelease) {
+			for i := range r.Members {
+				if r.Members[i].Role == "system-update" {
+					r.Members[i].Artifact.SHA256 = checksum([]byte("other"))
+				}
+			}
+		},
+		"another payload": func(r *releasecache.CoreRelease) {
+			for i := range r.Members {
+				if r.Members[i].Role == "system-root" {
+					r.Members[i].Artifact.SHA256 = checksum([]byte("other"))
+				}
+			}
+		},
+		"a payload of another tree": func(r *releasecache.CoreRelease) {
+			for i := range r.Members {
+				if r.Members[i].Role == "system-root" {
+					r.Members[i].SourceTree = baselineCommit
+				}
+			}
+		},
+		"an update manifest of another tree": func(r *releasecache.CoreRelease) {
+			for i := range r.Members {
+				if r.Members[i].Role == "system-update" {
+					r.Members[i].SourceTree = baselineCommit
+				}
+			}
+		},
+	} {
+		changed := r
+		changed.Members = append([]releasecache.CoreMember{}, r.Members...)
+		change(&changed)
+		if _, _, err := f.manager.verifyCoreHost(encode(changed), verified); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

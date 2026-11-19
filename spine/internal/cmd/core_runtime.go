@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -17,20 +18,27 @@ import (
 var coreSelectionRoot = systemupdate.CoreBootstrapPath
 var coreReceiptRoot = systemupdate.CoreStatePath
 
-// currentCoreSelection is the host-owned System update source: the protected
-// installer-recorded release policy. youeye.yaml release channels (writable by
-// the Control Panel through the Spine API) never participate.
-// currentCoreSelection is the box's repository and channel, plus its installed
-// build when a committed receipt exists (it decides stepping stones).
+// currentCoreSelection is the host-owned System update source: the box's
+// repository and channel from the protected installer-recorded release policy
+// (youeye.yaml release channels, writable by the Control Panel through the
+// Spine API, never participate), plus the installed release from the committed
+// receipt, which decides stepping stones. Only a box without a receipt (before
+// first deployment recorded one) is a fresh install; a receipt that cannot be
+// read is an error, never "nothing installed".
 func currentCoreSelection() (systemupdate.CoreReleaseSelection, error) {
 	selection, err := systemupdate.PolicyCoreSelection(coreSelectionRoot)
 	if err != nil {
 		return selection, err
 	}
-	if receipt, err := (systemupdate.CoreManager{Root: coreReceiptRoot}).ReadReceipt(); err == nil {
-		selection.InstalledBuild = receipt.Release.Build
+	receipt, err := (systemupdate.CoreManager{Root: coreReceiptRoot}).ReadReceipt()
+	switch {
+	case err == nil:
+		return selection.WithInstalled(receipt.Release), nil
+	case errors.Is(err, os.ErrNotExist):
+		selection.FreshInstall = true
+		return selection, nil
 	}
-	return selection, nil
+	return selection, fmt.Errorf("the installed release record cannot be read: %w", err)
 }
 
 func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {

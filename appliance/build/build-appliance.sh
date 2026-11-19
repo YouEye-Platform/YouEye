@@ -183,7 +183,7 @@ if [[ -n ${YOUEYE_SPINE_FILE:-} ]]; then
 else
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/spine" build \
     -trimpath -buildvcs=false \
-    -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$spine_version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$(date -u -d "@$spine_source_date_epoch" +%F)" \
+    -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$spine_version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$(date -u -d "@$spine_source_date_epoch" +%F) -X github.com/youeye-platform/YouEye/spine/internal/cmd.SourceTree=$spine_tree" \
     -o "$bin_dir/youeye" ./cmd/youeye
 fi
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/installer" build \

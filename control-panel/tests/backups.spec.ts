@@ -5,7 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { resolveSharedDatabasePasswordFile } from '../src/lib/backup/manifest-values';
 import { recoveryImportErrorMessage } from '../src/lib/backup/platform-backup';
-import { assessBackupCompatibility, parseBackupSourceIdentity } from '../src/lib/backup/compatibility';
+import { assessBackupCompatibility, backupSourceIdentityFromStatus, backupYouEyeVersion, parseBackupSourceIdentity } from '../src/lib/backup/compatibility';
+import { backupStoreRequest, storeBackupSet } from '../src/lib/backup/platform-backup';
+import { SpineAPIError } from '../src/lib/spine/client';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
 const read = (filename: string) => englishInterfaceSource(readFileSync(path.join(root, filename), 'utf8'));
@@ -56,6 +58,67 @@ test('restore refuses a recovery point made by a newer Control Panel, UI or Poin
   }
   // A component the box no longer runs is not a reason to refuse.
   assert.equal(assessBackupCompatibility({ ...current, pointer_version: '0.6.9-dev.1' }, { ...current, pointer_version: undefined }).compatible, true);
+});
+
+test('backups record releases by line, sequence and tree, alongside the old build names, and compare by them', () => {
+  const tree = (c: string) => c.repeat(40);
+  const status = {
+    spine: { version: '0.6.12-dev.3' }, incus: { version: '6' }, control_panel: { status: 'running', version: '0.6.12-dev.3' },
+    ui: { status: 'running', installed: true, enabled: true, version: '0.6.12-dev.3' }, host: { os: 'Debian' },
+    runtime: { kind: 'appliance-image', manifest_valid: true, repair_required: false, image_version: '0.6.12-dev.3', source_tree: tree('a'), capabilities: {} },
+    persistent_state: { available: true, state_schema_version: 1, data_schema_version: 1, disk_layout_version: 1, compatibility: { state: 'ok', data: 'ok', compatible: true, repair_required: false }, slots: { current: 'a', current_image_version: '0.6.12-dev.3' } },
+  } as never;
+  const core = (version: string, sequence: number, cpTree: string, build?: string) => ({ version, sequence, source_tree: tree('a'), members: [
+    { role: 'cp', source_tree: cpTree, ...(build ? { build_version: build } : {}) },
+    { role: 'ui', source_tree: tree('d'), ...(build ? { build_version: build } : {}) },
+  ] }) as never;
+  const pointer = (version: string, sequence: number, build?: string) => ({ release: { version, sequence, source_tree: tree('e') }, build: build ? { build_version: build } : {} }) as never;
+  // An old-shape release (0.6.12): both shapes are recorded; the build names are the documents' (not version.json's).
+  const promoted = backupSourceIdentityFromStatus(status, undefined, { core: core('0.6.12-beta.1', 100, tree('c'), '0.6.12-dev.2'), pointer: pointer('0.6.3', 50, '0.6.3-dev.4') });
+  assert.equal(promoted.control_panel_version, '0.6.12-dev.2');
+  assert.equal(promoted.pointer_version, '0.6.3-dev.4');
+  assert.deepEqual(promoted.release, { version: '0.6.12-beta.1', line: '0.6.12', sequence: 100, source_tree: tree('a') });
+  assert.deepEqual(promoted.control_panel, { version: '0.6.12-beta.1', line: '0.6.12', sequence: 100, source_tree: tree('c') });
+  assert.deepEqual(promoted.pointer, { version: '0.6.3', line: '0.6.3', sequence: 50, source_tree: tree('e') });
+  assert.deepEqual(parseBackupSourceIdentity(JSON.parse(JSON.stringify(promoted))), promoted);
+  // A new-shape release (0.6.13) has no build names: its version stands in for the old fields.
+  const clean = backupSourceIdentityFromStatus(status, undefined, { core: core('0.6.13', 200, tree('f')), pointer: pointer('0.6.4', 60) });
+  assert.equal(clean.control_panel_version, '0.6.13');
+  assert.equal(clean.pointer_version, '0.6.4');
+  // Spine (same build) stores the whole identity: the store request carries the release keys.
+  const stored = backupStoreRequest({ schema: 'youeye.backup.set.v1', id: 'backup-20261119T000000Z-0a1b2c3d', createdAt: '2026-11-19T00:00:00.000Z',
+    status: 'completed', appCount: 0, apps: [], source: clean }, 'media-1', undefined, true).source;
+  assert.deepEqual(stored, clean);
+  assert.deepEqual(stored.release, { version: '0.6.13', line: '0.6.13', sequence: 200, source_tree: tree('a') });
+
+  // Newer software made the backup: refused, naming versions only.
+  const refused = assessBackupCompatibility(clean, promoted);
+  assert.equal(refused.compatible, false);
+  assert.match(refused.summary, /newer Control Panel \(0\.6\.13; this box runs 0\.6\.12-beta\.1\)/);
+  assert.equal(assessBackupCompatibility(promoted, clean).compatible, true);
+  assert.match(assessBackupCompatibility(promoted, clean).summary, /YouEye 0\.6\.12-beta\.1 recovery data can be migrated by this YouEye 0\.6\.13 server/);
+  // Labels never decide: the same build under another name, or the same tree, is the same software.
+  const sameBuild = backupSourceIdentityFromStatus(status, undefined, { core: core('0.6.12-dev.2', 100, tree('c'), '0.6.12-dev.2'), pointer: pointer('0.6.3-dev.4', 50, '0.6.3-dev.4') });
+  assert.equal(assessBackupCompatibility(sameBuild, promoted).compatible, true);
+  const laterSameTree = backupSourceIdentityFromStatus(status, undefined, { core: core('0.6.12-dev.5', 150, tree('c'), '0.6.12-dev.5'), pointer: pointer('0.6.3', 50, '0.6.3-dev.4') });
+  assert.equal(assessBackupCompatibility(laterSameTree, promoted).compatible, true, 'reused parts (same trees) are not newer');
+  const newerUI = assessBackupCompatibility({ ...laterSameTree, ui: { ...laterSameTree.ui!, source_tree: tree('9') } }, promoted);
+  assert.equal(newerUI.compatible, false, 'a UI of a newer release is');
+  assert.match(newerUI.summary, /newer UI \(0\.6\.12-dev\.5; this box runs 0\.6\.12-beta\.1\)/);
+
+  // A backup from before 0.6.12 (build names only): by line, then the old build rule against the box's own build.
+  const { release: _r, control_panel: _c, ui: _u, pointer: _p, ...older } = promoted;
+  const old = { ...older, control_panel_version: '0.6.11-dev.6', ui_version: '0.6.11-dev.6', pointer_version: '0.6.3-dev.4' };
+  assert.equal(assessBackupCompatibility(old, promoted).compatible, true);
+  assert.equal(assessBackupCompatibility(old, clean).compatible, true);
+  assert.equal(assessBackupCompatibility({ ...old, control_panel_version: '0.6.12-dev.3' }, promoted).compatible, false, 'dev.3 is newer than dev.2 within the line');
+  assert.equal(assessBackupCompatibility({ ...old, control_panel_version: '0.6.12-dev.1' }, promoted).compatible, true);
+  assert.equal(assessBackupCompatibility({ ...old, control_panel_version: '0.6.14-dev.1' }, clean).compatible, false);
+  assert.equal(assessBackupCompatibility(old, { ...clean, control_panel_version: undefined, ui_version: undefined }).compatible, true, 'a line is enough');
+  // A backup shows the release that made it; an older one shows none.
+  assert.equal(backupYouEyeVersion(promoted), '0.6.12-beta.1');
+  assert.equal(backupYouEyeVersion(old), undefined);
+  assert.throws(() => parseBackupSourceIdentity({ ...promoted, release: { ...promoted.release, line: '0.6.12-dev.2' } }), /YouEye release is invalid/);
 });
 
 test('authenticated backup metadata binds source identity before live restore mutation', () => {
@@ -243,4 +306,41 @@ test('Settings polls media without replacing the page during an operation', () =
   assert.doesNotMatch(settings, /window\.location|router\.refresh/);
   assert.match(settingsMediaRoute, /export const dynamic = 'force-dynamic'/);
   assert.doesNotMatch(settingsMediaRoute, /export \{ POST, dynamic \}/);
+});
+
+test('a 0.6.11 Spine (the other slot) that refuses the release keys gets the backup once more with only its fields', async () => {
+  const tree = (c: string) => c.repeat(40);
+  const source = parseBackupSourceIdentity({ schema: 'youeye.backup.source.v1', runtime_kind: 'mutable-host', spine_version: '0.6.12-dev.3',
+    control_panel_version: '0.6.12-dev.3', ui_version: '0.6.12-dev.3', pointer_version: '0.6.3-dev.4',
+    release: { version: '0.6.12-beta.1', line: '0.6.12', sequence: 100, source_tree: tree('a') },
+    control_panel: { version: '0.6.12-beta.1', line: '0.6.12', sequence: 100, source_tree: tree('b') } });
+  const request = backupStoreRequest({ schema: 'youeye.backup.set.v1', id: 'backup-20261119T000000Z-0a1b2c3d', createdAt: '2026-11-19T00:00:00.000Z',
+    status: 'completed', appCount: 0, apps: [], source }, 'media-1', undefined, true);
+  const oldSpine = (refusal: SpineAPIError) => {
+    const sent: Record<string, unknown>[] = [];
+    return { sent, store: async (body: typeof request) => {
+      sent.push(structuredClone(body.source) as unknown as Record<string, unknown>);
+      if ('release' in body.source || 'control_panel' in body.source) throw refusal;
+    } };
+  };
+  // 0.6.11's strict decoder answers 400 "invalid repository store request" (it does not name the field).
+  const spine = oldSpine(new SpineAPIError('invalid repository store request', 400));
+  await storeBackupSet(request, spine.store);
+  assert.equal(spine.sent.length, 2);
+  assert.deepEqual(Object.keys(spine.sent[1]), ['schema', 'runtime_kind', 'spine_version', 'control_panel_version', 'ui_version', 'pointer_version']);
+  // The same Spine as the Control Panel: one request with everything.
+  const same = oldSpine(new SpineAPIError('unused', 400));
+  const { release: _release, control_panel: _cp, ...oldShape } = source;
+  await storeBackupSet({ ...request, source: oldShape }, same.store);
+  assert.equal(same.sent.length, 1);
+  // Any other refusal is the answer: no second request.
+  for (const refusal of [new SpineAPIError('Could not store recovery point: no drive', 400), new SpineAPIError('invalid repository store request', 500)]) {
+    const other = oldSpine(refusal);
+    await assert.rejects(storeBackupSet(request, other.store), new RegExp(refusal.message));
+    assert.equal(other.sent.length, 1, refusal.message);
+  }
+  // Refused again with the old fields: that refusal is reported.
+  let calls = 0;
+  await assert.rejects(storeBackupSet(request, async () => { calls++; throw new SpineAPIError('invalid repository store request', 400); }), /invalid repository store request/);
+  assert.equal(calls, 2);
 });

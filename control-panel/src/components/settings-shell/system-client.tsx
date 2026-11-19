@@ -144,7 +144,8 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-export function SystemClient({ cpVersion, spine }: { cpVersion?: string; spine?: { running: string; seed: string } }) {
+/** `release`: the installed release's version, shown for the parts it installed (System, Server interface). */
+export function SystemClient({ release }: { release?: string }) {
   const locale = useLocale();
   const translateInterface = useInterfaceTranslations("interface");
 const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIcon }> = {
@@ -356,7 +357,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
   const isAppliance = data.runtime.kind === "appliance-image";
   const platformRows = PLATFORM_ORDER.map((slug) => {
     if (slug === "__cp__") {
-      return { key: "__cp__", icon: Monitor, name: translateInterface("m0d6a16e62a51"), desc: translateInterface("m52858a1e8a21"), version: cpVersion ? `v${cpVersion}` : "", status: "running" };
+      return { key: "__cp__", icon: Monitor, name: translateInterface("m0d6a16e62a51"), desc: translateInterface("m52858a1e8a21"), version: release ?? "", status: "running" };
     }
     if (slug === "spine" && isAppliance) {
       return {
@@ -364,8 +365,8 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
         icon: PackageCheck,
         name: translateInterface("m996eea0a4157"),
         desc: translateInterface("mc474624e6d25"),
-        // Image version, then the Spine the slot runs (it updates without a new image).
-        version: showVersion(data.runtime.image_version) + (spine ? ` · Spine ${showVersion(spine.running)}${spine.running !== spine.seed ? ` (seed ${showVersion(spine.seed)})` : ""}` : ""),
+        // The installed release; the image and Spine builds are never shown (About has the details line).
+        version: release ?? "",
         status: data.runtime.repair_required ? "repair-required" : "image-managed",
       };
     }

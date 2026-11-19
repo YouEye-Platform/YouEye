@@ -19,8 +19,8 @@ func TestStatusContractForBackupIdentity(t *testing.T) {
 		DiskLayoutVersion: 1, Compatibility: appliance.Compatibility{State: "compatible", Data: "compatible", Compatible: true},
 	}
 	status := statusDocument("0.6.5-dev.1", "7.0.1", "Debian GNU/Linux 13 (trixie)",
-		map[string]interface{}{"status": "running", "version": "0.6.5-dev.1"},
-		map[string]interface{}{"status": "running", "installed": true, "enabled": true, "version": "0.6.5-dev.1"},
+		map[string]interface{}{"status": "running", "version": "0.6.5-dev.1", "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0"},
+		map[string]interface{}{"status": "running", "installed": true, "enabled": true, "version": "0.6.5-dev.1", "source_tree": "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0"},
 		appliance.RuntimeStatus{
 			Kind: appliance.RuntimeApplianceImage, ManifestValid: true, ImageVersion: "0.6.5-dev.1",
 			BuildID: "youeye-0.6.5-dev.1", SourceTree: "1844da69b0c3e0b0b8a7c1a2d3e4f5a6b7c8d9e0",

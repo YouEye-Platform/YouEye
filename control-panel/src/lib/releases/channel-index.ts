@@ -31,11 +31,12 @@ export const isReleaseChannel = (value: unknown): value is ReleaseChannelName =>
 export const INDEX_PRODUCTS = ['youeye', 'pointer', 'notes', 'wiki', 'search', 'translate', 'weather', 'cinema'] as const;
 
 /**
- * `version` is the release name (display and tag); `build` is the build
- * version it carries (core: the document's `build`; products: the build
- * manifest's `build_version`). Only `build` orders entries.
+ * `version` is the release name (display and tag). An entry says nothing
+ * about order: releases are ordered by the line and `sequence` of the
+ * document it names. A temporary `build` field (for readers up to 0.6.11)
+ * is ignored.
  */
-export type ChannelEntry = { repository: string; tag: string; version: string; build: string; document: string; sha256: string; download_base?: string };
+export type ChannelEntry = { repository: string; tag: string; version: string; document: string; sha256: string; download_base?: string };
 export type ChannelIndex = {
   schema: 'youeye.channel.v1'; channel: ReleaseChannelName; published_at: string; products: Record<string, ChannelEntry>;
   /** Products whose entry this reader could not use, with the reason. */
@@ -87,7 +88,7 @@ function channelEntry(product: string, value: unknown): ChannelEntry {
   const entry = value as ChannelEntry;
   let repository = '';
   try { repository = canonicalReleaseRepository(String(entry.repository)); } catch { /* reported below */ }
-  if (repository !== entry.repository || typeof entry.version !== 'string' || !parseReleaseVersion(entry.version) || typeof entry.build !== 'string' || !parseReleaseVersion(entry.build) || !validReleaseTag(entry.tag) || typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)
+  if (repository !== entry.repository || typeof entry.version !== 'string' || !parseReleaseVersion(entry.version) || !validReleaseTag(entry.tag) || typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)
     || entry.download_base !== undefined && !validDownloadBase(entry.download_base)) {
     throw new Error(`Channel index entry ${product} is invalid`);
   }
@@ -95,7 +96,7 @@ function channelEntry(product: string, value: unknown): ChannelEntry {
     : [`v${entry.version}`, 'product-release.json'];
   if (entry.tag !== tag || entry.document !== documentName) throw new Error(`Channel index entry ${product} must name ${tag}/${documentName}`);
   return {
-    repository: entry.repository, tag: entry.tag, version: entry.version, build: entry.build, document: entry.document, sha256: entry.sha256,
+    repository: entry.repository, tag: entry.tag, version: entry.version, document: entry.document, sha256: entry.sha256,
     ...(entry.download_base ? { download_base: entry.download_base } : {}),
   };
 }
@@ -261,11 +262,11 @@ export async function resolveChannelEntry(product: string, entry: ChannelEntry, 
   return verifyChannelEntryDocument(product, entry, raw);
 }
 
-/** Check a release document against the index entry that names it (digest, repository, tag, versions). */
+/** Check a release document against the index entry that names it (digest, repository, tag, version). */
 export function verifyChannelEntryDocument(product: string, entry: ChannelEntry, raw: Buffer): VerifiedProductRelease {
   if (createHash('sha256').update(raw).digest('hex') !== entry.sha256) throw new Error(`${entry.document} of ${entry.tag} differs from the channel index digest`);
   const selected = verifyProductRelease(raw, { product, repository: entry.repository, tag: entry.tag, downloadBase: entry.download_base });
-  if (selected.release.version !== entry.version || selected.build.build_version !== entry.build) throw new Error(`${product} release differs from its channel index version`);
+  if (selected.release.version !== entry.version) throw new Error(`${product} release differs from its channel index version`);
   return selected;
 }
 

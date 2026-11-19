@@ -9,13 +9,24 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-// CoreReleaseSelection is what a box follows: its repository and channel.
-// InstalledBuild, when known, lets resolution choose a stepping stone if the
-// channel head can't be installed from it.
+// CoreReleaseSelection is what a box follows (its repository and channel) and
+// what it holds. Installed is the ordering key of the installed release, from
+// the committed receipt, and InstalledVersion its name (for messages). They
+// decide whether the channel head can be installed or a stepping stone comes
+// first. FreshInstall says that nothing is installed yet, so only the head is
+// considered; it is never inferred from an empty Installed.
 type CoreReleaseSelection struct {
-	Repository     string
-	Channel        string
-	InstalledBuild string
+	Repository       string
+	Channel          string
+	Installed        releasecache.ReleaseKey
+	InstalledVersion string
+	FreshInstall     bool
+}
+
+// WithInstalled returns the selection of a box that holds r.
+func (s CoreReleaseSelection) WithInstalled(r releasecache.CoreRelease) CoreReleaseSelection {
+	s.Installed, s.InstalledVersion, s.FreshInstall = r.Key(), r.Version, false
+	return s
 }
 
 // ErrChannelBehind means the channel head is older than the installed release.
@@ -36,7 +47,8 @@ func ResolveCoreChoice(ctx context.Context, client *http.Client, selection CoreR
 	if client == nil {
 		client = ReleaseHTTPClient()
 	}
-	choice, err := releasecache.ChooseCoreRelease(releasecache.LiveDiscovery(ctx), client, selection.Repository, selection.Channel, selection.InstalledBuild)
+	choice, err := releasecache.ChooseCoreRelease(releasecache.LiveDiscovery(ctx), client, selection.Repository, selection.Channel,
+		releasecache.InstalledRelease{Fresh: selection.FreshInstall, Key: selection.Installed, Version: selection.InstalledVersion})
 	if err != nil {
 		return releasecache.CoreChoice{}, err
 	}
@@ -46,13 +58,14 @@ func ResolveCoreChoice(ctx context.Context, client *http.Client, selection CoreR
 	return choice, nil
 }
 
-// RefuseDowngrade returns ErrChannelBehind when target is an older build than
-// installed. Builds are compared, never release names: the same build under
-// another channel's name is not older.
+// RefuseDowngrade returns ErrChannelBehind when target is an older release
+// than installed: an older line, or an earlier build of the same line. Names
+// are never compared: the same build under another channel's name is not
+// older, and a stable 0.6.13 is older than a later 0.6.13-dev build.
 func RefuseDowngrade(channel string, installed, target releasecache.CoreRelease) error {
-	if releasecache.CompareVersions(target.Build, installed.Build) < 0 {
-		return fmt.Errorf("%w: channel %s offers %s (build %s), installed is %s (build %s); waiting for it to catch up",
-			ErrChannelBehind, channel, target.Version, target.Build, installed.Version, installed.Build)
+	if releasecache.CompareReleases(target.Key(), installed.Key()) < 0 {
+		return fmt.Errorf("%w: channel %s offers %s; this box has %s; waiting for it to catch up",
+			ErrChannelBehind, channel, target.Version, installed.Version)
 	}
 	return nil
 }

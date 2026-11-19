@@ -15,6 +15,7 @@ import * as realStore from '../../src/lib/market/market-store';
 import * as partialCatalog from '../../src/lib/market/partial-catalog';
 import * as sources from '../../src/lib/market/source';
 import * as routing from '../../src/lib/market/update-routing';
+import * as realVersion from '../../src/lib/version';
 import type { AppManifest } from '../../src/lib/market/types';
 import { fakeMarketHosts } from './market';
 
@@ -108,10 +109,11 @@ export function marketWorld(sites: Record<string, Map<string, Buffer>>, options:
         if (!manifest) throw new Error(`This channel has no ${id} release yet`);
         return {
           manifest: structuredClone(manifest),
-          selected: { repository: `https://git.example.test/owner/${id}`, release: { tag: `v${manifest.version}` }, build: { build_version: manifest.version } },
+          selected: { repository: `https://git.example.test/owner/${id}`, release: { tag: `v${manifest.version}`, version: manifest.version, sequence: 1762950000 }, build: {} },
         };
       },
     },
+    '../version': realVersion,
     './partial-catalog': partialCatalog,
     './source': sourceModule,
     './platform-env': { getPlatformContext: async () => ({ version: options.boxVersion ?? '0.6.11' }) },

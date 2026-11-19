@@ -56,8 +56,10 @@ func TestCoreReleaseRejectsBadDocuments(t *testing.T) {
 		"foreign release":  func(d map[string]any) { member(d, 0)["artifact"].(map[string]any)["release"] = "v1.0.0" },
 		"bad member tree":  func(d map[string]any) { member(d, 2)["source_tree"] = "" },
 		"cp without spine": func(d map[string]any) { delete(member(d, 12), "depends_on") },
-		"no build":         func(d map[string]any) { delete(d, "build") },
 		"bad build":        func(d map[string]any) { d["build"] = "dev2" },
+		"bad member build": func(d map[string]any) { member(d, 3)["build_version"] = "dev2" },
+		"bad minimum":      func(d map[string]any) { d["compatibility"].(map[string]any)["minimum_release"] = "0.6" },
+		"no sequence":      func(d map[string]any) { delete(d, "sequence") },
 		"other schema":     func(d map[string]any) { d["schema"] = "youeye.core-release.v2" },
 		"no reader":        func(d map[string]any) { delete(d, "minimum_reader") },
 	}
@@ -88,7 +90,7 @@ func TestFutureCoreRelease(t *testing.T) {
 		}
 	}
 	newer := map[string]func(map[string]any){
-		"reader 2": func(d map[string]any) { d["minimum_reader"] = 2; d["members"] = "a different shape" },
+		"reader 3": func(d map[string]any) { d["minimum_reader"] = 3; d["members"] = "a different shape" },
 		"new role": func(d map[string]any) {
 			extra := map[string]any{}
 			for k, v := range member(d, 0) {
@@ -118,18 +120,6 @@ func TestCoreReleaseEmptyDependsOnSurvivesJSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCompareVersions(t *testing.T) {
-	ordered := []string{"0.5.9-dev.3", "0.6.0-dev.1", "0.6.0-dev.2", "0.6.0-dev.10", "0.6.0", "0.6.1-dev.1", "1.0.0-dev.1"}
-	for i := 1; i < len(ordered); i++ {
-		if CompareVersions(ordered[i-1], ordered[i]) >= 0 || CompareVersions(ordered[i], ordered[i-1]) <= 0 {
-			t.Fatalf("%s should sort before %s", ordered[i-1], ordered[i])
-		}
-	}
-	if CompareVersions("0.6.1-dev.4", "0.6.1-dev.4") != 0 {
-		t.Fatal("equal versions differ")
-	}
-}
-
 func TestCanonicalRepository(t *testing.T) {
 	for raw, want := range map[string]string{
 		"https://GitHub.com/YouEye-Platform/YouEye":     OfficialRepository,
@@ -147,12 +137,106 @@ func TestCanonicalRepository(t *testing.T) {
 	}
 }
 
-func TestPromotedCoreReleaseKeepsItsBuild(t *testing.T) {
-	// A promotion renames the release and keeps the build and every member.
+func TestPromotedCoreReleaseIsTheSameRelease(t *testing.T) {
+	// A promotion renames the release and keeps the sequence and every member:
+	// the same key and the same payload.
+	dev, _, err := ParseCoreRelease(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw := mutate(t, func(d map[string]any) { d["version"], d["tag"] = "0.6.1", "youeye-v0.6.1" })
 	r, _, err := ParseCoreRelease(raw)
 	if err != nil || r.Version != "0.6.1" || r.Build != "0.6.1-dev.1" {
 		t.Fatalf("promoted document: %+v %v", r, err)
+	}
+	if CompareReleases(r.Key(), dev.Key()) != 0 || r.PayloadSHA256() != dev.PayloadSHA256() {
+		t.Fatalf("a promotion is another release: %+v %+v", r.Key(), dev.Key())
+	}
+}
+
+// Reader 2 reads both shapes: documents up to 0.6.12 carry build and a
+// build_version per member; later ones carry neither and say minimum_reader 2.
+func TestCoreReleaseWithoutBuildNames(t *testing.T) {
+	raw, err := os.ReadFile("testdata/core-release-no-build.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"build"`, `"build_version"`, "-dev."} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("the fixture without build names contains %s", forbidden)
+		}
+	}
+	r, digest, err := ParseCoreRelease(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Version != "0.6.13" || r.Build != "" || r.MinimumReader != 2 || r.Compatibility.MinimumRelease != "0.6.12" || len(digest) != 64 {
+		t.Fatalf("unexpected document %+v", r)
+	}
+	if key := r.Key(); key.Line != "0.6.13" || key.Sequence != 1795200000 {
+		t.Fatalf("key %+v", key)
+	}
+	for _, m := range r.Members {
+		if m.BuildVersion != "" {
+			t.Fatalf("%s has a build version", m.Role)
+		}
+	}
+	// A receipt or journal holds the parsed document as JSON: writing it back
+	// must not invent the old fields, and must keep them for an old document.
+	again, err := json.Marshal(r)
+	if err != nil || strings.Contains(string(again), `"build"`) || strings.Contains(string(again), "build_version") {
+		t.Fatalf("round trip added build names: %s %v", again, err)
+	}
+	old, _, err := ParseCoreRelease(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _ = json.Marshal(old)
+	if strings.Count(string(again), `"build_version":"0.6.1-dev.1"`) != len(CoreRoles) || !strings.Contains(string(again), `"build":"0.6.1-dev.1"`) {
+		t.Fatalf("round trip lost the old fields: %s", again)
+	}
+	back, _, err := ParseCoreRelease(again)
+	if err != nil || back.PayloadSHA256() != old.PayloadSHA256() {
+		t.Fatalf("round trip changed the payload: %v", err)
+	}
+	// The old shape without its top-level build is still a valid document
+	// (build is optional and unused).
+	if _, _, err := ParseCoreRelease(mutate(t, func(d map[string]any) { delete(d, "build") })); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Boxes keep payload digests on State (the version floor) and compare them
+// across Spine versions. These two values must never change: they are what a
+// 0.6.11 Spine computed for the old-shape fixture, and what reader 2 computes
+// for the fixture without build names.
+func TestPayloadDigestIsFrozen(t *testing.T) {
+	for name, want := range map[string]string{
+		"testdata/core-release.json":          "d9939a059d316d89c1f854455045b11306ed1ba2e94275414836fca05312d1ba",
+		"testdata/core-release-no-build.json": "28a2bdddb2965a86e281b47ec6a1d4f37d4b43ee44fd1e22a1e471be383351f5",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _, err := ParseCoreRelease(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.PayloadSHA256(); got != want {
+			t.Errorf("%s: payload digest %s, frozen %s", name, got, want)
+		}
+	}
+	// The hashed text itself, for the first member of the old shape: field
+	// names, their order and the omitted empty fields.
+	old, _, _ := ParseCoreRelease(fixture(t))
+	member, _ := json.Marshal(old.Members[0])
+	if string(member) != `{"role":"installer","build_version":"0.6.1-dev.1","source_tree":"1111111111111111111111111111111111111111","input_sha256":"9b2abab70e1120c9d3805d4d0cfa612d8a94b34d9576476f7457f9ce7b716bcb","artifact":{"name":"youeye-installer-linux-amd64","sha256":"ec5940f572eff34142f800751bd90863805b2e9f33b7dcb024f0b69370b493a9","size_bytes":37}}` {
+		t.Errorf("member JSON changed: %s", member)
+	}
+	compatibility, _ := json.Marshal(old.Compatibility)
+	if string(compatibility) != `{"state_min":1,"state_max":1,"data_min":1,"data_max":1,"minimum_release":"0.6.1-dev.1","capabilities":["core-release-v1"]}` {
+		t.Errorf("compatibility JSON changed: %s", compatibility)
 	}
 }
 

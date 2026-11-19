@@ -18,24 +18,32 @@ func TestNormalizeApplianceHealthProfile(t *testing.T) {
 	}
 }
 
-func TestValidateInstalledReleaseIdentityBindsVersionAndDigest(t *testing.T) {
-	digest := strings.Repeat("a", 64)
-	expected := appliance.ComponentRelease{Version: "0.6.1-dev.1", ArtifactSHA256: digest}
-	installed := installedReleaseIdentity{Version: expected.Version, ArtifactSHA256: digest}
-	if err := validateInstalledReleaseIdentity("Server interface", expected, installed); err != nil {
-		t.Fatal(err)
-	}
-	for name, mutate := range map[string]func(*installedReleaseIdentity){
-		"version": func(value *installedReleaseIdentity) { value.Version = "0.6.1-dev.2" },
-		"digest":  func(value *installedReleaseIdentity) { value.ArtifactSHA256 = strings.Repeat("b", 64) },
+// An installed Control Panel or UI is the release member's when its artifact
+// digest is the member's and it was built from the member's git tree. A tree
+// built before 0.6.12 says no tree: it is compared by version with the
+// member's build name, which only documents up to 0.6.12 carry.
+func TestValidateInstalledReleaseIdentityBindsTreeAndDigest(t *testing.T) {
+	digest, tree := strings.Repeat("a", 64), strings.Repeat("1", 40)
+	oldShape := appliance.ComponentRelease{Version: "0.6.1-dev.1", SourceTree: tree, ArtifactSHA256: digest}
+	newShape := appliance.ComponentRelease{SourceTree: tree, ArtifactSHA256: digest}
+	for name, c := range map[string]struct {
+		expected  appliance.ComponentRelease
+		installed installedReleaseIdentity
+		ok        bool
+	}{
+		"old tree, old document":               {oldShape, installedReleaseIdentity{Version: "0.6.1-dev.1", ArtifactSHA256: digest}, true},
+		"old tree of another build":            {oldShape, installedReleaseIdentity{Version: "0.6.1-dev.2", ArtifactSHA256: digest}, false},
+		"old tree, document without names":     {newShape, installedReleaseIdentity{Version: "0.6.1-dev.1", ArtifactSHA256: digest}, false},
+		"tree decides over the version shown":  {oldShape, installedReleaseIdentity{Version: "0.6.1", SourceTree: tree, ArtifactSHA256: digest}, true},
+		"tree, document without names":         {newShape, installedReleaseIdentity{Version: "0.6.13", SourceTree: tree, ArtifactSHA256: digest}, true},
+		"another tree under the member's name": {oldShape, installedReleaseIdentity{Version: "0.6.1-dev.1", SourceTree: strings.Repeat("2", 40), ArtifactSHA256: digest}, false},
+		"another digest":                       {newShape, installedReleaseIdentity{Version: "0.6.13", SourceTree: tree, ArtifactSHA256: strings.Repeat("b", 64)}, false},
+		"no digest recorded":                   {newShape, installedReleaseIdentity{Version: "0.6.13", SourceTree: tree}, false},
+		"nothing readable":                     {oldShape, installedReleaseIdentity{ArtifactSHA256: digest}, false},
 	} {
-		t.Run(name, func(t *testing.T) {
-			candidate := installed
-			mutate(&candidate)
-			if err := validateInstalledReleaseIdentity("Server interface", expected, candidate); err == nil {
-				t.Fatal("mismatched installed provenance was accepted")
-			}
-		})
+		if err := validateInstalledReleaseIdentity("Server interface", c.expected, c.installed); (err == nil) != c.ok {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

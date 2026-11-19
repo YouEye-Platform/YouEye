@@ -137,6 +137,9 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
       artifactSHA256: resolved.artifactSHA256,
     });
   }
+  // The UI reports the installed release's version (it cannot read State).
+  const { publishUIRelease } = await import('@/lib/releases/installed-release');
+  await publishUIRelease().catch((error) => console.warn('[deployer] The UI release version was not published:', error));
   // Replacing the root filesystem also removes its SSO environment/drop-in.
   // Spine retains the authoritative configuration outside that filesystem.
   await restoreUIBridgeAuthority(settings.setup_completed === true);

@@ -14,25 +14,15 @@ interface SystemInfo {
   uptime: string;
   primary_ip: string;
 }
-interface ServiceHealth {
-  slug: string;
-  version: string;
-}
 interface TlsStatus {
   mode: string;
   hasExternalCert: boolean;
 }
 
-// Versions sometimes come back empty or token-like; only show a short, sane string.
-function showVersion(v: string | undefined): string {
-  if (!v || v.length > 24 || /\s/.test(v)) return "";
-  return v.startsWith("v") || /[a-z]/i.test(v) ? v : `v${v}`;
-}
-
-
 const joinDot = (parts: Array<string | false | undefined | null>) => parts.filter(Boolean).join(" · ");
 
-export function AboutClient({ cpVersion }: { cpVersion?: string }) {
+/** `release`: the installed release's version and its details line (`<version> · <short git tree>`). */
+export function AboutClient({ release }: { release?: { version: string; details: string } }) {
   const translateInterface = useInterfaceTranslations("interface");
 function seriesOf(v: string | undefined): string {
   const m = v?.match(/^(\d+)\.(\d+)/);
@@ -42,7 +32,6 @@ function seriesOf(v: string | undefined): string {
 
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [siteName, setSiteName] = useState("This server");
-  const [coreVersion, setCoreVersion] = useState("");
   const [domain, setDomain] = useState<string | null>(null);
   const [caddyRunning, setCaddyRunning] = useState(true);
   const [tls, setTls] = useState<TlsStatus | null>(null);
@@ -53,10 +42,9 @@ function seriesOf(v: string | undefined): string {
     // `/settings/api/*` prefix from the root-domain Settings surface; domain/tls/
     // health reach CP directly. Each piece degrades to an honest placeholder on
     // failure (never a fabricated value), and logs — see pitfalls #23 / #28.
-    const [settingsR, sysR, healthR, domainR, tlsR] = await Promise.allSettled([
+    const [settingsR, sysR, domainR, tlsR] = await Promise.allSettled([
       fetch("/settings/api/settings"),
       fetch("/settings/api/settings/system"),
-      fetch("/api/health/services"),
       fetch("/api/domain"),
       fetch("/api/tls/status"),
     ]);
@@ -72,14 +60,6 @@ function seriesOf(v: string | undefined): string {
       setSys(await sysR.value.json().catch(() => null));
     } else {
       console.error("[About] system info load failed", sysR);
-    }
-
-    if (healthR.status === "fulfilled" && healthR.value.ok) {
-      const svcs = await healthR.value.json().catch(() => null);
-      const spine = Array.isArray(svcs) ? svcs.find((x: ServiceHealth) => x.slug === "spine") : undefined;
-      setCoreVersion(showVersion(spine?.version));
-    } else {
-      console.error("[About] health load failed", healthR);
     }
 
     if (domainR.status === "fulfilled" && domainR.value.ok) {
@@ -113,8 +93,6 @@ function seriesOf(v: string | undefined): string {
   else if (tls.hasExternalCert && tls.mode !== "internal") reach = translateInterface("m15df04d604c1");
   else reach = translateInterface("m01571f8c68af");
 
-  const interfaceVersion = showVersion(cpVersion);
-  const versionMeta = joinDot([coreVersion && translateInterface("mcceccb335716", {version: coreVersion}), interfaceVersion && translateInterface("m9117b752710a", {version: interfaceVersion})]) || "—";
 
   return (
     <div>
@@ -144,8 +122,8 @@ function seriesOf(v: string | undefined): string {
           >
             <Row
               title={translateInterface("mc78ffe195710")}
-              sub={seriesOf(cpVersion)}
-              right={<span className="text-[13px] text-muted-foreground">{versionMeta}</span>}
+              sub={seriesOf(release?.version)}
+              right={release ? <span className="flex items-center gap-3"><span className="text-[13px] tabular-nums text-muted-foreground">{release.details}</span><ButtonCopy value={release.details} /></span> : <span className="text-[13px] text-muted-foreground">—</span>}
             />
             <Row
               href="/settings/about/licenses"
