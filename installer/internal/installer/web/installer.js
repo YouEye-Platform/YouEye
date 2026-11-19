@@ -278,7 +278,7 @@
           [
             `${disk.size} · serial ${disk.serial || 'unknown'}`,
             disk.contents.length ? { warn: true, text: `Existing contents: ${disk.contents.join(', ')}` } : 'Blank disk',
-            disk.installed ? `Installed YouEye: ${disk.installed}` : '',
+            disk.installed ? (disk.installed_release ? `Installed YouEye: ${disk.installed_release}` : 'Installed YouEye') : '',
             disk.warning ? { warn: true, text: disk.warning } : '',
             disk.unavailable ? { warn: true, text: `Unavailable: ${disk.unavailable}` } : '',
           ],
@@ -393,7 +393,6 @@
       const channel = CHANNELS.find((entry) => entry.id === c.channel);
       const adapter = (ui.server.adapters || []).find((entry) => entry.mac === c.adapter_mac);
       const rows = [
-        ['Image', ui.server.image_version],
         ['Source tree', ui.server.source_tree],
         ['Drive', `${disk.path}  ${disk.size}  serial ${disk.serial}`],
         ['Layout', '1 GiB ESP · 4 GiB Recovery · 6 GiB A · 6 GiB B · 4 GiB State; YE-DATA uses the rest'],
@@ -404,7 +403,7 @@
         ['SSH', c.ssh_key ? `Public key ${c.ssh_key.trim().slice(0, 32)}…` : 'No SSH key'],
         ['Console', c.preserve ? 'kept as is (admins, root password, password SSH)' : ui.consoleSummary],
         ['Operation', c.preserve ? 'Preserve settings, identity, SSH keys, applications, and data' : 'Full erase and fresh install'],
-        disk.installed ? ['Existing', `YouEye ${disk.installed}`] : (disk.warning ? ['Existing', 'unreadable YouEye metadata'] : null),
+        disk.installed ? ['Existing', disk.installed_release ? `YouEye ${disk.installed_release}` : 'YouEye'] : (disk.warning ? ['Existing', 'unreadable YouEye metadata'] : null),
       ].filter(Boolean);
       let warning = 'The selected drive will be repartitioned and erased.';
       if (c.preserve) warning = 'System A/B, Recovery, and boot assets will be replaced. State and YE-DATA will remain.';

@@ -20,6 +20,21 @@ func refusalRuntimeFixture(t *testing.T, childResult func(CoreStep) CoreActionOb
 	if j.RestartRequired {
 		t.Fatal("fixture should change services only")
 	}
+	r, barrier := nativeRuntimeFixture(t, m)
+	starts := map[string]int{}
+	e := r.Executor()
+	e.ExecuteAction = func(_ context.Context, _ CoreJournal, s CoreStep) (CoreActionObservation, error) {
+		starts[s.Name]++
+		return childResult(s), nil
+	}
+	m.Executor = e
+	return m, j, r, barrier, starts
+}
+
+// nativeRuntimeFixture is a complete native runtime over m's state. Every child unit has exited and been
+// collected, and the core containers run (containerPID), as on a box that finished starting.
+func nativeRuntimeFixture(t *testing.T, m CoreManager) (NativeCoreRuntime, CoreLifecycleBarrier) {
+	t.Helper()
 	host := newManagerFixture(t).manager
 	host.config.CoreStatePath = m.Root
 	data := t.TempDir()
@@ -46,18 +61,12 @@ func refusalRuntimeFixture(t *testing.T, childResult func(CoreStep) CoreActionOb
 		RecoverHost: func(context.Context, CoreJournal, bool) (CoreActionObservation, error) {
 			return CoreActionObservation{}, fmt.Errorf("unused")
 		},
+		containerPID: func(context.Context, string) (int, error) { return os.Getpid(), nil },
 	}
 	if err := r.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	starts := map[string]int{}
-	e := r.Executor()
-	e.ExecuteAction = func(_ context.Context, _ CoreJournal, s CoreStep) (CoreActionObservation, error) {
-		starts[s.Name]++
-		return childResult(s), nil
-	}
-	m.Executor = e
-	return m, j, r, CoreLifecycleBarrier{Root: filepath.Join(data, "state", "app-updates")}, starts
+	return r, CoreLifecycleBarrier{Root: filepath.Join(data, "state", "app-updates")}
 }
 
 func refusedPreflight(s CoreStep) CoreActionObservation {

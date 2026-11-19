@@ -307,4 +307,44 @@ extra=$(YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --list-extra)
 chmod 0666 "$requests/menu.json"
 [ -z "$(YOUEYE_RECOVERY_REQUEST_DIR="$requests" "$recovery" --list-extra)" ] || { echo "FAIL: unprotected menu file read" >&2; exit 1; }
 
+# The menu names the installed release, never an image version, and shows
+# nothing (without failing) when State is missing or damaged.
+show_release() {
+    YOUEYE_RECOVERY_RECEIPT="$tmp/receipt.json" YOUEYE_RECOVERY_CORE_RELEASE="$tmp/selection.json" \
+        "$recovery" --installed-release
+}
+rm -f "$tmp/receipt.json" "$tmp/selection.json"
+[ -z "$(show_release)" ] || { echo "FAIL: a release was shown without State" >&2; exit 1; }
+printf '%s\n' '{"version":"0.6.13-beta.1","members":[]}' > "$tmp/selection.json"
+[ "$(show_release)" = 'Installed: YouEye 0.6.13-beta.1 (installing)' ] || { echo "FAIL: selected release: $(show_release)" >&2; exit 1; }
+printf '%s\n' '{"release":{"version":"0.6.13","tag":"youeye-v0.6.13"},"image_version":"0.6.13-dev.4"}' > "$tmp/receipt.json"
+[ "$(show_release)" = 'Installed: YouEye 0.6.13' ] || { echo "FAIL: committed release: $(show_release)" >&2; exit 1; }
+printf '%s\n' '{"release":{"version":"0.6.13\u001b[31m; rm"}}' > "$tmp/receipt.json"
+rm -f "$tmp/selection.json"
+[ -z "$(show_release)" ] || { echo "FAIL: a malformed release name was shown" >&2; exit 1; }
+printf '%s\n' 'not json' > "$tmp/receipt.json"
+[ -z "$(show_release)" ] || { echo "FAIL: a damaged receipt was shown" >&2; exit 1; }
+show_release >/dev/null || { echo "FAIL: a damaged receipt failed the menu" >&2; exit 1; }
+
+# "Show disk and boot entries" hides the entries' version key (for the System
+# entries the image's internal identity) and survives a failing bootctl.
+cat > "$fake_bin/bootctl" <<'BOOTCTL'
+#!/bin/sh
+[ "${1:-}" = list ] || exit 0
+printf '%s\n' '         type: Boot Loader Specification Type #1 (.conf)' '        title: YouEye System B' \
+    '           id: youeye-system-b+3-0.conf' '     sort-key: youeye-system' '      version: 0.6.13-dev.4-b' \
+    '        linux: /EFI/YouEye/youeye-system-b.efi'
+exit "${TEST_BOOTCTL_STATUS:-0}"
+BOOTCTL
+chmod 0755 "$fake_bin/bootctl"
+for status in 0 1; do
+    entries=$(TEST_BOOTCTL_STATUS=$status YOUEYE_RECOVERY_PATH="$fake_bin:/usr/bin:/bin" "$recovery" --boot-entries) ||
+        { echo "FAIL: boot entries failed with bootctl status $status" >&2; exit 1; }
+    case "$entries" in
+        *dev.4*|*version:*) echo "FAIL: boot entries show the image version" >&2; exit 1 ;;
+        *'title: YouEye System B'*'sort-key: youeye-system'*'youeye-system-b.efi'*) ;;
+        *) echo "FAIL: boot entries lost lines: $entries" >&2; exit 1 ;;
+    esac
+done
+
 printf '%s\n' 'PASS: Recovery repair and support export fail closed'

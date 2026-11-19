@@ -981,7 +981,7 @@ func (w applianceWizardModel) diskListView(cursor int) string {
 			rows = append(rows, theme.Dim.Render("    Blank disk"))
 		}
 		if installed, ok := w.installed[disk.Path]; ok {
-			rows = append(rows, theme.Dim.Render(fmt.Sprintf("    Installed YouEye: %s", installed.ImageVersion)))
+			rows = append(rows, theme.Dim.Render("    "+installed.label("Installed YouEye", ": ")))
 		}
 		if warning := w.identityWarnings[disk.Path]; warning != "" {
 			rows = append(rows, theme.Danger.Render("    "+shortApplianceText(warning, 58)))
@@ -1103,7 +1103,6 @@ func (w applianceWizardModel) reviewView() string {
 		ssh = "Public key " + shortApplianceText(w.sshInput.Value(), 24)
 	}
 	rows := []string{
-		fmt.Sprintf("Image:       %s", w.bundle.Manifest.ImageVersion),
 		fmt.Sprintf("Source tree: %s", shortApplianceText(w.bundle.Manifest.SourceTree, 40)),
 		fmt.Sprintf("Channel:     %s", w.releasePolicySummary()),
 		"",
@@ -1129,7 +1128,7 @@ func (w applianceWizardModel) reviewView() string {
 		rows = append(rows, "Operation: Full erase and fresh install")
 	}
 	if installed, ok := w.installed[target.Path]; ok {
-		rows = append(rows, fmt.Sprintf("Existing: YouEye %s", installed.ImageVersion))
+		rows = append(rows, "Existing: "+installed.label("YouEye", " "))
 	} else if warning := w.identityWarnings[target.Path]; warning != "" {
 		rows = append(rows, "Existing: unreadable YouEye metadata")
 	}

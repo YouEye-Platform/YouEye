@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { fullRestore } from '@/lib/backup/full-restore';
+import { fullRestore, holdRestoreServices, restoreApps, rollBackRestore } from '@/lib/backup/full-restore';
 import {
   backupSetPath,
   readRestoreStatus,
@@ -12,12 +12,13 @@ import {
   writeRestoreStatus,
   type RestoreStatusRecord,
   createPlatformBackup,
+  preservePreRestoreBackup,
+  type BackupSetRecord,
 } from '@/lib/backup/platform-backup';
 import { spineClient } from '@/lib/spine/client';
-import { restoreApp } from '@/lib/backup/app-restore';
-import type { BackupEvent } from '@/lib/backup/types';
-import path from 'node:path';
-import { readdir, rm } from 'node:fs/promises';
+import type { BackupEvent, FullRestoreProgress } from '@/lib/backup/types';
+import { logOperationFailure } from '@/lib/market/install-tracker';
+import { rm } from 'node:fs/promises';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,31 +102,42 @@ export async function POST(request: NextRequest) {
       };
       const send = (event: Record<string, unknown>) => sendChunk(`data: ${JSON.stringify(event)}\n\n`);
 	  let rollbackPath = '';
+	  let rollbackApps: string[] = [];
+	  let preRestore: BackupSetRecord | null = null;
+	  const progress: FullRestoreProgress = { changed: false, stoppedServices: [] };
+	  // The watchdog stays out of the core services from here until the restore and its rollback have ended.
+	  const releaseServices = restoreCore ? holdRestoreServices() : () => undefined;
+	  // Each step goes to the Control Panel's log, the rollback's too: its events reach no client.
+	  const logged = (phase: string) => (event: BackupEvent) =>
+		console.log(`[restore] ${phase} ${operationId}: ${event.stage}: ${event.message}`);
       try {
 		if (restoreCore) {
+		  // The checks that can refuse the restore run first, so a refusal does not cost the pre-restore backup.
+		  await withUserOperationLockWait(() => withRestoreLock(() =>
+			fullRestore({ backupPath, passphrase, appIds, checkOnly: true }, () => undefined)));
 		  send({ status: 'progress', stage: 'rollback-point', message: 'Protecting the current server state before restore', progress: 1 });
 		  const rollback = await createPlatformBackup({ passphrase, reason: 'pre-restore' }, () => undefined);
 		  rollbackPath = backupSetPath(rollback.id);
+		  rollbackApps = rollback.apps ?? [];
+		  preRestore = rollback;
 		}
         await withUserOperationLockWait(() => withRestoreLock(async () => {
-		  const relay = (event: BackupEvent) => send({
-            step: event.step,
-            totalSteps: event.totalSteps,
-            status: event.status,
-            stage: event.stage,
-            message: event.message,
-            progress: event.progress,
-          });
+		  const relay = (event: BackupEvent) => {
+			if (restoreCore) logged('restore')(event);
+			send({
+			  step: event.step,
+			  totalSteps: event.totalSteps,
+			  status: event.status,
+			  stage: event.stage,
+			  message: event.message,
+			  progress: event.progress,
+			});
+		  };
           if (restoreCore) {
-            await fullRestore({ backupPath, passphrase, appIds }, relay);
+            await fullRestore({ backupPath, passphrase, appIds, progress }, relay);
             return;
           }
-          for (const appId of appIds) {
-            const appDirectory = path.join(backupPath, 'youeye', 'apps', appId);
-            const archives = (await readdir(appDirectory)).filter(file => file.endsWith('.tar.enc')).sort().reverse();
-            if (!archives[0]) throw new Error(`No archive found for ${appId}`);
-            await restoreApp({ appId, archivePath: path.join(appDirectory, archives[0]), passphrase }, relay);
-          }
+          await restoreApps({ backupPath, passphrase, appIds }, relay);
         }));
         const completedAt = new Date().toISOString();
         await writeRestoreStatus({
@@ -141,15 +153,28 @@ export async function POST(request: NextRequest) {
         sendChunk('data: [DONE]\n\n');
       } catch (error) {
 		let message = error instanceof Error ? error.message : 'Restore failed';
-		if (restoreCore && rollbackPath) {
+		logOperationFailure(`Restore ${operationId}`, error);
+		// The rollback is a restore of the pre-restore backup that, like the failed restore, keeps every app that was
+		// not being restored; it is tried a second time if it fails. A restore refused before it changed anything is
+		// not rolled back at all.
+		if (restoreCore && rollbackPath && progress.changed) {
 		  send({ status: 'progress', stage: 'rollback', message: 'Restore failed; returning the server to its previous state', progress: 98 });
 		  try {
-			await withUserOperationLockWait(() => withRestoreLock(() => fullRestore({ backupPath: rollbackPath, passphrase }, () => undefined)));
+			await withUserOperationLockWait(() => withRestoreLock(() => rollBackRestore(
+			  { passphrase, appIds, progress }, { backupPath: rollbackPath, apps: rollbackApps }, logged('rollback'))));
 			await rm(rollbackPath, { recursive: true, force: true }).catch(() => undefined);
 			message = `Restore failed and the previous server state was recovered: ${message}`;
 		  } catch (rollbackError) {
-			message = `Restore failed (${message}); automatic rollback also failed (${rollbackError})`;
+			// The pre-restore backup holds the apps that were being replaced: it goes to the backup drive, where it
+			// can be restored like any recovery point.
+			const where = preRestore ? await preservePreRestoreBackup(preRestore, body.mediaId, passphrase)
+			  : `kept on the server in ${rollbackPath}`;
+			message = `Restore failed (${message}); automatic rollback also failed (${rollbackError instanceof Error ? rollbackError.message : rollbackError}). `
+			  + `The apps that were not being restored are still installed; the state from before the restore is ${where}`;
 		  }
+		} else if (restoreCore && !progress.changed) {
+		  if (rollbackPath) await rm(rollbackPath, { recursive: true, force: true }).catch(() => undefined);
+		  message = `Restore refused, nothing on the server was changed: ${message}`;
 		}
         const completedAt = new Date().toISOString();
         await writeRestoreStatus({
@@ -162,6 +187,7 @@ export async function POST(request: NextRequest) {
         }).catch(() => undefined);
         send({ status: 'error', stage: 'failed', message });
       } finally {
+		releaseServices();
         if (streamOpen) {
           try {
             controller.close();

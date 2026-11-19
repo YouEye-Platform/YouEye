@@ -179,8 +179,9 @@ type spineContractReport struct {
 // supports (`<binary> spine contract`), so the launcher checks what the binary
 // itself declares, not what the installing Spine assumes. The entry is
 // identified by the digest alone. Its Version is only a name and is never
-// empty: the release's name for this Spine, else what the binary calls itself
-// (a reused Spine keeps its own line), else the release's line.
+// empty: the release's name for this Spine (documents up to 0.6.12), else the
+// line the binary calls itself (a reused Spine keeps its own line), else the
+// release's line.
 func spineEntry(ctx context.Context, path string, identity spineIdentity) (spineselect.Entry, error) {
 	_ = os.Chmod(path, 0o500)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -194,8 +195,11 @@ func spineEntry(ctx context.Context, path string, identity spineIdentity) (spine
 		return spineselect.Entry{}, fmt.Errorf("Spine %s reported an invalid contract", identity.shown())
 	}
 	e := spineselect.Entry{SHA256: identity.SHA256, Version: identity.Version, SourceTree: identity.SourceTree, DiskLayout: report.DiskLayout, HelperContract: report.HelperContract}
-	if e.Version == "" && releasecache.ValidCoreVersion(report.Version) {
-		e.Version = report.Version
+	if e.Version == "" {
+		// A document without build names: the binary's line, so a record
+		// never names a build the release does not (a Spine up to 0.6.12
+		// calls itself by its build name).
+		e.Version, _ = releasecache.LineOfVersion(report.Version)
 	}
 	if e.Version == "" {
 		e.Version = identity.label()
@@ -391,6 +395,14 @@ func init() {
 	spineCmd.AddCommand(&cobra.Command{Use: "adopt", Args: cobra.NoArgs, Short: "Run the installed release's Spine on this slot", RunE: func(cmd *cobra.Command, _ []string) error {
 		return adoptReleaseSpine(cmd.Context(), cmd.OutOrStdout())
 	}})
+}
+
+// settleSlotSpine is the update engine's SettleSpine: the slot an image update
+// to a reader-2 release was staged from keeps no fallback Spine written by a
+// Spine up to 0.6.11 (spineselect.DropUndescribedFallbacks).
+func settleSlotSpine(_ context.Context, _ systemupdate.CoreJournal, slot string) error {
+	_, err := spineselect.DropUndescribedFallbacks(spineRoot, slot, time.Now())
+	return err
 }
 
 // coreSpineHooks connect the System update engine to the Spine store: the

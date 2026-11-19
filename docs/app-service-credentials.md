@@ -101,7 +101,7 @@ secret. `POST` (admin and CSRF) with one of:
 | Body | Effect |
 |---|---|
 | `{"action":"provision"}` | create a missing record |
-| `{"action":"reconcile"}` | roll the stored generation forward |
+| `{"action":"reconcile"}` | roll the stored generation forward; when the dashboard holds another revision (its database came back from a backup), fence it and make a new generation, as a server restore does for a kept app |
 | `{"action":"rotate","expectedRevision":N}` | new secret, retire the old one |
 | `{"action":"revoke","expectedRevision":N}` | revoke and stop the app |
 | `{"action":"reinstall","expectedRevision":N}` | after revocation and explicit ownership adoption: a new installation identity and secret |
@@ -129,7 +129,17 @@ resource ownership check passes under the app lock.
   source box.
 - A partial restore (including core-only) keeps other installed apps. Their archived routing and SSO installation
   identities must match the target, or restore stops and asks for those app archives. Kept apps stay stopped with
-  pending intent until reconciliation re-injects and probes their credential.
+  pending intent until reconciliation re-injects and probes their credential. The restore runs that
+  reconciliation itself, under the container maintenance lease it holds for each kept app from the moment it stops
+  the app until the restore ends, and then starts the apps that were running. After a failed restore the kept apps
+  stay stopped and pending until the rollback, or an admin `reconcile`, reopens them.
+- An app that is not installed after a core restore (removed since the backup, or left out of the restore) is
+  fenced too: the dashboard's row came back from the backup, the store kept the later revocation (or has no record
+  on a new box), and the next install publishes one step after the store's revision, which the dashboard refuses
+  unless its own revision is the step before. The restore reads the dashboard's row for every app either side
+  knows and publishes the store's revoked record at or above both revisions (`fenceAbsentAppCredential`).
+- Removing an app publishes its revocation step by step; when the dashboard refuses that (it holds another
+  revision), the same revocation is published as a fence, so an app is never impossible to remove.
 
 ## Tests
 

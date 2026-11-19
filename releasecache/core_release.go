@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -241,14 +242,7 @@ func (r CoreRelease) Validate() error {
 func (r CoreRelease) PayloadSHA256() string {
 	members := make([]CoreMember, len(r.Members))
 	for i, m := range r.Members {
-		m.Artifact.Release = ""
-		if m.BuildInputs != nil {
-			inputs := *m.BuildInputs
-			inputs.Release = ""
-			m.BuildInputs = &inputs
-		}
-		m.DependsOn = append([]string{}, m.DependsOn...)
-		members[i] = m
+		members[i] = m.Payload()
 	}
 	raw, _ := json.Marshal(struct {
 		Schema        string            `json:"schema"`
@@ -258,6 +252,28 @@ func (r CoreRelease) PayloadSHA256() string {
 	}{r.Schema, r.MinimumReader, r.Compatibility, members})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+// Payload is the member without the release that stores its files. A
+// promotion writes a new document for the same files, and only that address
+// may differ (an alpha document names the dev release that holds them, a beta
+// one holds them itself). Two members with equal payloads are the same files:
+// nothing is downloaded or installed again for them. m is not changed.
+func (m CoreMember) Payload() CoreMember {
+	m.Artifact.Release = ""
+	if m.BuildInputs != nil {
+		inputs := *m.BuildInputs
+		inputs.Release = ""
+		m.BuildInputs = &inputs
+	}
+	m.DependsOn = append([]string{}, m.DependsOn...)
+	return m
+}
+
+// SamePayload reports whether two members are the same files, wherever each
+// document says they are stored.
+func (m CoreMember) SamePayload(other CoreMember) bool {
+	return reflect.DeepEqual(m.Payload(), other.Payload())
 }
 
 // Member returns the member with role.

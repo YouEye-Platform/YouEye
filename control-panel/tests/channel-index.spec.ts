@@ -117,7 +117,7 @@ test('channel index entries follow the contract', () => {
 });
 
 test('an index that still carries a market entry parses; the Market is not a channel product any more', async () => {
-  // Every channel index keeps the frozen `market` entry (Market 0.6.4) for boxes up to 0.6.10.
+  // An index may still carry the frozen `market` entry (Market 0.6.4) for boxes up to 0.6.10 (removed with 0.6.13).
   const { f, files } = notesRelease();
   const frozen = { repository: 'https://github.com/YouEye-Platform/Market', tag: 'catalog-v0.6.4', version: '0.6.4', build: '0.6.4-dev.2', document: 'product-release.json', sha256: 'c'.repeat(64) };
   const answer = spineIndex(youeye, 'stable', { notes: { repository: notesRepo, tag: f.tag, version: '0.6.1-dev.2', raw: f.raw } });

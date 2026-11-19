@@ -11,6 +11,11 @@ export interface AppCredentialLifecycleEffects {
   withMaintenance<T>(action: () => Promise<T>): Promise<T>;
   markPending(): Promise<void>;
   quiesce(): Promise<void>;
+  /**
+   * `reconcile` only, with the app stopped: bring a dashboard that holds another revision than this store back
+   * in step (a deny-only fence, then a new generation), so that the publications below can follow it.
+   */
+  alignVerifier?(): Promise<void>;
   /** Must write only server runtime configuration, using the existing installer. */
   writeRuntime(secret: string, credential: AppCredentialProjection): Promise<void>;
   publish(credential: AppCredentialProjection, expectedRevision: number): Promise<void>;
@@ -58,6 +63,7 @@ export async function runAppCredentialLifecycle(
         await effects.markPending();
         await effects.quiesce();
         await store.recoverAbandonedOperation(appId);
+        if (operation.action === 'reconcile') await effects.alignVerifier?.();
         let credential = await store.projection(appId);
         const priorStatus = await store.status(appId);
         if (operation.action === 'provision') {

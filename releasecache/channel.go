@@ -32,8 +32,10 @@ func ValidChannel(channel string) bool {
 	return false
 }
 
-// Product ids that may appear in an index.
-var Products = []string{"youeye", "pointer", "market", "notes", "wiki", "search", "translate", "weather", "cinema"}
+// Product ids this reader takes from an index. An index may still carry a
+// frozen "market" entry for boxes up to 0.6.10 (the Market is read from its
+// own address since 0.6.11); like any product not listed here, it is skipped.
+var Products = []string{"youeye", "pointer", "notes", "wiki", "search", "translate", "weather", "cinema"}
 
 // ChannelIndex is read leniently, so a later publisher can extend it without
 // cutting older boxes off: unknown keys are ignored, unknown products are
@@ -129,10 +131,6 @@ func (e ChannelEntry) validate(product string) error {
 	case product == "youeye":
 		if e.Tag != "youeye-v"+e.Version || e.Document != "core-release.json" {
 			return fmt.Errorf("index entry youeye must name youeye-v<version>/core-release.json")
-		}
-	case product == "market":
-		if e.Tag != "catalog-v"+e.Version || e.Document != "product-release.json" {
-			return fmt.Errorf("index entry market must name catalog-v<version>/product-release.json")
 		}
 	default:
 		if e.Tag != "v"+e.Version || e.Document != "product-release.json" {
@@ -255,64 +253,51 @@ func hostOf(target string) string {
 
 // Download reads one small release file over HTTPS with a size limit.
 func Download(ctx context.Context, client *http.Client, target string, limit int64) ([]byte, error) {
+	raw, _, _, err := download(ctx, client, target, limit, "")
+	return raw, err
+}
+
+// download is Download with If-None-Match when etag is set: the body and its
+// ETag, or notModified for a 304 to that question. Every other answer that is
+// not 200 is classified by HTTPError (an unasked 304 included).
+func download(ctx context.Context, client *http.Client, target string, limit int64, etag string) (raw []byte, newETag string, notModified bool, err error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	request.Header.Set("User-Agent", "youeye")
+	if etag != "" {
+		request.Header.Set("If-None-Match", etag)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		var remote *url.Error
 		if errors.As(err, &remote) {
-			return nil, fmt.Errorf("download %s: %w", hostOf(target), remote.Err)
+			return nil, "", false, fmt.Errorf("download %s: %w", hostOf(target), remote.Err)
 		}
-		return nil, err
+		return nil, "", false, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotModified && etag != "" {
+		return nil, response.Header.Get("ETag"), true, nil
+	}
 	if response.StatusCode != http.StatusOK {
-		return nil, HTTPError(response.StatusCode, target)
+		return nil, "", false, HTTPError(response.StatusCode, target)
 	}
 	if response.ContentLength > limit {
-		return nil, fmt.Errorf("%s exceeds %d bytes", target, limit)
+		return nil, "", false, fmt.Errorf("%s exceeds %d bytes", target, limit)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	raw, err = io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	if int64(len(raw)) > limit || len(raw) == 0 {
-		return nil, fmt.Errorf("%s is empty or exceeds %d bytes", target, limit)
+		return nil, "", false, fmt.Errorf("%s is empty or exceeds %d bytes", target, limit)
 	}
-	return raw, nil
-}
-
-// FetchChannelIndex downloads and validates the index for repository/channel.
-// It tries each location in order; a rate-limit answer from one location is
-// returned only when no later location succeeded.
-func FetchChannelIndex(ctx context.Context, client *http.Client, repository, channel string) (ChannelIndex, []byte, error) {
-	if !ValidChannel(channel) {
-		return ChannelIndex{}, nil, fmt.Errorf("unknown channel %q", channel)
-	}
-	var lastErr error
-	for _, target := range ChannelIndexURLs(repository, channel) {
-		raw, err := Download(ctx, client, target, 256<<10)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		index, err := ParseChannelIndex(raw)
-		if err == nil && index.Channel != channel {
-			err = fmt.Errorf("index at %s is for channel %s", target, index.Channel)
-		}
-		if err != nil {
-			lastErr = fmt.Errorf("%w at %s: %v", ErrInvalidIndex, target, err)
-			continue
-		}
-		return index, raw, nil
-	}
-	return ChannelIndex{}, nil, lastErr
+	return raw, response.Header.Get("ETag"), false, nil
 }
 
 // FetchDocument downloads an entry's release document and checks its digest.

@@ -93,7 +93,8 @@ func runApplianceCommitHealthySlot() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Committed healthy System %s (%s)\n", state.Slots.Current, state.Slots.CurrentImageVersion)
+	// The slot only: the image's own version is internal and never printed.
+	fmt.Printf("Committed healthy System %s\n", state.Slots.Current)
 	return nil
 }
 

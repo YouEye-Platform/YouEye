@@ -34,6 +34,40 @@ type NativeCoreRuntime struct {
 	SpineTrial   func(context.Context, CoreJournal) (string, error)
 	SelectSpine  func(context.Context, CoreJournal, string) error
 	RestoreSpine func(context.Context, CoreJournal) error
+	// SettleSpine runs before an image update is committed, with the slot the
+	// update was staged from: it removes the Spines that slot may fall back to
+	// and that cannot read what the committed release writes.
+	SettleSpine func(context.Context, CoreJournal, string) error
+	// containerPID observes a running core container for the wait before
+	// verify-members. Nil means Incus (nativeCoreContainerPID); tests set it.
+	containerPID func(context.Context, string) (int, error)
+}
+
+// settlePreviousSlotSpine calls SettleSpine for the slot this image update was
+// staged from, once the new slot actually runs. Only a release that needs
+// reader 2 or later asks for it: until its receipt exists every Spine on the
+// box reads State, and nothing is taken from a slot.
+//
+// The slot it names always holds an image whose seed reads the release: the
+// update was staged there by the release the box ran, which is at least the
+// target's minimum_release, on that release's own image. A slot that still
+// holds an older image is the one this update wrote over, never this one.
+//
+// It runs before the commitment, not after: a lost acknowledgement lets
+// observation alone finish the commit-host step. Running again changes nothing.
+func (r NativeCoreRuntime) settlePreviousSlotSpine(ctx context.Context, j CoreJournal) error {
+	if r.SettleSpine == nil || j.Target.MinimumReader < 2 {
+		return nil
+	}
+	host, err := loadJournal(r.Host.config.JournalPath)
+	if err != nil || host.CoreManifestSHA256 != j.ManifestSHA256 {
+		return nil // CommitCoreHost refuses this request
+	}
+	_, _, slot, err := r.Host.current()
+	if err != nil || slot != host.CandidateSlot {
+		return nil // not on the new slot: CommitCoreHost refuses
+	}
+	return r.SettleSpine(ctx, j, host.ActiveSlot)
 }
 
 func (r NativeCoreRuntime) Validate() error {
@@ -65,6 +99,17 @@ func (r NativeCoreRuntime) Executor() NativeCoreExecutor {
 		AuthorizeLiveFenceAction:     r.Runner.AuthorizeLiveFence,
 		ContinueRecoveryHealthAction: r.continueRecoveryHealth,
 		AdmitAction: func(ctx context.Context, j CoreJournal, s CoreStep) error {
+			if s.Name == "verify-members" {
+				// The walk of the installed trees refuses a container that is not
+				// running. Right after a boot the core containers are still starting:
+				// wait for them here, before the action is launched, where a wait that
+				// ends first leaves the request retryable. Nothing is reserved.
+				observe := r.containerPID
+				if observe == nil {
+					observe = nativeCoreContainerPID
+				}
+				return waitCoreContainersRunning(ctx, observe)
+			}
 			barrier := CoreLifecycleBarrier{Root: filepath.Join(r.Checkpoint.DataRoot, "state", "app-updates")}
 			return barrier.BeginContext(ctx, j, func(ctx context.Context) error {
 				current, err := (CoreManager{Root: r.Root}).Read()
@@ -325,8 +370,19 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		if err := r.Checkpoint.PrepareHealth(ctx, j.RequestID, false, false); err != nil {
 			return CoreActionObservation{}, err
 		}
+		if j.NoOp || j.MetadataOnly {
+			// No step of this request stopped, started or waited for a service, so
+			// its one check may meet a box that is still starting. See
+			// waitCoreSettledHealth.
+			return coreActionPassed(waitCoreSettledHealth(ctx, func(ctx context.Context) (string, error) {
+				return r.AuthenticatedHealth(ctx, j, false)
+			}))
+		}
 		return coreActionPassed(r.AuthenticatedHealth(ctx, j, false))
 	case "commit-host":
+		if err := r.settlePreviousSlotSpine(ctx, j); err != nil {
+			return CoreActionObservation{}, err
+		}
 		return r.Host.CommitCoreHost(ctx, j.RequestID, false)
 	case "recovery-fence":
 		return coreActionPassed(r.Checkpoint.Fence(ctx, j.RequestID, r.Runner))

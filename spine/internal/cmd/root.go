@@ -12,12 +12,15 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
-// Version and BuildDate are set at build time via ldflags:
+// Version, BuildDate and SourceTree are set at build time via ldflags:
 //
-//	go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.2.4.1 -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
+//	go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.6.13 -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=2026-11-19 -X github.com/youeye-platform/YouEye/spine/internal/cmd.SourceTree=<40 hex>"
 //
-// Defaults here are used only for development builds.
-var Version = "0.0.0" // set at build time from YOUEYE_VERSION
+// Version is the line (X.Y.Z, YOUEYE_LINE) from 0.6.13 on, never a build name:
+// the release document names the build, on each channel under its own name.
+// Spines up to 0.6.12 carry their build name here. Defaults are used only for
+// development builds.
+var Version = "0.0.0"
 var BuildDate = "dev"
 
 // SourceTree is the git tree the binary was built from (set at build time
@@ -80,7 +83,7 @@ func init() {
 
 	// Version command flags
 	versionCmd.Flags().BoolVar(&versionCheckFlag, "check", false, "Check for available updates")
-	versionCmd.Flags().BoolVarP(&versionVerboseFlag, "verbose", "v", false, "add each part's git tree and sha256 and the image identity")
+	versionCmd.Flags().BoolVarP(&versionVerboseFlag, "verbose", "v", false, "add each part's git tree and sha256")
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "emit machine-readable runtime and component status")
 
 	// Infrastructure commands (existing)

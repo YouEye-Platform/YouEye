@@ -63,15 +63,18 @@ type serveProgress struct {
 }
 
 type serveDisk struct {
-	Path                string   `json:"path"`
-	Model               string   `json:"model"`
-	Serial              string   `json:"serial"`
-	Size                string   `json:"size"`
-	Contents            []string `json:"contents"`
-	Installed           string   `json:"installed,omitempty"`
-	Warning             string   `json:"warning,omitempty"`
-	Unavailable         string   `json:"unavailable,omitempty"`
-	PreserveUnavailable string   `json:"preserve_unavailable,omitempty"`
+	Path     string   `json:"path"`
+	Model    string   `json:"model"`
+	Serial   string   `json:"serial"`
+	Size     string   `json:"size"`
+	Contents []string `json:"contents"`
+	// Installed: the drive holds a readable YouEye installation.
+	// InstalledRelease is the release version its State records, when readable.
+	Installed           bool   `json:"installed,omitempty"`
+	InstalledRelease    string `json:"installed_release,omitempty"`
+	Warning             string `json:"warning,omitempty"`
+	Unavailable         string `json:"unavailable,omitempty"`
+	PreserveUnavailable string `json:"preserve_unavailable,omitempty"`
 }
 
 type serveAdapter struct {
@@ -82,7 +85,6 @@ type serveAdapter struct {
 type serveState struct {
 	Phase           string         `json:"phase"`
 	Error           string         `json:"error,omitempty"`
-	ImageVersion    string         `json:"image_version,omitempty"`
 	SourceTree      string         `json:"source_tree,omitempty"`
 	MinimumSize     string         `json:"minimum_size"`
 	RecommendedSize string         `json:"recommended_size"`
@@ -271,7 +273,9 @@ func (s *installerServer) handleState(w http.ResponseWriter, _ *http.Request) {
 	default:
 		state.Phase = "choose"
 		inv := s.inventory
-		state.ImageVersion, state.SourceTree = inv.bundle.Manifest.ImageVersion, inv.bundle.Manifest.SourceTree
+		// The image's own version is internal and never shown; the release to
+		// install is chosen from the channel when the installation starts.
+		state.SourceTree = inv.bundle.Manifest.SourceTree
 		for index, disk := range inv.disks {
 			entry := serveDisk{
 				Path: disk.Path, Model: strings.TrimSpace(disk.Model), Serial: disk.Serial,
@@ -285,7 +289,7 @@ func (s *installerServer) handleState(w http.ResponseWriter, _ *http.Request) {
 				entry.Unavailable = err.Error()
 			}
 			if installed, ok := inv.installed[disk.Path]; ok {
-				entry.Installed = installed.ImageVersion
+				entry.Installed, entry.InstalledRelease = true, installed.ReleaseVersion
 				candidate := inv
 				candidate.targetCur = index
 				if err := candidate.preserveEligibility(); err != nil {

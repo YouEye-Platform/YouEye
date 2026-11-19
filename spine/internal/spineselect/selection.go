@@ -570,6 +570,47 @@ func Select(root, slotName string, e Entry, host Host, now time.Time) error {
 	return save(root, s, now, slotName)
 }
 
+// DropUndescribedFallbacks removes the previous and trial entries of a slot
+// that no Spine from 0.6.12 on wrote: those without a description of their own
+// (described_sha256). A Spine up to 0.6.11 kept the slot's previous entry when
+// it selected a Spine for an image update, so the slot that holds the 0.6.12
+// image can still name a 0.6.11 Spine. That one reads release documents up to
+// reader 1: on a failed current payload, or on `youeye spine rollback`, it
+// would run against a receipt it calls broken. Without the entries the slot
+// falls back to the seed of its own image.
+//
+// The slot's current entry stays, described or not: it is the Spine that ran
+// the slot's release. The caller names a slot whose image seeds a Spine that
+// reads what the box now writes (the update engine: the slot an image update
+// to a reader-2 release was staged from). It returns what it removed; payloads
+// stay on State. A record that cannot be read has nothing to remove: its slots
+// run their seeds.
+func DropUndescribedFallbacks(root, slotName string, now time.Time) ([]Entry, error) {
+	if !validSlot(slotName) {
+		return nil, fmt.Errorf("unknown System slot %q", slotName)
+	}
+	s, err := Load(root)
+	if err != nil {
+		return nil, nil
+	}
+	slot := s.Slots[slotName]
+	if slot == nil {
+		return nil, nil
+	}
+	var dropped []Entry
+	// Load cleared every description that is not the entry's own.
+	for _, e := range []**Entry{&slot.Previous, &slot.Trial} {
+		if *e != nil && (*e).DescribedSHA256 == "" {
+			dropped = append(dropped, **e)
+			*e = nil
+		}
+	}
+	if len(dropped) == 0 {
+		return nil, nil
+	}
+	return dropped, Save(root, s, now)
+}
+
 // Rollback makes the slot's previous Spine current again.
 func Rollback(root, slotName string, now time.Time) error {
 	s, err := Load(root)

@@ -22,7 +22,7 @@ import { sendNotificationToUI } from './notification-bridge';
 import { spineClient } from '@/lib/spine/client';
 import { readFileSync } from 'fs';
 import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
-import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
+import { isContainerHeldByOperation, isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
 import { startWatchdogContainer } from './watchdog-start';
 import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
@@ -143,6 +143,9 @@ async function checkServiceHealth(): Promise<void> {
   }
 
   for (const svc of services) {
+    // A server restore has stopped this service on purpose and starts it again itself. Reporting it as down would
+    // raise a critical issue, and an open critical issue refuses the app installs the restore is about to run.
+    if (isContainerHeldByOperation(`youeye-${svc.slug}`)) continue;
     const prev = serviceStates.get(svc.slug);
     const prevStatus = prev?.status ?? 'unknown';
     const currentStatus = svc.status;

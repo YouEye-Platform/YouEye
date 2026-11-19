@@ -143,15 +143,28 @@ installed release. Each update has a request ID (`--request`), shown in the jour
   checkpoint preflight refused. After that, use `recover` (`spine/internal/systemupdate/core_journal.go`).
 - `youeye update core check` says `"behind": true` when the channel's release is older than the installed one. A box
   never downgrades; it waits for the channel to catch up ([below](#waiting-for-the-channel-to-catch-up)).
-- **An update started right after a boot stops at `needs-recovery`** with "core container is not running" in
-  `verify-members`: the core containers were still starting. `resume` repeats the error and `recover` answers "no
-  activation checkpoint exists; use staged cancellation". Nothing was changed. Cancel it and run it again once
-  the core containers run (`incus list` shows `youeye-control` and `youeye-ui` as `RUNNING`):
+- **An update started right after a boot** (a box running 0.6.13 or later) waits for the box to finish starting:
+  - Before `verify-members` is launched, the coordinator waits up to 5 minutes for `youeye-control` and `youeye-ui`
+    to run. Meanwhile the status API shows the step with `action_state: running`, `stage: admission`,
+    `effect_state: not-started`.
+  - If they still do not run, the command ends and the request stays `applying` with "The Control Panel and
+    dashboard containers (youeye-control, youeye-ui) were not running, so the update has changed nothing; resume
+    this request once they run" (`action_state: retryable`). Nothing was launched. `resume` (the panel's "Retry
+    update") waits again and continues; `cancel` ends the request. The same holds when the waiting command was
+    killed or the box rebooted during the wait.
+  - A promotion of the installed build and a no-op request repeat their one health check
+    (`authenticated-health`) for up to 3 minutes, because Pi-hole and the Control Panel's server come up after the
+    containers. If the box is still not healthy then, the step is left uncertain (`needs-recovery`) as before, and
+    `resume` runs the check again.
+
+  Older Spines failed at once with "core container is not running" in `verify-members` and left the request in
+  `needs-recovery`: `resume` repeated the error and `recover` answered "no activation checkpoint exists; use staged
+  cancellation". Nothing was changed. On such a box, cancel and run the update again once `incus list` shows
+  `youeye-control` and `youeye-ui` as `RUNNING`:
   ```sh
   youeye update core cancel --request <id>
   youeye update core check    # then stage and activate with a new request ID, or Update in Settings → System
   ```
-  (Backlog: `verify-members` should wait for the core containers.)
 - "release host refused or rate-limited the request" means HTTP 403 or 429 from the release host. Clients retry
   with backoff. GitHub allows 60 anonymous API requests per hour per IP, which is why boxes read only the channel
   index and release assets.
@@ -257,7 +270,8 @@ seconds at power-on (`applianceLoaderConfigScript` in `installer/internal/instal
 (`appliance/scripts/youeye-recovery`):
 
 1. Offline diagnostics (`youeye appliance health --profile=recovery`)
-2. Disks and boot entries
+2. Disks and boot entries (without the entries' `version` key: for the two System entries it is the image's
+   internal identity, which only orders them)
 3. / 4. Boot System A or B once (`bootctl set-oneshot`)
 5. Repair the systemd-boot files from verified assets
 6. Export support evidence to a USB drive labelled `YOUEYE-SUP` or `YOUEYE-SUPPORT`
@@ -267,6 +281,10 @@ seconds at power-on (`applianceLoaderConfigScript` in `installer/internal/instal
 10. / 11. Reboot or power off
 12. Reset owner password (a one-time code on the console at the next boot)
 13. and later: extra items an update lists in `recovery/menu.json` on State
+
+The menu of a box installed with 0.6.13 or later has `Installed: YouEye <release version>` under its title: the
+committed receipt's version, else the release selected at install with `(installing)`, else no line (Recovery must
+work when State is damaged). It never shows an image's build name.
 
 Recovery is never updated, so it reads only slots, file ownership and digests (no schema or format checks), repairs
 systemd-boot with `bootctl update` when one is installed (never downgrading it), and queues any well-formed request
@@ -420,6 +438,65 @@ every 10 minutes instead of every pass, and connections with a stopped side are 
 refreshes its connections). To measure: `timeout 60 incus monitor --type=logging | grep -c "Matched trusted
 cert"` (Control Panel API requests per minute), `ls /var/lib/incus/containers/youeye-postgres/exec-output | wc -l`.
 
+
+## A restore failed
+
+`/var/lib/youeye/backups/.restore-status/<operationId>.json` holds the result of a platform restore; the Control
+Panel's log (`youeye logs control`) has the details.
+
+- **"Restore refused, nothing on the server was changed: …"**: the restore stopped at a check. The usual reasons:
+  the backup was made by a newer release (update the box first), or "Retained `<app>` requires a matching core
+  identity or its app archive" (the app was installed or reinstalled after the backup: choose its archive too, or
+  remove the app, then restore again).
+- **"Restore failed and the previous server state was recovered: …"**: the rollback worked. The box is as it was
+  before the restore; the apps that were being replaced were put back from the pre-restore backup.
+- **"Restore failed (…); automatic rollback also failed (…)"**: the rollback was tried twice. The second pair of
+  brackets holds the rollback's own error (each attempt's, when they differ); `youeye logs control | grep -e
+  '\[restore\]' -e 'Server restore'` shows the step each attempt stopped at. No app that was not being restored
+  was removed, but the apps that were kept can be stopped with their service integration pending, an app that
+  was being replaced can be missing, and the core (settings, routes) can be partly the backup's. In this order:
+  1. **Core services.** The watchdog starts them again within a minute of the restore's end. Check `incus list
+     youeye-`; restart Caddy once (`incus restart youeye-caddy`) so that it runs on its current data.
+  2. **The whole state from before the restore** is a recovery point on the backup drive, made just before the
+     restore (the message names it; if the drive could not take it, it names
+     `/var/lib/youeye/backups/sets/<id>` instead, encrypted with the same recovery key). Restoring it with the
+     core is the complete repair: it puts back the settings, the routes and the apps that were being replaced.
+  3. **Or app by app.** For each stopped app, `POST /api/market/credentials/<appId>` with
+     `{"action":"reconcile"}` ([app-service-credentials.md](app-service-credentials.md#admin-actions)): it renews
+     the app's service access, also when the dashboard holds an older revision than the Control Panel, and starts
+     the app if it was running before the restore. An app that is missing: restore it alone from a recovery point.
+  4. **Removing an app in this state** (`youeye app remove <id>`) can stop at "Caddy route … still exists" with
+     its network left `cleanup_pending`: Caddy was not answering. After step 1 run the same command again; a
+     removal continues from where it stopped (`--force` if the app is reported as half removed).
+  Before 0.6.13 this state could also come from the watchdog starting Caddy or the dashboard in the middle of a
+  restore (log: "[watchdog] youeye-caddy should be running but is Stopped — starting"), and the message was
+  "Server restore failed; retained app maintenance requires reconciliation" instead of the real error.
+- **Before 0.6.13** a platform restore with apps failed in two ways, and its rollback removed every app:
+  "Container maintenance already active for an update target" (step `reconcile-apps`, when any installed app was
+  not being restored), and "App `<id>` already owns `yeapp<N>` (…) in active state" when an app was reinstalled.
+  The second also stays behind: `/var/lib/youeye/networks/ipam.json` then lists networks for apps that are not
+  installed, and installing such an app is refused with the same message. On 0.6.13, restoring the app from a
+  backup releases that lease first. A core-only restore was not affected.
+- **Before 0.6.13, an app with a `setup/install.yaml` could not be restored** ("`[<app>]` setup/install.yaml
+  failed", in the log for Memos "POST /api/users returned HTTP 403"): the restore ran the app's first-run setup
+  against its restored data, and the rollback failed the same way. Affected: audiobookshelf,
+  calibre-web-automated, gramps-web, immich, jellyfin, kavita, memos, paperless-ngx, qbittorrent, trek, wallabag.
+  The failed restore also left `/var/lib/youeye/app-<id>/secrets` and the app's database and role, and an install
+  then refuses "App `<id>` has retained data without an active install". On 0.6.13: restore the app from a backup
+  (the restore replaces those leftovers; if it fails it removes them).
+- **After a restore, YouEye ID sign-in to a restored app fails**, and the restore reported "setup/sso.yaml failed:
+  turn YouEye ID sign-in for … off and on again": the app came back, but its sign-in setup could not run (it signs
+  in with the generated admin password, shown under the app's credentials; the owner may have changed it in the
+  app). Set that password again in the app, then turn "YouEye ID sign-in" off and on in the app's settings.
+- **After a server restore before 0.6.13, nobody can sign in to an app that was kept** (YouEye ID answers 401 to
+  the app's token request): the restore put back the backup's YouEye ID client, and the app holds a newer secret
+  (its client was made again after the backup, for example by an app-only restore). 0.6.13 keeps the box's own
+  client through a restore. To repair such an app: turn "YouEye ID sign-in" off and on in its settings (apps with a
+  `setup/sso.yaml`), or restore the app alone from a backup (its reinstall makes a new client).
+- **An app installed after a core restore stops at "App service integration is pending; reconcile credentials"**,
+  `reconcile` answers 409 and removal fails with "App credential publication requires reconciliation" (a restore
+  before 0.6.13: the dashboard kept the backup's credential for an app that had been removed since). On 0.6.13,
+  `youeye app remove <id>` works for such an app; then install it again.
 
 ## One app's record is damaged
 

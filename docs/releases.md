@@ -11,8 +11,8 @@ Every product is built once and promoted unchanged through four channels:
 
 Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema) and Pointer.
 Nothing is signed; integrity comes from HTTPS and SHA-256. The Market is not a product: it has no releases and is
-published as static files ([market-format.md](market-format.md)); a channel index only keeps its
-[frozen entry](#the-frozen-market-entry) for older boxes.
+published as static files ([market-format.md](market-format.md)); its old index entry is
+[removed with 0.6.13](#the-frozen-market-entry).
 
 ## Signing is off
 
@@ -32,18 +32,27 @@ downloads use HTTPS with normal certificate checks. When signing returns, it att
 | The same build on stable | `X.Y.Z` | `0.6.13` |
 
 - `VERSION` in each repository holds the line (`0.6.13`); the publish tool picks the next free `dev.N` and passes the
-  full build name to the build as `YOUEYE_VERSION`, and the git tree as `YOUEYE_SOURCE_TREE`. A failed build bumps
-  `N`.
+  full build name to the build as `YOUEYE_VERSION`, and the git tree as `YOUEYE_SOURCE_TREE`; `.youeye/build/lib.sh`
+  derives `YOUEYE_LINE` (`X.Y.Z`, checked against `VERSION`). A failed build bumps `N`.
 - **Promotion never rebuilds and never changes a file.** It writes one new small release document that names the
   build under the channel's name and binds the very same files by SHA-256. A fix found on alpha is new code: a new
   build (`dev.6`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line.
 - **Build names exist only on dev.** On dev a release's `version` is its build name. A promoted release is named
   only by its channel name; nothing a box shows names the dev build it came from.
-- What is baked into files: up to 0.6.12, Go binaries get the build name through `-ldflags` and the Control Panel,
-  UI, apps and Pointer write it into `version.json` (or their build manifest), next to `source_tree` (from 0.6.12).
-  Spine up to 0.6.11 compares those names with the release document, so 0.6.12 still bakes them. Plan 12 Part E
-  (0.6.13) bakes only the line and the tree. Newer code identifies files by git tree and SHA-256, never by a baked
-  name. `package.json` versions are a `0.0.0` placeholder.
+- What is baked into files: since 0.6.13 only the line and the git tree. Spine gets them through `-ldflags`
+  (`cmd.Version` is the line, `cmd.SourceTree` the tree; the image's seed Spine is built the same way and must equal
+  the Spine artifact byte for byte), the Control Panel and UI write `{"version": "<line>", "source_tree": "<tree>"}`
+  into `version.json` (`scripts/write-version.mjs`), and `build-inputs.json` names the parts by tree and SHA-256
+  only. The one exception is the image's internal identity: `image_version` in `appliance-manifest.json` and
+  `target_image_version` in `system-update-manifest.json` stay the image build's dev name, because the A/B engine
+  orders and keys images by it (Plan 12 decision 9). No release document repeats it and nothing shows it to the
+  owner: no screen (installer, console, Recovery menu, Control Panel) and no command's normal output or error
+  message. It stays in those two manifests, in State records and logs (`appliance-state.json`, the update journal,
+  the image binding, the boot entries' `version` key that orders the two System entries) and in `--json` output. The manifests' `release_set`
+  names Spine, Control Panel and UI by the line. Up to 0.6.12 the files baked the build name (Spine up to 0.6.11
+  compared it with the release document). Code identifies files by git tree and SHA-256, never by a baked name.
+  `package.json` versions are a `0.0.0` placeholder. Native apps and Pointer follow with their next releases
+  (Plan 12 Part F).
 
 ## Ordering: line, then sequence
 
@@ -131,8 +140,8 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
   equal an old-shape document's `build`. The tools write the document's `build` when it has one (0.6.12 and
   earlier) and the entry's `version` otherwise (0.6.13 and later), so a promoted entry never names a dev build.
   Readers from 0.6.12 on neither check nor use it. It is deleted before the Release, with the 0.6.12 stones.
-- Products: `youeye`, `pointer`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`, plus the frozen
-  `market` entry (below).
+- Products: `youeye`, `pointer`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`. Readers from 0.6.13
+  skip a `market` entry like any product they do not know ([below](#the-frozen-market-entry)).
 - **Read leniently, so later indexes never cut a box off:** unknown keys at any level are ignored, a product this
   reader doesn't know is skipped, and an invalid entry makes only that product unavailable (`Invalid` in Go,
   `invalid` in the CP). Only a different `schema` means an incompatible index. A new product or field therefore
@@ -157,10 +166,12 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
   retried with backoff — never as a network failure. `install.sh` also retries 5xx and network failures the same
   way (30, 60, 120 s) and does not retry a 404.
 
-Spine answers `GET /api/releases/index` from a copy it keeps for 5 minutes plus 0–10 % jitter. It asks each index
-address with `If-None-Match` and the ETag of that address's last good copy (a `304` keeps the copy), and while the
-release host fails (back-off from 30 s, doubling up to 10 minutes) it answers the last good index; only with no
-good copy yet does it answer the error (`spine/internal/api/releases.go`).
+Every channel index fetch (`releasecache.FetchChannelIndex`, so also the update check through `ChooseCoreRelease`)
+asks each index address with `If-None-Match` and the ETag of the last good copy that address served in this
+process; a `304` answers that copy (`releasecache/channel_fetch.go`). Spine answers `GET /api/releases/index` from a
+copy it keeps for 5 minutes plus 0–10 % jitter (`releasecache.NextChannelIndexCheck`), and while the release host
+fails (back-off from 30 s, doubling up to 10 minutes) it answers the last good index; only with no good copy yet
+does it answer the error (`spine/internal/api/releases.go`).
 
 Who reads it:
 
@@ -174,12 +185,13 @@ Who reads it:
 
 ### The frozen Market entry
 
-Up to 0.6.10 the Market was a product of the channel index (release `catalog-v<name>` with `catalog.tar`). Every
-channel index still carries that `market` entry, frozen at the 0.6.4 catalog (build `0.6.4-dev.3`, named for each
-channel), because boxes up to 0.6.10 read their Market only from it: it keeps them working until they update
-YouEye, after which they read the Market by address and no longer use the entry. The entry
-must never change or disappear: the release tools refuse to set it and stop any index write that would change it
-(`Tools/release/index frozen <channel>` prints it), and `promote all` never touches it.
+Up to 0.6.10 the Market was a product of the channel index (release `catalog-v<name>` with `catalog.tar`). Until
+0.6.13 every channel index carried that `market` entry, frozen at the 0.6.4 catalog (build `0.6.4-dev.3`, named for
+each channel), because boxes up to 0.6.10 read their Market only from it. It goes with 0.6.13 (owner decision, Plan
+12): Spine from 0.6.13 no longer lists `market` among the index products (`releasecache.Products`; the Control
+Panel never did since 0.6.11), and the entry is taken out of every channel index with the release tools when 0.6.13
+is published and promoted. Boxes up to 0.6.10 then have no Market until they update YouEye, after which they read
+the Market by address.
 
 ## The box's channel
 
@@ -282,7 +294,9 @@ fix the app or its configuration. Never loosen the guard.
 
 - `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index. The
   document's `sequence` must be higher than every earlier YouEye release; `minimum_release` comes from
-  `.youeye/minimum-release` (a reader-1 document needs a build name there, so 0.6.12 keeps `0.6.5-dev.2`).
+  `.youeye/minimum-release`: the line `0.6.12` since 0.6.13 (0.6.12 itself, a reader-1 document, needed a build name
+  there and had `0.6.5-dev.2`). The repository's `scripts/assemble-core-release.py` writes the document: since
+  0.6.13 without `build` or member `build_version`, with `minimum_reader: 2`.
   `--stone-previous` makes the outgoing dev head a stone in the same index write.
 - `Tools/release/app-release <repo>` then `Tools/release/index set dev …` — the same for native apps and Pointer.
 - The Market has none of these steps: a push to the catalog's `dev` or `main` branch is published to

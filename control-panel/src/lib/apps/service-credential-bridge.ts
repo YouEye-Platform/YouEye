@@ -98,31 +98,66 @@ export async function revokeAppCredential(appId: string): Promise<void> {
   if (!current) return;
   const revoked = current.status === 'revoked'
     ? current : await appServiceCredentials.revoke(appId, current.revision);
-  await publishCredential(revoked);
+  try {
+    await publishCredential(revoked);
+  } catch (error) {
+    // The dashboard can hold another revision than this store (its database came back from a backup, or an
+    // install could not publish): the step-by-step publication is then refused for good, and with it every
+    // removal of the app. The revocation is published as a deny-only fence instead, which is all a fence can do.
+    try { await publishRestoreFence(appId, true); } catch { throw error; }
+  }
+}
+
+/**
+ * Make the dashboard deny the app at a revision this store agrees with: read what the dashboard holds, take the
+ * store's revoked record at or above both revisions (`fenceForRestore`), and publish it as a restore fence. A fence
+ * can cross a revision gap only to revoke; it never activates a secret or goes back. Repeating it changes nothing.
+ * With `onlyIfKnown`, an app neither side has a record for is left without one. Returns the fence's revision.
+ */
+async function publishRestoreFence(appId: string, onlyIfKnown: boolean): Promise<number | null> {
+  const bridge = await uiBridge();
+  const url = `${bridge.origin}/api/ui-bridge/app-credentials/${encodeURIComponent(appId)}/restore-fence`;
+  const headers = { 'Content-Type': 'application/json', 'X-UI-Bridge-Token': bridge.token };
+  const read = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  if (!read.ok) throw new Error('Restore authority unavailable');
+  const body = await read.json();
+  const expected = body.credential === null ? null : parseAppCredentialProjection(body.credential);
+  if (onlyIfKnown && !expected && !(await appServiceCredentials.projection(appId))) return null;
+  const fence = await appServiceCredentials.fenceForRestore(appId, expected);
+  const write = await fetch(url, {
+    method: 'POST', headers, signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({ credential: fence, expected }),
+  });
+  if (!write.ok) throw new Error('Restore fence rejected');
+  const receipt = await write.json();
+  if (receipt.ok !== true || receipt.revision !== fence.revision) throw new Error('Restore fence receipt mismatch');
+  await appServiceCredentials.acknowledgePublication(appId, fence.revision);
+  return fence.revision;
 }
 
 /** Called by authenticated encrypted app restore after current runtime removal. */
 export async function prepareRestoredAppCredential(appId: string): Promise<void> {
   try {
-    const bridge = await uiBridge();
-    const url = `${bridge.origin}/api/ui-bridge/app-credentials/${encodeURIComponent(appId)}/restore-fence`;
-    const headers = { 'Content-Type': 'application/json', 'X-UI-Bridge-Token': bridge.token };
-    const read = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-    if (!read.ok) throw new Error('Restore authority unavailable');
-    const body = await read.json();
-    const expected = body.credential === null ? null : parseAppCredentialProjection(body.credential);
-    const fence = await appServiceCredentials.fenceForRestore(appId, expected);
-    const write = await fetch(url, {
-      method: 'POST', headers, signal: AbortSignal.timeout(15_000),
-      body: JSON.stringify({ credential: fence, expected }),
-    });
-    if (!write.ok) throw new Error('Restore fence rejected');
-    const receipt = await write.json();
-    if (receipt.ok !== true || receipt.revision !== fence.revision) throw new Error('Restore fence receipt mismatch');
-    await appServiceCredentials.acknowledgePublication(appId, fence.revision);
-    await appServiceCredentials.prepareReinstall(appId, fence.revision);
+    const revision = await publishRestoreFence(appId, false);
+    await appServiceCredentials.prepareReinstall(appId, revision!);
   } catch {
     throw new Error('Restored app credential requires reconciliation');
+  }
+}
+
+/**
+ * After a server restore, for an app that is not installed and is not being reinstalled yet. The dashboard's
+ * credential table came back from the backup while this store, outside every restored volume, did not move: the
+ * two can name different revisions for the app (the backup's active credential against the revocation of a
+ * later removal, or a row against no record at all). The next install publishes one step after this store's
+ * revision, the dashboard refuses a step that does not follow its own, and the app is left installed, stopped and
+ * "pending" with nothing able to publish, not even its removal. Fencing leaves both sides revoked at one revision.
+ */
+export async function fenceAbsentAppCredential(appId: string): Promise<void> {
+  try {
+    await publishRestoreFence(appId, true);
+  } catch {
+    throw new Error('Absent app credential requires reconciliation');
   }
 }
 

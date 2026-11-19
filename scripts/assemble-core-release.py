@@ -6,14 +6,23 @@ the exact sha256 of core-release.json, and every member artifact below it is
 bound by sha256 and size. Python 3 standard library only.
 
 Usage:
-  assemble-core-release.py --version 0.6.1-dev.1 --source-tree <40 hex> \
-      --minimum-release 0.6.1-dev.1 --artifacts DIR [--sequence N] [--output DIR] \
+  assemble-core-release.py --version 0.6.13-dev.1 --source-tree <40 hex> \
+      --minimum-release 0.6.12 --artifacts DIR [--sequence N] [--output DIR] \
       [--reuse PREVIOUS-core-release.json=ROLE[,ROLE…]]…
 
---reuse keeps the named members of an earlier release of the same repository
-unchanged: same build version, tree and digests, with the blob's "release"
-naming the release that carries the file. "image" stands for every role except
-spine, cp and ui. DIR then only needs the files of the roles built fresh.
+The document has the clean shape (Plan 12, from 0.6.13): it names the build
+only by its `version` (the build name X.Y.Z-dev.N on dev; promotion writes a new
+document with the channel's name for the same payload) and `sequence`. There is
+no `build` field and no member `build_version`; members are identified by git
+tree and sha256. `minimum_reader` is 2, so a reader up to 0.6.11 says "needs a
+newer reader" and takes a stepping stone. `--minimum-release` is a line X.Y.Z
+(publish passes `.youeye/minimum-release`).
+
+--reuse keeps the named members of an earlier release of the same repository:
+same tree, input hash and digests, with the blob's "release" naming the release
+that carries the file. A member of an older-shape document loses its
+`build_version`. "image" stands for every role except spine, cp and ui. DIR then
+only needs the files of the roles built fresh.
 
 DIR must contain every asset listed in ROLES under its exact name. The tool
 writes DIR/core-release.json and DIR/SHA256SUMS unless --output names another
@@ -22,7 +31,7 @@ humans only; nothing verifies it.
 
 The document is host-independent: it names assets but never says where they
 live, and it carries the git tree (not a commit) the build came from. The same
-bytes are published unchanged on every host a release is promoted to.
+payload is published on every host a release is promoted to.
 
 Member input_sha256 is sha256 of the UTF-8 text
 "youeye.core-member-input.v1\\n<role>\\n<source_tree>\\n<artifact sha256>\\n".
@@ -62,7 +71,10 @@ SERVICE_ROLES = {"spine", "cp", "ui"}
 # state_schema_* and data_schema_* in the appliance manifest.
 COMPATIBILITY = {"state_min": 1, "state_max": 1, "data_min": 1, "data_max": 1}
 
-VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$")
+# The reader this document needs: 2 reads documents without build names (0.6.12 and later).
+MINIMUM_READER = 2
+
+LINE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 BUILD = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*")
 TREE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -95,8 +107,8 @@ def main():
     tag = "youeye-v" + a.version
     if not BUILD.fullmatch(a.version):
         fail("version must be the build version X.Y.Z-dev.N")
-    if not VERSION.fullmatch(a.minimum_release):
-        fail("invalid --minimum-release")
+    if not LINE.fullmatch(a.minimum_release):
+        fail("--minimum-release must be a release line X.Y.Z")
     if not TREE.fullmatch(a.source_tree):
         fail("--source-tree must be 40 lowercase hex characters")
     if not 1 <= a.sequence <= 9007199254740991:
@@ -128,6 +140,7 @@ def main():
             if member["role"] in reused:
                 fail("role " + member["role"] + " is reused twice")
             member = json.loads(json.dumps(member))
+            member.pop("build_version", None)  # an older-shape member; tree and digests identify it
             for key in ("artifact", "build_inputs"):
                 if key in member:
                     member[key].setdefault("release", previous["tag"])
@@ -142,7 +155,6 @@ def main():
         text = f"youeye.core-member-input.v1\n{role}\n{a.source_tree}\n{artifact['sha256']}\n"
         member = {
             "role": role,
-            "build_version": a.version,
             "source_tree": a.source_tree,
             "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "artifact": artifact,
@@ -155,12 +167,11 @@ def main():
 
     document = {
         "schema": SCHEMA,
-        "version": a.version,
-        "build": a.version,  # a published build is named by its build version; promotion renames, never rebuilds
+        "version": a.version,  # the build name; promotion writes the same payload under the channel's name
         "tag": tag,
         "source_tree": a.source_tree,
         "sequence": a.sequence,
-        "minimum_reader": 1,
+        "minimum_reader": MINIMUM_READER,
         "authority": "digest",
         "compatibility": dict(COMPATIBILITY, minimum_release=a.minimum_release, capabilities=["core-release-v1"]),
         "members": members,

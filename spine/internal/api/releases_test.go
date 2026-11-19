@@ -37,13 +37,8 @@ func releaseTestServer(t *testing.T) *Server {
 func stubChannelIndex(t *testing.T, fetch func(repository, channel string) (releasecache.ChannelIndex, []byte, error)) {
 	t.Helper()
 	old := fetchChannelIndex
-	fetchChannelIndex = func(_ *http.Request, repository, channel string, _ map[string]channelIndexCopy) (string, channelIndexCopy, error) {
-		index, raw, err := fetch(repository, channel)
-		if err != nil {
-			return "", channelIndexCopy{}, err
-		}
-		sum := sha256.Sum256(raw)
-		return "stub", channelIndexCopy{Index: index, Digest: hex.EncodeToString(sum[:])}, nil
+	fetchChannelIndex = func(_ *http.Request, repository, channel string) (releasecache.ChannelIndex, []byte, error) {
+		return fetch(repository, channel)
 	}
 	t.Cleanup(func() { fetchChannelIndex = old })
 }

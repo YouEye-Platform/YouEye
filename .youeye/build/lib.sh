@@ -25,11 +25,14 @@ youeye_prepare_contract() {
         youeye_build_fail 'YOUEYE_OUTPUT_DIR must be a dedicated non-root directory'
     [[ -n $YOUEYE_WORK_DIR && $YOUEYE_WORK_DIR != / && $YOUEYE_WORK_DIR != "$YOUEYE_SOURCE_DIR" ]] || \
         youeye_build_fail 'YOUEYE_WORK_DIR must be a dedicated non-root directory'
-    # The full build version (X.Y.Z-dev.N) comes from the publish tool; the
-    # source tree only holds the line in VERSION.
+    # The build name (X.Y.Z-dev.N) comes from the publish tool. Only the image
+    # keeps it, as its internal identity (appliance build); everything else a
+    # build writes into a file names the line (YOUEYE_LINE, X.Y.Z, the line in
+    # VERSION) and the git tree, never the build name.
     [[ $YOUEYE_VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev\.[1-9][0-9]*$ ]] || \
         youeye_build_fail 'YOUEYE_VERSION must be the build version X.Y.Z-dev.N'
-    if [[ -f $YOUEYE_SOURCE_DIR/VERSION && ${YOUEYE_VERSION%%-*} != "$(tr -d '[:space:]' < "$YOUEYE_SOURCE_DIR/VERSION")" ]]; then
+    YOUEYE_LINE="${YOUEYE_VERSION%%-*}"
+    if [[ -f $YOUEYE_SOURCE_DIR/VERSION && $YOUEYE_LINE != "$(tr -d '[:space:]' < "$YOUEYE_SOURCE_DIR/VERSION")" ]]; then
         youeye_build_fail "YOUEYE_VERSION $YOUEYE_VERSION is not a build of the line in VERSION"
     fi
 
@@ -50,7 +53,7 @@ youeye_prepare_contract() {
         youeye_build_fail 'SOURCE_DATE_EPOCH must be a positive integer'
 
     install -d -m 0755 "$YOUEYE_OUTPUT_DIR" "$YOUEYE_WORK_DIR"
-    export YOUEYE_SOURCE_DIR YOUEYE_OUTPUT_DIR YOUEYE_WORK_DIR YOUEYE_SOURCE_TREE YOUEYE_VERSION SOURCE_DATE_EPOCH
+    export YOUEYE_SOURCE_DIR YOUEYE_OUTPUT_DIR YOUEYE_WORK_DIR YOUEYE_SOURCE_TREE YOUEYE_LINE YOUEYE_VERSION SOURCE_DATE_EPOCH
     export LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 }
 

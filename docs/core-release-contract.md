@@ -9,7 +9,7 @@ returns before the public Release; the `authority` field is where it will attach
 
 | Code | Role |
 |---|---|
-| `scripts/assemble-core-release.py` | writes the document |
+| `scripts/assemble-core-release.py` | writes the document (since 0.6.13 without `build` and member `build_version`, `minimum_reader: 2`, `minimum_release` a line) |
 | `releasecache/core_release.go` | the Go reader (`ParseCoreRelease`), used by Spine and the installer |
 | `control-panel/src/lib/releases/core-release.ts` | the Control Panel reader; both parse `releasecache/testdata/core-release.json` |
 | `spine/internal/systemupdate/core_*.go` | the update engine |
@@ -35,13 +35,14 @@ Schema `youeye.core-release.v1`. Top-level fields:
 `minimum_release` is a line (`0.6.12`): a box may install the document when its installed release's line is that
 line or later (`MinimumReleaseMet` in `releasecache/order.go`). An old-shape value written as a build name
 (`0.6.5-dev.2`) is read as its line. It comes from `.youeye/minimum-release` in the repository. It is not the image
-floor: `appliance/recipe.json` `minimum_current_version` (written into `system-update.json` as
+floor: `appliance/recipe.json` `minimum_current_version` (written into `system-update-manifest.json` as
 `minimum_current_image_version`) is an image identity that the A/B engine compares with image identities, and it
 stays a build name.
 
 Each member has `role`, `source_tree`, `input_sha256`, optional `depends_on`, an `artifact` blob
 `{name, sha256, size_bytes, release?}`, and in the old shape `build_version` (the dev name of the build the member's
-file came from; optional, checked when present, used for nothing, absent from 0.6.13 on). The `appliance` member
+file came from; optional, checked when present, used for nothing, absent from 0.6.13 on; a member a 0.6.13 or later
+document reuses from an older-shape release comes over without it). The `appliance` member
 also has a `build_inputs` blob (`build-inputs.json`); no other member may. `input_sha256` is the SHA-256 of the text
 `youeye.core-member-input.v1\n<role>\n<source_tree>\n<artifact sha256>\n`.
 
@@ -184,13 +185,17 @@ fresh install, or the update cache at `verify-members`. Releases that reuse an i
 record is derived again from those two places only; when neither has it, the update downloads the appliance member
 into the cache again (checked against the retained document) before staging and after the reboot into a new image,
 because a Spine up to 0.6.11 that staged the release kept no record. The image keeps its own identity
-(`image_version`, the image build's dev name): the A/B engine orders images and names boot entries by it. It is
-never shown and no document repeats it; only `appliance-manifest.json` and `system-update.json` carry it.
+(`image_version`, the image build's dev name): the A/B engine orders images and names boot entries by it. No
+release document repeats it and no screen, command output or error message shows it
+([releases.md](releases.md)); of the published files only `appliance-manifest.json` and
+`system-update-manifest.json` carry it. Their
+`release_set` names the Spine, Control Panel and UI the image pins by line, git tree and SHA-256 (since 0.6.13; up
+to 0.6.12 by build name), and `build-inputs.json` by tree and SHA-256 only.
 
 The Spine, Control Panel and UI members are identified the same way, by tree and SHA-256: the Spine trial checks
 that the service runs the member's binary by SHA-256 ([spine.md](spine.md#spine-only-update-no-reboot)), and the
 Control Panel and UI by the `source_tree` in their `version.json` (a build without one, before 0.6.12, by its baked
-name).
+name). Since 0.6.13 nothing built carries a build name: Spine's own `version` and `version.json`'s are the line.
 
 **Kinds of update** (`coreJournalStepNames`):
 
@@ -209,8 +214,13 @@ name).
   known-good default.
 - `apply-cp` and `apply-ui` replace the container payloads from the verified archives and run their schema step
   once; a completed schema receipt is never replayed.
-- A metadata-only request installs nothing. Its `authenticated-health` action first gives the Control Panel the
-  promoted document (see [The recorded selection](#the-recorded-selection)) and then runs the health checks.
+- A metadata-only request installs nothing and downloads nothing. Its `authenticated-health` action first gives
+  the Control Panel the promoted document (see [The recorded selection](#the-recorded-selection)) and then runs the
+  health checks.
+- `verify-members` downloads a member only when its files differ from the installed release's. Where a document
+  says a file is stored (`artifact.release`: an alpha document names the dev release, a beta one holds the file
+  itself) is not part of the member (`CoreMember.SamePayload`, as in the payload digest), so a promotion or a part
+  reused from another release is not fetched again.
 
 **Phases:** `prepared` → `applying` → (`awaiting-restart`) → `committed`, or `needs-recovery` → `recovering` → `rolled-back`, or
 `cancelling` → `cancelled`. Only one unfinished request may exist.

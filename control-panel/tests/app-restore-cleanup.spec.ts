@@ -163,6 +163,69 @@ for (const variant of ['no-manifest', 'digest-mismatch']) test(`restore refuses 
   assert.deepEqual(uninstalled, [], 'the current app is left alone');
 });
 
+for (const installRecordLeft of [false, true]) test(`a restore whose reinstall fails ${installRecordLeft
+  ? 'keeps what an unfinished install rollback still maps' : 'removes the secrets and database it put in place'}`, async () => {
+  const effects: string[] = [];
+  let installRan = false;
+  const forbidden = async () => { throw Error('Unexpected effect'); };
+  const loadedModule = loadModule('backup/app-restore.ts', {
+    'fs/promises': { mkdir: async () => {}, rm: async () => {}, readFile: async (file: string) => {
+      if (file.endsWith('backup-meta.json')) return JSON.stringify({ schema: 'youeye.backup.app-meta.v1', appId: binding.appId });
+      if (file.endsWith('install.json')) return JSON.stringify({ appId: binding.appId, databaseName: 'fixture_db', databaseUser: 'fixture_role' });
+      if (file.endsWith('admission.json')) return '{}';
+      if (file.endsWith('manifest.json')) return JSON.stringify({ database: { mode: 'shared' } });
+      if (file.endsWith('-shared.sql')) return 'fixture dump';
+      throw Error('Unexpected file');
+    } },
+    // The archive holds a shared-database dump and no own-database dump.
+    fs: { existsSync: (file: string) => !file.endsWith('-own.sql') },
+    '@/lib/spine/client': { spineClient: {
+      restoreArchive: async () => {},
+      prepareIncusRecovery: async () => ({ status: 'prepared', volumes: [], runtimes: [] }),
+      applyBackupVolumes: async () => { effects.push('apply-volumes'); },
+    } },
+    // The app is not installed when the restore starts; afterwards the variant decides.
+    '@/lib/market/metadata': {
+      readInstallMetadata: async () => installRan && installRecordLeft ? { appId: binding.appId, lifecycleState: 'installing' } : null,
+      removeInstallMetadata: async () => { effects.push('remove-app-directory'); },
+      removeInstallMetadataRecord: async () => {},
+    },
+    '@/lib/market/uninstaller': { uninstallApp: forbidden },
+    '@/lib/market/storage': { listStorageLocations: async () => [{ id: 'default' }], deleteCreatedRecoveryStorage: forbidden },
+    '@/lib/infrastructure/secrets': { appSecretNameFromFile: () => 'db_password', readAppSecret: async () => 'fixture-only',
+      writeAppSecret: forbidden },
+    './manifest-values': { resolveSharedDatabasePasswordFile: () => 'secrets/db_password' },
+    './postgres': {
+      replacePlatformAppDatabase: async (options: { database: string }) => { effects.push(`create-database:${options.database}`); },
+      dropPlatformAppDatabase: async (options: { database: string; user: string }) => {
+        effects.push(`drop-database:${options.database}/${options.user}`);
+      },
+    },
+    '@/lib/market/install-tracker': { startTracking: () => ({ signal: undefined }), finishTracking: () => {}, trackEvent: () => {},
+      sanitiseInstallEvent: (event: unknown) => event, logOperationFailure: () => {} },
+    '@/lib/apps/service-credential-bridge': { prepareRestoredAppCredential: async () => {} },
+    // Like the installer after its own rollback: containers, route and network are gone, the restored data stays.
+    '@/lib/market/engine': { installApp: async () => { installRan = true; throw Error('App installation failed (installer stage failed)'); } },
+    './workspace': { BACKUP_STAGING_ROOT: '/fixture-only' },
+    './compatibility': { readCurrentBackupSourceIdentity: async () => ({}), assessBackupCompatibility: () => ({ compatible: true }) },
+    '@/lib/market/update-admission': { withAppInventory: async (fn: () => unknown) => fn(),
+      withAppLifecycle: async (_id: string, fn: () => unknown) => fn() },
+    './app-restore-intent': { readAppRestoreIntent: () => ({ desiredState: 'running' }) },
+    '@/lib/admission/store': { getAdmissionPolicy: async () => ({}) },
+    '@/lib/market/restored-managed-ai': { readRestoredManagedAI: () => undefined },
+    '@/lib/admission/backup': { validateAppAdmissionRestore: async () => ({ policy: {} }) },
+    '@/lib/market/frozen-manifest': { appFromFrozenRegistration: (registration: Record<string, unknown>) =>
+      ({ ...registration, metadata: { id: binding.appId, name: binding.appId }, containers: [], secrets: [] }) },
+  });
+  await assert.rejects(loadedModule.restoreApp({ appId: binding.appId, archivePath: '/fixture-only.tar.enc', passphrase: 'fixture-only' }, () => {}, false),
+    /installer stage failed/);
+  // With no install the archive's secrets and database belong to nothing, and an install would refuse the app
+  // ("retained data without an active install"). The data itself is still in the archive.
+  assert.deepEqual(effects, installRecordLeft
+    ? ['apply-volumes', 'create-database:fixture_db']
+    : ['apply-volumes', 'create-database:fixture_db', 'drop-database:fixture_db/fixture_role', 'remove-app-directory']);
+});
+
 function cleanupVerifier(response: unknown) {
   const f = runtime(response);
   const lifecycle = loadModule('admission/lifecycle.ts', {

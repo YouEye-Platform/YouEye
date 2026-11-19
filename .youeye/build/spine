@@ -6,7 +6,9 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 youeye_prepare_contract
 for command in go date sha256sum; do youeye_require_command "$command"; done
 
-version="$YOUEYE_VERSION"
+# The binary names its line and git tree, never the build name (Plan 12):
+# a release document names the build, on each channel under its own name.
+version="$YOUEYE_LINE"
 build_date="$(date -u -d "@$SOURCE_DATE_EPOCH" +%F)"
 temporary="$YOUEYE_WORK_DIR/spine-linux-amd64.partial"
 output="$YOUEYE_OUTPUT_DIR/spine-linux-amd64"
@@ -24,7 +26,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/spine" build \
 # Capture first: grep -q stops reading at the match, and with pipefail the
 # writer's SIGPIPE would fail the check at random.
 version_output="$("$temporary" version 2>&1 || true)"
-grep -Fq "$version" <<<"$version_output" || youeye_build_fail 'Spine binary does not report the build version'
+grep -Fq "$version" <<<"$version_output" || youeye_build_fail 'Spine binary does not report its line'
 install -m 0755 "$temporary" "$output"
 rm -f -- "$temporary"
 sha256sum "$output"

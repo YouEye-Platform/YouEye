@@ -25,13 +25,18 @@ The entrypoints in `.youeye/build/` build one component each (see
 | Appliance image | **as root** on Debian | needs `mmdebstrap`, `live-build` (`lb`), `ukify`, `xorriso`, `debugfs`, `jq`, `go`, exactly `zstd` 1.5.7, and an APT cache on `127.0.0.1:3142` (`LIVE_BUILD_APT_PROXY`). Takes tens of minutes. |
 
 Every entrypoint needs `YOUEYE_VERSION` (the build version `X.Y.Z-dev.N`; `X.Y.Z` must equal `VERSION`) and builds
-from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`). Nothing in the source tree carries the
-build number `N`; see [releases.md](releases.md).
+from a commit whose git tree identifies the build (`YOUEYE_SOURCE_TREE`); `.youeye/build/lib.sh` exports the line as
+`YOUEYE_LINE`. Nothing in the source tree carries the build number `N`, and since 0.6.13 nothing built carries the
+build name: Spine's `-ldflags` and the Control Panel's and UI's `version.json` name the line and the tree. Only the
+image keeps the build name, as its internal identity (`image_version` in its manifests, never shown); see
+[releases.md](releases.md).
 
 The image build takes `YOUEYE_BUILD_INPUTS`, a `youeye.build-inputs.v1` file:
 
-- the Spine, CP and UI artifacts by version, source tree and SHA-256;
-- the Debian snapshot and minimum update version, which come from `appliance/recipe.json`.
+- the Spine, CP and UI artifacts by source tree, SHA-256 and source epoch (no version since 0.6.13; a file that
+  still names one is refused);
+- the Debian snapshot, which comes from `appliance/recipe.json`. The image floor (`minimum_current_version`) is read
+  from the recipe by the image build itself.
 
 The image bakes no repository, branch, channel or Market source: the installer records the repository and channel
 in protected State, so one image is promoted unchanged through every channel. Pass the Spine you already built as
@@ -51,11 +56,12 @@ the UI each have their own inputs and update without a reboot.
    - `spine-linux-amd64`;
    - `cp-standalone.tar`;
    - `ui-standalone.tar`.
-2. Run `scripts/assemble-core-release.py --version <X.Y.Z-dev.N> --source-tree <tree> --minimum-release <v>
-   --artifacts <dir>` (`<v>` from `.youeye/minimum-release`; `--sequence` defaults to now). It writes
-   `core-release.json` and `SHA256SUMS`. When the image did not change, add
-   `--reuse <previous core-release.json>=image` (or `=spine`, `=cp`, `=ui`): those members are copied unchanged and
-   their blobs name the earlier release that holds the file, so only the rebuilt files need to be in `<dir>`.
+2. Run `scripts/assemble-core-release.py --version <X.Y.Z-dev.N> --source-tree <tree> --minimum-release <line>
+   --artifacts <dir>` (`<line>` from `.youeye/minimum-release`; `--sequence` defaults to now). It writes
+   `core-release.json` (no `build`, no member `build_version`, `minimum_reader: 2`) and `SHA256SUMS`. When the image
+   did not change, add `--reuse <previous core-release.json>=image` (or `=spine`, `=cp`, `=ui`): those members are
+   copied unchanged (a member of an older-shape release without its `build_version`) and their blobs name the
+   earlier release that holds the file, so only the rebuilt files need to be in `<dir>`.
 3. Create release `youeye-v<version>` (prerelease) in the development repository, upload every file plus
    `installer/scripts/install.sh`, and point the `dev` channel index at it.
 4. Promote it to alpha, beta and stable without rebuilding: each promotion writes a new document for the same files
@@ -169,8 +175,8 @@ audit, Plan 7):
 - **Markets** ([market-format.md](market-format.md)): `market.json` and the index may only grow; readers ignore
   unknown fields, and an entry of an unknown `kind` is listed as needing a newer YouEye. Manifests change behind
   `requires.youeye` and the field-since table. A box never accepts a lower `sequence` from the same address, so a
-  market is undone with a new commit, never by publishing an older one. The frozen `market` entry of every channel
-  index stays byte for byte ([releases.md](releases.md#the-frozen-market-entry)).
+  market is undone with a new commit, never by publishing an older one. The frozen `market` entry of the channel
+  indexes (for boxes up to 0.6.10) goes with 0.6.13 ([releases.md](releases.md#the-frozen-market-entry)).
 - **Image inputs** (`appliance/`, `installer/`, `releasecache/`, `.youeye/build/{appliance,installer,lib.sh}`; see
   Building) never change in a release that is meant to update boxes without a reboot. Collect such changes for the
   next image release.

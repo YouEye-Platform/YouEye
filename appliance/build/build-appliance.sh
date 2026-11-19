@@ -14,18 +14,34 @@ if ! build_inputs_validate "$build_inputs"; then
     printf 'BUILD_INPUTS_PATH must name valid youeye.build-inputs.v1 appliance build inputs: %s\n' "$build_inputs_error" >&2
     exit 1
 fi
+# The image's internal identity is its build name (YOUEYE_VERSION, X.Y.Z-dev.N):
+# the A/B engine orders and keys images by it (Plan 12 decision 9). It is
+# written only as image_version / target_image_version in the two manifests.
+# Everything else names the line (YOUEYE_LINE) and git trees.
+image_version="${YOUEYE_VERSION:-}"
+line="${YOUEYE_LINE:-}"
+if ! build_inputs_identity "$image_version" "$line" "$source_dir"; then
+    printf '%s\n' "$build_inputs_error" >&2
+    exit 1
+fi
+# The image floor is an image identity (an image build name), compared with
+# image identities by the A/B engine; it comes from the recipe at the commit.
+minimum_current_image_version="$(jq -er '.minimum_current_version' "$source_dir/appliance/recipe.json" 2>/dev/null || true)"
+if ! build_inputs_valid_version "$minimum_current_image_version"; then
+    printf 'appliance/recipe.json minimum_current_version must be an exact image version.\n' >&2
+    exit 1
+fi
 input_value() { jq -er "$1" "$build_inputs"; }
 snapshot="$(input_value '.debian_snapshot')"
-image_version="$(input_value '.version')"
-minimum_current_image_version="$(input_value '.minimum_current_version')"
-spine_version="$(input_value '.components.spine.version')"
+# The image's release_set names each part by the line, its tree and sha256.
+spine_version="$line"
 spine_tree="$(input_value '.components.spine.source_tree')"
 spine_source_date_epoch="$(input_value '.components.spine.source_date_epoch')"
 spine_expected_sha256="$(input_value '.components.spine.artifact_sha256')"
-cp_version="$(input_value '.components.control_panel.version')"
+cp_version="$line"
 cp_tree="$(input_value '.components.control_panel.source_tree')"
 cp_sha256="$(input_value '.components.control_panel.artifact_sha256')"
-ui_version="$(input_value '.components.ui.version')"
+ui_version="$line"
 ui_tree="$(input_value '.components.ui.source_tree')"
 ui_sha256="$(input_value '.components.ui.artifact_sha256')"
 live_build_attempts="${LIVE_BUILD_ATTEMPTS:-3}"

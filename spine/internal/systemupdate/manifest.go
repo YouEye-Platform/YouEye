@@ -231,18 +231,18 @@ func (m Manifest) validateCurrent(current appliance.Manifest, state appliance.St
 	if ordering.CompareVersion(minimum, installed) > 0 {
 		return &CurrentCompatibilityError{
 			Code:    "bridge_required",
-			Message: fmt.Sprintf("current image %s is older than required minimum %s", current.ImageVersion, m.MinimumCurrentImageVersion),
+			Message: "the running system image is older than this update's required minimum",
 		}
 	}
 	target, _ := ordering.ParseVersion(m.TargetImageVersion)
 	switch ordering.CompareVersion(target, installed) {
 	case -1:
-		return &CurrentCompatibilityError{Code: "downgrade", Message: fmt.Sprintf("target image %s is older than installed image %s", m.TargetImageVersion, current.ImageVersion)}
+		return &CurrentCompatibilityError{Code: "downgrade", Message: "the update's system image is older than the installed one"}
 	case 0:
 		if allowCurrent {
 			return nil
 		}
-		return fmt.Errorf("system update ordering: incoming image version %s is not newer than installed version %s", m.TargetImageVersion, current.ImageVersion)
+		return errors.New("system update ordering: the update's system image is not newer than the installed one")
 	}
 	return nil
 }

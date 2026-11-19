@@ -113,6 +113,9 @@ func (r CoreControlRunner) Start(ctx context.Context, request, command string) (
 	return observed, nil
 }
 
+// CoreBootContinuationUnit continues a retained request after a reboot.
+const CoreBootContinuationUnit = "youeye-core-update.service"
+
 var coreFinishedUnitName = regexp.MustCompile(`^youeye-core-(control-)?[0-9a-f]{64}\.service$`)
 
 // ResetFailedUnits clears the failed state of the transient units a finished
@@ -161,6 +164,10 @@ func (r CoreSystemdRunner) ResetFailedUnits(ctx context.Context, j CoreJournal) 
 	if len(named) == 1 {
 		return nil
 	}
+	// The boot continuation (`youeye-core-update.service`) fails when the boot finds
+	// the request needing recovery, which is true at that moment; once the request
+	// is finished, that failure is stale and `systemctl --failed` should be clean.
+	named = append(named, CoreBootContinuationUnit)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	_, _ = r.capture(ctx, "systemctl", named...)
