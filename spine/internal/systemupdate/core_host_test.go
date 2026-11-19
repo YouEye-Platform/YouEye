@@ -167,8 +167,38 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 	if err := os.WriteFile(f.manager.config.CurrentManifestPath, imageRaw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Before the commitment, the slot the update was staged from loses the
+	// fallback Spines that cannot read a reader-2 release: only for such a
+	// release, and only once the new slot actually runs.
+	var settled []string
+	runtime := NativeCoreRuntime{Host: f.manager, SettleSpine: func(_ context.Context, _ CoreJournal, slot string) error {
+		settled = append(settled, slot)
+		return nil
+	}}
+	reader2 := jCore
+	reader2.Target.MinimumReader = 2
+	if err := runtime.settlePreviousSlotSpine(context.Background(), reader2); err != nil || len(settled) != 0 {
+		t.Fatal("a slot was settled while the box still ran the slot it staged from", settled, err)
+	}
 	if err := os.WriteFile(f.manager.config.KernelCmdlinePath, []byte("root=PARTLABEL=YE-SYSTEM-B ro"), 0600); err != nil {
 		t.Fatal(err)
+	}
+	reader1 := jCore
+	reader1.Target.MinimumReader = 1
+	if err := runtime.settlePreviousSlotSpine(context.Background(), reader1); err != nil || len(settled) != 0 {
+		t.Fatal("a reader-1 release took Spines from a slot", settled, err)
+	}
+	other := reader2
+	other.ManifestSHA256 = strings.Repeat("0", 64)
+	if err := runtime.settlePreviousSlotSpine(context.Background(), other); err != nil || len(settled) != 0 {
+		t.Fatal("another selection settled a slot", settled, err)
+	}
+	if err := runtime.settlePreviousSlotSpine(context.Background(), reader2); err != nil || len(settled) != 1 || settled[0] != "A" {
+		t.Fatal("the slot the update was staged from was not settled", settled, err)
+	}
+	runtime.SettleSpine = func(context.Context, CoreJournal, string) error { return fmt.Errorf("fixture State write failed") }
+	if err := runtime.settlePreviousSlotSpine(context.Background(), reader2); err == nil {
+		t.Fatal("a failed Spine record write was not reported")
 	}
 	bootStatus, blessCalls := "indeterminate", 0
 	priorRun := f.manager.config.Run

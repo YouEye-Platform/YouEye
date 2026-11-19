@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
               restartControl: async () => { await spineClient.restartControl(5); },
               restore: async (checkpoint) => {
                 await fullRestore({
-                  backupPath, passphrase: body.passphrase, appIds: body.appIds,
+                  backupPath, passphrase: body.passphrase, appIds: body.appIds!,
                   setupMode: true, setupRecovery: checkpoint,
                 }, (event) => {
                   // Driver errors and details can contain secrets.

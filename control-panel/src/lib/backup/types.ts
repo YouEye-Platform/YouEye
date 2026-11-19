@@ -5,6 +5,8 @@
  * and event types for SSE progress streaming.
  */
 
+import type { IdentityClient } from '@/lib/identity/store';
+
 /** Event emitted during backup progress (sent via SSE) */
 export interface BackupEvent {
   step: number;
@@ -84,12 +86,44 @@ export interface SetupRestoreCheckpoint {
   quiesced(): string[];
 }
 
+/** What a server restore has done so far; the caller of a failed one reads it to put the box back. */
+export interface FullRestoreProgress {
+  /** False until the restore changes the box: a restore refused before that has nothing to roll back. */
+  changed: boolean;
+  /** The core services the restore stopped. After a failure some of them can still be stopped. */
+  stoppedServices: string[];
+  /** The YouEye ID clients of the kept apps as the restore found them, before it replaced the databases. */
+  keptAppClients?: IdentityClient[];
+}
+
 export interface FullRestoreConfig {
   backupPath: string;  // root of backup dir (contains youeye/)
   passphrase: string;
   coreArchivePath?: string;
-  /** Restore only these application archives; core is always restored. */
-  appIds?: string[];
+  /**
+   * The application archives to restore; the core is always restored. On a box in use, every other installed app
+   * stays installed (its data is not in the core archive) and is never removed. During setup the box has none.
+   */
+  appIds: string[];
+  /**
+   * Installed apps to remove without restoring them. Only the rollback of a failed restore uses it, for the apps
+   * that restore added and the box did not have before.
+   */
+  discardAppIds?: string[];
+  /** Core services an earlier failed restore stopped and did not start again: this restore starts them. */
+  stoppedServices?: string[];
+  /**
+   * The YouEye ID clients of the kept apps as an earlier failed restore found them. Its rollback puts these back
+   * instead of reading clients that the failed restore may already have replaced with its backup's.
+   */
+  keptAppClients?: IdentityClient[];
+  /** Filled in while the restore runs (see FullRestoreProgress). */
+  progress?: FullRestoreProgress;
+  /**
+   * Run only the checks that can refuse the restore (the archive opens, it is compatible, every installed app can
+   * be kept or is selected) and change nothing. The restore route asks this before it makes the pre-restore backup.
+   */
+  checkOnly?: boolean;
   /** Keep setup incomplete until the setup route has finished every restore gate. */
   setupMode?: boolean;
   /** Setup-only durable checkpoints, held under the setup and backup lifecycle locks. */

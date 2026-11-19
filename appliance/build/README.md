@@ -6,36 +6,42 @@ single mode and never signs anything.
 
 ## Inputs
 
-The Debian snapshot and the oldest version this image may update from are pinned in
-`appliance/recipe.json`; tooling copies them into the build inputs below.
+The Debian snapshot and the oldest image this image may update from
+(`minimum_current_version`, an image build name) are pinned in
+`appliance/recipe.json`. The build reads the image floor from there and writes it
+into `system-update-manifest.json`; tooling copies the snapshot into the build
+inputs below.
 
 `BUILD_INPUTS_PATH` (default `appliance/build-inputs.json`, absent from source)
-names a `youeye.build-inputs.v1` file, validated by `build-inputs.sh`:
+names a `youeye.build-inputs.v1` file, validated by `build-inputs.sh`. It names
+the exact Spine, Control Panel and UI artifacts by git tree and sha256, and no
+version (since 0.6.13):
 
 ```json
 {
   "schema": "youeye.build-inputs.v1",
-  "version": "0.6.0-dev.1",
   "debian_snapshot": "20260805T142647Z",
-  "minimum_current_version": "0.5.6",
-  "release_source": "https://github.com/YouEye-Platform/YouEye",
-  "release_branch": "dev",
-  "market": {"source": "https://github.com/YouEye-Platform/Market", "branch": "main", "commit": "<40 hex>"},
   "components": {
-    "spine":         {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
-    "control_panel": {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
-    "ui":            {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1}
+    "spine":         {"source_tree": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
+    "control_panel": {"source_tree": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
+    "ui":            {"source_tree": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1}
   }
 }
 ```
 
-The build compiles Spine (or reuses `YOUEYE_SPINE_FILE`) and refuses to continue
-unless its sha256 equals `components.spine.artifact_sha256`. The Spine version in
-`spine/internal/cmd/root.go` must equal `components.spine.version`. Control Panel
-and UI hashes are pinned in the image so first deployment fetches exactly those
-bytes. The image channel follows the version suffix (none = stable, `-beta.N` =
-beta, otherwise development); `ARTIFACT_KIND=test` marks a development build as
-test-only. Other optional variables: `OUTPUT_DIR`, `WORK_DIR`,
+`YOUEYE_VERSION` (the image build name `X.Y.Z-dev.N`) and `YOUEYE_LINE` (`X.Y.Z`,
+the line in `VERSION`) come from `.youeye/build/lib.sh`. The build name is the
+image's internal identity: it is written only as `image_version` in
+`appliance-manifest.json` (and in the image) and as `target_image_version` in
+`system-update-manifest.json`, because the A/B engine orders and keys images by it
+(Plan 12 decision 9). It is never shown. The manifests' `release_set` names each
+part by the line, its git tree and sha256.
+
+The build compiles Spine (or reuses `YOUEYE_SPINE_FILE`) with the line and tree in
+its ldflags, like `.youeye/build/spine`, and refuses to continue unless its sha256
+equals `components.spine.artifact_sha256`. Control Panel and UI hashes are pinned
+in the image so first deployment fetches exactly those bytes. `ARTIFACT_KIND=test`
+marks a build as test-only. Other optional variables: `OUTPUT_DIR`, `WORK_DIR`,
 `LIVE_BUILD_APT_PROXY`, `LIVE_BUILD_ATTEMPTS`, `APPLIANCE_TEST_FAULT`.
 
 ## Outputs

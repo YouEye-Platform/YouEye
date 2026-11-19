@@ -188,7 +188,7 @@ func TestCoreFinishedRequestResetsOnlyItsOwnFailedUnits(t *testing.T) {
 			t.Fatal(phase, calls)
 		}
 		// One started action and two continuations; pending actions never ran.
-		want := map[string]bool{runner.unit(j, j.Steps[0]): true}
+		want := map[string]bool{runner.unit(j, j.Steps[0]): true, CoreBootContinuationUnit: true}
 		for _, command := range []string{"delivery-1", "delivery-2"} {
 			want[fmt.Sprintf("youeye-core-control-%x.service", sha256.Sum256([]byte(j.RequestID+"\x00"+command)))] = true
 		}

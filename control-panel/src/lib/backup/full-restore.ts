@@ -23,6 +23,7 @@ import {
   setConfig as setCaddyConfig,
 } from '@/lib/caddy/client';
 import { withAppInventory, withAppLifecycles } from '@/lib/market/update-admission';
+import { logOperationFailure } from '@/lib/market/install-tracker';
 import { restoreApp } from './app-restore';
 import { listInstalledApps, listRetainedApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { uninstallApp, deregisterAppFromUI } from '@/lib/market/uninstaller';
@@ -32,15 +33,18 @@ import { getInstalledApp, removeInstalledApp } from '@/lib/market/installed-apps
 import { isUuid } from '../../../../shared/admission';
 import type { InstallMetadata } from '@/lib/market/types';
 import { quiesceAppCredentialRuntime } from '@/lib/apps/service-credential-probe';
-import { getClient } from '@/lib/identity/store';
+import { ensureClient, getClient, type IdentityClient } from '@/lib/identity/store';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import type {
   FullRestoreConfig,
+  FullRestoreProgress,
   BackupEvent,
   BackupEventCallback,
 } from './types';
 import { BACKUP_STAGING_ROOT, runningContainers } from './workspace';
-import { isPlatformDatabase, PLATFORM_DATABASES, replacePlatformDatabase, suspendRestoredAppCredentials } from './postgres';
+import {
+  isPlatformDatabase, listRestoredAppCredentialIds, PLATFORM_DATABASES, replacePlatformDatabase, suspendRestoredAppCredentials,
+} from './postgres';
 import { assessBackupCompatibility, readCurrentBackupSourceIdentity } from './compatibility';
 import * as caddy from '@/lib/caddy/client';
 import { getDNSRecords, setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
@@ -52,9 +56,12 @@ import {
 import { tlsStorage } from '@/lib/acme/storage';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
 import { readRetainedAppInventory, restoreRetainedApps } from './retained-apps';
-import { markCredentialReady, reconcileRetainedAppCredential } from '@/lib/apps/service-credential-bridge';
+import { fenceAbsentAppCredential, markCredentialReady, reconcileRetainedAppCredential } from '@/lib/apps/service-credential-bridge';
 import { operateAppCredential } from '@/lib/apps/service-credential-operations';
-import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
+import {
+  beginContainerMaintenance, holdContainersForOperation, type ContainerMaintenanceLease,
+} from '@/lib/maintenance/container-maintenance';
+import { releaseAbsentAppNetwork } from '@/lib/incus/app-network';
 import { appServiceCredentials } from '@/lib/apps/service-credential-store';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
@@ -73,6 +80,10 @@ const SETUP_PRESERVED_MACHINE_CONFIG = [
   '/var/lib/youeye/config/cli-token',
   '/var/lib/youeye/config/config.yaml',
 ] as const;
+const APP_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** The core services a restore on a box in use stops while it replaces their data (setup leaves Caddy serving). */
+const IN_PLACE_CORE_SERVICES = ['youeye-caddy', 'youeye-pihole', 'youeye-ui', 'youeye-pointer'];
+const SETUP_CORE_SERVICES = ['youeye-pihole', 'youeye-pointer', 'youeye-ui'];
 const KNOWN_CORE_VOLUMES = new Set([
   '/var/lib/youeye/caddy',
   '/var/lib/youeye/pihole',
@@ -173,7 +184,17 @@ async function prepareSetupRestoreVolumeMap(coreStagingDir: string, retainedApps
   );
 }
 
-async function preserveRetainedAppNetworks(coreStagingDir: string): Promise<void> {
+/**
+ * A restore on a box in use never applies the backup's `/var/lib/youeye/networks`.
+ *
+ * That directory is the allocator of the app networks (`ipam.json`: which app owns which `yeapp<N>` bridge and
+ * subnet). It describes the bridges that exist on this box now, not the ones that existed when the backup was
+ * made: the apps that stay keep their bridges, and the removal of every other app has released its lease. The
+ * backup's copy would name every app of the backup as the owner of a bridge that no longer exists, and the
+ * reinstall of a restored app (which allocates its network like any install: the lowest free bridge and subnet)
+ * refuses an app that already owns one. Nothing else in a backup refers to a bridge or a subnet.
+ */
+async function keepTargetAppNetworks(coreStagingDir: string): Promise<void> {
   const filename = path.join(coreStagingDir, 'volume-map.json');
   const document = JSON.parse(await readFile(filename, 'utf8'));
   if (document.schema !== CORE_VOLUME_MAP_SCHEMA || !Array.isArray(document.volumes)) {
@@ -286,6 +307,49 @@ function parseRestoredAppInventory(value: unknown): RestoredAppInventory[] {
   return result;
 }
 
+/** The YouEye ID client names an installed app can have (one in practice: `youeye-app-<id>`). */
+function appClientIds(app: Pick<InstallMetadata, 'appId' | 'ssoClientId' | 'ssoSlug' | 'enableSSO'>): string[] {
+  return [...new Set([app.ssoClientId, app.ssoSlug, app.enableSSO ? `youeye-app-${app.appId}` : undefined]
+    .filter((clientId): clientId is string => Boolean(clientId)))];
+}
+
+/**
+ * A kept app's YouEye ID client must stay the box's own through a server restore.
+ *
+ * The clients are rows of the `youeye` database, which the restore replaces with the backup's. A kept app is not
+ * reinstalled, so it still holds the client secret it was given last, in its environment or its own settings. When
+ * the client was made again after the backup (an app-only restore, a reinstall that kept the installation, sign-in
+ * turned off and on), the backup's row has an older secret and YouEye ID refuses the app's token requests: nobody
+ * can sign in to it. So the whole row (secret, redirect addresses, scopes, role claim) is read before the databases
+ * are replaced and written back after. Nothing changes inside the app and no setup file runs.
+ *
+ * Sign-in through forward-auth has no client and no secret, so there is nothing to keep. A restored app is
+ * reinstalled and gets a new client, which its `setup/sso.yaml` writes into it.
+ */
+async function readKeptAppClients(apps: InstallMetadata[]): Promise<IdentityClient[]> {
+  const clients: IdentityClient[] = [];
+  for (const clientId of apps.flatMap(appClientIds)) {
+    const client = await getClient(clientId);
+    if (client) clients.push(client);
+  }
+  return clients;
+}
+
+async function writeKeptAppClients(clients: IdentityClient[], apps: InstallMetadata[]): Promise<void> {
+  const kept = new Set(apps.flatMap(appClientIds));
+  for (const client of clients) {
+    if (!kept.has(client.client_id)) continue;
+    await ensureClient({
+      clientId: client.client_id, clientSecret: client.client_secret, name: client.name,
+      redirectUris: client.redirect_uris, postLogoutRedirectUris: client.post_logout_redirect_uris,
+      backchannelLogoutUri: client.backchannel_logout_uri, scopes: client.scopes, roleClaim: client.role_claim,
+    });
+    if ((await getClient(client.client_id))?.client_secret !== client.client_secret) {
+      throw new Error(`The YouEye ID client of a kept app did not come back: ${client.client_id}`);
+    }
+  }
+}
+
 async function removeCurrentApp(appId: string): Promise<void> {
   const result = await uninstallApp(appId, { keepData: false });
   if (!result.success) throw new Error(`Could not clear the current ${appId} installation before server restore`);
@@ -366,6 +430,9 @@ async function clearRestoredAppRegistration(app: RestoredAppInventory): Promise<
       throw new Error(`Network registration remains for ${app.appId}`);
     }
   }
+  // The app has no install record and no container (checked above), so a network it still owns is a leftover;
+  // the reinstall allocates its own.
+  await releaseAbsentAppNetwork(app.appId);
 }
 
 async function startContainerAfterRestore(container: string): Promise<void> {
@@ -417,6 +484,108 @@ function readSkippedApps(backupPath: string): string[] {
 }
 
 /**
+ * Keep the watchdog and the health monitor away from the core services a server restore stops, until the returned
+ * release is called. `fullRestore` holds them itself; the restore route holds them as well, so the hold has no
+ * gap between a failed restore and its rollback.
+ */
+export function holdRestoreServices(): () => void {
+  return holdContainersForOperation(IN_PLACE_CORE_SERVICES);
+}
+
+const ROLLBACK_ATTEMPTS = 2;
+
+/**
+ * Roll a failed restore back from the pre-restore backup (rollbackRestoreConfig), and try once more when the
+ * rollback itself fails: it is a restore like any other, and can be run again from where it stopped. The second
+ * attempt starts the services either attempt left stopped and writes back the same YouEye ID clients.
+ *
+ * Returns 'unchanged' when the failed restore had changed nothing. Throws when every attempt failed, with each
+ * attempt's own error (also logged with its cause).
+ */
+export async function rollBackRestore(
+  failed: Pick<FullRestoreConfig, 'passphrase' | 'appIds'> & { progress: FullRestoreProgress },
+  preRestore: { backupPath: string; apps: string[] },
+  onEvent: BackupEventCallback,
+  run: (config: FullRestoreConfig) => Promise<void> = config => fullRestore(config, onEvent),
+): Promise<'unchanged' | 'recovered'> {
+  let state = failed.progress;
+  const errors: string[] = [];
+  for (let attempt = 1; attempt <= ROLLBACK_ATTEMPTS; attempt++) {
+    const config = rollbackRestoreConfig({ ...failed, progress: state }, preRestore);
+    if (!config) return 'unchanged';
+    const progress: FullRestoreProgress = { changed: false, stoppedServices: [] };
+    try {
+      await run({ ...config, progress });
+      return 'recovered';
+    } catch (error) {
+      logOperationFailure(`Rollback of the server restore (attempt ${attempt} of ${ROLLBACK_ATTEMPTS})`, error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!errors.includes(message)) errors.push(message);
+      state = {
+        changed: true,
+        stoppedServices: [...new Set([...state.stoppedServices, ...progress.stoppedServices])].sort(),
+        keptAppClients: state.keptAppClients ?? progress.keptAppClients,
+      };
+    }
+  }
+  throw new Error(errors.join('; then: '));
+}
+
+/**
+ * The restore that puts a box back after `failed` (a restore on a box in use) did not finish, from the pre-restore
+ * backup made just before it. Null when the failed restore was refused before it changed anything.
+ *
+ * It is a restore of the same kind, so it keeps the same promise: the apps the failed restore was not replacing
+ * stay installed and are never removed. Only the apps it was replacing come back from the pre-restore backup, an
+ * app it added that the box did not have is removed, and the core services it left stopped are started again.
+ */
+export function rollbackRestoreConfig(
+  failed: Pick<FullRestoreConfig, 'passphrase' | 'appIds'> & { progress: FullRestoreProgress },
+  preRestore: { backupPath: string; apps: string[] },
+): FullRestoreConfig | null {
+  if (!failed.progress.changed) return null;
+  const before = new Set(preRestore.apps);
+  return {
+    backupPath: preRestore.backupPath,
+    passphrase: failed.passphrase,
+    appIds: failed.appIds.filter(appId => before.has(appId)),
+    discardAppIds: failed.appIds.filter(appId => !before.has(appId)),
+    stoppedServices: [...failed.progress.stoppedServices],
+    keptAppClients: failed.progress.keptAppClients,
+  };
+}
+
+/**
+ * Restore apps from a backup set without the core (`restoreCore: false`), each with its own rollback point.
+ *
+ * An app that cannot be restored does not cost the apps after it: the others are still restored, and the call
+ * fails at the end naming every app that did not come back, like a server restore.
+ */
+export async function restoreApps(
+  config: Pick<FullRestoreConfig, 'backupPath' | 'passphrase' | 'appIds'>,
+  onEvent: BackupEventCallback,
+): Promise<void> {
+  const failures: string[] = [];
+  const restored: string[] = [];
+  for (const appId of config.appIds) {
+    try {
+      if (!APP_ID.test(appId)) throw new Error('invalid app identifier');
+      const appDirectory = path.join(config.backupPath, 'youeye', 'apps', appId);
+      const archives = existsSync(appDirectory)
+        ? readdirSync(appDirectory).filter(file => file.endsWith('.tar.enc')).sort().reverse() : [];
+      if (!archives[0]) throw new Error(`No archive found for ${appId}`);
+      await restoreApp({ appId, archivePath: path.join(appDirectory, archives[0]), passphrase: config.passphrase }, onEvent);
+      restored.push(appId);
+    } catch (error) {
+      failures.push(`Failed to restore ${appId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`${failures.join('; ')}${restored.length > 0 ? ` (restored: ${restored.join(', ')})` : ''}`);
+  }
+}
+
+/**
  * Restore the full YouEye platform from a backup directory.
  *
  * The backupPath should point to the root of the backup directory
@@ -427,8 +596,15 @@ export async function fullRestore(
   onEvent: BackupEventCallback
 ): Promise<void> {
   if (config.setupRecovery && !config.setupMode) throw new Error('Setup recovery requires setup admission');
-  const appDirectory = path.join(config.backupPath, 'youeye', 'apps');
-  const archivedIds = config.appIds ?? (existsSync(appDirectory) ? readdirSync(appDirectory) : []);
+  const discardIds = config.discardAppIds ?? [];
+  if (!Array.isArray(config.appIds) || new Set(config.appIds).size !== config.appIds.length
+    || [...config.appIds, ...discardIds].some(appId => typeof appId !== 'string' || !APP_ID.test(appId))) {
+    throw new Error('Restore selection contains an invalid app identifier.');
+  }
+  if (discardIds.some(appId => config.appIds.includes(appId))) {
+    throw new Error('Restore selection names an app both to restore and to remove.');
+  }
+  if (config.progress) Object.assign(config.progress, { changed: false, stoppedServices: [], keptAppClients: undefined });
   return withAppInventory(async () => {
     const current = await listInstalledApps();
     // Refuse before anything changes, naming the app: a full restore replaces every app, so none may be mid-update,
@@ -443,7 +619,7 @@ export async function fullRestore(
       throw new Error(`Full restore refused: this backup does not contain ${skipped.join(', ')}, which is installed here; `
         + 'restoring it would remove them. Take a new backup, or restore apps individually.');
     }
-    return withAppLifecycles(['identity', 'pointer', ...current.map(app => app.appId), ...archivedIds],
+    return withAppLifecycles(['identity', 'pointer', ...current.map(app => app.appId), ...config.appIds],
       () => fullRestoreUnderLifecycle(config, onEvent));
   });
 }
@@ -452,13 +628,22 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
   const { backupPath, passphrase } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const stagingDir = path.join(STAGING_BASE, `full-${timestamp}-${randomUUID()}`);
-  const retainedLeases: ReturnType<typeof beginContainerMaintenance>[] = [];
+  const retainedLeases = new Map<string, ContainerMaintenanceLease>();
+  const progress: FullRestoreProgress = config.progress ?? { changed: false, stoppedServices: [] };
+  const coreServices = config.setupMode ? SETUP_CORE_SERVICES : IN_PLACE_CORE_SERVICES;
   let retainedApps: InstallMetadata[] = [];
   const preparedRetainedApps: InstallMetadata[] = [];
+  let releaseServices: () => void = () => undefined;
   const checkpoint = config.setupRecovery;
   const runStep = (name: string, retry: 'replace' | 'never', work: () => Promise<void>) =>
     checkpoint ? checkpoint.step(name, retry, work) : work();
   let quiesced: string[] = checkpoint?.quiesced() ?? [];
+  // The UI is what checks an app's credential, and a retained app's is marked not ready there while the app is
+  // stopped. A UI that a restore has stopped (this one, or the failed one this one rolls back) cannot be told and
+  // need not be: nothing can use a credential meanwhile, and the UI only starts again after the restore-databases
+  // step has marked every restored credential not ready.
+  const uiStoppedByRestore = async () => [...quiesced, ...(config.stoppedServices ?? [])].includes('youeye-ui')
+    && (await runningContainers(['youeye-ui'])).length === 0;
 
   // Discover available backup archives
   const coreDir = path.join(backupPath, 'youeye', 'core');
@@ -496,16 +681,11 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     }
   }
 
-  if (config.appIds !== undefined) {
-    if (new Set(config.appIds).size !== config.appIds.length || config.appIds.some(appId => !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId))) {
-      throw new Error('Restore selection contains an invalid app identifier.');
-    }
-    const available = new Set(appArchives.map(item => item.appId));
-    const missing = config.appIds.filter(appId => !available.has(appId));
-    if (missing.length > 0) throw new Error(`Selected app backup is unavailable: ${missing.join(', ')}`);
-    const selected = new Set(config.appIds);
-    appArchives = appArchives.filter(item => selected.has(item.appId));
-  }
+  const available = new Set(appArchives.map(item => item.appId));
+  const missing = config.appIds.filter(appId => !available.has(appId));
+  if (missing.length > 0) throw new Error(`Selected app backup is unavailable: ${missing.join(', ')}`);
+  const selected = new Set(config.appIds);
+  appArchives = appArchives.filter(item => selected.has(item.appId));
 
   // Calculate total steps
   const totalSteps = (coreArchive ? 9 : 1) + appArchives.length;
@@ -601,10 +781,11 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     }
     const currentApps = checkpoint?.completed('remove-current-apps') ? [] : await listInstalledApps();
     const selectedApps = new Set(appArchives.map(app => app.appId));
-    // An explicit selection restores those archives and retains other installed
-    // apps. A fresh/setup restore or whole-server restore replaces the inventory.
-    retainedApps = config.appIds !== undefined && !config.setupMode
-      ? currentApps.filter(app => !selectedApps.has(app.appId)) : [];
+    // The selected archives replace their apps; every other installed app is retained: no failure of this
+    // restore, and no rollback of it, removes an app that was not selected. Setup starts from an empty box.
+    const discarded = new Set(config.discardAppIds ?? []);
+    retainedApps = config.setupMode ? []
+      : currentApps.filter(app => !selectedApps.has(app.appId) && !discarded.has(app.appId));
     const retainedIds = new Set(retainedApps.map(app => app.appId));
     for (const app of retainedApps) {
       const archived = restoredApps.find(item => item.appId === app.appId);
@@ -615,20 +796,40 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
         throw new Error(`Retained ${app.appId} requires a matching core identity or its app archive`);
       }
     }
+    // Everything above only read the backup and the box.
+    if (config.checkOnly) return;
+    // From here to the end, whatever the outcome, the core services are this restore's to stop and start: the
+    // watchdog must not start one while its data is being replaced (holdContainersForOperation).
+    releaseServices = holdContainersForOperation(coreServices);
     await runStep('remove-current-apps', 'never', async () => {
       emit('remove-current-apps', 'Preparing applications for the selected server restore...');
+      // Read while the databases are still the box's own; the rollback of this restore gets the same list.
+      progress.keptAppClients = config.keptAppClients ?? await readKeptAppClients(retainedApps);
+      progress.changed = true;
+      const serving = !(await uiStoppedByRestore());
       for (const app of retainedApps) {
         const names = app.containers.map(container => container.containerName);
-        retainedLeases.push(beginContainerMaintenance(names, { operation: `core-restore:${app.appId}` }));
+        retainedLeases.set(app.appId, beginContainerMaintenance(names, { operation: `core-restore:${app.appId}` }));
         preparedRetainedApps.push(app);
-        app.serviceCredentialDesiredState ??= app.desiredState ?? 'running';
+        // What the app was doing before this restore stopped it. An app an earlier restore left pending is
+        // stopped only because of that, so the state remembered then still stands.
+        if (app.serviceCredentialState === 'pending') app.serviceCredentialDesiredState ??= app.desiredState ?? 'running';
+        else app.serviceCredentialDesiredState = app.desiredState ?? 'running';
         app.serviceCredentialState = 'pending';
         app.enabled = false;
         app.desiredState = 'stopped';
         await saveInstallMetadata(app);
         await quiesceAppCredentialRuntime(names);
-        if ((await appServiceCredentials.projection(app.appId))?.status === 'active') {
-          await markCredentialReady(app.appId, false);
+        // The app is stopped; the dashboard is told as well, but need not hear it: the restore-databases step
+        // marks every credential not ready before the dashboard serves again. And a dashboard whose table an
+        // unfinished restore already replaced cannot accept this at all, which must not stop the restore that
+        // is run to finish the job (a rollback, or its second attempt).
+        try {
+          if (serving && (await appServiceCredentials.projection(app.appId))?.status === 'active') {
+            await markCredentialReady(app.appId, false);
+          }
+        } catch (error) {
+          logOperationFailure(`Telling the dashboard that kept app ${app.appId} is stopped`, error);
         }
       }
       for (const currentApp of currentApps) {
@@ -640,10 +841,12 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       emit('restore-volumes', 'Restoring persistent server configuration...');
       const machineConfig = config.setupMode ? await captureSetupMachineConfig() : [];
       if (config.setupMode) await prepareSetupRestoreVolumeMap(coreStagingDir, archivedRetainedApps);
-      if (retainedApps.length) await preserveRetainedAppNetworks(coreStagingDir);
-      quiesced = await runningContainers(config.setupMode
-        ? ['youeye-pihole', 'youeye-pointer', 'youeye-ui']
-        : ['youeye-caddy', 'youeye-pihole', 'youeye-ui', 'youeye-pointer']);
+      else await keepTargetAppNetworks(coreStagingDir);
+      // The services to start again afterwards: those running now, and those a failed restore left stopped
+      // when this restore is its rollback.
+      const leftStopped = (config.stoppedServices ?? []).filter(name => coreServices.includes(name));
+      quiesced = [...new Set([...await runningContainers(coreServices), ...leftStopped])].sort();
+      progress.stoppedServices = [...quiesced];
       if (checkpoint) await checkpoint.rememberQuiesced(quiesced);
       await quiesceAppCredentialRuntime(quiesced);
       let machineConfigRestoreError: unknown;
@@ -710,6 +913,8 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       // The restored snapshot can predate additive ownership/queue migrations.
       // Do not trust this surviving process's pre-restore schema-ready cache.
       await refreshIdentitySchemaAfterRestore(path.basename(stagingDir));
+      // The kept apps' YouEye ID clients are the box's, not the backup's (readKeptAppClients).
+      await writeKeptAppClients(progress.keptAppClients ?? [], retainedApps);
       // No restored projection is active until a fresh authenticated push.
       await identityCommand(`UPDATE admission_outbox SET acknowledged_revision = 0`);
       await suspendRestoredAppCredentials();
@@ -784,6 +989,17 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       for (const restoredApp of restoredApps) {
         if (!retainedIds.has(restoredApp.appId)) await clearRestoredAppRegistration(restoredApp);
       }
+      // The dashboard's app credentials came back from the backup; this box's credential store did not move.
+      // A kept app is reconciled below and a restored app gets a new credential from its reinstall. Every other
+      // app either side knows is denied at one revision on both sides, or its next install could never publish.
+      // An app left out here is still recoverable (removing it publishes the same fence), so a failure is logged.
+      const known = new Set([...restoredApps.map(app => app.appId), ...await listRestoredAppCredentialIds(),
+        ...await appServiceCredentials.installedCredentialIds()]);
+      for (const appId of [...known].sort()) {
+        if (retainedIds.has(appId)) continue;
+        try { await fenceAbsentAppCredential(appId); }
+        catch (error) { console.warn(`[restore] The dashboard still holds another service credential for ${appId}:`, error); }
+      }
       for (const app of retainedApps) {
         // Install metadata and protected authority are target-owned, outside core
         // volume restore. Never replace them with archived verifier hashes.
@@ -793,7 +1009,9 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
           app.serviceCredentialState = 'revoked';
           await saveInstallMetadata(app);
         } else {
-          await operateAppCredential(app.appId, { action: 'reconcile' });
+          // This restore holds the maintenance lease of the app's containers until it ends (the watchdog must
+          // not start a retained app while the core is being replaced); the reconcile works under that lease.
+          await operateAppCredential(app.appId, { action: 'reconcile' }, { maintenance: retainedLeases.get(app.appId) });
         }
       }
     });
@@ -812,6 +1030,10 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     }
 
     // ── Restore each selected app ──────────────────────────
+    // An app that cannot be restored does not cost the apps after it: the others are still restored, and the
+    // restore fails at the end naming every app that did not come back. (This matters most in a rollback, where
+    // each remaining app is one the box had.) Setup restore keeps its durable step order and stops at the first.
+    const appFailures: string[] = [];
     for (const { appId, archivePath } of appArchives) {
       await runStep(`restore-app:${appId}`, 'never', async () => {
         emit('restore-app', `Restoring app: ${appId}...`);
@@ -841,8 +1063,12 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
           });
           throw new Error(`Failed to restore ${appId}: ${err}`);
         }
+      }).catch((error: unknown) => {
+        if (checkpoint) throw error;
+        appFailures.push(error instanceof Error ? error.message : String(error));
       });
     }
+    if (appFailures.length > 0) throw new Error(appFailures.join('; '));
 
     // Final completion
     onEvent({
@@ -856,8 +1082,10 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
   } catch (error) {
     // A later app failure must not leave an earlier retained app reopened.
     // Persist pending intent and stop writers before releasing watchdog leases.
-    for (const lease of retainedLeases) lease.markFailed('Server restore requires reconciliation');
-    let cleanupFailed = false;
+    for (const lease of retainedLeases.values()) lease.markFailed('Server restore requires reconciliation');
+    logOperationFailure('Server restore', error);
+    const notStopped: string[] = [];
+    const serving = preparedRetainedApps.length > 0 && !(await uiStoppedByRestore().catch(() => false));
     for (const app of preparedRetainedApps) {
       app.serviceCredentialState = 'pending';
       app.enabled = false;
@@ -867,15 +1095,29 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
           await quiesceAppCredentialRuntime(app.containers.map(container =>
             container.containerName));
         }
-        if ((await appServiceCredentials.projection(app.appId))?.status === 'active') {
+      } catch (cleanupError) {
+        notStopped.push(app.appId);
+        logOperationFailure(`Stopping kept app ${app.appId} after the failed restore`, cleanupError);
+      }
+      // The app is stopped and recorded as pending; telling the dashboard as well is not what the failure is
+      // about. A dashboard that is starting, or half restored, must not replace the restore's own error.
+      try {
+        if (serving && (await appServiceCredentials.projection(app.appId))?.status === 'active') {
           await markCredentialReady(app.appId, false);
         }
-      } catch { cleanupFailed = true; }
+      } catch (cleanupError) {
+        logOperationFailure(`Telling the dashboard that kept app ${app.appId} is stopped`, cleanupError);
+      }
     }
-    if (cleanupFailed) throw new Error('Server restore failed; retained app maintenance requires reconciliation');
+    // The reason the restore failed always comes first; what could not be cleaned up is added to it.
+    if (notStopped.length > 0) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${reason}; kept apps that could not be stopped and need reconciliation: ${notStopped.join(', ')}`, { cause: error });
+    }
     throw error;
   } finally {
-    for (const lease of retainedLeases) lease.release();
+    releaseServices();
+    for (const lease of retainedLeases.values()) lease.release();
     // Clean up staging directory
     try {
       if (existsSync(stagingDir)) {

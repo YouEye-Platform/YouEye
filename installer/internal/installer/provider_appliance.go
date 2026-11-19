@@ -89,6 +89,13 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 		sendErr(ch, fmt.Errorf("verify complete System selection before disk changes: %w", err))
 		return
 	}
+	// Name what is being installed by its release version (the image's own
+	// version is internal and never shown).
+	if input.CoreRelease != nil {
+		if release, _, decodeErr := decodeCoreAnswer(input.CoreRelease); decodeErr == nil {
+			send(ch, "Select System release", "YouEye "+release.Version, 0.30)
+		}
+	}
 	allowNonBlank := input.EraseConfirmed || resuming || preserving
 	plan, err := planApplianceInstall(targetDisk, applianceArtifactSet{
 		RootPayloadBytes: rootBytes,

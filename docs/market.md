@@ -342,7 +342,8 @@ on, a failure rolls the install back (`rollbackInstall`).
 10. **Network wiring.** Incus proxy devices let the app reach the system services it needs: the UI gateway, and
     PostgreSQL, YouEye ID or Pointer inference when it uses them. Caddy joins the app bridge.
 11. **Setup files.** The OCI containers of an SSO app get the box's Caddy root CA. Then `setup/install.yaml` runs,
-    then `setup/sso.yaml` when sign-in is on (see [app-manifest.md](app-manifest.md) for the step rules).
+    then `setup/sso.yaml` when sign-in is on (see [app-manifest.md](app-manifest.md) for the step rules). When the
+    app's data came back (a restore, or kept data taken over) `install.yaml` is not run.
 12. **Route.** Caddy routes `https://<subdomain>.<domain>` to the main container's IP on the app bridge, behind
     YouEye ID's forward-auth check.
 13. **Records.** `install.json` (`youeye.install.v1`: installation id, manifest digest, approved shared folders),

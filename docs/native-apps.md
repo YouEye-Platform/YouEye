@@ -169,13 +169,16 @@ pnpm test
 pnpm build        # next build with output: "standalone"
 ```
 
-- `VERSION` holds the release line `X.Y.Z`. Each build is `X.Y.Z-dev.N` and gets that version as
-  `YOUEYE_VERSION`; `package.json` and the manifest keep `0.0.0`.
+- `VERSION` holds the release line `X.Y.Z`. Each build is released as `X.Y.Z-dev.N`; the tools pass that name as
+  `YOUEYE_VERSION`, and the build only checks it against `VERSION` and unsets it (Plan 12). What the app bakes
+  and serves (`/api/manifest`, `/api/health`) is the line (`YOUEYE_LINE`) and the git tree (`YOUEYE_SOURCE_TREE`,
+  from the environment or `git rev-parse HEAD^{tree}`); `/api/health` also returns `source_tree`.
+  `package.json` and the source manifest keep `0.0.0`.
 - The build entrypoint is `.youeye/build/app` (with `lib.sh` and `manifest.json`). It installs offline from a
   shared pnpm store, runs `pnpm run build`, finds the single `server.js` under `.next/standalone`, adds
   `LICENSE`, `TRADEMARK.md` and `THIRD_PARTY_NOTICES.txt`, and runs `scripts/write-release-manifest.mjs`. That
-  script writes `release-manifest.json` into the tree and the release copy of `youeye-app.yaml` with
-  `version: <build>`. The tree is packed as a reproducible `standalone.tar` (sorted, fixed owner and mtime).
+  script writes `release-manifest.json` (`version`: the line, `source_tree`) into the tree and the release copy of
+  `youeye-app.yaml` with `version: <line>`. No released file names a build. The tree is packed as a reproducible `standalone.tar` (sorted, fixed owner and mtime).
 - A build is published as release `v<X.Y.Z>-dev.N` of the app's repository, with `product-release.json`,
   `standalone.tar` and `youeye-app.yaml`, and the channel index's product key (the app id: `notes`, `wiki`, …)
   points at it. Promotion names the same build `-alpha.N`, `-beta.N`, then `X.Y.Z`. See [releases.md](releases.md)
@@ -208,5 +211,6 @@ From `YouEye-Canvas/README.md`:
 Canvas itself is released as source (`source.tar.gz` + `youeye-app.yaml`), not as an installable app. To make a
 fork installable, copy from an existing native app what Canvas does not carry: `output: "standalone"` in
 `next.config.ts`, the `.youeye/build/` directory, the `scripts/` used by its `build` script (including
-`write-release-manifest.mjs`, with the new id) and `THIRD_PARTY_NOTICES.txt`. Then add the repository and product
+`write-release-manifest.mjs`, with the new id; `lib.sh` brings `app_require_source_tree`) and
+`THIRD_PARTY_NOTICES.txt`. Then add the repository and product
 key to the release tooling and the id to the official catalog's `native:` list.

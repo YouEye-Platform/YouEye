@@ -214,6 +214,14 @@ receipt's version, or before first deployment records one the version being inst
 (`appliance/scripts/youeye-console-status` in the image, from the 0.6.12 image on, and the installer's console in
 `installer/internal/installer/appliance_console.go`).
 
+The installers do not show the image's build name either (since 0.6.13). The graphical and the text installer list
+a drive that holds YouEye as `Installed YouEye: <release version>` and the review says `Existing: YouEye <release
+version>`: the version recorded on that drive's State (the committed receipt's, else the release selected when it
+was installed), or no version when State has none readable. The review has no line for the media's image: the
+release is chosen from the channel when the installation starts, and the progress then names it (`Select System
+release: YouEye 0.6.13`). Proxmox mode prints `Manifest and ISO verified by SHA-256 for YouEye <release version>`.
+A preserve reinstall still needs a newer image than the installed one; its refusal says so without naming either.
+
 ### youeye.local and HTTP
 
 - `youeye-mdns.service` runs `youeye mdns run`: Spine writes `/run/youeye/avahi-daemon.conf` for the adapter that

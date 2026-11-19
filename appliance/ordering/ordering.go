@@ -127,17 +127,20 @@ func CompareVersion(left, right Version) int {
 	return 0
 }
 
+// RequireUpgradeIdentity checks that the incoming image is newer than the
+// installed one. Its errors reach the owner (the installer's preserve choice),
+// so they never quote an image version: that is an internal identity.
 func RequireUpgradeIdentity(currentVersion, incomingVersion string) error {
 	current, err := ParseVersion(currentVersion)
 	if err != nil {
-		return fmt.Errorf("current image version %q: %w", currentVersion, err)
+		return fmt.Errorf("installed system image identity: %w", err)
 	}
 	incoming, err := ParseVersion(incomingVersion)
 	if err != nil {
-		return fmt.Errorf("incoming image version %q: %w", incomingVersion, err)
+		return fmt.Errorf("incoming system image identity: %w", err)
 	}
 	if CompareVersion(incoming, current) <= 0 {
-		return fmt.Errorf("incoming image version %s is not newer than installed version %s", incomingVersion, currentVersion)
+		return fmt.Errorf("the incoming system image is not newer than the installed one")
 	}
 	return nil
 }

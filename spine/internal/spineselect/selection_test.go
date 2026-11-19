@@ -847,3 +847,135 @@ func TestReportShowsLinesNotStoredNames(t *testing.T) {
 		t.Fatalf("message: %v", err)
 	}
 }
+
+// A slot written by a Spine up to 0.6.11 can keep a 0.6.11 Spine as its
+// previous entry next to the 0.6.12 Spine (that Spine's Select kept it). Once
+// the box commits a reader-2 release from the other slot, that entry must not
+// run on the 0.6.12 image: not when the current payload fails, not on
+// `youeye spine rollback`. The slot then runs the seed of its own image.
+func TestDropUndescribedFallbacksLeavesTheSeedBehindCurrent(t *testing.T) {
+	root := t.TempDir()
+	old := staged(t, root, "spine 0.6.11", "0.6.11-dev.5")
+	older := staged(t, root, "spine 0.6.10", "0.6.10-dev.2")
+	stone := staged(t, root, "spine 0.6.12", "0.6.12-dev.2")
+	next := staged(t, root, "spine 0.6.13", "0.6.13")
+	next.Line, next.SourceTree = "0.6.13", strings.Repeat("d", 40)
+	// Slot B exactly as the 0.6.11 Spine wrote it when it staged the 0.6.12
+	// image: the release's Spine as current, the slot's earlier Spine kept as
+	// previous, an abandoned trial, and none of them described. Slot A as the
+	// 0.6.12 Spine wrote it for the 0.6.13 image.
+	record := map[string]any{"schema": selectionSchema, "updated_at": testNow, "future": map[string]any{"x": 1}, "slots": map[string]any{
+		"B": map[string]any{
+			"current":  entry0611{SHA256: stone.SHA256, Version: stone.Version, HelperContract: HelperContract, DiskLayout: DiskLayout},
+			"previous": entry0611{SHA256: old.SHA256, Version: old.Version, HelperContract: HelperContract, DiskLayout: DiskLayout},
+			"trial":    entry0611{SHA256: older.SHA256, Version: older.Version, HelperContract: HelperContract, DiskLayout: DiskLayout},
+			"pinned":   true,
+		},
+	}}
+	raw, _ := json.Marshal(record)
+	if err := os.WriteFile(filepath.Join(root, selectionFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Select(root, "A", next, TargetSlotHost(next), testNow); err != nil {
+		t.Fatal(err)
+	}
+	// Before: the gap. A failed current payload on slot B runs the 0.6.11 Spine.
+	if got := slotOf(t, root, "B"); digestOf(got.Current) != stone.SHA256 || digestOf(got.Previous) != old.SHA256 || got.Previous.DescribedSHA256 != "" {
+		t.Fatalf("fixture slot B: %+v", got)
+	}
+
+	dropped, err := DropUndescribedFallbacks(root, "B", testNow)
+	if err != nil || len(dropped) != 2 || dropped[0].SHA256 != old.SHA256 || dropped[1].SHA256 != older.SHA256 {
+		t.Fatalf("dropped %+v, %v", dropped, err)
+	}
+	// The slot keeps its release's Spine, though a 0.6.11 Spine wrote the
+	// entry: a 0.6.12 box must still boot this slot with it.
+	b := slotOf(t, root, "B")
+	if digestOf(b.Current) != stone.SHA256 || b.Previous != nil || b.Trial != nil {
+		t.Fatalf("slot B after: %+v", b)
+	}
+	if res, err := Resolve(root, "B", ThisHost(), true, testNow); err != nil || res.Role != "current" || res.Entry.SHA256 != stone.SHA256 {
+		t.Fatalf("slot B runs %+v, %v", res, err)
+	}
+	// On disk too (no key of the removed entries is carried over), and
+	// everything else stays: the other slot and what other Spines wrote.
+	raw, _ = os.ReadFile(filepath.Join(root, selectionFile))
+	var after map[string]any
+	if err := json.Unmarshal(raw, &after); err != nil {
+		t.Fatal(err)
+	}
+	slotB := after["slots"].(map[string]any)["B"].(map[string]any)
+	if slotB["previous"] != nil || slotB["trial"] != nil || slotB["pinned"] != true || after["future"] == nil || strings.Contains(string(raw), old.SHA256) {
+		t.Fatalf("record after: %s", raw)
+	}
+	if a := slotOf(t, root, "A"); digestOf(a.Current) != next.SHA256 || a.Current.DescribedSHA256 != next.SHA256 {
+		t.Fatalf("slot A changed: %+v", a)
+	}
+	// The payloads stay on State; only the selection changed.
+	if _, err := Verify(root, old, ThisHost()); err != nil {
+		t.Fatalf("the dropped Spine's payload was removed: %v", err)
+	}
+	// Rollback has nothing to go back to, and a damaged current payload runs
+	// the seed of the slot's image, never the 0.6.11 Spine.
+	if err := Rollback(root, "B", testNow); err == nil || !strings.Contains(err.Error(), "no previous Spine") {
+		t.Fatalf("rollback on slot B: %v", err)
+	}
+	if err := os.Remove(PayloadPath(root, stone.SHA256)); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := Resolve(root, "B", ThisHost(), true, testNow); err != nil || res.Role != "seed" || res.Entry != nil {
+		t.Fatalf("slot B with a damaged current payload runs %+v, %v", res, err)
+	}
+
+	// Again: nothing left to remove, the record is not rewritten.
+	before, _ := os.ReadFile(filepath.Join(root, selectionFile))
+	if dropped, err := DropUndescribedFallbacks(root, "B", testNow.Add(time.Hour)); err != nil || dropped != nil {
+		t.Fatalf("second run: %+v %v", dropped, err)
+	}
+	if now, _ := os.ReadFile(filepath.Join(root, selectionFile)); string(now) != string(before) {
+		t.Fatal("a run with nothing to remove rewrote the record")
+	}
+}
+
+// Entries a Spine from 0.6.12 on wrote are described and stay: the previous
+// Spine of a Spine-only update, and a trial in progress. Nothing else is read
+// as a reason to remove an entry.
+func TestDropUndescribedFallbacksKeepsDescribedEntries(t *testing.T) {
+	root := t.TempDir()
+	described := func(content, version, line string) Entry {
+		e := staged(t, root, content, version)
+		e.Line, e.SourceTree = line, strings.Repeat("e", 40)
+		return e
+	}
+	first, second, third := described("spine 0.6.13", "0.6.13", "0.6.13"), described("spine 0.6.14", "0.6.14", "0.6.14"), described("spine 0.6.15", "0.6.15", "0.6.15")
+	selectThenCommit(t, root, "A", first, second)
+	if err := BeginTrial(root, "A", third, ThisHost(), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if dropped, err := DropUndescribedFallbacks(root, "A", testNow); err != nil || dropped != nil {
+		t.Fatalf("dropped %+v, %v", dropped, err)
+	}
+	if a := slotOf(t, root, "A"); digestOf(a.Current) != second.SHA256 || digestOf(a.Previous) != first.SHA256 || digestOf(a.Trial) != third.SHA256 {
+		t.Fatalf("slot A: %+v", a)
+	}
+	// A slot without a record, no record at all, an unreadable record, an
+	// unknown slot: nothing to do, and only the last is an error.
+	if dropped, err := DropUndescribedFallbacks(root, "B", testNow); err != nil || dropped != nil {
+		t.Fatalf("slot without a record: %+v %v", dropped, err)
+	}
+	if dropped, err := DropUndescribedFallbacks(t.TempDir(), "A", testNow); err != nil || dropped != nil {
+		t.Fatalf("no record: %+v %v", dropped, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, selectionFile), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if dropped, err := DropUndescribedFallbacks(root, "A", testNow); err != nil || dropped != nil {
+		t.Fatalf("unreadable record: %+v %v", dropped, err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(root, selectionFile)); string(raw) != "{broken" {
+		t.Fatal("an unreadable record was rewritten")
+	}
+	if _, err := DropUndescribedFallbacks(root, "C", testNow); err == nil {
+		t.Fatal("an unknown slot was accepted")
+	}
+}

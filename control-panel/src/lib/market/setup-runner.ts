@@ -164,6 +164,40 @@ export function setupFor(manifest: Pick<AppManifest, 'setups'>, purpose: SetupPu
   return manifest.setups.find((setup) => setup.for === purpose);
 }
 
+export interface InstallSetupStep {
+  purpose: 'install' | 'sso';
+  file: SetupFile;
+  /** False: the file is listed (it is a step of the install) but not run. */
+  run: boolean;
+  /** False: a failure is logged and reported, and the install goes on. */
+  mustSucceed: boolean;
+}
+
+/**
+ * The setup files of an install, in order, and how each is treated.
+ *
+ * `install` makes the app's first-run state inside the app's own data: its first account, default settings. It runs
+ * once in the life of that data. When the data came back (a restore from a backup, or a reinstall over the data a
+ * keep-data uninstall left) the file is not run: what it would make exists, and an app refuses to make its first
+ * account twice (Memos answers 403), which failed every restore of such an app and its rollback.
+ *
+ * `sso` writes the YouEye ID client into the app. Every install makes a new client with a new secret, so the file
+ * runs whenever sign-in is on (its steps are idempotent by rule). With data that came back it must not undo the
+ * restore: it signs in with the generated admin password, which the owner may have changed since. A failure is
+ * then logged and reported, the app keeps its data, and sign-in is applied again from the app's settings.
+ */
+export function installSetupPlan(
+  manifest: Pick<AppManifest, 'setups'>,
+  options: { ssoEnabled: boolean; dataCameBack: boolean },
+): InstallSetupStep[] {
+  const plan: InstallSetupStep[] = [];
+  const install = setupFor(manifest, 'install');
+  if (install) plan.push({ purpose: 'install', file: install, run: !options.dataCameBack, mustSucceed: true });
+  const sso = options.ssoEnabled ? setupFor(manifest, 'sso') : undefined;
+  if (sso) plan.push({ purpose: 'sso', file: sso, run: true, mustSucceed: !options.dataCameBack });
+  return plan;
+}
+
 // ─── Safe data ────────────────────────────────────────────
 
 type Data = Record<string, unknown>;

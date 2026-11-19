@@ -137,9 +137,11 @@ func printSystemUpdateStatus(status systemupdate.Status, asJSON bool) error {
 		return encoder.Encode(status)
 	}
 	fmt.Printf("System update: %s\n", status.State)
-	fmt.Printf("  Running: %s (System %s)\n", status.RunningImage, status.ActiveSlot)
-	if status.TargetImage != "" {
-		fmt.Printf("  Target:  %s (System %s)\n", status.TargetImage, status.CandidateSlot)
+	// Slots only: an image's own version is internal and never printed (--json
+	// keeps the record). `youeye version` names the installed release.
+	fmt.Printf("  Running: System %s\n", status.ActiveSlot)
+	if status.TargetImage != "" && status.CandidateSlot != "" {
+		fmt.Printf("  Target:  System %s\n", status.CandidateSlot)
 	}
 	if status.RebootRequired {
 		fmt.Println("  Reboot required: yes")

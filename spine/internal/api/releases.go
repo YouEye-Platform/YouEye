@@ -1,16 +1,11 @@
 package api
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"sync"
 	"time"
@@ -24,22 +19,9 @@ import (
 // addresses, not through it). Spine owns the repository and channel
 // (protected State) and fetches the index; nothing calls a release-listing API.
 
-const releaseIndexTTL = 5 * time.Minute
-
-// releaseIndexJitter is the most added to releaseIndexTTL each time the index is fetched (0-10 %), so boxes that
-// started together drift apart instead of asking the release host at the same moment.
-const releaseIndexJitter = 0.10
-
-// releaseIndexRand is [0, 1); tests replace it.
-var releaseIndexRand = rand.Float64
-
-func releaseIndexExpiry(now time.Time) time.Time {
-	return now.Add(releaseIndexTTL + time.Duration(releaseIndexRand()*releaseIndexJitter*float64(releaseIndexTTL)))
-}
-
-// channelIndexLimit is the size releasecache allows a channel index (FetchChannelIndex, ParseChannelIndex).
-const channelIndexLimit = 256 << 10
-
+// releaseIndexCache is the index the Control Panel is answered from: fetched
+// again after releasecache.ChannelIndexTTL plus 0-10 % jitter, so boxes that
+// started together do not ask the release host at the same moment.
 type releaseIndexCache struct {
 	mu      sync.Mutex
 	key     string
@@ -47,9 +29,6 @@ type releaseIndexCache struct {
 	expires time.Time
 	index   releasecache.ChannelIndex
 	digest  string
-	// The last good answer of each index address with its ETag, so the next fetch asks "changed since?"
-	// (If-None-Match) and a 304 keeps that address's copy.
-	copies map[string]channelIndexCopy
 	// After a failure the host is not asked again until retry (30 s,
 	// doubling up to 10 minutes); the last error is answered meanwhile.
 	failures int
@@ -57,91 +36,12 @@ type releaseIndexCache struct {
 	lastErr  error
 }
 
-// channelIndexCopy is a channel index as one address served it.
-type channelIndexCopy struct {
-	ETag   string
-	Index  releasecache.ChannelIndex
-	Digest string
-}
-
-// fetchChannelIndex returns the index address that answered and its copy (known[address] after a 304).
-var fetchChannelIndex = func(r *http.Request, repository, channel string, known map[string]channelIndexCopy) (string, channelIndexCopy, error) {
+// fetchChannelIndex reads the box's channel index. releasecache asks each
+// address conditionally (If-None-Match with the ETag of the copy it last
+// served), so a refresh of an unchanged index is a 304; tests replace it.
+var fetchChannelIndex = func(r *http.Request, repository, channel string) (releasecache.ChannelIndex, []byte, error) {
 	// Discovery must never be served from a frozen install-time cache.
-	return fetchChannelIndexConditional(releasecache.LiveDiscovery(r.Context()), systemupdate.ReleaseHTTPClient(), releasecache.ChannelIndexURLs(repository, channel), channel, known)
-}
-
-// fetchChannelIndexConditional is releasecache.FetchChannelIndex with If-None-Match: it tries each address in order
-// (a failure at one is returned only when no later one answered), sends the ETag of that address's last good copy,
-// and takes a 304 as "that copy is still current". A changed index is parsed and checked as releasecache does.
-func fetchChannelIndexConditional(ctx context.Context, client *http.Client, targets []string, channel string, known map[string]channelIndexCopy) (string, channelIndexCopy, error) {
-	if !releasecache.ValidChannel(channel) {
-		return "", channelIndexCopy{}, fmt.Errorf("unknown channel %q", channel)
-	}
-	lastErr := errors.New("no address for the channel index")
-	for _, target := range targets {
-		previous := known[target]
-		raw, etag, notModified, err := getChannelIndex(ctx, client, target, previous.ETag)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if notModified {
-			if etag != "" {
-				previous.ETag = etag
-			}
-			return target, previous, nil
-		}
-		index, err := releasecache.ParseChannelIndex(raw)
-		if err == nil && index.Channel != channel {
-			err = fmt.Errorf("index at %s is for channel %s", target, index.Channel)
-		}
-		if err != nil {
-			lastErr = fmt.Errorf("%w at %s: %v", releasecache.ErrInvalidIndex, target, err)
-			continue
-		}
-		sum := sha256.Sum256(raw)
-		return target, channelIndexCopy{ETag: etag, Index: index, Digest: hex.EncodeToString(sum[:])}, nil
-	}
-	return "", channelIndexCopy{}, lastErr
-}
-
-// getChannelIndex is releasecache.Download with If-None-Match (when etag is set): the body and its ETag, or
-// notModified for a 304. Other answers are classified by releasecache.HTTPError.
-func getChannelIndex(ctx context.Context, client *http.Client, target, etag string) (raw []byte, newETag string, notModified bool, err error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, "", false, err
-	}
-	request.Header.Set("User-Agent", "youeye")
-	if etag != "" {
-		request.Header.Set("If-None-Match", etag)
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		var remote *url.Error
-		if errors.As(err, &remote) {
-			return nil, "", false, fmt.Errorf("download %s: %w", request.URL.Host, remote.Err)
-		}
-		return nil, "", false, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotModified && etag != "" {
-		return nil, response.Header.Get("ETag"), true, nil
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, "", false, releasecache.HTTPError(response.StatusCode, target)
-	}
-	if response.ContentLength > channelIndexLimit {
-		return nil, "", false, fmt.Errorf("%s exceeds %d bytes", target, channelIndexLimit)
-	}
-	raw, err = io.ReadAll(io.LimitReader(response.Body, channelIndexLimit+1))
-	if err != nil {
-		return nil, "", false, err
-	}
-	if len(raw) > channelIndexLimit || len(raw) == 0 {
-		return nil, "", false, fmt.Errorf("%s is empty or exceeds %d bytes", target, channelIndexLimit)
-	}
-	return raw, response.Header.Get("ETag"), false, nil
+	return releasecache.FetchChannelIndex(releasecache.LiveDiscovery(r.Context()), systemupdate.ReleaseHTTPClient(), repository, channel)
 }
 
 func (s *Server) releasePolicyPath() string {
@@ -227,11 +127,11 @@ func (s *Server) handleReleaseIndex(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.key != key {
-		c.key, c.fetched, c.expires, c.index, c.digest, c.copies, c.failures, c.retry, c.lastErr = key, time.Time{}, time.Time{}, releasecache.ChannelIndex{}, "", nil, 0, time.Time{}, nil
+		c.key, c.fetched, c.expires, c.index, c.digest, c.failures, c.retry, c.lastErr = key, time.Time{}, time.Time{}, releasecache.ChannelIndex{}, "", 0, time.Time{}, nil
 	}
 	backingOff := c.lastErr != nil && time.Now().Before(c.retry)
 	if (c.fetched.IsZero() || !time.Now().Before(c.expires)) && !backingOff {
-		target, answer, err := fetchChannelIndex(r, policy.Repository, policy.Channel, c.copies)
+		index, raw, err := fetchChannelIndex(r, policy.Repository, policy.Channel)
 		if err != nil {
 			c.failures++
 			delay := 30 * time.Second << min(c.failures-1, 5)
@@ -242,12 +142,9 @@ func (s *Server) handleReleaseIndex(w http.ResponseWriter, r *http.Request) {
 			c.lastErr, c.retry = err, time.Now().Add(delay)
 		} else {
 			// A 304 is a successful refresh too: the copy is current, and the next one is due a full TTL later.
-			if c.copies == nil {
-				c.copies = map[string]channelIndexCopy{}
-			}
-			c.copies[target] = answer
+			sum := sha256.Sum256(raw)
 			now := time.Now()
-			c.fetched, c.expires, c.index, c.digest, c.failures, c.lastErr = now, releaseIndexExpiry(now), answer.Index, answer.Digest, 0, nil
+			c.fetched, c.expires, c.index, c.digest, c.failures, c.lastErr = now, releasecache.NextChannelIndexCheck(now), index, hex.EncodeToString(sum[:]), 0, nil
 		}
 	}
 	if c.fetched.IsZero() {

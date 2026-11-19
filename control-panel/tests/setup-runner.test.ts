@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { loadApp } from '../src/lib/market/app-format/compile';
 import type { SetupStep } from '../src/lib/market/app-format/schema';
 import {
-  cappedFetch, runSetup, SETUP_LIMITS, SetupStepError,
+  cappedFetch, installSetupPlan, runSetup, SETUP_LIMITS, SetupStepError,
   type SetupHttpRequest, type SetupPurpose, type SetupRunContext, type SetupTransport,
 } from '../src/lib/market/setup-runner';
 import { runConnectionWiring, type WiringDeps } from '../src/lib/market/wire-runner';
@@ -806,4 +806,71 @@ test('unwiring a connect file without remove: steps does nothing and looks up no
   assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true }), { ran: false });
   assert.equal(lookups, 0);
   assert.equal(transport.http.length, 0);
+});
+
+// ─── Which setup files an install runs ────────────────────
+
+/** An app like Memos: POST /api/users makes the first account, and is refused once the app has one. */
+function firstAccountApp(hasData: boolean): { manifest: Pick<AppManifest, 'setups' | 'containers'>; respond: Responder } {
+  let users = hasData ? 1 : 0;
+  const files: SetupFile[] = [
+    { name: 'setup/install.yaml', for: 'install', steps: [
+      { http: { method: 'POST', path: '/api/users', body: { username: 'admin', password: '${secret.admin_password}' } } },
+    ] as SetupStep[] },
+    { name: 'setup/sso.yaml', for: 'sso', steps: [
+      { http: { method: 'POST', path: '/api/auth/signin', body: { username: 'admin', password: '${secret.admin_password}' }, save: { token: 'accessToken' } } },
+      { http: { method: 'POST', path: '/api/identity-providers', headers: { Authorization: 'Bearer ${vars.token}' },
+        body: { clientId: '${sso.client_id}', clientSecret: '${sso.client_secret}' } } },
+    ] as SetupStep[] },
+  ];
+  return {
+    manifest: { setups: files, containers: [container('main', 8080)] },
+    respond: (call) => {
+      if (call.path === '/api/users') return users++ === 0 ? { status: 200, body: {} } : { status: 403 };
+      if (call.path === '/api/auth/signin') return users > 0 ? { body: { accessToken: 'token' } } : { status: 401 };
+      return { body: {} };
+    },
+  };
+}
+
+test('a first install runs setup/install.yaml and then setup/sso.yaml, and both must succeed', async () => {
+  const { manifest, respond } = firstAccountApp(false);
+  const plan = installSetupPlan(manifest, { ssoEnabled: true, dataCameBack: false });
+  assert.deepEqual(plan.map(step => [step.file.name, step.run, step.mustSucceed]),
+    [['setup/install.yaml', true, true], ['setup/sso.yaml', true, true]]);
+  const fake = fakeTransport(respond);
+  for (const step of plan) await runSetup(manifest, step.purpose, context(fake, { containers: { main: 'app-demo' } }));
+  assert.deepEqual(fake.http.map(call => call.path), ['/api/users', '/api/auth/signin', '/api/identity-providers']);
+  // Sign-in off: only the install file.
+  assert.deepEqual(installSetupPlan(manifest, { ssoEnabled: false, dataCameBack: false }).map(step => step.purpose), ['install']);
+});
+
+test('an install whose data came back does not run setup/install.yaml; sso runs and its failure is not fatal', async () => {
+  const { manifest, respond } = firstAccountApp(true);
+  // What every restore of such an app did before: the app refuses to make its first account twice.
+  await assert.rejects(runSetup(manifest, 'install', context(fakeTransport(respond), { containers: { main: 'app-demo' } })),
+    /setup\/install\.yaml step 1 \(http\): POST \/api\/users returned HTTP 403/);
+
+  const plan = installSetupPlan(manifest, { ssoEnabled: true, dataCameBack: true });
+  assert.deepEqual(plan.map(step => [step.file.name, step.run, step.mustSucceed]),
+    [['setup/install.yaml', false, true], ['setup/sso.yaml', true, false]]);
+  const fake = fakeTransport(respond);
+  for (const step of plan) {
+    if (step.run) await runSetup(manifest, step.purpose, context(fake, { containers: { main: 'app-demo' } }));
+  }
+  // The new YouEye ID client is written into the restored app; its first account is left alone.
+  assert.deepEqual(fake.http.map(call => call.path), ['/api/auth/signin', '/api/identity-providers']);
+  assert.match(fake.http[1].body ?? '', /"clientSecret":"cs"/);
+  assert.deepEqual(installSetupPlan(manifest, { ssoEnabled: false, dataCameBack: true }).map(step => [step.purpose, step.run]),
+    [['install', false]]);
+  assert.deepEqual(installSetupPlan({ setups: [] }, { ssoEnabled: true, dataCameBack: true }), []);
+});
+
+test('the installer follows installSetupPlan: data that came back skips install, and a failing sso is reported', () => {
+  const engine = readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
+  assert.match(engine, /installSetupPlan\(manifest, \{ ssoEnabled, dataCameBack: Boolean\(restoreOptions\) \}\)/);
+  assert.match(engine, /if \(!run\) \{\s*emit\(onEvent, step, totalSteps, 'skipped'/);
+  assert.match(engine, /if \(!mustSucceed\) \{[\s\S]{0,400}'warning'[\s\S]{0,200}continue;/);
+  // No setup file runs outside the plan.
+  assert.doesNotMatch(engine, /for \(const purpose of \['install', 'sso'\]/);
 });

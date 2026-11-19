@@ -121,5 +121,6 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 		},
 	}
 	r.SpineTrial, r.SelectSpine, r.RestoreSpine = coreSpineHooks(cache)
+	r.SettleSpine = settleSlotSpine
 	return r, r.Validate()
 }

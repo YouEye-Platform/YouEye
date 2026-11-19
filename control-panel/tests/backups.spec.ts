@@ -6,7 +6,7 @@ import test from 'node:test';
 import { resolveSharedDatabasePasswordFile } from '../src/lib/backup/manifest-values';
 import { recoveryImportErrorMessage } from '../src/lib/backup/platform-backup';
 import { assessBackupCompatibility, backupSourceIdentityFromStatus, backupYouEyeVersion, parseBackupSourceIdentity } from '../src/lib/backup/compatibility';
-import { backupStoreRequest, storeBackupSet } from '../src/lib/backup/platform-backup';
+import { backupStoreRequest, preservePreRestoreBackup, storeBackupSet } from '../src/lib/backup/platform-backup';
 import { SpineAPIError } from '../src/lib/spine/client';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
@@ -343,4 +343,27 @@ test('a 0.6.11 Spine (the other slot) that refuses the release keys gets the bac
   let calls = 0;
   await assert.rejects(storeBackupSet(request, async () => { calls++; throw new SpineAPIError('invalid repository store request', 400); }), /invalid repository store request/);
   assert.equal(calls, 2);
+});
+
+test('after a failed rollback the pre-restore backup goes to the backup drive, or stays on the server', async () => {
+  const record = { schema: 'youeye.backup.set.v1' as const, id: 'backup-20261119T154500Z-0a1b2c3d', createdAt: '2026-11-19T15:45:00.000Z',
+    status: 'completed' as const, appCount: 2, apps: ['memos', 'notes'], reason: 'pre-restore' as const, sizeBytes: 10,
+    source: { schema: 'youeye.backup.source.v1' as const, runtime_kind: 'appliance-image' as const, spine_version: '0.6.13' } };
+  const stored: Array<Record<string, unknown>> = [];
+  const removed: string[] = [];
+  const where = await preservePreRestoreBackup(record, 'drive-1', 'fixture-recovery-key',
+    async request => { stored.push(request as unknown as Record<string, unknown>); }, async root => { removed.push(root); });
+  // Stored like any set, so the restore page lists it: its apps, its time, its reason.
+  assert.equal(stored.length, 1);
+  assert.deepEqual([stored[0].media_id, stored[0].backup_id, stored[0].reason, stored[0].apps],
+    ['drive-1', record.id, 'pre-restore', ['memos', 'notes']]);
+  assert.deepEqual(removed, [`/var/lib/youeye/backups/sets/${record.id}`], 'the local copy goes once the drive has it');
+  assert.match(where, /^saved on the backup drive as recovery point backup-20261119T154500Z-0a1b2c3d/);
+
+  // A drive that cannot take it: nothing is deleted.
+  removed.length = 0;
+  const kept = await preservePreRestoreBackup(record, 'drive-1', 'fixture-recovery-key',
+    async () => { throw new Error('no space left on device'); }, async root => { removed.push(root); });
+  assert.deepEqual(removed, []);
+  assert.equal(kept, `kept on the server in /var/lib/youeye/backups/sets/${record.id}`);
 });

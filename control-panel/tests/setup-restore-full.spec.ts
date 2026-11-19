@@ -46,6 +46,7 @@ async function fixture(t: { after: (work: () => Promise<void>) => void }, machin
       },
     },
     '@/lib/incus/server': { execCommand: forbidden, incusRequest: forbidden, incusUploadFile: forbidden },
+    '@/lib/incus/app-network': { releaseAbsentAppNetwork: forbidden },
     '@/lib/caddy/client': { setConfig: forbidden, ensureIdentityRoute: forbidden },
     '@/lib/market/update-admission': {
       withAppInventory: (work: () => Promise<void>) => work(),
@@ -79,7 +80,8 @@ async function fixture(t: { after: (work: () => Promise<void>) => void }, machin
     '@/lib/identity/core-clients': {}, '@/lib/acme/storage': {}, '@/lib/infrastructure/deployer': {},
     './retained-apps': { readRetainedAppInventory: async () => [], restoreRetainedApps: forbidden },
     '@/lib/apps/service-credential-bridge': {}, '@/lib/apps/service-credential-operations': {},
-    '@/lib/maintenance/container-maintenance': {}, '@/lib/apps/service-credential-store': {},
+    '@/lib/maintenance/container-maintenance': { holdContainersForOperation: () => () => {} },
+    '@/lib/market/install-tracker': { logOperationFailure: () => {} }, '@/lib/apps/service-credential-store': {},
   };
   const filename = path.join(import.meta.dirname, '../src/lib/backup/full-restore.ts');
   const output = ts.transpileModule(readFileSync(filename, 'utf8'), {

@@ -29,6 +29,30 @@ extra_menu_items() {
     done | head -n 8
 }
 
+# The installed release's version, for the menu header: the committed receipt's,
+# else (before the first commit) the version being installed, as the console
+# screen reads it. Recovery must work when State is damaged or unmounted, so
+# every failure prints nothing. An image's own version is never shown.
+recovery_receipt=${YOUEYE_RECOVERY_RECEIPT:-/var/lib/youeye-state/core-update/committed.json}
+recovery_selection=${YOUEYE_RECOVERY_CORE_RELEASE:-/var/lib/youeye-state/bootstrap/core-release.json}
+installed_release() {
+    release=$(jq -r '.release.version // empty' "$recovery_receipt" 2>/dev/null | head -n 1) || release=
+    suffix=
+    if [ -z "$release" ]; then
+        release=$(jq -r '.version // empty' "$recovery_selection" 2>/dev/null | head -n 1) || release=
+        suffix=' (installing)'
+    fi
+    # A release name only (X.Y.Z or X.Y.Z-token.N); anything else is not shown.
+    printf '%s' "$release" | grep -Eqx '[0-9]{1,9}(\.[0-9]{1,9}){2}(-[a-z][a-z0-9-]{0,62}\.[0-9]{1,9})?' || return 0
+    printf 'Installed: YouEye %s%s\n' "$release" "$suffix"
+}
+
+# Boot entries without their "version" key: for the two System entries it is
+# the image's internal identity, which orders them and is never shown.
+show_boot_entries() {
+    { bootctl list 2>&1 || true; } | sed '/^[[:space:]]*version:/d'
+}
+
 show_recovery_request() {
     request="$recovery_request_dir/request.json"
     result="$recovery_request_dir/last-result.json"
@@ -257,6 +281,12 @@ repair_boot() (
 	recovery_version=$(jq -er '.recovery_version' "$manifest") || return 1
 	factory_image_version=$(jq -er '.image_version' "$manifest") || return 1
 
+	# Prints the slot's verified boot asset and its boot entry's "version" key.
+	# That key is the image's internal identity plus the slot: systemd-boot
+	# orders the two System entries by it (the newer image first), as Spine
+	# writes it after an image update. It is plumbing and is not shown: the
+	# titles differ, so the boot menu never prints it, and "Show disk and boot
+	# entries" leaves it out.
 	select_slot_asset() {
 		slot=$1
 		baseline_path=$2
@@ -386,11 +416,19 @@ if [ "${1:-}" = --export-support ]; then
     export_support_evidence
     exit $?
 fi
+if [ "${1:-}" = --installed-release ]; then
+    installed_release
+    exit 0
+fi
+if [ "${1:-}" = --boot-entries ]; then
+    show_boot_entries
+    exit 0
+fi
 while true; do
     clear
+    printf '%s\n' 'YouEye Recovery' '==============='
+    installed_release
     printf '%s\n' \
-        'YouEye Recovery' \
-        '===============' \
         '' \
         '1. Show offline Recovery diagnostics' \
         '2. Show disk and boot entries' \
@@ -419,7 +457,7 @@ while true; do
         2)
             lsblk -o NAME,PATH,SIZE,MODEL,SERIAL,RO,RM,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS
             printf '\nBoot entries:\n'
-            bootctl list || true
+            show_boot_entries
             ;;
         3)
             set_slot_once a && systemctl reboot

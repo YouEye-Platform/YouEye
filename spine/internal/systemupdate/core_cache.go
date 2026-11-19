@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"syscall"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -102,7 +101,10 @@ func (c CoreArtifactCache) StageUpdate(ctx context.Context, selection CoreHostSe
 		if err != nil {
 			return target, "", err
 		}
-		if !reflect.DeepEqual(old, member) {
+		// The same files stored under another release (a promotion: an
+		// alpha document names the dev release, a beta one itself) are not
+		// fetched again.
+		if !old.SamePayload(member) {
 			selected[member.Role] = true
 		}
 	}
@@ -248,7 +250,9 @@ func (c CoreArtifactCache) IndexSelected(m CoreManager, j CoreJournal, role stri
 	if err != nil {
 		return CorePayloadIndex{}, err
 	}
-	if reflect.DeepEqual(member, previous) {
+	// As StageUpdate decides: where a document stores the files is not part
+	// of the member, so a promoted member is not looked for in the cache.
+	if member.SamePayload(previous) {
 		return m.LoadPayloadIndex(member.Artifact.SHA256)
 	}
 	return c.IndexMember(member)

@@ -981,6 +981,29 @@ export async function deleteAppNetwork(appId: string): Promise<void> {
 }
 
 /**
+ * Release the network an app that is not installed still owns, before a server restore reinstalls it.
+ *
+ * The reinstall allocates the app's network itself and refuses an app that already owns one. A lease can be left
+ * for an absent app by an interrupted removal, or by a server restore from before 0.6.13, which copied the
+ * backup's allocator file over the box's. The caller has proved that the app has no install record and no
+ * container. What the Control Panel attached to the bridge goes first, then the bridge, then the lease; a bridge
+ * that cannot be deleted keeps its lease (cleanup_pending) and the error stops the restore.
+ * Returns whether a lease was released.
+ */
+export async function releaseAbsentAppNetwork(appId: string): Promise<boolean> {
+  return withAppNetworkOperationLock(appId, 'restore-release', async () => {
+    const config = await loadAppNetworkConfig();
+    // A box that never installed an app has no allocator file, and so no lease.
+    const state = await readIpamState({ config, allowInitialize: true });
+    if (!state.leases.some((lease) => lease.appId === appId)) return false;
+    await removeSystemProxyDevices(appId);
+    await removeCaddyFromAppNetwork(appId);
+    await deleteAppNetwork(appId);
+    return true;
+  });
+}
+
+/**
  * Enable or disable NAT (internet access) on an app's bridge.
  * NAT is enabled during install so containers can pull packages/images,
  * then disabled post-install for apps that don't require blanket internet.

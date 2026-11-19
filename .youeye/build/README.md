@@ -29,20 +29,24 @@ These executable entrypoints are the component build boundary:
 
 Every entrypoint requires `YOUEYE_SOURCE_DIR`, `YOUEYE_WORK_DIR`,
 `YOUEYE_OUTPUT_DIR`, `YOUEYE_VERSION` (the build version `X.Y.Z-dev.N`; its
-`X.Y.Z` must equal `VERSION`), `YOUEYE_SOURCE_TREE` and `SOURCE_DATE_EPOCH`. Git
-metadata is optional: when it exists, the supplied tree must match `HEAD^{tree}`.
-The build is identified by its git tree, which is the same on every host a
-release is promoted to. The source tree carries only the line (`VERSION`,
-`X.Y.Z`); the build number `dev.N` comes in as `YOUEYE_VERSION`, and the
-channel names (`-alpha.N`, `-beta.N`, `X.Y.Z`) are given at promotion, which
-never rebuilds. Node
+`X.Y.Z` must equal `VERSION`), `YOUEYE_SOURCE_TREE` and `SOURCE_DATE_EPOCH`, and
+exports `YOUEYE_LINE` (`X.Y.Z`). Git metadata is optional: when it exists, the
+supplied tree must match `HEAD^{tree}`. The build is identified by its git tree,
+which is the same on every host a release is promoted to. The source tree carries
+only the line (`VERSION`, `X.Y.Z`); the build number `dev.N` comes in as
+`YOUEYE_VERSION`, and the channel names (`-alpha.N`, `-beta.N`, `X.Y.Z`) are given
+at promotion, which never rebuilds. Since 0.6.13 nothing built names the build:
+Spine's ldflags and the Control Panel's and UI's `version.json` carry the line and
+the tree, and `build-inputs.json` trees and sha256 only. The one exception is the
+image's internal identity (`image_version` in the image manifests, Plan 12
+decision 9; see `appliance/build/README.md`). Node
 builds require pnpm `10.6.2` and always use `--frozen-lockfile`; there is no
 unlocked dependency fallback. Entrypoints build only. They never sign, publish,
 or accept credentials.
 
 The `appliance` entrypoint additionally requires `YOUEYE_BUILD_INPUTS`, the
 `youeye.build-inputs.v1` file naming the exact Spine, Control Panel and UI
-artifacts. It uses the builder-local APT cache (`LIVE_BUILD_APT_PROXY`, default
+artifacts by tree and sha256. It uses the builder-local APT cache (`LIVE_BUILD_APT_PROXY`, default
 `http://127.0.0.1:3142`) for both `mmdebstrap` and `live-build`; Debian's signed
 Release metadata and package hashes remain authoritative.
 

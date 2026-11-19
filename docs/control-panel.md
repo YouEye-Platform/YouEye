@@ -229,7 +229,8 @@ key and the backups cannot be read.
   the installed-apps list, infrastructure secrets, Caddy and Pi-hole configuration, and the data of
   `/var/lib/youeye/{caddy,pihole,config,networks,ui,ui-data,pointer}`, and the Market's sources and apps added by
   URL (`market/`, listed as `marketFiles` in `backup-meta.json`; see [market.md](market.md#backups)). The system
-  containers are frozen briefly while their volumes are copied.
+  containers are frozen briefly while their volumes are copied. (`networks` is in the archive as a record of the
+  box; no restore applies it.)
 - one archive per selected app (`app-backup.ts`): its frozen manifest, `install.json`, secrets, database dump,
   volumes and admission metadata.
 
@@ -259,13 +260,57 @@ Rules:
   same git tree is the same software); a backup from before 0.6.12 has build names only and is compared by line,
   and within one line by the old build rule only between two dev build names. Update the box first in that case
   (`compatibility.ts`).
-- **Platform restore** (`restoreCore`) first makes a pre-restore backup of the current box, then restores the core
-  (settings, secrets, databases, Caddy, Pi-hole) and the chosen apps, and restarts the CP. If it fails, it restores
-  that pre-restore backup automatically.
+- **Platform restore** (`restoreCore`, `full-restore.ts`) first runs the checks that can refuse it (below), then
+  makes a pre-restore backup of the current box, then restores the core (settings, secrets, databases, Caddy,
+  Pi-hole) and the chosen apps, and restarts the CP.
+  - **Apps.** The chosen apps (`appIds`, possibly none) are replaced by their archives: removed, then reinstalled.
+    Every other installed app is kept and is never removed, by the restore or by its rollback. A kept app is
+    stopped while the core is replaced, then its service credential is reconciled and it is started again if it
+    was running. An installed app the backup's core does not know (installed or reinstalled after the backup) can't
+    be kept: the restore refuses before it changes anything ("Retained `<app>` requires a matching core identity or
+    its app archive"). An app in the backup that is neither chosen nor installed stays absent, and what the
+    restored core recorded for it (route, sign-in client, DNS) is removed.
+  - **App networks.** The backup's `/var/lib/youeye/networks` is never applied. The allocator (`ipam.json`)
+    describes the bridges on the box now: kept apps keep their `yeapp<N>` bridge and subnet, a removed app's lease
+    was released with it, and a restored app gets a network like any install (the lowest free bridge and subnet,
+    which can differ from the ones in the backup; nothing else in a backup refers to them). A lease still held by
+    an app that is not installed is released before the app is reinstalled.
+  - **YouEye ID sign-in.** The apps' YouEye ID clients are rows of the restored `youeye` database. A kept app
+    still holds the client secret it was given last, so its client row (secret, redirect addresses, scopes, role
+    claim) is read before the databases are replaced and written back after: the box's own client, not the
+    backup's. Nothing changes inside the app and no setup file runs. (A restored app is reinstalled and gets a new
+    client. Forward-auth sign-in has no client.) The rollback of a failed restore writes back the same rows.
+  - **App service credentials.** The dashboard's credential table comes back with its database; the Control
+    Panel's credential store is outside every restored volume. A kept app is reconciled, a restored app gets a new
+    credential, and every other app either side knows is revoked at one revision on both sides, so that it can be
+    installed again later ([app-service-credentials.md](app-service-credentials.md#restore)).
+  - **Failure.** A restore refused before it changed anything is not rolled back ("Restore refused, nothing on the
+    server was changed"); the refusing checks run before the pre-restore backup is made. An app that cannot be
+    restored does not stop the apps after it: they are restored, and the restore then fails naming every app
+    that did not come back (the same in the rollback). Otherwise the rollback is a restore of the same kind from
+    the pre-restore backup: the apps that were being replaced come back from it, an app the failed restore added is removed, the core services
+    it left stopped are started, and the kept apps are reconciled and started. A rollback that fails is run once
+    more from where it stopped. If that fails too, the kept apps are still installed (see
+    [troubleshooting.md](troubleshooting.md#a-restore-failed)), the message gives the rollback's own error, and
+    the pre-restore backup is written to the backup drive as a recovery point (it stays in
+    `/var/lib/youeye/backups/sets/<id>` only when the drive cannot take it).
+  - **Core services.** The restore stops Caddy, Pi-hole, the dashboard and Pointer while it replaces their data
+    and starts them again itself. From its first change to its end, rollback included, the watchdog does not start
+    them and the health monitor does not report them as down (`holdContainersForOperation` in
+    `lib/maintenance/container-maintenance.ts`; in memory only, so it ends with the Control Panel process). Each
+    step of the restore and of the rollback is written to the Control Panel's log (`[restore] …`).
 - **App restore** (`app-restore.ts`) replaces one app: uninstall, restore secrets and database, reinstall in restore
   mode, restore volumes, restart and health-check. Ownership and admission are checked against the current box;
   see [app-admission.md](app-admission.md). App service credentials are never taken from the archive
   ([app-service-credentials.md](app-service-credentials.md)).
+  - The reinstall does not run `setup/install.yaml`: the app's first-run state is in the restored data. It runs
+    `setup/sso.yaml` when sign-in is on, and a failure there is reported without failing the restore
+    ([app-manifest.md](app-manifest.md#setup-files-setupyaml)).
+  - When the reinstall fails, the secrets (`/var/lib/youeye/app-<id>`) and the shared database and role the
+    restore had put in place are removed again, so the app can be restored or installed afterwards. The data is
+    still in the archive.
+  - With several apps and no core (`restoreCore` false), an app that cannot be restored does not stop the apps
+    after it; the request fails at the end with "Failed to restore `<app>`: …" for each and "(restored: …)".
 - Progress streams as SSE; the result is kept in `/var/lib/youeye/backups/.restore-status/<operationId>.json`.
   Only one backup or restore runs at a time (a kernel lock).
 

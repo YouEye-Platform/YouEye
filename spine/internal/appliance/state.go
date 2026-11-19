@@ -284,7 +284,7 @@ func CommitHealthySlot(path string, m Manifest, cmdline string) (StateRecord, er
 	}
 	if state.Slots.Current == slot {
 		if state.Slots.CurrentImageVersion != m.ImageVersion {
-			return StateRecord{}, fmt.Errorf("running slot %s image %s conflicts with recorded current image %s", slot, m.ImageVersion, state.Slots.CurrentImageVersion)
+			return StateRecord{}, fmt.Errorf("the image running on slot %s is not the one recorded as current for it", slot)
 		}
 	} else {
 		state.Slots.Previous = state.Slots.Current

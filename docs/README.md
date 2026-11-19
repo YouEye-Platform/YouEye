@@ -39,7 +39,7 @@ and the code disagree, the code wins: fix the page in the same change. The old Y
 
 | Page | What it covers |
 |---|---|
-| [Releases](releases.md) | Release names per channel, ordering (line, then sequence), what a box shows, channel indexes (and the frozen Market entry), channel switches, stepping stones (0.6.11 → 0.6.12 → 0.6.13), promotion, tree identity, signing (off) |
+| [Releases](releases.md) | Release names per channel, ordering (line, then sequence), what a box shows, channel indexes (and the old Market entry, removed with 0.6.13), channel switches, stepping stones (0.6.11 → 0.6.12 → 0.6.13), promotion, tree identity, signing (off) |
 | [System release contract](core-release-contract.md) | `core-release.json`: roles, update kinds and steps, checkpoints, recovery |
 | [Product release contract](product-release-contract.md) | Native app and Pointer releases |
 | [App update transactions](app-update-transactions.md) | A Market app update as a journaled transaction: commit, or put back exactly |

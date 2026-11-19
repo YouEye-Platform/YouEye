@@ -369,7 +369,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	if err != nil {
 		return err
 	}
-	emitProxmoxProgress(progress, "Verify release", "Manifest and ISO verified by SHA-256 for "+verified.Manifest.ImageVersion, 0.35)
+	emitProxmoxProgress(progress, "Verify release", "Manifest and ISO verified by SHA-256 for YouEye "+release.core.Version, 0.35)
 
 	keyFinal, err := loadProxmoxAuthorizedKeys(config)
 	if err != nil {
@@ -1118,8 +1118,8 @@ func terminalProxmoxGuestProgressError(vmid int, progress proxmoxGuestProgress) 
 func friendlyGuestProgressStage(stage string) string {
 	labels := map[string]string{
 		"network": "Check wired network", "release_convergence": "Verify platform release",
-		"system_restart": "Restart into updated System", "market_seed": "Prepare Market",
-		"storage": "Prepare storage", "incus": "Start Incus", "system_core": "Start System core",
+		"system_restart": "Restart into updated System", "storage": "Prepare storage",
+		"incus": "Start Incus", "system_core": "Start System core",
 		"server_interface": "Install Server interface", "database": "Prepare Database",
 		"web_gateway": "Prepare Web gateway", "network_shield": "Prepare Network shield",
 		"ui": "Install UI", "verifying": "Verify platform", "setup": "Open setup", "complete": "YouEye is healthy",

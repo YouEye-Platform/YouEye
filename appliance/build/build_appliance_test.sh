@@ -98,6 +98,22 @@ for retired in release_source release_branch market_source release_channels youe
     fi
 done
 require_text "$build" 'spine_sha256 != "$spine_expected_sha256"'
+# Built files name the line and the tree, never the build name (Plan 12 E1). The
+# seed Spine rebuilt here must equal the Spine artifact byte for byte, so both
+# builds use the same ldflags: the line, the build date and the tree.
+for text in 'spine_version="$line"' 'cp_version="$line"' 'ui_version="$line"' 'image_version="${YOUEYE_VERSION:-}"' \
+    'cmd.Version=$spine_version' 'cmd.SourceTree=$spine_tree'; do
+    require_text "$build" "$text"
+done
+for text in 'version="$YOUEYE_LINE"' 'cmd.Version=$version' 'cmd.SourceTree=$YOUEYE_SOURCE_TREE'; do
+    require_text "$root/.youeye/build/spine" "$text"
+done
+for retired in "input_value '.version'" "input_value '.minimum_current_version'" '.components.spine.version' \
+    '.components.control_panel.version' '.components.ui.version'; do
+    if grep -Fq -- "$retired" "$build"; then
+        fail "the image build reads a version from its build inputs: $retired"
+    fi
+done
 require_text "$build" '@$spine_source_date_epoch'
 
 require_text "$build" 'lb clean || true'

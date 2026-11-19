@@ -561,6 +561,9 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 				if observation.Code == "admission_rejected" {
 					j.Error = "Lifecycle admission is blocked before checkpoint effects; reconcile unfinished app, container or backup work and current policy, then resume this request"
 				}
+				if step.Name == "verify-members" {
+					j.Error = coreContainersNotRunningError
+				}
 			}
 			j.Phase = "applying"
 			return j, m.saveCore(&j)

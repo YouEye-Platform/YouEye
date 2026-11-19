@@ -21,7 +21,7 @@ import { randomUUID } from 'crypto';
 import { spineClient } from '@/lib/spine/client';
 import { incusRequest } from '@/lib/incus/server';
 import { containerState, waitForOperation } from '@/lib/incus/snapshot';
-import { readInstallMetadata, removeInstallMetadataRecord } from '@/lib/market/metadata';
+import { readInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from '@/lib/market/metadata';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { installApp } from '@/lib/market/engine';
 import { getContainerName } from '@/lib/market/engine-helpers';
@@ -34,7 +34,7 @@ import type {
 } from './types';
 import { BACKUP_STAGING_ROOT, runningContainers } from './workspace';
 import { assessBackupCompatibility, readCurrentBackupSourceIdentity } from './compatibility';
-import { replacePlatformAppDatabase, restoreOwnPostgresDatabase } from './postgres';
+import { dropPlatformAppDatabase, replacePlatformAppDatabase, restoreOwnPostgresDatabase } from './postgres';
 import { backupApp } from './app-backup';
 import { probeInstalledApps } from '@/lib/market/app-prober';
 import { resolveOwnPostgres, resolveSharedDatabasePasswordFile } from './manifest-values';
@@ -44,7 +44,7 @@ import { deleteCreatedRecoveryStorage, listStorageLocations } from '@/lib/market
 import { withAppInventory, withAppLifecycle } from '@/lib/market/update-admission';
 import { prepareRestoredAppCredential } from '@/lib/apps/service-credential-bridge';
 import { operateAppCredential } from '@/lib/apps/service-credential-operations';
-import { sanitiseInstallEvent } from '@/lib/market/install-tracker';
+import { logOperationFailure, sanitiseInstallEvent } from '@/lib/market/install-tracker';
 import { readAppRestoreIntent } from './app-restore-intent';
 import { getAdmissionPolicy } from '@/lib/admission/store';
 import { readRestoredManagedAI } from '@/lib/market/restored-managed-ai';
@@ -105,6 +105,24 @@ async function validateOwnPostgresStorageContract(
 }
 
 /**
+ * Remove what a restore put on the box for an app whose reinstall then failed: the archive's copy of
+ * `/var/lib/youeye/app-<id>` (secrets) and the shared database and role made from its dump.
+ *
+ * The app was removed, or absent, before they were put in place, so without an install they belong to nothing,
+ * and they block the app from then on: an install refuses "retained data without an active install". The data is
+ * not lost, it is in the archive. An install that could not roll back cleanly keeps its record as the map for
+ * repair; then nothing is removed here.
+ */
+async function discardRestoredAppData(
+  appId: string,
+  placed: { volumes: boolean; database: { database: string; user: string } | null },
+): Promise<void> {
+  if (await readInstallMetadata(appId)) return;
+  if (placed.database) await dropPlatformAppDatabase(placed.database);
+  if (placed.volumes) await removeInstallMetadata(appId);
+}
+
+/**
  * Restore a single app from a backup archive.
  */
 export async function restoreApp(
@@ -129,6 +147,7 @@ async function restoreAppOnce(
   let retainRollbackPoint = false;
   let installedDuringRestore = false;
   let createdRecoveryStorage: Array<{ pool: string; name: string }> = [];
+  const placed: Parameters<typeof discardRestoredAppData>[1] = { volumes: false, database: null };
 
   const totalSteps = 8;
   let step = 0;
@@ -274,6 +293,7 @@ async function restoreAppOnce(
     // containers. Applying volumes after install would bind newly-generated
     // credentials into those containers and then overwrite them on disk.
     emit('restore-volumes', `Restoring volume data for ${appId}...`);
+    placed.volumes = true;
     await spineClient.applyBackupVolumes(stagingDir);
     // App data, secrets, and install.json intentionally share the same owned
     // root. The frozen install.json above is an input to reinstall, not active
@@ -294,6 +314,7 @@ async function restoreAppOnce(
       const user = typeof backedUpInstallMeta?.databaseUser === 'string'
         ? backedUpInstallMeta.databaseUser
         : appId;
+      placed.database = { database, user };
       await restoreSharedDatabase(appId, database, user, sharedDumpPath, manifest, onEvent, step, totalSteps);
       restoredSharedDatabase = true;
     }
@@ -527,6 +548,10 @@ async function restoreAppOnce(
   } catch (error) {
     if (!installedDuringRestore && createdRecoveryStorage.length > 0) {
       await deleteCreatedRecoveryStorage(appId, createdRecoveryStorage).catch(() => undefined);
+    }
+    if (!installedDuringRestore) {
+      await discardRestoredAppData(appId, placed).catch(cleanupError =>
+        logOperationFailure(`Cleanup after the failed restore of ${appId}`, cleanupError));
     }
     if (rollbackArchive && protectCurrentState) {
       onEvent({ step, totalSteps, status: 'progress', stage: 'rollback', message: `Restore failed; returning ${appId} to its previous state`, progress: Math.round((step / totalSteps) * 100) });

@@ -189,6 +189,29 @@ export async function storeBackupSet(request: BackupStoreRequest,
   }
 }
 
+/**
+ * After a restore and its rollback have both failed: put the pre-restore backup on the backup drive, where the
+ * restore page lists it as a recovery point and it can be restored like any other. On the box it
+ * can only be read by hand. The local copy goes once the drive's copy is written and checked; when the drive
+ * cannot take it, the local copy stays. Returns where the backup is, for the message to the owner.
+ */
+export async function preservePreRestoreBackup(
+  record: BackupSetRecord,
+  mediaId: string,
+  passphrase: string,
+  store: (request: BackupStoreRequest) => Promise<unknown> = body => spineClient.storeBackupSet(body),
+  remove: (root: string) => Promise<void> = root => rm(root, { recursive: true, force: true }),
+): Promise<string> {
+  const root = backupSetPath(record.id);
+  try {
+    await storeBackupSet(backupStoreRequest(record, mediaId, passphrase, false), store);
+  } catch {
+    return `kept on the server in ${root}`;
+  }
+  await remove(root).catch(() => undefined);
+  return `saved on the backup drive as recovery point ${record.id}, made just before the restore`;
+}
+
 export async function createPlatformBackup(input: unknown | CreatePlatformBackupOptions, onEvent: BackupEventCallback): Promise<BackupSetRecord> {
 	const emit: BackupEventCallback = event => {
 		try { onEvent(event); } catch { /* The backup must outlive a disconnected progress stream. */ }

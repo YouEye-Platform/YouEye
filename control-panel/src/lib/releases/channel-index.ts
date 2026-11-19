@@ -18,9 +18,9 @@ import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProduct
  * downloads (`releaseAssetURL`: the entry's download base when it names one,
  * else the repository's release-download layout), each checked by SHA-256. No
  * release-listing API is ever called. The index is read leniently, like
- * Spine's: unknown keys and products are ignored (an index still carries a
- * `market` entry for boxes up to 0.6.10), and an invalid entry fails only its
- * own product (`invalid`).
+ * Spine's: unknown keys and products are ignored (an index may still carry a
+ * frozen `market` entry for boxes up to 0.6.10, which neither Spine nor this
+ * reader takes), and an invalid entry fails only its own product (`invalid`).
  */
 
 export const RELEASE_CHANNELS = ['dev', 'alpha', 'beta', 'stable'] as const;

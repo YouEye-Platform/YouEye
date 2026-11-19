@@ -16,7 +16,8 @@ Spine is the host agent and the `youeye` CLI. An appliance has two kinds of Spin
 
   An entry is identified by `sha256`: the payload is stored and checked under it, and nothing compares the other
   fields with a running binary. `version` is the name the release gave this Spine (a build name up to 0.6.12),
-  else the line; it is never empty, because a Spine up to 0.6.11 in the other slot drops an entry without it.
+  else the line the binary reports, else the release's line; it is never empty, because a Spine up to 0.6.11 in
+  the other slot drops an entry without it.
   `line` and `source_tree` (from 0.6.12) describe the binary for people; `described_sha256` says which binary they
   describe, because an older Spine that replaces an entry keeps keys it does not know, and they are dropped unless
   it equals the entry's `sha256`.
@@ -53,8 +54,13 @@ through any name ([core-release-contract.md](core-release-contract.md#the-update
 `youeye version` shows the installed release's version (the release document's `version`; on dev that is the dev
 name) and, per part (System image, Spine, Control Panel, UI), the same version or `from <release>` when the part was
 reused from an earlier release (the full name on dev, only another line elsewhere). It never shows a build name.
+On beta and stable from 0.6.13 on, a part reused from an older line shows the release's version too, without
+`from <line>`: their documents hold every file themselves and name no build, so nothing in them says which release
+first carried the part (dev and alpha documents name the release that stores the file, `artifact.release`; accepted
+in Plan 12). `--verbose` tells a reused part by its tree.
 `youeye version --verbose` adds the release's tree and each member's tree and sha256; it shows no image identity
-(that is the image build's name). The Spine line says what runs: `0.6.13 (current on State, slot A)`, `(seed in the
+(that is the image build's name, which no screen and no command's normal output shows: `youeye update system
+status` and `youeye appliance commit-healthy-slot` name slots only). The Spine line says what runs: `0.6.13 (current on State, slot A)`, `(seed in the
 image, …)`, or "not the installed release's" with its sha256. The Control Panel line names the installed release
 when the container's `version.json` has the member's tree, else "not the installed release's: tree …". The
 installed release is the committed receipt's, or before the first commit the installer's selection, shown as
@@ -63,9 +69,9 @@ prints the same `release` line and, for the seed and each selected Spine, its li
 in `selection.json` keeps the stored names (build names up to 0.6.12), which a Spine up to 0.6.11 in the other slot
 reads. Messages about a selected Spine (a missing payload, a digest mismatch, an abandoned trial) name it by line and
 the start of its sha256. `youeye channel get` prints only the repository and channel. The Spine API has
-`GET /api/spine/status` (the same view); `GET /api/version` answers the binary's own `version` (unchanged, a 0.6.11
-Spine compares it during a Spine trial), the installed `release` (what callers show and compare) and the binary's
-`source_tree`. `GET /api/releases/channel` no longer has `installed_build`.
+`GET /api/spine/status` (the same view); `GET /api/version` answers the binary's own `version` (its line since
+0.6.13, its build name before; a 0.6.11 Spine compares it during a Spine trial of 0.6.12), the installed `release`
+(what callers show and compare) and the binary's `source_tree`. `GET /api/releases/channel` no longer has `installed_build`.
 
 Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
 `youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
@@ -97,11 +103,13 @@ Each start of `api serve` also refreshes Pi-hole's port-53 address and starts Pi
 (`spine/internal/cmd/hostipcheck.go`).
 
 **The channel index answer** (`spine/internal/api/releases.go`). `GET /api/releases/index` is answered from a copy
-kept for 5 minutes plus 0–10 % jitter. A refresh tries the index addresses in order and sends `If-None-Match` with
-the ETag of that address's last good copy; a `304` keeps the copy and counts as a refresh. After a failure the host
-is not asked again for 30 s, doubling up to 10 minutes, and meanwhile the last good index is answered; only with no
-good copy yet is the answer the error (502 with `code`). Changing the channel starts over. `youeye update core
-check` fetches the index separately and unconditionally.
+kept for 5 minutes plus 0–10 % jitter (`releasecache.NextChannelIndexCheck`). A refresh goes through
+`releasecache.FetchChannelIndex`, which tries the index addresses in order and sends `If-None-Match` with the ETag
+of that address's last good copy in this process; a `304` answers the copy and counts as a refresh. After a failure
+the host is not asked again for 30 s, doubling up to 10 minutes, and meanwhile the last good index is answered;
+only with no good copy yet is the answer the error (502 with `code`). Changing the channel starts over. The update
+check (`youeye update core check`, `ChooseCoreRelease`) reads the index through the same conditional fetch, without
+the 5-minute copy.
 
 ## Host maintenance (API service)
 
@@ -151,6 +159,15 @@ reboot the new slot runs it. That is then the slot's whole record: what it held 
 is dropped, the previous Spine included, because an older Spine may not read what the new release writes. If the
 release's Spine cannot run, the slot runs the seed of its new image, and `youeye spine rollback` says the slot has
 no previous Spine until a Spine update on that slot leaves one.
+
+A Spine up to 0.6.11 kept the previous entry when it selected a Spine for an image update, so the slot holding the
+0.6.12 image can still name a 0.6.11 Spine as previous. That Spine reads release documents up to reader 1. So before
+an image update to a release that needs reader 2 is committed (`commit-host`), the slot the update was staged from
+loses its previous and trial entries that no Spine from 0.6.12 on wrote: those without their own
+`described_sha256` (`spineselect.DropUndescribedFallbacks`). Its current entry stays, and behind it the slot runs
+the seed of its own image, which reads the release (the update was staged there by a release at or after the
+target's `minimum_release`, on that release's image). A slot still holding an older image is never the one this
+names: it is the slot the update wrote over.
 
 ## Compatibility
 

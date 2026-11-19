@@ -61,7 +61,7 @@ import {
 } from '../infrastructure/secrets';
 import { addRoute, getRoutes, removeRoute, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
-import { runSetup, setupFor } from './setup-runner';
+import { installSetupPlan, runSetup, setupFor } from './setup-runner';
 import {
   createOAuthClient,
   getIdentityProviderConfig,
@@ -1873,13 +1873,15 @@ async function installAppLocked(
   const setupContainers = Object.fromEntries(manifest.containers.map((containerSpec) => [
     containerSpec.name, getContainerName(appId, containerSpec.name, manifest.containers.length),
   ]));
-  for (const purpose of ['install', 'sso'] as const) {
-    if (purpose === 'sso' && !ssoEnabled) continue;
-    const file = setupFor(manifest, purpose);
-    if (!file) continue;
+  // With `restoreOptions` the app's data came back (a restore, or kept data taken over): see installSetupPlan.
+  for (const { purpose, file, run, mustSucceed } of installSetupPlan(manifest, { ssoEnabled, dataCameBack: Boolean(restoreOptions) })) {
     checkCancelled();
     step++;
     const label = purpose === 'sso' ? `${manifest.metadata.name} SSO` : manifest.metadata.name;
+    if (!run) {
+      emit(onEvent, step, totalSteps, 'skipped', `${file.name} not run: ${manifest.metadata.name} came back with its data`);
+      continue;
+    }
     emit(onEvent, step, totalSteps, 'running', `Configuring ${label} (${file.name})...`);
     try {
       await runSetup(manifest, purpose, {
@@ -1890,6 +1892,12 @@ async function installAppLocked(
       });
       emit(onEvent, step, totalSteps, 'success', `${label} configured`);
     } catch (err) {
+      if (!mustSucceed) {
+        logOperationFailure(`${file.name} of ${appId} (its data came back; the install goes on)`, err);
+        emit(onEvent, step, totalSteps, 'warning',
+          `${file.name} failed: turn YouEye ID sign-in for ${manifest.metadata.name} off and on again in its settings`);
+        continue;
+      }
       onEvent({
         step,
         totalSteps,

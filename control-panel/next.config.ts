@@ -28,7 +28,8 @@ const nextConfig: NextConfig = {
     if (!buildId || !/^[0-9a-f]{40}$/.test(buildId)) {
       throw new Error('YOUEYE_BUILD_ID must be the exact 40-character source commit');
     }
-    return buildId;
+    // Distinct from the UI's ("ui-…"): see ui/next.config.ts.
+    return `control-panel-${buildId}`;
   },
   // Allow remote images from GitHub (Market icons)
   images: {

@@ -52,6 +52,8 @@ export interface ContainerMaintenanceOptions {
 export interface ContainerMaintenanceLease {
   id: string;
   containers: string[];
+  /** False once released: a released lease fences nothing. */
+  isHeld(): boolean;
   markRollback(error?: string): void;
   markFailed(error: string): void;
   release(): void;
@@ -150,10 +152,49 @@ function readRecords(directory: string): ContainerMaintenanceRecord[] {
     });
 }
 
+// ─── Containers a running operation keeps stopped ──────────
+
+const heldKey = Symbol.for('youeye.containers-held-by-operation');
+const heldGlobal = globalThis as typeof globalThis & { [heldKey]?: Map<string, number> };
+// One map for the whole process: the restore, the watchdog and the health monitor can be separate bundles.
+const heldContainers = heldGlobal[heldKey] ??= new Map<string, number>();
+
+/**
+ * Keep the watchdog away from containers an operation of this process stops on purpose and starts again itself:
+ * the core services (Caddy, Pi-hole, the dashboard, Pointer) during a server restore and its rollback. A watchdog
+ * that started one of them in between ran it on a data directory the restore was replacing, and the restore's
+ * rollback then failed.
+ *
+ * Unlike a maintenance lease this is not written to disk. Nothing resumes a restore after the Control Panel
+ * restarts, so a hold that outlived its process would keep the watchdog away from the core services for good, and
+ * Spine refuses a System update while a maintenance record is open. Holds are counted, so an operation inside
+ * another (a restore inside its route, which also covers the rollback) may hold the same containers.
+ * Returns the release; calling it twice releases once.
+ */
+export function holdContainersForOperation(names: Iterable<string>): () => void {
+  const containers = normalizeContainerNames(names);
+  for (const name of containers) heldContainers.set(name, (heldContainers.get(name) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const name of containers) {
+      const count = (heldContainers.get(name) ?? 1) - 1;
+      if (count > 0) heldContainers.set(name, count); else heldContainers.delete(name);
+    }
+  };
+}
+
+/** Whether an operation of this process holds the container (see holdContainersForOperation). */
+export function isContainerHeldByOperation(name: string): boolean {
+  return heldContainers.has(name);
+}
+
 export function isContainerMaintenanceActive(
   name: string,
   options?: ContainerMaintenanceOptions,
 ): boolean {
+  if (isContainerHeldByOperation(name)) return true;
   try {
     // Resource keys do not include ownerAppId. Exact Incus identity also covers
     // containers whose app metadata is missing or has changed during an update.
@@ -230,6 +271,7 @@ export function beginContainerMaintenance(
   return {
     id: record.id,
     containers,
+    isHeld: () => !released,
     markRollback: (error) => transition('rollback', error),
     markFailed: (error) => transition('failed', error),
     release: () => {

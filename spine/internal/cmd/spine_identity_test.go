@@ -25,8 +25,9 @@ func fakeSpine(t *testing.T, report string) string {
 
 // A selection entry is identified by its digest. Its version is only a name,
 // and never empty (a Spine up to 0.6.11 skips an entry without one): the
-// release's name for the Spine when the document has one, else what the binary
-// calls itself, else the release's line.
+// release's name for the Spine when the document has one, else the line the
+// binary calls itself (never a build name the document does not give), else the
+// release's line.
 func TestSpineEntryNamesTheSpineWithoutIdentifyingByIt(t *testing.T) {
 	digest, tree := strings.Repeat("a", 64), strings.Repeat("1", 40)
 	for name, c := range map[string]struct {
@@ -39,6 +40,7 @@ func TestSpineEntryNamesTheSpineWithoutIdentifyingByIt(t *testing.T) {
 		"document up to 0.6.12 names the build":       {`{"disk_layout":1,"helper_contract":1,"version":"0.6.12-dev.3"}`, spineIdentity{SHA256: digest, Version: "0.6.12-dev.3", Line: "0.6.12", SourceTree: tree}, "0.6.12-dev.3", "0.6.12", false},
 		"the document's name wins over the binary's":  {`{"disk_layout":1,"helper_contract":1,"version":"0.0.0"}`, spineIdentity{SHA256: digest, Version: "0.6.12-dev.3", Line: "0.6.12", SourceTree: tree}, "0.6.12-dev.3", "0.6.12", false},
 		"no name in the document: the binary's line":  {`{"disk_layout":1,"helper_contract":1,"version":"0.6.13"}`, spineIdentity{SHA256: digest, Line: "0.6.14", SourceTree: tree}, "0.6.13", "0.6.13", false},
+		"a binary that calls itself by a build name":  {`{"disk_layout":1,"helper_contract":1,"version":"0.6.12-dev.2"}`, spineIdentity{SHA256: digest, Line: "0.6.13", SourceTree: tree}, "0.6.12", "0.6.12", false},
 		"a Spine that does not say: the release line": {`{"disk_layout":1,"helper_contract":1}`, spineIdentity{SHA256: digest, Line: "0.6.13", SourceTree: tree}, "0.6.13", "0.6.13", false},
 		"a binary that says nonsense":                 {`{"disk_layout":1,"helper_contract":1,"version":"dev build"}`, spineIdentity{SHA256: digest, Line: "0.6.13", SourceTree: tree}, "0.6.13", "0.6.13", false},
 		"nothing names it at all":                     {`{"disk_layout":1,"helper_contract":1}`, spineIdentity{SHA256: digest}, "aaaaaaaaaaaa", "", false},

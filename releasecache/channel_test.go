@@ -147,8 +147,9 @@ func TestChannelIndexValidation(t *testing.T) {
 		}
 	}
 	good := index("beta", `"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1-dev.2","version":"0.6.1-dev.2","build":"0.6.1-dev.2","document":"product-release.json","sha256":"`+strings.Repeat("b", 64)+`"},"market":{"repository":"https://github.com/YouEye-Platform/YE-AppMarket","tag":"catalog-v0.6.1-dev.1","version":"0.6.1-dev.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("c", 64)+`"}`)
-	if parsed, err := ParseChannelIndex([]byte(good)); err != nil || len(parsed.Products) != 2 || len(parsed.Invalid) != 0 {
-		t.Fatal(err)
+	// The frozen market entry (for boxes up to 0.6.10) is skipped like any product this reader does not take.
+	if parsed, err := ParseChannelIndex([]byte(good)); err != nil || len(parsed.Products) != 1 || len(parsed.Invalid) != 0 || parsed.Products["notes"].Tag != "v0.6.1-dev.2" {
+		t.Fatal(err, parsed)
 	}
 }
 

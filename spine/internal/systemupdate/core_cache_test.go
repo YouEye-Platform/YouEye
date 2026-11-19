@@ -65,6 +65,53 @@ func TestCoreCacheRequiresCapacityAndCompleteDigestBoundBytes(t *testing.T) {
 	if _, digest, err := c.StageUpdate(context.Background(), selection, r); err != nil || digest != checksum(raw) || requests != 0 {
 		t.Fatal("no-op downloaded", digest, err, requests)
 	}
+	// A promotion of the same build downloads nothing either: its document
+	// stores the same files under another release (an alpha document names the
+	// dev release, a beta one itself), and nothing else differs.
+	promotedFrom := r
+	promotedFrom.Members = append([]releasecache.CoreMember{}, r.Members...)
+	for i := range promotedFrom.Members {
+		m := &promotedFrom.Members[i]
+		m.Artifact.Release = "youeye-v0.6.0-dev.1"
+		if m.BuildInputs != nil {
+			inputs := *m.BuildInputs
+			inputs.Release = "youeye-v0.6.0-dev.1"
+			m.BuildInputs = &inputs
+		}
+	}
+	if promotedFrom.PayloadSHA256() != r.PayloadSHA256() {
+		t.Fatal("fixture: the promoted document has other payloads")
+	}
+	if _, digest, err := c.StageUpdate(context.Background(), selection, promotedFrom); err != nil || digest != checksum(raw) || requests != 0 {
+		t.Fatal("a same-build promotion downloaded members", digest, err, requests)
+	}
+	// Its service trees are read from the index of the installed files, not
+	// looked for in the (empty) cache.
+	manager := CoreManager{Root: filepath.Join(root, "core")}
+	cp, _ := r.Member("cp")
+	installed := CorePayloadIndex{Schema: "youeye.core-payload.v1", ArtifactSHA256: cp.Artifact.SHA256, Entries: []CorePayloadEntry{{Path: "server.js", Kind: "file", Mode: 0644, SHA256: checksum([]byte("x")), Size: 1}}}
+	if err := manager.SavePayloadIndex(installed); err != nil {
+		t.Fatal(err)
+	}
+	promotion := CoreJournal{Target: r, Previous: CoreReceipt{Release: promotedFrom}}
+	if index, err := c.IndexSelected(manager, promotion, "cp"); err != nil || index.ArtifactSHA256 != cp.Artifact.SHA256 || len(index.Entries) != 1 || requests != 0 {
+		t.Fatal("a promoted member was not read from its installed index", index, err, requests)
+	}
+	// A member whose bytes differ is still fetched (and here refused: no capacity).
+	changedMember := promotedFrom
+	changedMember.Members = append([]releasecache.CoreMember{}, promotedFrom.Members...)
+	for i := range changedMember.Members {
+		if changedMember.Members[i].Role == "ui" {
+			changedMember.Members[i].Artifact.SHA256 = strings.Repeat("b", 64)
+		}
+	}
+	if _, _, err := c.StageUpdate(context.Background(), selection, changedMember); err == nil || requests != 0 {
+		t.Fatal("a changed member was not staged", err, requests)
+	}
+	changedJournal := CoreJournal{Target: r, Previous: CoreReceipt{Release: changedMember}}
+	if _, err := c.IndexSelected(manager, changedJournal, "ui"); err == nil {
+		t.Fatal("a changed member was read without its cached artifact")
+	}
 	c.AvailableBytes = func(string) (uint64, error) { return 1 << 30, nil }
 	fresh := c
 	fresh.Root = filepath.Join(root, "fresh-public")

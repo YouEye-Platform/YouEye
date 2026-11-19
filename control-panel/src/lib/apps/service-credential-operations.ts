@@ -1,7 +1,7 @@
 import { withAppLifecycle } from '../market/update-admission';
 import { appServiceCredentials } from './service-credential-store';
 import { runAppCredentialLifecycle, type AppCredentialLifecycleAction } from './service-credential-lifecycle';
-import { publishCredential, probeCredential, markCredentialReady } from './service-credential-bridge';
+import { publishCredential, probeCredential, markCredentialReady, reconcileRetainedAppCredential } from './service-credential-bridge';
 import { rewriteCredentialEnvironment, assertPrivateCredentialConfig } from './service-credential-runtime';
 import { probeNativeAppCredential, quiesceAppCredentialRuntime } from './service-credential-probe';
 import { readInstallMetadata, saveInstallMetadata } from '../market/metadata';
@@ -14,12 +14,23 @@ import { resolveEnvironment } from '../market/variables';
 import { writeAllConfigFiles } from '../market/config-writer';
 import { readAppSecret } from '../infrastructure/secrets';
 import { withAppNetworkOperationLock } from '../incus/app-network';
-import { beginContainerMaintenance } from '../maintenance/container-maintenance';
+import { beginContainerMaintenance, type ContainerMaintenanceLease } from '../maintenance/container-maintenance';
 import { incusDownloadFile, incusUploadFile, incusRequest } from '../incus/server';
 import { startContainer, waitForRunning, waitForOperation } from '../incus/snapshot';
 
-/** Deliberate authenticated lifecycle action; no browser-visible secret values. */
-export async function operateAppCredential(appId: string, operation: AppCredentialLifecycleAction) {
+/**
+ * Deliberate authenticated lifecycle action; no browser-visible secret values.
+ *
+ * The work runs under the container maintenance lease of the app's containers. A caller that already holds that
+ * lease (a server restore keeps its kept apps fenced from the moment it stops them until it ends) passes it as
+ * `maintenance`: the lease is exclusive, so asking for it again would refuse the caller's own work. The lease then
+ * stays the caller's: this function neither marks it failed nor releases it.
+ */
+export async function operateAppCredential(
+  appId: string,
+  operation: AppCredentialLifecycleAction,
+  options: { maintenance?: ContainerMaintenanceLease } = {},
+) {
   return withAppLifecycle(appId, () => withAppNetworkOperationLock(appId, `credential:${operation.action}`, async () => {
     const metadata = await readInstallMetadata(appId);
     if (!metadata || metadata.lifecycleState !== 'active') throw new Error('Installed app is unavailable');
@@ -32,7 +43,11 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
       throw new Error('Installed app runtime identity mismatch');
     }
     const intendedState = metadata.serviceCredentialDesiredState ?? metadata.desiredState ?? 'running';
-    const lease = beginContainerMaintenance(names, { operation: `credential:${appId}` });
+    const held = options.maintenance;
+    if (held && (!held.isHeld() || names.some(name => !held.containers.includes(name)))) {
+      throw new Error('The held container maintenance does not cover this app');
+    }
+    const lease = held ?? beginContainerMaintenance(names, { operation: `credential:${appId}` });
     try {
       await appServiceCredentials.recoverAbandonedOperation(appId);
       const before = await appServiceCredentials.status(appId);
@@ -60,11 +75,23 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
           await bindInstalledAdmission(metadata);
           await reconcileAdmissionProjections();
           if ((await appServiceCredentials.projection(appId))?.status === 'active') {
-            await markCredentialReady(appId, false);
+            try {
+              await markCredentialReady(appId, false);
+            } catch (error) {
+              // A dashboard that holds another revision cannot accept this. `reconcile` deals with that itself
+              // once the app is stopped (alignVerifier); every other action needs the dashboard in step.
+              if (operation.action !== 'reconcile') throw error;
+            }
           }
         },
         async quiesce() {
           await quiesceAppCredentialRuntime(names);
+        },
+        // The dashboard's credential table can be older than this store (its database came back from a backup and
+        // the restore, or its rollback, did not get as far as reconciling this app). Step-by-step publication is
+        // then refused for good; this is the same crossing a server restore makes for the apps it keeps.
+        async alignVerifier() {
+          await reconcileRetainedAppCredential(appId);
         },
         async writeRuntime(secret) {
           const secrets: Record<string, string> = {};
@@ -140,8 +167,8 @@ export async function operateAppCredential(appId: string, operation: AppCredenti
         },
       });
     } catch (error) {
-      lease.markFailed('App service integration requires reconciliation');
+      if (!held) lease.markFailed('App service integration requires reconciliation');
       throw error;
-    } finally { lease.release(); }
+    } finally { if (!held) lease.release(); }
   }));
 }

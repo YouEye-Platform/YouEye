@@ -11,7 +11,10 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig = {
-  generateBuildId: async () => process.env.YOUEYE_BUILD_ID || null,
+  // Distinct from the Control Panel's (same commit, "control-panel-…"): both apps share the box's address, and Next
+  // loads a page in full only when the other app's page data comes from a different build ID. With the same ID a
+  // client-side navigation between them (Home, Settings) applied the other app's data and crashed.
+  generateBuildId: async () => (process.env.YOUEYE_BUILD_ID ? `ui-${process.env.YOUEYE_BUILD_ID}` : null),
   output: "standalone" as const,
   transpilePackages: ["@youeye/branding"],
   // Never write rendered routes into the installed tree (.next/server/...):

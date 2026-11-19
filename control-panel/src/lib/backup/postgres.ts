@@ -156,6 +156,42 @@ export async function replacePlatformDatabase(databaseInput: string, dump: Buffe
   });
 }
 
+/** The apps the restored dashboard database holds a service credential for (active or revoked). */
+export async function listRestoredAppCredentialIds(): Promise<string[]> {
+  const query = ['psql', '--username', PLATFORM_POSTGRES_ADMIN, '--dbname', 'youeye_ui',
+    '--set', 'ON_ERROR_STOP=1', '--tuples-only', '--no-align', '--command'];
+  // A dashboard database from before the table existed has no rows to reconcile.
+  const exists = await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
+    ...query, `SELECT to_regclass('public.app_service_credentials') IS NOT NULL`,
+  ], 10_000, 'Inspect restored app credentials');
+  if (exists.stdout.trim() !== 't') return [];
+  const result = await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
+    ...query, 'SELECT app_id FROM public.app_service_credentials ORDER BY app_id',
+  ], 10_000, 'List restored app credentials');
+  return result.stdout.split('\n').map(line => line.trim()).filter(line => /^[a-z0-9][a-z0-9-]{0,62}$/.test(line));
+}
+
+/**
+ * Remove the shared database and role a restore made for an app whose reinstall then failed. With no install
+ * they belong to nothing, and an install refuses an app whose database or role already exists.
+ */
+export async function dropPlatformAppDatabase(options: { database: string; user: string }): Promise<void> {
+  const database = checkedIdentifier(options.database, 'App database name');
+  const user = checkedIdentifier(options.user, 'App database user');
+  if (isPlatformDatabase(database) || user === PLATFORM_POSTGRES_ADMIN) throw new Error('Refusing to drop a platform database');
+  const maintenance = ['psql', '--username', PLATFORM_POSTGRES_ADMIN, '--dbname', 'postgres', '--set', 'ON_ERROR_STOP=1'];
+  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
+    ...maintenance,
+    '--command', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${sqlLiteral(database)}' AND pid <> pg_backend_pid()`,
+  ], 10_000, `Terminate PostgreSQL clients for ${database}`);
+  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
+    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${quotedIdentifier(database, 'App database name')}`,
+  ], 10_000, `Drop PostgreSQL database ${database}`);
+  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
+    ...maintenance, '--command', `DROP ROLE IF EXISTS ${quotedIdentifier(user, 'App database user')}`,
+  ], 10_000, `Drop PostgreSQL role ${user}`);
+}
+
 /** UI must remain stopped until restored verifier rows are denied. */
 export async function suspendRestoredAppCredentials(): Promise<void> {
   await checkedExec(PLATFORM_POSTGRES_CONTAINER, [

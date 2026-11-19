@@ -35,7 +35,9 @@ test('what the box reports outside uses the installed release, never version.jso
   // The System card shows the release version only (no build span).
   assert.doesNotMatch(read('src/components/settings-shell/core-system-update.tsx'), /release\.build/);
   // The UI is told the release (it cannot read State) and reports it.
-  assert.match(read('src/lib/apps/update-cache.ts'), /publishUIRelease\(\)/);
+  // The 60 s publisher (instrumentation.ts) restores the file; the 3-hour update check no longer does.
+  assert.match(read('src/instrumentation.ts'), /startUIReleasePublisher\(\)/);
+  assert.doesNotMatch(read('src/lib/apps/update-cache.ts'), /publishUIRelease/);
   assert.match(read('src/lib/infrastructure/deployer.ts'), /publishUIRelease\(\)/);
   const ui = read('../ui/src/lib/build-version.ts');
   assert.match(ui, /\/etc\/youeye\/release\.json/);

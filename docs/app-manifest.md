@@ -282,6 +282,13 @@ remove:                          # optional: undo steps, run when the feature is
   whose SSO needs a setup file shows a "YouEye ID sign-in" toggle at install); `url-change` and `sso` run again after
   the box's address changes (for an app that is stopped then, when it is next started). A failing step fails the install (which is rolled back) unless it has
   `allow_failure`; after an address change failures are logged.
+- **`install` runs once in the life of the app's data**, so it is for first-run state inside the app's own data
+  (its first account, default settings). An install whose data came back does not run it: a restore from a
+  backup, and a reinstall over the data a keep-data uninstall left. What it would make exists, and apps refuse
+  to make it twice (Memos answers 403 to a second first account). Anything a restored app still needs must be in
+  `sso` or `url-change`, or in the manifest. `sso` does run then (every install makes a new YouEye ID client and
+  secret), and there a failure does not undo the restore: it is logged and reported, the app keeps its data, and
+  sign-in is applied again by turning it off and on (`installSetupPlan` in `setup-runner.ts`).
 - The sign-in setting can change after install (Settings → Apps → the app → Overview, "YouEye ID sign-in"; or
   `GET`/`PUT /api/market/app/<id>/sign-in` with `{"enabled": …}`): on creates the OAuth client and runs `steps:`, off
   runs `remove:` and then deletes the client. It is offered for apps with `sso:` and a `setup/sso.yaml`.

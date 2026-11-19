@@ -234,6 +234,31 @@ func validateNativeIdentity(j CoreJournal, s CoreStep) error {
 	return fmt.Errorf("unknown native core action")
 }
 
+// coreActionAdmitted: the coordinator admits these actions itself before it
+// records their launch. For checkpoint and recovery-fence that is the lifecycle
+// admission (ordinary app work settles, the reservation is taken); for
+// verify-members it is the wait for the core containers its walk reads. An
+// admission that ends first is recorded as retryable with nothing started, and
+// only that record lets the same request be admitted again.
+func coreActionAdmitted(name string) bool {
+	return name == "checkpoint" || name == "recovery-fence" || name == "verify-members"
+}
+
+// coreAdmissionWords is the evidence of an admission: while it waits, when it
+// was refused, and when the wait ended first.
+func coreAdmissionWords(name string) (words struct{ waiting, rejected, ended string }) {
+	if name == "verify-members" {
+		words.waiting = "waiting for the core containers (youeye-control, youeye-ui) to start"
+		words.rejected = "the wait for the core containers was refused before native action launch; resume the same request"
+		words.ended = "the core containers were not running before native action launch; resume the same request once they run"
+		return words
+	}
+	words.waiting = "waiting for ordinary lifecycle work to settle"
+	words.rejected = "lifecycle admission rejected before native action launch; reconcile ordinary work and current policy"
+	words.ended = "lifecycle admission ended before native action launch; resume the same request after ordinary work settles"
+	return words
+}
+
 func (e NativeCoreExecutor) Start(ctx context.Context, j CoreJournal, s CoreStep) (CoreActionObservation, error) {
 	if err := validateNativeIdentity(j, s); err != nil {
 		return CoreActionObservation{}, err
@@ -244,7 +269,7 @@ func (e NativeCoreExecutor) Start(ctx context.Context, j CoreJournal, s CoreStep
 	}
 	defer unlock()
 	if previous, err := e.read(j, s); err == nil {
-		if previous.Result.State != "retryable" || e.AdmitAction == nil || (s.Name != "checkpoint" && s.Name != "recovery-fence") {
+		if previous.Result.State != "retryable" || e.AdmitAction == nil || !coreActionAdmitted(s.Name) {
 			return e.observe(ctx, j, s)
 		}
 		// Only this executor's positive pre-launch receipt permits admission
@@ -266,21 +291,22 @@ func (e NativeCoreExecutor) Start(ctx context.Context, j CoreJournal, s CoreStep
 		return CoreActionObservation{}, err
 	}
 	a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: s.RequestID, Name: s.Name, ManifestSHA256: j.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: identity, Active: true, Result: CoreActionObservation{State: "running"}}
-	if e.AdmitAction != nil && (s.Name == "checkpoint" || s.Name == "recovery-fence") {
-		a.Result = CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started", Evidence: "waiting for ordinary lifecycle work to settle"}
+	if e.AdmitAction != nil && coreActionAdmitted(s.Name) {
+		words := coreAdmissionWords(s.Name)
+		a.Result = CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started", Evidence: words.waiting}
 		if err := e.save(s, a); err != nil {
 			return a.Result, err
 		}
 		if err := e.AdmitAction(ctx, j, s); err != nil {
 			a.Active = false
 			a.Result.State, a.Result.Code = "retryable", "admission_rejected"
-			a.Result.Evidence = "lifecycle admission rejected before native action launch; reconcile ordinary work and current policy"
+			a.Result.Evidence = words.rejected
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 				a.Result.State, a.Result.Code = "retryable", "admission_timeout"
 				if errors.Is(err, context.Canceled) {
 					a.Result.Code = "admission_cancelled"
 				}
-				a.Result.Evidence = "lifecycle admission ended before native action launch; resume the same request after ordinary work settles"
+				a.Result.Evidence = words.ended
 			}
 			if saveErr := e.save(s, a); saveErr != nil {
 				return CoreActionObservation{State: "unknown"}, saveErr
@@ -342,6 +368,21 @@ func (e NativeCoreExecutor) observe(ctx context.Context, j CoreJournal, s CoreSt
 	if a.Active && a.Result.State == "running" {
 		identity, err := nativeProcessIdentity(a.PID)
 		if err == nil && identity == a.ProcessIdentity {
+			return a.Result, nil
+		}
+		if s.Name == "verify-members" && a.Result.Stage == "admission" && a.Result.EffectState == "not-started" {
+			// The coordinator that waited for the core containers is gone (a reboot,
+			// a killed console command). Its wait only read, and it replaces this
+			// record with the launch record before it asks the runner for a child,
+			// under the action lock this caller now holds: no child was launched and
+			// nothing was changed. The request is admitted again, as after a wait
+			// that timed out. Checkpoint and recovery-fence admission may have taken
+			// the lifecycle reservation, so their lost wait stays unknown.
+			a.Active = false
+			a.Result = CoreActionObservation{State: "retryable", Stage: "admission", Code: "admission_cancelled", EffectState: "not-started", Evidence: coreAdmissionWords(s.Name).ended}
+			if err := e.save(s, a); err != nil {
+				return CoreActionObservation{}, err
+			}
 			return a.Result, nil
 		}
 	}

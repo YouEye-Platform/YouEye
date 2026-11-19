@@ -262,3 +262,39 @@ func TestPayloadIgnoresWhereFilesLive(t *testing.T) {
 		t.Fatal("PayloadSHA256 changed its input")
 	}
 }
+
+// Where a document stores a member's files is not part of the member: the
+// same build promoted is the same members (what a box compares before it
+// downloads anything). Everything else is.
+func TestMemberPayloadIgnoresOnlyTheStoringRelease(t *testing.T) {
+	inputs := CoreBlob{Name: "build-inputs.json", SHA256: strings.Repeat("2", 64), SizeBytes: 2, Release: "youeye-v0.6.13-dev.1"}
+	dev := CoreMember{Role: "cp", SourceTree: strings.Repeat("a", 40), InputSHA256: strings.Repeat("3", 64),
+		Artifact: CoreBlob{Name: "cp.tar", SHA256: strings.Repeat("1", 64), SizeBytes: 1, Release: "youeye-v0.6.13-dev.1"}, BuildInputs: &inputs}
+	beta := dev
+	betaInputs := inputs
+	betaInputs.Release = ""
+	beta.Artifact.Release, beta.BuildInputs, beta.DependsOn = "", &betaInputs, []string{}
+	if !dev.SamePayload(beta) || !beta.SamePayload(dev) {
+		t.Fatal("the same files under another release are another member")
+	}
+	if dev.Artifact.Release == "" || dev.BuildInputs.Release == "" || inputs.Release == "" {
+		t.Fatal("comparing changed the member")
+	}
+	for name, change := range map[string]func(*CoreMember){
+		"artifact digest": func(m *CoreMember) { m.Artifact.SHA256 = strings.Repeat("4", 64) },
+		"artifact size":   func(m *CoreMember) { m.Artifact.SizeBytes++ },
+		"artifact name":   func(m *CoreMember) { m.Artifact.Name = "other.tar" },
+		"inputs digest":   func(m *CoreMember) { b := *m.BuildInputs; b.SHA256 = strings.Repeat("5", 64); m.BuildInputs = &b },
+		"no inputs":       func(m *CoreMember) { m.BuildInputs = nil },
+		"tree":            func(m *CoreMember) { m.SourceTree = strings.Repeat("b", 40) },
+		"input digest":    func(m *CoreMember) { m.InputSHA256 = strings.Repeat("6", 64) },
+		"role":            func(m *CoreMember) { m.Role = "ui" },
+		"dependencies":    func(m *CoreMember) { m.DependsOn = []string{"spine"} },
+	} {
+		other := beta
+		change(&other)
+		if dev.SamePayload(other) {
+			t.Fatalf("%s: a different member passes for the same payload", name)
+		}
+	}
+}
