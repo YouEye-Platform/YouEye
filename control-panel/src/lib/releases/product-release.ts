@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { compareVersions, parseReleaseVersion } from '../version';
+import { compareLines, compareReleases, compareVersions, isBuildName, parseReleaseVersion, releaseKey, releaseLine, validReleaseKey, type ReleaseKey } from '../version';
 import { canonicalReleaseRepository, RELEASE_READER, ReleaseNeedsNewerReader, releaseAssetURL, uniqueJSON, validAssetName, validSourceTree, type CoreBlob } from './core-release';
 
 /**
@@ -10,16 +10,20 @@ import { canonicalReleaseRepository, RELEASE_READER, ReleaseNeedsNewerReader, re
  * document, which binds every asset by SHA-256 and size. Assets are located
  * with `releaseAssetURL` (under the index entry's download base when it names one).
  * Unknown fields are ignored; a higher `minimum_reader` is `ReleaseNeedsNewerReader`.
+ * Both shapes are read: old documents (`minimum_reader: 1`, the build manifest
+ * names its `build_version`) and new ones (`minimum_reader: 2`, no build name).
+ * Releases are ordered by line and `sequence`, never by name.
  */
 
 export type ProductBuild = {
   schema: 'youeye.product-build.v1'; product: string; kind: 'native' | 'source';
-  build_version: string; source_tree: string;
+  /** Old shape only: the build name. Validated when present; ordering never uses it. */
+  build_version?: string; source_tree: string;
   input_sha256: string; contract_sha256: string; primary: string; assets: CoreBlob[];
 };
 export type ProductRelease = {
   schema: 'youeye.product-release.v1'; product: string; version: string; tag: string; source_tree: string;
-  sequence: number; minimum_reader: 1; authority: 'digest'; build_manifest_base64: string;
+  sequence: number; minimum_reader: number; authority: 'digest'; build_manifest_base64: string;
 };
 /** A verified document plus where it was found (from the channel index). */
 export type VerifiedProductRelease = {
@@ -53,7 +57,7 @@ function document(raw: Buffer): unknown {
 export function parseProductBuild(raw: Buffer): ProductBuild {
   const b = document(raw) as ProductBuild;
   object(b);
-  if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || !validSourceTree(b.source_tree)
+  if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || b.build_version !== undefined && (typeof b.build_version !== 'string' || !parseReleaseVersion(b.build_version)) || !validSourceTree(b.source_tree)
     || !hash(b.input_sha256) || !hash(b.contract_sha256) || !['native','source'].includes(b.kind)) throw new Error('Invalid immutable product build');
   if (!Array.isArray(b.assets) || !b.assets.length || b.assets.length > 32) throw new Error('Invalid product asset set');
   const names = new Set<string>();
@@ -80,7 +84,7 @@ export function parseProductRelease(raw: Buffer) {
     throw new ReleaseNeedsNewerReader(`Product release needs reader ${r.minimum_reader}`);
   }
   if (r.schema !== 'youeye.product-release.v1' || r.authority !== 'digest' || !products.has(r.product) || !parseReleaseVersion(r.version)
-    || r.tag !== productTag(r.version) || !validSourceTree(r.source_tree) || r.minimum_reader !== 1
+    || r.tag !== productTag(r.version) || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.minimum_reader) || r.minimum_reader < 1
     || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid product release identity');
   const build = parseProductBuild(base64(r.build_manifest_base64,1024*1024));
   if (build.product !== r.product || build.source_tree !== r.source_tree) throw new Error('Product release references another build');
@@ -104,6 +108,11 @@ export function verifyInstalledProductReceipt(receipt: InstalledProductReceipt, 
   if (selected.manifestSHA256 !== receipt.manifestSHA256) throw new Error('Installed product receipt digest differs');
   return selected;
 }
+/** The installed release a receipt records, or null when there is none or it is unreadable (never throws). */
+export function installedProductRelease(receipt: InstalledProductReceipt | null | undefined, product: string): VerifiedProductRelease | null {
+  if (!receipt) return null;
+  try { return verifyInstalledProductReceipt(receipt, {product}); } catch { return null; }
+}
 /** Where one asset of a verified release is downloaded. */
 export function productAssetURL(selected: VerifiedProductRelease, blob: CoreBlob): string {
   if (!selected.build.assets.includes(blob)) throw new Error('Foreign product asset');
@@ -120,43 +129,92 @@ export function productBuildSHA256(selected: VerifiedProductRelease): string {
 
 export function installedProductProjection(selected: VerifiedProductRelease) {
   return {schema:'youeye.installed-product.v1',product:selected.release.product,version:selected.release.version,
-    build_version:selected.build.build_version,source_tree:selected.release.source_tree,release_sha256:selected.manifestSHA256,
+    ...(selected.build.build_version ? {build_version:selected.build.build_version} : {}),
+    source_tree:selected.release.source_tree,release_sha256:selected.manifestSHA256,
     build_sha256:productBuildSHA256(selected)};
 }
 
+/** The order key of a verified release: its line and sequence. */
+export function productReleaseKey(selected: VerifiedProductRelease): ReleaseKey {
+  return releaseKey(selected.release);
+}
+
 /**
- * Replay floor per product: a box never accepts an older build of a product
+ * Replay floor per product: a box never accepts an older release of a product
  * than the one it already runs (this is also the no-downgrade rule when the
  * box's channel changes; it waits for the channel to catch up).
  *
- * Only build versions are ordered (X, Y, Z, then N); release names are for
- * display. `build` and `buildSHA256` identify the accepted build;
- * `manifestSHA256` is the release document last accepted for it.
+ * Releases are ordered by line, then sequence (`compareReleases`); names are
+ * labels. `buildSHA256` identifies the accepted build; `manifestSHA256` is the
+ * release document last accepted for it.
+ *
+ * Two shapes (Plan 12, decision 8): `line` and `sequence` are the key; `build`
+ * is the old shape (a 0.6.11 Control Panel orders by it and requires it).
+ * Until the Release cleanup both are written. A floor written before 0.6.12
+ * has no `sequence`: it is taken from the installed release document when that
+ * is the document the floor names, else the old build rule decides within one
+ * line.
  */
-export type ProductReleaseFloor = {build:string;buildSHA256:string;manifestSHA256:string};
+export type ProductReleaseFloor = {line?: string; sequence?: number; build?: string; buildSHA256: string; manifestSHA256: string};
 export type ProductSequenceFloors = Record<string,ProductReleaseFloor>;
 export function validProductFloor(floor: unknown): floor is ProductReleaseFloor {
   const f = floor as ProductReleaseFloor | undefined;
-  return !!f && typeof f === 'object' && typeof f.build === 'string' && !!parseReleaseVersion(f.build) && hash(f.buildSHA256) && hash(f.manifestSHA256);
+  if (!f || typeof f !== 'object' || !hash(f.buildSHA256) || !hash(f.manifestSHA256)) return false;
+  const keyed = f.line !== undefined || f.sequence !== undefined;
+  if (keyed && !validReleaseKey({line:f.line,sequence:f.sequence})) return false;
+  if (f.build !== undefined && (typeof f.build !== 'string' || !parseReleaseVersion(f.build))) return false;
+  return keyed || f.build !== undefined;
 }
-/** Order of the selected build against a floor: <0 older, 0 the same build, >0 newer. Throws on a different build with the same version. */
-export function compareToProductFloor(floor: ProductReleaseFloor, selected: VerifiedProductRelease): number {
-  const order = compareVersions(selected.build.build_version, floor.build);
+/** The floor's key: recorded, or (an older floor) from the installed document it names; null when neither has one. */
+function floorKey(floor: ProductReleaseFloor, installed?: VerifiedProductRelease | null): ReleaseKey | null {
+  if (floor.line !== undefined && floor.sequence !== undefined) return {line:floor.line,sequence:floor.sequence};
+  if (installed && installed.manifestSHA256 === floor.manifestSHA256) return productReleaseKey(installed);
+  return null;
+}
+/**
+ * Order of the selected release against a floor: <0 older, 0 the same build,
+ * >0 newer. Throws on other contents under the same key. `installed` is the
+ * installed release document, used to read an older floor's sequence.
+ */
+export function compareToProductFloor(floor: ProductReleaseFloor, selected: VerifiedProductRelease, installed?: VerifiedProductRelease | null): number {
+  const key = floorKey(floor, installed);
+  let order: number;
+  if (key) order = compareReleases(selected.release, key);
+  else {
+    // An older floor (build only): lines first. Within one line the old build rule orders two build names only
+    // (`-dev.N`); a release name (`-beta.1`, `0.6.4`) is a label, never ordered against a build. A document without
+    // a build name has the new shape, which was published after every old-shape build: newer, unless it holds the
+    // floor's own build.
+    const built = selected.build.build_version;
+    order = compareLines(selected.release.version, releaseLine(floor.build!)!);
+    if (order === 0) {
+      if (isBuildName(built) && isBuildName(floor.build)) order = compareVersions(built, floor.build);
+      else if (productBuildSHA256(selected) !== floor.buildSHA256) order = built === undefined ? 1 : -1;
+    }
+  }
   if (order === 0 && productBuildSHA256(selected) !== floor.buildSHA256) {
-    throw new Error(`The channel offers ${selected.release.product} build ${selected.build.build_version} with other contents than the installed build of that version`);
+    throw new Error(`The channel offers ${selected.release.product} ${selected.release.version} with other contents than the installed release of the same build`);
   }
   return order;
 }
-export function acceptProductSequence(floors: ProductSequenceFloors | undefined, selected: VerifiedProductRelease): ProductSequenceFloors {
-  const {release:r,build,manifestSHA256} = selected;
+/** The floor after accepting `selected`, in both shapes (see ProductReleaseFloor). */
+export function productReleaseFloor(selected: VerifiedProductRelease): ProductReleaseFloor {
+  const {line, sequence} = productReleaseKey(selected);
+  return {line, sequence, build:selected.build.build_version ?? selected.release.version, buildSHA256:productBuildSHA256(selected), manifestSHA256:selected.manifestSHA256};
+}
+export function acceptProductSequence(floors: ProductSequenceFloors | undefined, selected: VerifiedProductRelease, installed?: VerifiedProductRelease | null): ProductSequenceFloors {
+  const r = selected.release;
   const previous = floors?.[r.product];
   if (previous && !validProductFloor(previous)) throw new Error('Invalid installed product sequence floor');
   // The same build under another release name (a promotion) is not older;
   // accepting it only changes the release document.
-  if (previous && compareToProductFloor(previous, selected) < 0) {
-    throw new Error(`The channel offers an older ${r.product} build (${build.build_version}, release ${r.version}) than the installed ${previous.build}; waiting for the channel to catch up`);
+  if (previous && compareToProductFloor(previous, selected, installed) < 0) {
+    // Versions only: the installed release's name when the floor is that release, else the floor's line (never a build name).
+    const key = floorKey(previous, installed);
+    const has = installed && key && compareReleases(installed.release, key) === 0 ? installed.release.version : key?.line ?? releaseLine(previous.build!);
+    throw new Error(`The channel offers ${r.product} ${r.version}; this box has ${has}; waiting for the channel to catch up`);
   }
-  return {...floors,[r.product]:{build:build.build_version,buildSHA256:productBuildSHA256(selected),manifestSHA256}};
+  return {...floors,[r.product]:productReleaseFloor(selected)};
 }
 
 const megabytes = (bytes: number) => Math.ceil(bytes / (1024 * 1024));

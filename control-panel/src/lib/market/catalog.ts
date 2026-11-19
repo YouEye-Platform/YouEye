@@ -25,6 +25,7 @@ import { describeReleaseError } from '../releases/channel-index';
 import { isKnownAppKind, requiredYouEye, type MarketAppBundle, type MarketIndexEntry } from './market-format';
 import { currentMarket, requestMarketRefresh, type AcceptedMarket } from './market-store';
 import { nativeListing } from './native-artifact';
+import { releaseKey, type ReleaseKey } from '../version';
 import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp, MarketBundle, MarketCategory, MarketCuration } from './types';
 import {
@@ -49,8 +50,8 @@ export interface ManifestReference {
   branch: string;
   /** The manifest's frozen digest (app-format/digest.ts): the same for the same manifest and setup files, whatever carried them. */
   digest: string;
-  /** Native channel products only: the build version of the release (orders updates). */
-  build?: string;
+  /** Native channel products only: the release's line and sequence (orders updates). */
+  key?: ReleaseKey;
 }
 
 export interface ManifestFetchResult {
@@ -209,7 +210,7 @@ async function nativeManifest(id: string): Promise<ManifestFetchResult> {
   const { selected, manifest } = await nativeListing(id);
   return {
     manifest,
-    reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, build: selected.build.build_version },
+    reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, key: releaseKey(selected.release) },
   };
 }
 

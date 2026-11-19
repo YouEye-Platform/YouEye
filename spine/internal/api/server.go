@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/backup"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
@@ -115,6 +116,7 @@ func (l *authRateLimiter) cleanup() {
 type Server struct {
 	coreUpdateOperations CoreUpdateOperations
 	coreStatePath        string
+	sourceTree           string
 	coreBootstrapPath    string
 	version              string
 	socketPath           string
@@ -359,12 +361,26 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]interface{}{"status": "ok", "runtime": status.Kind})
 }
 
+// handleVersion answers what this Spine binary calls itself (version: its
+// baked value, which a 0.6.11 Spine compares during a Spine trial), the
+// installed release's version (release; what callers show and compare) and
+// the git tree this binary was built from (source_tree).
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, map[string]string{
+	out := map[string]string{
 		"version": s.version,
 		"service": "youeye",
-	})
+	}
+	if receipt, err := (systemupdate.CoreManager{Root: s.coreRoot()}).ReadReceipt(); err == nil {
+		out["release"] = receipt.Release.Version
+	}
+	if releasecache.ValidGitTree(s.sourceTree) {
+		out["source_tree"] = s.sourceTree
+	}
+	jsonResponse(w, out)
 }
+
+// SetSourceTree records the git tree this Spine binary was built from.
+func (s *Server) SetSourceTree(tree string) { s.sourceTree = tree }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	const cacheTTL = 30 * time.Second
@@ -817,13 +833,16 @@ func getControlStatus() map[string]interface{} {
 
 	// Try to get version
 	if strings.ToUpper(status) == "RUNNING" {
+		// version.json says what the installed tree was built from: a version,
+		// and from 0.6.12 builds on the git tree, which is its identity.
 		verOut, err := readStatusContainerFile("youeye-control", "/opt/app/version.json")
 		if err == nil {
-			var pkg struct {
-				Version string `json:"version"`
+			identity := container.ParseInstalledIdentity(verOut)
+			if identity.Version != "" {
+				result["version"] = identity.Version
 			}
-			if json.Unmarshal(verOut, &pkg) == nil && pkg.Version != "" {
-				result["version"] = pkg.Version
+			if identity.SourceTree != "" {
+				result["source_tree"] = identity.SourceTree
 			}
 		}
 	}
@@ -863,6 +882,16 @@ func getServiceWorkingDir(containerName, serviceName, fallback string) string {
 }
 
 func readPackageVersionFromContainer(containerName string, appDirs ...string) string {
+	if version := readPackageIdentityFromContainer(containerName, appDirs...).Version; version != "" {
+		return version
+	}
+	return "unknown"
+}
+
+// readPackageIdentityFromContainer reads what the first installed tree among
+// appDirs says about itself: its version, and its git tree when its
+// version.json has one (builds from 0.6.12 on).
+func readPackageIdentityFromContainer(containerName string, appDirs ...string) container.InstalledIdentity {
 	seen := map[string]bool{}
 	for _, appDir := range appDirs {
 		appDir = strings.TrimSpace(appDir)
@@ -876,15 +905,16 @@ func readPackageVersionFromContainer(containerName string, appDirs ...string) st
 			if err != nil {
 				continue
 			}
-			var pkg struct {
-				Version string `json:"version"`
-			}
-			if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" && pkg.Version != "0.0.0" {
-				return pkg.Version
+			identity := container.ParseInstalledIdentity(out)
+			if identity.Version != "" && identity.Version != "0.0.0" {
+				if name != "/version.json" {
+					identity.SourceTree = ""
+				}
+				return identity
 			}
 		}
 	}
-	return "unknown"
+	return container.InstalledIdentity{}
 }
 
 // handlePiholeCredentials handles GET/POST for Pi-Hole web interface credentials.
@@ -1186,7 +1216,8 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		// Parallel checks inside the running container
 		var wg sync.WaitGroup
 		var serviceActive bool
-		var version, ip string
+		var ip string
+		var identity container.InstalledIdentity
 		var ssoConfigured bool
 
 		wg.Add(4)
@@ -1199,7 +1230,7 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		go func() {
 			defer wg.Done()
 			serviceDir := getServiceWorkingDir(containerName, "youeye-ui", cfg.Deployment.UI.AppDir)
-			version = readPackageVersionFromContainer(containerName, serviceDir, "/opt/youeye-ui", cfg.Deployment.UI.AppDir, "/opt/app")
+			identity = readPackageIdentityFromContainer(containerName, serviceDir, "/opt/youeye-ui", cfg.Deployment.UI.AppDir, "/opt/app")
 		}()
 		go func() {
 			defer wg.Done()
@@ -1226,8 +1257,13 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		} else {
 			result["status"] = "installed"
 		}
-		if version != "" {
-			result["version"] = version
+		// As before, an unreadable version is reported as "unknown".
+		result["version"] = "unknown"
+		if identity.Version != "" {
+			result["version"] = identity.Version
+		}
+		if identity.SourceTree != "" {
+			result["source_tree"] = identity.SourceTree
 		}
 		if ip != "" {
 			result["ip"] = ip

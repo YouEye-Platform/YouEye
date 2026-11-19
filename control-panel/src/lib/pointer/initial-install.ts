@@ -1,5 +1,5 @@
 import {
-  acceptProductSequence, productReceipt, type InstalledProductReceipt, type ProductSequenceFloors, type VerifiedProductRelease,
+  acceptProductSequence, installedProductRelease, productReceipt, type InstalledProductReceipt, type ProductSequenceFloors, type VerifiedProductRelease,
 } from '../releases/product-release';
 import type { StagedMarketNativeArtifact } from '../market/native-artifact';
 import { builtPointerRelease, type PointerReleaseState } from './release-metadata';
@@ -45,7 +45,8 @@ async function deployVerifiedPointer(io: PointerDeployIO): Promise<{ selected: V
   if (r.product !== 'pointer' || selected.build.kind !== 'native' || !primary) {
     throw new Error('Pointer product release is not a native Pointer build');
   }
-  const floors = acceptProductSequence(before.floors, selected);
+  const floors = acceptProductSequence(before.floors, selected,
+    installedProductRelease(before.installed?.receipt ?? before.built?.receipt, 'pointer'));
   const artifact = await io.stage(selected);
   if (artifact.verification.status !== 'product-release'
     || artifact.containerName !== 'youeye-pointer' || artifact.artifactSHA256 !== primary.sha256

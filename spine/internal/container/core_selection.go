@@ -36,10 +36,38 @@ func optionalCoreSelection(root string) (*releasecache.CoreRelease, string, erro
 	return &release, digest, nil
 }
 
-// Reconciliation uses the selected CP payload's build version, not the shared
-// assembly version or the CP version recorded by reused installation media.
-// The immutable host and baked Spine must still match that selection.
-func verifyExistingControlVersion(installed string, image appliance.Manifest, root string) error {
+// InstalledIdentity is what a packaged Control Panel or UI says about itself
+// in its version.json: the git tree it was built from (builds from 0.6.12 on)
+// and a version.
+type InstalledIdentity struct {
+	Version    string `json:"version"`
+	SourceTree string `json:"source_tree"`
+}
+
+// MatchesMember reports whether an installed tree with this identity is the
+// release's member. The git tree decides. A tree built before 0.6.12 does not
+// say its tree; it is then compared by its version with the member's build
+// name, which only documents up to 0.6.12 carry.
+func (i InstalledIdentity) MatchesMember(member releasecache.CoreMember) error {
+	if i.SourceTree != "" {
+		if i.SourceTree != member.SourceTree {
+			return fmt.Errorf("installed tree was built from %.12s, the selected release member from %.12s", i.SourceTree, member.SourceTree)
+		}
+		return nil
+	}
+	if member.BuildVersion == "" {
+		return fmt.Errorf("installed tree %q does not say which source tree it was built from", i.Version)
+	}
+	if i.Version != member.BuildVersion {
+		return fmt.Errorf("installed version %q does not match selected release member %q", i.Version, member.BuildVersion)
+	}
+	return nil
+}
+
+// Reconciliation checks the installed CP against the selected CP member, not
+// the shared assembly version or the CP recorded by reused installation
+// media. The immutable host must still be that selection's image.
+func verifyExistingControlVersion(installed InstalledIdentity, image appliance.Manifest, root string) error {
 	if image.ReleaseSet == nil {
 		return fmt.Errorf("Control Panel reconciliation requires sealed image provenance")
 	}
@@ -53,14 +81,12 @@ func verifyExistingControlVersion(installed string, image appliance.Manifest, ro
 	if err := systemupdate.BindCoreImage(*selected, image); err != nil {
 		return err
 	}
-	expected := ""
-	for _, member := range selected.Members {
-		if member.Role == "cp" {
-			expected = member.BuildVersion
-		}
+	member, ok := selected.Member("cp")
+	if !ok {
+		return fmt.Errorf("the accepted System selection has no Control Panel")
 	}
-	if expected == "" || installed != expected {
-		return fmt.Errorf("existing Control Panel version %q does not match selected release member %q; update the Control Panel through its release channel before resuming deployment", installed, expected)
+	if err := installed.MatchesMember(member); err != nil {
+		return fmt.Errorf("existing Control Panel is not the selected release's (%v); update the Control Panel through its release channel before resuming deployment", err)
 	}
 	return nil
 }

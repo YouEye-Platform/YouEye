@@ -1,4 +1,4 @@
-import { compareVersions, isNewer } from '@/lib/version';
+import { compareReleases, isNewer, type ReleaseKey } from '@/lib/version';
 import { normalizeMarketAddress } from './market-format';
 import type { CatalogEntry } from './types';
 
@@ -42,8 +42,8 @@ export interface UpdateCandidate {
   /** Release name (display). */
   version: string;
   tag: string;
-  /** Build version of the release; channel candidates are ordered by it. */
-  build?: string;
+  /** Line and sequence of a channel release; channel candidates are ordered by it. */
+  key?: ReleaseKey;
 }
 
 export interface UpdateAvailability {
@@ -166,20 +166,20 @@ export function classifyAppUpdateRouting(input: {
 
 /**
  * Shared update projection used by Settings, Market, and UI bridge data. A
- * native app's channel candidate is ordered by build, never by release name:
- * an older build is never offered (the box waits for its channel to catch
- * up); the same build under another release name is a metadata-only update.
+ * native app's channel candidate is ordered by line and sequence, never by
+ * release name: an older release is never offered (the box waits for its
+ * channel to catch up); the same build under another release name is a
+ * metadata-only update.
  */
 export function projectUpdateAvailability(input: {
   routing: UpdateRoutingDecision;
   installedVersion: string | null | undefined;
-  /** Build version of the installed native release, when known. */
-  installedBuild?: string | null;
+  /** Line and sequence of the installed native release, when known. */
+  installedKey?: ReleaseKey | null;
   catalogVersion: string | null;
   candidate?: UpdateCandidate | null;
 }): UpdateAvailability {
   const installedVersion = clean(input.installedVersion);
-  const installedBuild = clean(input.installedBuild);
   const candidate = input.routing.kind === 'channel' ? input.candidate ?? null : null;
   const version = candidate ? candidate.version : input.routing.kind === 'catalog' ? input.catalogVersion : null;
   let updateAvailable = false;
@@ -187,11 +187,11 @@ export function projectUpdateAvailability(input: {
     try {
       if (!candidate) {
         updateAvailable = !installedVersion || isNewer(version, installedVersion);
-      } else if (!installedBuild) {
-        // Not installed from a product release (no recorded build): offer the channel's release.
+      } else if (!input.installedKey) {
+        // Not installed from a product release (no recorded release): offer the channel's release.
         updateAvailable = true;
-      } else if (candidate.build) {
-        const order = compareVersions(candidate.build, installedBuild);
+      } else if (candidate.key) {
+        const order = compareReleases(candidate.key, input.installedKey);
         updateAvailable = order > 0 || order === 0 && version !== installedVersion;
       }
     } catch {

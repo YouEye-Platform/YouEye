@@ -31,8 +31,13 @@ interface SpineAuthResponse {
 }
 
 interface SpineVersionResponse {
+  /** The binary's own baked value (a build name up to 0.6.12, the line from 0.6.13). Never shown. */
   version: string;
   service: string;
+  /** The installed release's version (Spine from 0.6.12 on); what callers show and compare. */
+  release?: string;
+  /** The git tree this Spine binary was built from (from 0.6.12 builds on). */
+  source_tree?: string;
 }
 
 export interface SpineRuntimeCapabilities {
@@ -213,9 +218,9 @@ export interface CoreUpdateStatus {
   selection?: { repository: string; channel: string };
   installed?: {
     manifest_sha256: string;
-    /** `version` is the release name (display); `build` the build version it carries. */
-    release: { version: string; build?: string; tag: string; sequence: number; source_tree: string };
-    members?: { role: string; version: string; source_tree: string; sha256: string }[];
+    /** `version` is what the box shows; releases are ordered by line and `sequence`. */
+    release: { version: string; tag: string; sequence: number; source_tree: string };
+    members?: { role: string; source_tree: string; sha256: string }[];
     accepted_at: string;
     machine_bound: boolean;
     payload_observation: 'not-observed';
@@ -230,7 +235,7 @@ export interface CoreUpdateStatus {
 }
 
 export interface CoreUpdateCandidate {
-  release: { version: string; build?: string; tag: string; sequence: number; source_tree?: string };
+  release: { version: string; tag: string; sequence: number; source_tree?: string };
   manifest_sha256: string;
   restart_required: boolean;
   /** The channel head is older than the installed version; the box waits for it to catch up. */
@@ -432,11 +437,6 @@ export class SpineClient {
   /** Ask Spine to follow another channel of the same repository. */
   async setReleaseChannel(channel: string): Promise<SpineReleaseChannel> {
     return this.request('/api/releases/channel', 'PUT', { channel });
-  }
-
-  /** The Spine the booted slot runs (selected on State, or the seed baked into the image). */
-  async getSpineStatus(): Promise<{ version: string; spine: { slot: string; seed: { version: string }; running: { role: 'trial' | 'current' | 'previous' | 'seed' } } }> {
-    return this.request('/api/spine/status');
   }
 
   /** The channel index of the box's channel, fetched and cached by Spine. */

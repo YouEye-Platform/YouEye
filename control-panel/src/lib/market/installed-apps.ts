@@ -28,13 +28,13 @@ import {
   recordedSourceAddressChange,
 } from './update-routing';
 import type { AppManifest, InstallMetadata } from './types';
-import { verifyInstalledProductReceipt } from '../releases/product-release';
+import { installedProductRelease } from '../releases/product-release';
+import { releaseKey, type ReleaseKey } from '../version';
 
-/** Build version of a native app's accepted product release (null when it has none or it is unreadable). */
-function installedProductBuild(appId: string, installMeta: InstallMetadata | null | undefined): string | null {
-  const receipt = installMeta?.nativeArtifacts?.find((artifact) => artifact.productRelease)?.productRelease;
-  if (!receipt) return null;
-  try { return verifyInstalledProductReceipt(receipt, { product: appId }).build.build_version; } catch { return null; }
+/** Line and sequence of a native app's accepted product release (null when it has none or it is unreadable). */
+function installedProductKey(appId: string, installMeta: InstallMetadata | null | undefined): ReleaseKey | null {
+  const installed = installedProductRelease(installMeta?.nativeArtifacts?.find((artifact) => artifact.productRelease)?.productRelease, appId);
+  return installed ? releaseKey(installed.release) : null;
 }
 
 const STORE_PATH = process.env.YOUEYE_INSTALLED_APPS_PATH ?? statePath('installed-apps.json');
@@ -508,13 +508,13 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
 
     // A native app's catalog manifest is its release on the box's channel.
     const candidate = routing.kind === 'channel' && resolvedCatalog?.manifest.version
-      ? { version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch, build: resolvedCatalog.reference.build }
+      ? { version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch, key: resolvedCatalog.reference.key }
       : null;
 
     const availability = projectUpdateAvailability({
       routing,
       installedVersion: app.installedVersion,
-      installedBuild: routing.kind === 'channel' ? installedProductBuild(app.appId, installMeta) : null,
+      installedKey: routing.kind === 'channel' ? installedProductKey(app.appId, installMeta) : null,
       catalogVersion,
       candidate,
     });

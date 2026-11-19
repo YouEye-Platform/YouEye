@@ -7,8 +7,11 @@ import { createHash } from 'node:crypto';
 import { canonicalReleaseRepository, ReleaseNeedsNewerReader, parseCoreRelease, coreArtifactVerificationShell, releaseAssetURL, selectedCoreRole, loadSelectedCoreDocument, verifyCoreArtifactBuffer } from '../src/lib/releases/core-release';
 import { releaseArtifactVerificationShell, releaseDownloadShell, verifyReleaseArtifactBuffer } from '../src/lib/releases/artifact';
 
-// The same fixture the Go reader (releasecache) parses: one document, one interpretation.
+// The same fixtures the Go reader (releasecache) parses: one document, one interpretation.
+// core-release.json is the old shape (0.6.11/0.6.12: `build`, member `build_version`, reader 1);
+// core-release-no-build.json the new one (0.6.13: neither, reader 2, line `minimum_release`).
 const fixture = readFileSync(new URL('../../releasecache/testdata/core-release.json', import.meta.url));
+const clean = readFileSync(new URL('../../releasecache/testdata/core-release-no-build.json', import.meta.url));
 const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 const mutate = (change: (r: any) => void) => { const r = JSON.parse(fixture.toString()); change(r); return Buffer.from(JSON.stringify(r)); };
 
@@ -29,9 +32,12 @@ test('the shared host-independent core release fixture parses strictly', () => {
   assert.throws(() => parseCoreRelease(mutate(r => r.members.pop())), /Incomplete/);
   assert.throws(() => parseCoreRelease(mutate(r => { delete r.authority; })), /identity/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.source_tree = 'abc'; })), /identity/);
-  // `build` is required: the build version the document carries, whatever its release name.
-  assert.throws(() => parseCoreRelease(mutate(r => { delete r.build; })), /identity/);
+  // `build` is optional (the old shape), validated when present, never used.
+  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { delete r.build; })));
   for (const build of ['', '0.6.1-dev', 'v0.6.1-dev.1', 1]) assert.throws(() => parseCoreRelease(mutate(r => { r.build = build; })), /identity/, String(build));
+  // Member build versions likewise.
+  assert.doesNotThrow(() => parseCoreRelease(mutate(r => { for (const m of r.members) delete m.build_version; })));
+  for (const build of ['', '0.6.1-dev', 1]) assert.throws(() => parseCoreRelease(mutate(r => { r.members[0].build_version = build; })), /member/, String(build));
   // A promoted document: another name and tag for the same build.
   const promoted = parseCoreRelease(mutate(r => { r.version = '0.6.1-beta.1'; r.tag = 'youeye-v0.6.1-beta.1'; }));
   assert.equal(promoted.version,'0.6.1-beta.1');
@@ -43,7 +49,8 @@ test('the shared host-independent core release fixture parses strictly', () => {
   }
   assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[0].sbom = 'x'; r.members[0].artifact.mirrors = ['https://m.test']; })));
   // A higher reader or an unknown role is "needs a newer reader", not an invalid document.
-  assert.throws(() => parseCoreRelease(mutate(r => { r.minimum_reader = 2; r.members = 'another shape'; })), ReleaseNeedsNewerReader);
+  assert.throws(() => parseCoreRelease(mutate(r => { r.minimum_reader = 3; r.members = 'another shape'; })), ReleaseNeedsNewerReader);
+  for (const reader of [0, 1.5, '1', undefined]) assert.throws(() => parseCoreRelease(mutate(r => { r.minimum_reader = reader; })), /identity|integer/, String(reader));
   assert.throws(() => parseCoreRelease(mutate(r => { r.members.push({ ...r.members[0], role: 'firmware' }); })), ReleaseNeedsNewerReader);
   assert.throws(() => parseCoreRelease(mutate(r => { r.members.shift(); })), /Incomplete core membership/);
   assert.throws(() => parseCoreRelease(mutate(r => { r.schema = 'youeye.core-release.v2'; })), /schema/);
@@ -52,6 +59,19 @@ test('the shared host-independent core release fixture parses strictly', () => {
   // A blob may live in another youeye-v release of the same repository, nothing else.
   assert.doesNotThrow(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'youeye-v0.6.0-dev.3'; })));
   assert.throws(() => parseCoreRelease(mutate(r => { r.members[4].artifact.release = 'v0.6.0'; })), /blob/);
+});
+
+test('the new shape (no build names, reader 2, a line as minimum_release) parses like the old one', () => {
+  const r = parseCoreRelease(clean), old = parseCoreRelease(fixture);
+  assert.equal(r.version, '0.6.13');
+  assert.equal(r.tag, 'youeye-v0.6.13');
+  assert.equal(r.minimum_reader, 2);
+  assert.equal(r.build, undefined);
+  assert.equal(r.compatibility.minimum_release, '0.6.12');
+  assert.equal(r.members.length, old.members.length);
+  for (const member of r.members) assert.equal(member.build_version, undefined);
+  // A reader-2 document with build names is still read (they are ignored).
+  assert.doesNotThrow(() => parseCoreRelease(mutate(d => { d.minimum_reader = 2; })));
 });
 
 test('assets are located only by repository, tag and name', () => {

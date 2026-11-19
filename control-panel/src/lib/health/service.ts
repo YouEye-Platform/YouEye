@@ -8,6 +8,7 @@
 
 import { getInstanceState, execShell, incusDownloadFile } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
+import { selectedRelease } from '@/lib/releases/installed-release';
 import { platformCommand } from '@/lib/postgres/platform';
 import { caddyAdminAddress } from '@/lib/caddy/client';
 
@@ -213,11 +214,13 @@ async function checkPointerHealth(container: string): Promise<{ status: ServiceS
     const result = await execShell(container, 'curl -fsS --max-time 5 http://127.0.0.1:4001/readyz', { timeout: 7000 });
     if (result.exitCode !== 0) return { status: 'degraded', version: '' };
     const body = JSON.parse(result.stdout) as { status?: string; build?: { version?: string } };
+    // The installed release's version; Pointer's own (baked) version only when no release is recorded.
+    const { installedPointerVersion } = await import('@/lib/pointer/release-metadata');
     return {
       status: body.status === 'ready' || body.status === 'ok'
         ? 'running'
         : body.status === 'degraded' ? 'degraded' : 'error',
-      version: body.build?.version || '',
+      version: await installedPointerVersion() || body.build?.version || '',
     };
   } catch {
     return { status: 'degraded', version: '' };
@@ -238,7 +241,8 @@ async function checkSpineHealth(): Promise<ServiceHealth> {
         slug: 'spine',
         status: health.status === 'ok' ? 'running' : 'degraded',
         uptime: '—',
-        version: version.version || '',
+        // The installed release's version, never the build name baked into Spine.
+        version: version.release || selectedRelease()?.version || version.version || '',
         lastCheck: new Date().toISOString(),
         cpu: 0,
         cpuPercent: -2, // -2 = N/A (Spine is a host process, not a container)

@@ -89,7 +89,8 @@ Timing: the CP logs `[youeye-names] certificate for <name> issued in N s` (`jour
 - resume an interrupted setup from its recorded stage (the setup-time job resumes at once, above);
 - check that the certificate Caddy serves matches `lifecycle.json`;
 - heartbeat (`/v1/leases/<name>/heartbeat`) with the box's primary IP, certificate fingerprint and expiry, version
-  and Caddy health;
+  (`youeyeVersion`: the installed release's version, [control-panel.md](control-panel.md#the-installed-release)) and
+  Caddy health;
 - renew the certificate when it expires within 30 days or the broker asks for a new CSR, then swap it in Caddy.
   Renewal needs the current certificate terms version to have been accepted.
 

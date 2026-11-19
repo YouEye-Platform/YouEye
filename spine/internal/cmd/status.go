@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
@@ -31,13 +32,19 @@ func runStatus() error {
 	// Spine/image version. Appliance images never run package/release checks for
 	// image-owned components.
 	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
-		fmt.Printf("System Image:    v%s (image-managed)\n", runtimeStatus.ImageVersion)
-		// The running Spine is the one selected on State for this slot; the image only carries the seed.
-		where := "system image"
-		if report, err := readSpineStatus(); err == nil && report.Running.Role != "" && report.Running.Role != "seed" {
-			where = "on State, " + report.Running.Role
+		// The installed release's version, per part; never a build name.
+		if r, installing, err := installedRelease(); err == nil {
+			youeye := r.Version
+			if installing {
+				youeye += " (installing)"
+			}
+			fmt.Printf("YouEye:          %s\n", youeye)
+			fmt.Printf("System Image:    %s (image-managed)\n", rolePartVersion(r, "appliance"))
+			fmt.Printf("Spine:           %s\n", runningSpineVersion(&r))
+		} else {
+			fmt.Printf("System Image:    image-managed (no installed release recorded)\n")
+			fmt.Printf("Spine:           %s\n", runningSpineVersion(nil))
 		}
-		fmt.Printf("Spine:           v%s (%s)\n", Version, where)
 	} else {
 		fmt.Printf("Spine:           v%s\n", Version)
 	}
@@ -297,10 +304,17 @@ func getControlPanelStatus(cfg *config.Config) string {
 			"cat", appDir+"/version.json").Output()
 		if err == nil {
 			var pkg struct {
-				Version string `json:"version"`
+				Version    string `json:"version"`
+				SourceTree string `json:"source_tree"`
 			}
-			if json.Unmarshal(verOut, &pkg) == nil && pkg.Version != "" {
-				return fmt.Sprintf("Running (v%s)", pkg.Version)
+			if json.Unmarshal(verOut, &pkg) == nil {
+				var installed *releasecache.CoreRelease
+				if r, _, err := installedRelease(); err == nil {
+					installed = &r
+				}
+				if shown := containerRelease(installed, "cp", pkg.Version, pkg.SourceTree); shown != "" {
+					return "Running (" + shown + ")"
+				}
 			}
 		}
 		return "Running"

@@ -378,8 +378,10 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 	// selection before the provider discovers or writes disks.
 	appliance, _ := core.Member("appliance")
 	spine, _ := core.Member("spine")
+	// The image's own version is not a name the document repeats: the media is
+	// the release's because its bundle manifest is the appliance member.
 	bundle := verifiedApplianceBundle{ManifestSHA256: appliance.Artifact.SHA256, Manifest: applianceBundleManifest{
-		ImageVersion: appliance.BuildVersion, SourceTree: appliance.SourceTree,
+		ImageVersion: "0.6.0-dev.7", BuildID: "appliance-111111111111-1", SourceTree: appliance.SourceTree,
 		ReleaseSet: applianceManifestReleases{
 			Spine: applianceManifestComponent{Version: spine.BuildVersion, SourceTree: spine.SourceTree, ArtifactSHA256: spine.Artifact.SHA256}},
 	}}
@@ -461,7 +463,7 @@ func TestResolveApplianceReleaseFollowsDownloadBase(t *testing.T) {
 		`"document":"core-release.json"`, `"document":"core-release.json","download_base":"https://mirror.example.test/files"`, 1)
 	hosts := newReleaseHosts(t, map[string]string{
 		"forge.example.test/owner/YouEye/releases/download/channel-dev/index.json": index,
-		"mirror.example.test/files/" + testFixtureTag + "/core-release.json":      string(raw),
+		"mirror.example.test/files/" + testFixtureTag + "/core-release.json":       string(raw),
 	}, nil)
 	release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", "", "", "")
 	if err != nil {
@@ -481,5 +483,78 @@ func TestResolveApplianceReleaseFollowsDownloadBase(t *testing.T) {
 	}
 	if _, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "dev", testFixtureTag, digest, "http://mirror.example.test/files"); err == nil {
 		t.Fatal("plain HTTP download base accepted")
+	}
+}
+
+// From 0.6.13 a release document carries no build names and says
+// minimum_reader 2, and an index entry's build is a temporary copy of its
+// version (or absent). This installer reads both shapes and installs the head.
+func TestResolveApplianceReleaseWithoutBuildNames(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "releasecache", "testdata", "core-release-no-build.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, tag, version := coreManifestDigest(raw), "youeye-v0.6.13", "0.6.13"
+	for name, build := range map[string]string{"no build": "", "build is the version": `"build":"0.6.13",`} {
+		index := fmt.Sprintf(`{"schema":"youeye.channel.v1","channel":"stable","published_at":"2026-11-20T10:00:00Z","products":{"youeye":{"repository":%q,"tag":%q,"version":%q,%s"document":"core-release.json","sha256":%q,
+		 "stepping_stones":[{"tag":"youeye-v0.6.12","version":"0.6.12","build":"0.6.12-dev.4","sequence":1795100000,"document":"core-release.json","sha256":%q,"minimum_release":"0.6.5-dev.2","minimum_reader":1}]}}}`,
+			testForgeRepository, tag, version, build, digest, strings.Repeat("a", 64))
+		hosts := newReleaseHosts(t, map[string]string{
+			"forge.example.test/owner/YouEye/releases/download/channel-stable/index.json":     index,
+			"forge.example.test/owner/YouEye/releases/download/" + tag + "/core-release.json": string(raw),
+		}, nil)
+		release, err := resolveApplianceRelease(t.Context(), hosts.Client, testForgeRepository, "stable", "", "", "")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		// A fresh install takes the head and never a stepping stone, although
+		// the head's minimum_release (0.6.12) names a line nothing here has.
+		if release.TagName != tag || release.coreSHA256 != digest || release.core.Build != "" || release.core.MinimumReader != 2 {
+			t.Fatalf("%s: unexpected release %+v", name, release.TagName)
+		}
+		for _, request := range hosts.Requests() {
+			if strings.Contains(request, "youeye-v0.6.12") {
+				t.Fatalf("%s: a fresh install asked for the stepping stone: %s", name, request)
+			}
+		}
+	}
+}
+
+// The media is the release's when its bundle manifest is the appliance member
+// by digest (and tree). The document's build names, when it has any, are not
+// compared with the image version.
+func TestCoreInstallBundleIsBoundByDigest(t *testing.T) {
+	for _, name := range []string{"core-release.json", "core-release-no-build.json"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "releasecache", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		release, _, err := releasecache.ParseCoreRelease(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		member, _ := release.Member("appliance")
+		root, _ := release.Member("system-root")
+		bundle := verifiedApplianceBundle{ManifestSHA256: member.Artifact.SHA256,
+			Manifest: applianceBundleManifest{ImageVersion: "0.6.7-dev.1", BuildID: "appliance-111111111111-1", SourceTree: member.SourceTree},
+			Assets:   map[string]verifiedApplianceAsset{"system-root": {Manifest: applianceManifestAsset{SHA256: root.Artifact.SHA256, SizeBytes: root.Artifact.SizeBytes}}}}
+		if err := bindCoreInstallBundle(release, bundle); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		other := bundle
+		other.ManifestSHA256 = strings.Repeat("e", 64)
+		if err := bindCoreInstallBundle(release, other); err == nil {
+			t.Fatalf("%s: another bundle manifest was accepted", name)
+		}
+		other = bundle
+		other.Manifest.SourceTree = strings.Repeat("9", 40)
+		if err := bindCoreInstallBundle(release, other); err == nil {
+			t.Fatalf("%s: a bundle of another tree was accepted", name)
+		}
+		other = bundle
+		other.Assets = map[string]verifiedApplianceAsset{"system-root": {Manifest: applianceManifestAsset{SHA256: strings.Repeat("e", 64), SizeBytes: root.Artifact.SizeBytes}}}
+		if err := bindCoreInstallBundle(release, other); err == nil {
+			t.Fatalf("%s: media with another system image was accepted", name)
+		}
 	}
 }

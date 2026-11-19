@@ -56,7 +56,7 @@ import { fetchDirectMarketAppUpdate, saveDirectMarketApp } from './direct-apps';
 import { readFrozenUpdateManifest } from './frozen-manifest';
 import { isMarketSourceConsentError, MarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID, setupFilesChanged } from './source';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
-import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
+import { acceptProductSequence, installedProductRelease, type VerifiedProductRelease } from '../releases/product-release';
 import { updateIdenticalProductRelease } from './update-release-metadata';
 import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import type {
@@ -272,7 +272,8 @@ async function updateMarketAppLocked(
       productRelease = await resolveNativeProduct(appId);
       const native = await nativeManifestFromRelease(productRelease);
       // No downgrade: an older channel head is rejected here (the box waits).
-      acceptProductSequence(installMeta.productReleaseFloors, productRelease);
+      acceptProductSequence(installMeta.productReleaseFloors, productRelease,
+        installedProductRelease(installMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
       manifest = native.manifest;
       channelManifestReference = nativeManifestReference(productRelease, manifest);
     } catch (err) {
@@ -488,7 +489,8 @@ async function updateMarketAppLocked(
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Updating version records...');
     installMeta.installedVersion = targetVersion;
-    if (productRelease) installMeta.productReleaseFloors = acceptProductSequence(installMeta.productReleaseFloors,productRelease);
+    if (productRelease) installMeta.productReleaseFloors = acceptProductSequence(installMeta.productReleaseFloors,productRelease,
+      installedProductRelease(originalInstallMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
     installMeta.catalogKey = `${sourceId}:app:${appId}`;
     installMeta.itemKind = 'app';
     installMeta.sourceId = sourceId;

@@ -2009,8 +2009,8 @@ async function installAppLocked(
   for (const artifact of meta.nativeArtifacts ?? []) {
     if (!artifact.productRelease) continue;
     const { acceptProductSequence, verifyInstalledProductReceipt } = await import('../releases/product-release');
-    meta.productReleaseFloors = acceptProductSequence(meta.productReleaseFloors,
-      verifyInstalledProductReceipt(artifact.productRelease, {product:appId}));
+    const accepted = verifyInstalledProductReceipt(artifact.productRelease, {product:appId});
+    meta.productReleaseFloors = acceptProductSequence(meta.productReleaseFloors, accepted, accepted);
   }
   await saveInstallMetadata(meta);
   finalMetadata = meta;

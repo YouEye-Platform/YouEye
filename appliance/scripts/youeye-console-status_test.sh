@@ -8,8 +8,11 @@ pid=
 trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT INT TERM
 
 mkdir -p "$tmp/first" "$tmp/update" "$tmp/root/.ssh"
-cat > "$tmp/release" <<'EOF'
-{"image_version":"0.5.23.0.0.12"}
+cat > "$tmp/receipt" <<'EOF'
+{"release":{"version":"0.6.12-beta.1","build":"0.6.12-dev.3"}}
+EOF
+cat > "$tmp/selection" <<'EOF'
+{"version":"0.6.12-alpha.1","build":"0.6.12-dev.3"}
 EOF
 cat > "$tmp/state" <<'EOF'
 {"slots":{"current":"A"}}
@@ -29,31 +32,44 @@ printf '%s\n' '{"schema":"youeye.console-access.v1","root_password_hash":"$y$j9T
 printf 'ABCDE-FGHJK\n' > "$tmp/owner-reset-code"
 : > "$tmp/tty"
 
-YOUEYE_CONSOLE_RELEASE="$tmp/release" \
-YOUEYE_CONSOLE_STATE="$tmp/state" \
-YOUEYE_CONSOLE_FIRST_DEPLOY="$tmp/first/progress.json" \
-YOUEYE_CONSOLE_FIRST_COMPLETE="$tmp/first/complete" \
-YOUEYE_CONSOLE_UPDATE="$tmp/update/journal.json" \
-YOUEYE_CONSOLE_ACCESS="$tmp/console-access.json" \
-YOUEYE_CONSOLE_RESET_CODE="$tmp/owner-reset-code" \
-YOUEYE_CONSOLE_CONFIG="$tmp/config" \
-YOUEYE_CONSOLE_AUTHORIZED_KEYS="$tmp/root/.ssh/authorized_keys" \
-YOUEYE_CONSOLE_CMDLINE="$tmp/cmdline" \
-YOUEYE_CONSOLE_TTYS="$tmp/tty" \
-YOUEYE_CONSOLE_RUNTIME_DIR="$tmp" \
-YOUEYE_CONSOLE_REFRESH_SECONDS=1 \
-"$script" &
-pid=$!
-sleep 1.2
-kill "$pid"
-wait "$pid" 2>/dev/null || true
-pid=
+run_console() {
+    : > "$tmp/tty"
+    YOUEYE_CONSOLE_RECEIPT="$1" \
+    YOUEYE_CONSOLE_SELECTION="$tmp/selection" \
+    YOUEYE_CONSOLE_STATE="$tmp/state" \
+    YOUEYE_CONSOLE_FIRST_DEPLOY="$tmp/first/progress.json" \
+    YOUEYE_CONSOLE_FIRST_COMPLETE="$tmp/first/complete" \
+    YOUEYE_CONSOLE_UPDATE="$tmp/update/journal.json" \
+    YOUEYE_CONSOLE_ACCESS="$tmp/console-access.json" \
+    YOUEYE_CONSOLE_RESET_CODE="$tmp/owner-reset-code" \
+    YOUEYE_CONSOLE_CONFIG="$tmp/config" \
+    YOUEYE_CONSOLE_AUTHORIZED_KEYS="$tmp/root/.ssh/authorized_keys" \
+    YOUEYE_CONSOLE_CMDLINE="$tmp/cmdline" \
+    YOUEYE_CONSOLE_TTYS="$tmp/tty" \
+    YOUEYE_CONSOLE_RUNTIME_DIR="$tmp" \
+    YOUEYE_CONSOLE_REFRESH_SECONDS=1 \
+    "$script" &
+    pid=$!
+    sleep 1.2
+    kill "$pid"
+    wait "$pid" 2>/dev/null || true
+    pid=
+}
+
+# Before the first commit: the version being installed.
+run_console "$tmp/no-receipt"
+grep -Fq 'YouEye 0.6.12-alpha.1 (installing)' "$tmp/tty"
+run_console "$tmp/receipt"
 
 grep -Fq 'YouEye local appliance status console' "$root/appliance/systemd/youeye-console-status.service"
 grep -Fq 'test.ui.bingo' "$tmp/tty"
 grep -Fq 'System update: trial' "$tmp/tty"
 grep -Fq 'slot B' "$tmp/tty"
-grep -Fq '0.5.23.0.0.12' "$tmp/tty"
+grep -Fq 'YouEye 0.6.12-beta.1' "$tmp/tty"
+if grep -Fq 'dev.3' "$tmp/tty" || grep -Fq 'installing' "$tmp/tty"; then
+    printf 'the console shows the installed release version only\n' >&2
+    exit 1
+fi
 grep -Fq 'public key' "$tmp/tty"
 grep -Fq 'admins sign in on Ctrl+Alt+F2' "$tmp/tty"
 grep -Fq 'password SSH on (local network)' "$tmp/tty"

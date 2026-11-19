@@ -149,7 +149,7 @@ export async function updateIdenticalProductRelease(
   const native = manifest.containers.filter(c => c.type === 'lxd');
   if (native.length !== artifacts.length || native.some(c => !artifacts.some(a => a.containerName === c.name))) throw new Error('Incomplete installed product receipt set');
   const next = structuredClone(before), r = selected.release;
-  next.productReleaseFloors = acceptProductSequence(before.productReleaseFloors, selected);
+  next.productReleaseFloors = acceptProductSequence(before.productReleaseFloors, selected, originals[0]);
   next.installedVersion = r.version;
   next.manifestPath = reference.path; next.manifestRepo = reference.repo;
   next.manifestBranch = reference.branch; next.manifestDigest = reference.digest;
@@ -178,7 +178,7 @@ export async function updateIdenticalProductRelease(
         if (Object.hasOwn(next, key)) Object.assign(current, {[key]:next[key]});
         else delete current[key];
       }
-      current.productReleaseFloors = acceptProductSequence(current.productReleaseFloors, selected);
+      current.productReleaseFloors = acceptProductSequence(current.productReleaseFloors, selected, originals[0]);
       await io.save(current);
     });
     await transaction.mutate('publish-provenance', () => io.provenance(before.appId, selected));

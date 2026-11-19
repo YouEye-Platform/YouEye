@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 const backupSetsRoot = "/var/lib/youeye/backups/sets"
@@ -27,18 +29,56 @@ type RecoveryPoint struct {
 	Source     *BackupSourceIdentity `json:"source,omitempty"`
 }
 
+// BackupSourceIdentity says what made a backup. The Control Panel writes it
+// and judges it on restore (control-panel/src/lib/backup/compatibility.ts);
+// Spine checks its form and keeps it with the recovery point.
+//
+// From 0.6.12 the installed releases are recorded by their ordering key and
+// git tree: Release (YouEye), ControlPanel and UI (the YouEye release, with
+// each part's own tree) and Pointer (its product release). The three
+// *_version fields are the older form (build names); they are still written
+// next to the keys until the Release cleanup, for a Control Panel that orders
+// backups by them, and are all an older backup has.
 type BackupSourceIdentity struct {
-	Schema              string `json:"schema"`
-	RuntimeKind         string `json:"runtime_kind"`
-	ImageVersion        string `json:"image_version,omitempty"`
-	SourceTree          string `json:"source_tree,omitempty"`
-	StateSchemaVersion  int    `json:"state_schema_version,omitempty"`
-	DataSchemaVersion   int    `json:"data_schema_version,omitempty"`
-	DiskLayoutVersion   int    `json:"disk_layout_version,omitempty"`
-	SpineVersion        string `json:"spine_version"`
-	ControlPanelVersion string `json:"control_panel_version,omitempty"`
-	UIVersion           string `json:"ui_version,omitempty"`
-	PointerVersion      string `json:"pointer_version,omitempty"`
+	Schema              string         `json:"schema"`
+	RuntimeKind         string         `json:"runtime_kind"`
+	ImageVersion        string         `json:"image_version,omitempty"`
+	SourceTree          string         `json:"source_tree,omitempty"`
+	StateSchemaVersion  int            `json:"state_schema_version,omitempty"`
+	DataSchemaVersion   int            `json:"data_schema_version,omitempty"`
+	DiskLayoutVersion   int            `json:"disk_layout_version,omitempty"`
+	SpineVersion        string         `json:"spine_version"`
+	ControlPanelVersion string         `json:"control_panel_version,omitempty"`
+	UIVersion           string         `json:"ui_version,omitempty"`
+	PointerVersion      string         `json:"pointer_version,omitempty"`
+	Release             *BackupRelease `json:"release,omitempty"`
+	ControlPanel        *BackupRelease `json:"control_panel,omitempty"`
+	UI                  *BackupRelease `json:"ui,omitempty"`
+	Pointer             *BackupRelease `json:"pointer,omitempty"`
+}
+
+// BackupRelease is a release in a backup's identity: its name (shown), its
+// ordering key (the line X.Y.Z, then the build's sequence) and the git tree
+// of the software.
+type BackupRelease struct {
+	Version    string `json:"version"`
+	Line       string `json:"line"`
+	Sequence   int64  `json:"sequence"`
+	SourceTree string `json:"source_tree"`
+}
+
+func (r BackupRelease) validate() error {
+	key, err := releasecache.KeyOfVersion(r.Line, r.Sequence)
+	if err != nil || key.Line != r.Line {
+		return fmt.Errorf("invalid backup release key")
+	}
+	if line, ok := releasecache.LineOfVersion(r.Version); !ok || line != r.Line || len(r.Version) > 128 {
+		return fmt.Errorf("invalid backup release version")
+	}
+	if !repositorySourceTree.MatchString(r.SourceTree) {
+		return fmt.Errorf("invalid backup release source tree")
+	}
+	return nil
 }
 
 type recoveryCatalog struct {
@@ -184,6 +224,14 @@ func validateBackupSource(source BackupSourceIdentity) error {
 	for _, value := range []string{source.ImageVersion, source.SourceTree, source.ControlPanelVersion, source.UIVersion, source.PointerVersion} {
 		if len(value) > 256 {
 			return fmt.Errorf("backup source identity field is too long")
+		}
+	}
+	for _, release := range []*BackupRelease{source.Release, source.ControlPanel, source.UI, source.Pointer} {
+		if release == nil {
+			continue
+		}
+		if err := release.validate(); err != nil {
+			return err
 		}
 	}
 	return nil

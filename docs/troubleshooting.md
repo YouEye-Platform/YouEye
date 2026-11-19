@@ -59,6 +59,19 @@ Setup opens only after `first-deploy/complete` exists.
 Choose **Install YouEye (text mode)** in the GRUB menu (or add `youeye.text=1` to the kernel line). The graphical
 installer also falls back to the text installer by itself when its browser fails within 20 s.
 
+## An older installer ISO stops
+
+The ISO installer installs its channel's current release and only when that release's image is the ISO's own
+(`bindCoreInstallBundle`), so an ISO from an earlier release stops before it writes anything:
+
+- an ISO up to 0.6.11 (reader 1) stops on a channel whose head is 0.6.13 or later with "release needs a newer
+  reader: core release needs reader 2";
+- a later ISO whose image is not the head's stops with "selected System does not contain this appliance media; use
+  its matching ISO or an exact selection that contains this media".
+
+Download the ISO of the channel's current release ([install.md](install.md#install-from-the-iso)), or install on
+Proxmox with `install.sh`, which always runs the installer of the release it installs.
+
 ## First deployment stopped
 
 The console shows "Needs attention" and `progress.json` has `"stage": "needs_attention"`.
@@ -128,8 +141,17 @@ installed release. Each update has a request ID (`--request`), shown in the jour
 
 - Cancel works only before any service was touched: while only `verify-members` and `stage-host` ran, or when the
   checkpoint preflight refused. After that, use `recover` (`spine/internal/systemupdate/core_journal.go`).
-- `youeye update core check` says `"behind": true` when the channel's build is older than the installed one. A box
-  never downgrades; it waits for the channel to catch up.
+- `youeye update core check` says `"behind": true` when the channel's release is older than the installed one. A box
+  never downgrades; it waits for the channel to catch up ([below](#waiting-for-the-channel-to-catch-up)).
+- **An update started right after a boot stops at `needs-recovery`** with "core container is not running" in
+  `verify-members`: the core containers were still starting. `resume` repeats the error and `recover` answers "no
+  activation checkpoint exists; use staged cancellation". Nothing was changed. Cancel it and run it again once
+  the core containers run (`incus list` shows `youeye-control` and `youeye-ui` as `RUNNING`):
+  ```sh
+  youeye update core cancel --request <id>
+  youeye update core check    # then stage and activate with a new request ID, or Update in Settings → System
+  ```
+  (Backlog: `verify-members` should wait for the core containers.)
 - "release host refused or rate-limited the request" means HTTP 403 or 429 from the release host. Clients retry
   with backoff. GitHub allows 60 anonymous API requests per hour per IP, which is why boxes read only the channel
   index and release assets.
@@ -204,6 +226,22 @@ installed release. Each update has a request ID (`--request`), shown in the jour
   already open): loading a Control Panel page in a browser can write the entry again (a tab that already shows
   the favicon usually doesn't), and the old Spine then refuses once more at `verify-members` or the checkpoint
   preflight. From `apply-cp` on, the steps run in the new Spine, which no longer refuses it.
+
+## Waiting for the channel to catch up
+
+`youeye update core check` answers `"behind": true` with a message such as `channel stable offers 0.6.13; this box
+has 0.6.13-dev.7; waiting for it to catch up`, and Settings → System shows that message instead of an update. A
+native app or Pointer says "The channel offers <app> <version>; this box has <version>; waiting for the channel to
+catch up".
+
+It means the box already runs a newer release than its channel offers. Releases are ordered by line, then by the
+build's sequence, never by name ([releases.md](releases.md#ordering-line-then-sequence)), and a box never installs
+older files. This happens after a channel switch: a dev box on `0.6.13-dev.7` that switches to stable, where 0.6.13
+is the earlier `dev.5` promoted, keeps `0.6.13-dev.7`.
+
+Nothing is wrong and nothing needs doing. The box takes the next release of its channel that is newer than what it
+runs (here the next stable line, 0.6.14). Switching back to the channel it came from (`youeye channel set dev`)
+offers that channel's later builds again. To get onto the channel's exact release now, reinstall.
 
 ## The box does not boot the new image
 

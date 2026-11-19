@@ -180,3 +180,36 @@ func TestApplianceConsoleNetworkSetupBeforeAndAfterClaim(t *testing.T) {
 		t.Fatal("a missing record must not open network setup")
 	}
 }
+
+// The console shows the installed release's version (never a build name): the
+// committed receipt's, else the version being installed.
+func TestApplianceConsoleShowsTheReleaseVersion(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("YOUEYE_CONSOLE_STATE_ROOT", root)
+	t.Setenv("YOUEYE_CONSOLE_RUN_DIR", filepath.Join(root, "run"))
+	for _, dir := range []string{"bootstrap", "core-update"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "appliance-state.json"), []byte(`{"slots":{"current":"B"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if view := (applianceConsoleModel{snapshot: readApplianceConsoleSnapshot()}).View(); !strings.Contains(view, "System      slot B") {
+		t.Fatalf("no release: %s", view)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bootstrap", "core-release.json"), []byte(`{"version":"0.6.12-beta.1","build":"0.6.12-dev.3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view := (applianceConsoleModel{snapshot: readApplianceConsoleSnapshot()}).View()
+	if !strings.Contains(view, "System      YouEye 0.6.12-beta.1 (installing) · slot B") || strings.Contains(view, "dev.3") {
+		t.Fatalf("installing: %s", view)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core-update", "committed.json"), []byte(`{"release":{"version":"0.6.12","build":"0.6.12-dev.3"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view = (applianceConsoleModel{snapshot: readApplianceConsoleSnapshot()}).View()
+	if !strings.Contains(view, "System      YouEye 0.6.12 · slot B") || strings.Contains(view, "dev.3") || strings.Contains(view, "installing") {
+		t.Fatalf("installed: %s", view)
+	}
+}

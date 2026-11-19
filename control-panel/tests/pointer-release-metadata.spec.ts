@@ -19,7 +19,8 @@ test('Pointer release-only transaction commits and recovers without payload or e
       const r = {...base.release,version,tag:productTag(version),sequence};
       return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'pointer',repository,tag:r.tag});
     };
-    const original = release('1.2.3-dev.1',3), next = release('1.2.3-alpha.1',4), later = release('1.2.3-beta.1',5);
+    // One build (line 1.2.3, sequence 3) under three release names.
+    const original = release('1.2.3-dev.1',3), next = release('1.2.3-alpha.1',3), later = release('1.2.3-beta.1',3);
     const file = join(root,'pointer-release','installed.json'), store = new AppUpdateJournalStore(join(root,'journal'));
     const state: PointerReleaseState = {schema:'youeye.installed-pointer.v1',installed:{receipt:productReceipt(original),runtimeUUID:'12345678-1234-1234-1234-123456789abc'},floors:acceptProductSequence(undefined,original)};
     await savePointerReleaseState(state,file);
@@ -41,18 +42,39 @@ test('Pointer release-only transaction commits and recovers without payload or e
     assert.equal(pointerRelease(await io.read())?.release.version,'1.2.3-alpha.1');
     assert.equal(projection.receipt.manifestSHA256,next.manifestSHA256);
     // The floor keeps the accepted build; the installed document stays as recovered.
-    assert.deepEqual((await io.read()).floors.pointer,{build:'1.2.3-dev.1',buildSHA256:state.floors.pointer.buildSHA256,manifestSHA256:later.manifestSHA256});
+    assert.deepEqual((await io.read()).floors.pointer,{line:'1.2.3',sequence:3,build:'1.2.3-dev.1',buildSHA256:state.floors.pointer.buildSHA256,manifestSHA256:later.manifestSHA256});
     assert.equal(store.list().filter(r=>r.rollbackVerifiedAt && r.cleanupComplete).length,1);
     // Another name of the same build (e.g. the box changed channel back) is a label update, never "older".
     assert.equal(await withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,original,io),{store}),true);
     assert.equal(pointerRelease(await io.read())?.release.version,'1.2.3-dev.1');
     // An older build is refused whatever its name.
-    const olderBuild = productFixture('pointer','1.2.3',repository,{'standalone.tar':Buffer.from('older'),'pointer-build-contract.json':Buffer.from('contract')},{build:'1.2.2-dev.7'});
-    assert.throws(()=>acceptProductSequence(state.floors,verifyProductRelease(olderBuild.raw,{product:'pointer',repository,tag:olderBuild.tag})),/older pointer build/);
+    const olderBuild = productFixture('pointer','1.2.3',repository,{'standalone.tar':Buffer.from('older'),'pointer-build-contract.json':Buffer.from('contract')},{build:'1.2.2-dev.7',sequence:2});
+    assert.throws(()=>acceptProductSequence(state.floors,verifyProductRelease(olderBuild.raw,{product:'pointer',repository,tag:olderBuild.tag})),/offers pointer 1\.2\.3; this box has 1\.2\.3; waiting/);
+    assert.throws(()=>acceptProductSequence(state.floors,verifyProductRelease(olderBuild.raw,{product:'pointer',repository,tag:olderBuild.tag}),original),/this box has 1\.2\.3-dev\.1; waiting/);
     replaced = true;
     const writes = effects.filter(e=>e === 'save' || e === 'publish').length;
     await assert.rejects(withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,later,io),{store}),/runtime replaced/);
     assert.equal(effects.filter(e=>e === 'save' || e === 'publish').length,writes);
     assert.ok(store.list().every(r=>r.resources.every(x=>!x.mutable || x.kind === 'metadata')));
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('a Pointer state from 0.6.11 (floor with a build name only) is read, and the next acceptance writes both shapes', async () => {
+  const root = await mkdtemp(join(tmpdir(),'youeye-pointer-old-floor-'));
+  try {
+    const repository = 'https://github.com/YouEye-Platform/Pointer';
+    const assets = {'standalone.tar':Buffer.from('standalone.tar'),'pointer-build-contract.json':Buffer.from('contract')};
+    const installed = verifyProductRelease(productFixture('pointer','0.6.2',repository,assets,{build:'0.6.2-dev.3',sequence:40}).raw,{product:'pointer',repository,tag:'v0.6.2'});
+    const {line:_line,sequence:_sequence,...oldFloor} = acceptProductSequence(undefined,installed).pointer;
+    assert.deepEqual(Object.keys(oldFloor),['build','buildSHA256','manifestSHA256']);
+    const file = join(root,'installed.json');
+    const state: PointerReleaseState = {schema:'youeye.installed-pointer.v1',installed:{receipt:productReceipt(installed),runtimeUUID:'12345678-1234-1234-1234-123456789abc'},floors:{pointer:oldFloor}};
+    await savePointerReleaseState(state,file);
+    assert.equal(pointerRelease(await readPointerReleaseState(file))?.release.version,'0.6.2');
+    // The floor's key is the installed document's (the one it names): an older sequence of the line waits.
+    const older = verifyProductRelease(productFixture('pointer','0.6.2-dev.9',repository,{...assets,'standalone.tar':Buffer.from('x')},{sequence:39}).raw,{product:'pointer',repository,tag:'v0.6.2-dev.9'});
+    assert.throws(()=>acceptProductSequence(state.floors,older,installed),/offers pointer 0\.6\.2-dev\.9; this box has 0\.6\.2; waiting/);
+    const newer = verifyProductRelease(productFixture('pointer','0.6.3-dev.1',repository,{...assets,'standalone.tar':Buffer.from('y')},{sequence:41}).raw,{product:'pointer',repository,tag:'v0.6.3-dev.1'});
+    assert.deepEqual(Object.keys(acceptProductSequence(state.floors,newer,installed).pointer),['line','sequence','build','buildSHA256','manifestSHA256']);
   } finally { await rm(root,{recursive:true,force:true}); }
 });

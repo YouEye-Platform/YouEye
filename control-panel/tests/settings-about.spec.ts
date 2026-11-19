@@ -21,11 +21,12 @@ test('About pulls real server identity, versions, channel, reachability', () => 
   const c = read('src/components/settings-shell/about-client.tsx');
   assert.match(c, /\/settings\/api\/settings"/);        // siteName + releaseBranch
   assert.match(c, /\/settings\/api\/settings\/system/);  // hostname / os / uptime
-  assert.match(c, /\/api\/health\/services/);            // spine ("core") version
   assert.match(c, /\/api\/domain/);                      // domain
   assert.match(c, /\/api\/tls\/status/);                 // HTTPS state
-  // "interface" version is the build-time CP version, injected by the page
-  assert.match(c, /cpVersion/);
+  // The version is the installed release's, injected by the page with its details line and Copy.
+  assert.match(c, /release\.details/);
+  assert.match(c, /<ButtonCopy value=\{release\.details\} \/>/);
+  assert.doesNotMatch(c, /cpVersion|\/api\/health\/services/);
 });
 
 test('About degrades honestly — Promise.allSettled, logs failures, no fabricated values (pitfalls #23/#28)', () => {
@@ -42,10 +43,11 @@ test('telemetry export removed from About (moves to Privacy per D18)', () => {
   assert.doesNotMatch(c, /Usage Report/);
 });
 
-test('About page shows the CP build version (version.json, never package.json) and is admin-gated', () => {
+test('About page shows the installed release (version · short tree, never a build name) and is admin-gated', () => {
   const p = read('src/app/settings/(shell)/about/page.tsx');
-  assert.doesNotMatch(p, /package\.json/);
-  assert.match(p, /cpVersion=\{controlPanelVersion\(\)\}/);
+  assert.doesNotMatch(p, /package\.json|version\.json|controlPanelVersion/);
+  assert.match(p, /await installedRelease\(\)/);
+  assert.match(p, /releaseDetails\(release\)/);
   assert.match(p, /session\?\.isAdmin/);
 });
 

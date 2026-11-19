@@ -26,21 +26,58 @@ downloads use HTTPS with normal certificate checks. When signing returns, it att
 
 | What | Name | Example |
 |---|---|---|
-| A build (every publish; the dev channel) | `X.Y.Z-dev.N` | `0.6.2-dev.2` (the second build of 0.6.2) |
-| The same build on alpha | `X.Y.Z-alpha.N` | `0.6.2-alpha.1` |
-| The same build on beta | `X.Y.Z-beta.N` | `0.6.2-beta.1` |
-| The same build on stable | `X.Y.Z` | `0.6.2` |
+| A build (every publish; the dev channel) | `X.Y.Z-dev.N` | `0.6.13-dev.5` (the fifth build of 0.6.13) |
+| The same build on alpha | `X.Y.Z-alpha.N` | `0.6.13-alpha.1` |
+| The same build on beta | `X.Y.Z-beta.N` | `0.6.13-beta.1` |
+| The same build on stable | `X.Y.Z` | `0.6.13` |
 
-- `VERSION` in each repository holds the line (`0.6.2`); the publish tool picks the next free `dev.N` and passes the
-  full **build version** to the build as `YOUEYE_VERSION`. Binaries, `version.json` and build manifests carry the
-  build version. A failed build bumps `N`.
+- `VERSION` in each repository holds the line (`0.6.13`); the publish tool picks the next free `dev.N` and passes the
+  full build name to the build as `YOUEYE_VERSION`, and the git tree as `YOUEYE_SOURCE_TREE`. A failed build bumps
+  `N`.
 - **Promotion never rebuilds and never changes a file.** It writes one new small release document that names the
   build under the channel's name and binds the very same files by SHA-256. A fix found on alpha is new code: a new
-  build (`dev.3`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line.
-- **Only builds are ordered** (`X`, `Y`, `Z`, then `N` of `X.Y.Z-dev.N`). Release names are for people: a box on
-  alpha showing `0.6.2-alpha.1` may run an older build than a box on dev showing `0.6.2-dev.5`.
-- Go binaries get the build version through `-ldflags`; the Control Panel, UI, apps and Pointer write it into a
-  `version.json` (or their build manifest) at build time. `package.json` versions are a `0.0.0` placeholder.
+  build (`dev.6`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line.
+- **Build names exist only on dev.** On dev a release's `version` is its build name. A promoted release is named
+  only by its channel name; nothing a box shows names the dev build it came from.
+- What is baked into files: up to 0.6.12, Go binaries get the build name through `-ldflags` and the Control Panel,
+  UI, apps and Pointer write it into `version.json` (or their build manifest), next to `source_tree` (from 0.6.12).
+  Spine up to 0.6.11 compares those names with the release document, so 0.6.12 still bakes them. Plan 12 Part E
+  (0.6.13) bakes only the line and the tree. Newer code identifies files by git tree and SHA-256, never by a baked
+  name. `package.json` versions are a `0.0.0` placeholder.
+
+## Ordering: line, then sequence
+
+Releases are ordered by one rule everywhere (Go `releasecache.CompareReleases` in `releasecache/order.go`,
+TypeScript `compareReleases` in `control-panel/src/lib/version.ts`; both read the shared vectors in
+`releasecache/testdata/release-order.json`), for the System and for every product:
+
+1. the **line** `X.Y.Z`, numerically (0.6.9 before 0.6.10);
+2. then the build's **`sequence`**: its publish time in Unix seconds, written once when the build is published and
+   kept by every promotion. The publish tools refuse a sequence that is not higher than every earlier release of
+   the product.
+
+**Release names are labels and are never compared.** The dev, alpha, beta and stable documents of one build have
+the same key and are the same release. A stable `0.6.13` is older than a later `0.6.13-dev.6`, and `0.6.13-alpha.2`
+is older than a `0.6.13-dev.1` published after it. An old-shape document's `build` field is not used for ordering.
+The same key means the same build: a document with that key must then install the same files (the same payload
+digest, [core-release-contract.md](core-release-contract.md#host-independence)), or it is refused.
+
+`minimum_release` in a System document and `requires.youeye` in an app manifest are compared by line only
+(`MinimumReleaseMet`, `meetsMinimumRelease`): any release of that line or a later one meets them. An old value
+written as a build name (`0.6.5-dev.2`) is read as its line.
+
+## What a box shows
+
+A box shows the `version` of the release document it installed, on its channel, and nothing else: `0.6.13-dev.5`
+on dev; the same files promoted show `0.6.13-alpha.1`, `0.6.13-beta.1` or `0.6.13`. A dev box shows its dev name
+everywhere, because that is its version. The same version is used by the Control Panel (About, Settings → System,
+Settings → Apps, backups), the CLI (`youeye version`, `youeye status`, `youeye spine status`), the
+console, the dashboard (from `/etc/youeye/release.json`, [control-panel.md](control-panel.md#the-installed-release)),
+the heartbeat to the YouEye Names broker and the platform context apps get (`requires.youeye` checks it too).
+
+For support, a details line gives the git tree: About shows `0.6.13 · b39fe307` (version · short tree) with a Copy
+button, and `youeye version --verbose` lists the release tree and each part's tree and SHA-256
+([spine.md](spine.md#commands)). Neither shows a build name.
 
 ## Build identity
 
@@ -52,11 +89,12 @@ never share commits.
 ## Release documents
 
 - **System:** release `youeye-v<name>` with `core-release.json` (`youeye.core-release.v1`, see
-  [core-release-contract.md](core-release-contract.md)). Its `version` is the release name and its `build` the build
-  version; on dev they are equal.
+  [core-release-contract.md](core-release-contract.md)). Its `version` is the release name. Documents up to 0.6.12
+  also carry `build` (the dev name of the build) and a `build_version` per member; from 0.6.13 they carry neither
+  and say `minimum_reader: 2`.
 - **Apps and Pointer:** release `v<name>`. Each has `product-release.json` (see
-  [product-release-contract.md](product-release-contract.md)) embedding the immutable build manifest
-  (`build_version` = the build).
+  [product-release-contract.md](product-release-contract.md)) embedding the immutable build manifest. Old-shape
+  manifests name the build in `build_version`; new-shape ones (reader 2) do not.
 - Documents **name** files (`{name, sha256, size_bytes, release?}`) and never locate them. A client downloads
   `<repository>/releases/download/<tag>/<name>`, using the repository and tag where it found the document (or the
   blob's `release` tag in the same repository). No source, branch, channel or commit URL is inside.
@@ -76,16 +114,23 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
 ```json
 {"schema":"youeye.channel.v1","channel":"stable","published_at":"2026-11-12T10:00:00Z",
  "products":{
-   "youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.6.2","version":"0.6.2","build":"0.6.2-dev.2","document":"core-release.json","sha256":"…"},
-   "notes": {"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1","version":"0.6.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"…"}
+   "youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.6.13","version":"0.6.13","build":"0.6.13","document":"core-release.json","sha256":"…",
+             "stepping_stones":[{"tag":"youeye-v0.6.12","version":"0.6.12","build":"0.6.12-dev.4","sequence":1795100000,"document":"core-release.json","sha256":"…","minimum_release":"0.6.5-dev.2","minimum_reader":1}]},
+   "notes": {"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.4","version":"0.6.4","build":"0.6.4","document":"product-release.json","sha256":"…"}
  }}
 ```
 
 - Location: asset `index.json` of release `channel-<channel>` in the YouEye repository of the channel's host:
   `<youeye repository>/releases/download/channel-<channel>/index.json`. For the official repository's `beta` and
   `stable` channels a copy is served at `https://releases.youeye.me/v1/channels/<channel>.json` and tried first.
-- The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry. `build` is the
-  entry's build version, used for ordering.
+- The client downloads the entry's document and refuses it unless its SHA-256 equals the index entry. **A document
+  matches its entry by tag, version and digest** (`fetchCoreEntry` in `releasecache/channel.go`,
+  `verifyChannelEntryDocument` in `control-panel/src/lib/releases/channel-index.ts`). The entry says nothing about
+  order: the document's line and `sequence` do.
+- **`build` is temporary**, kept only for readers up to 0.6.11, which refuse an entry without it and require it to
+  equal an old-shape document's `build`. The tools write the document's `build` when it has one (0.6.12 and
+  earlier) and the entry's `version` otherwise (0.6.13 and later), so a promoted entry never names a dev build.
+  Readers from 0.6.12 on neither check nor use it. It is deleted before the Release, with the 0.6.12 stones.
 - Products: `youeye`, `pointer`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`, plus the frozen
   `market` entry (below).
 - **Read leniently, so later indexes never cut a box off:** unknown keys at any level are ignored, a product this
@@ -100,9 +145,12 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
     they are fetched from `<download_base>/<that tag>/<name>`. Nothing sets it yet; a file mirror on
     `releases.youeye.me` is a Backlog item.
   - `stepping_stones` (`youeye` only): older releases a box installs first when it can't install the head
-    (`{tag, version, build, document, sha256, minimum_release, minimum_reader[, download_base]}`; see
-    [core-release-contract.md](core-release-contract.md#older-readers-and-stepping-stones)). An unreadable stone is
-    skipped. `Tools/release/index stone add|remove <channel> <version>` manages them; they stay when the head moves.
+    (`{tag, version, build, sequence, document, sha256, minimum_release, minimum_reader[, download_base]}`; see
+    [core-release-contract.md](core-release-contract.md#older-readers-and-stepping-stones) and
+    [below](#stepping-stones-from-0611-to-0613)). `build` is the temporary field above; `sequence` (from 0.6.12, absent
+    in older indexes) repeats the document's, so a box can order stones before fetching them. An unreadable stone is
+    skipped. `Tools/release/index stone add|remove <channel> <version>` manages them (at most one per line, each
+    older than the head); they stay when the head moves.
 - Downloads may be redirected to any HTTPS host (every file is checked by SHA-256 and size); leaving HTTPS,
   credentials, fragments and release-listing APIs are refused.
 - An HTTP 403 or 429 from a release host is reported as "release host refused or rate-limited the request" and
@@ -146,9 +194,47 @@ The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
   any other one (for example a development forge) is used only because `--repository` was given at install.
 - `youeye channel get|set <channel>` (or Settings in the Control Panel, through Spine `PUT /api/releases/channel`)
   switches between channels of the same repository.
-- **A box never downgrades.** If the channel's current build is older than the installed build, the update check
-  says so (`behind: true`) and the box waits for the channel to catch up. The same build under another channel's
-  name is not older; taking it only records the new document (no file changes).
+- **A box never downgrades.** After a channel switch the box takes any release with a higher key
+  ([line, then sequence](#ordering-line-then-sequence)) and never older files:
+  - a stable box on 0.6.13 that switches to dev takes the dev channel's current build when it was published after
+    the build 0.6.13 came from (a later `0.6.13-dev.N` or a later line);
+  - a box on `0.6.13-dev.7` that switches to stable, where 0.6.13 is `dev.5` promoted, waits for a later stable
+    (0.6.14). `youeye update core check` then says `"behind": true` with a message that names versions only:
+    `channel stable offers 0.6.13; this box has 0.6.13-dev.7; waiting for it to catch up`. Settings → System shows
+    that message and offers no update. Native apps and Pointer say the same per product
+    ([troubleshooting.md](troubleshooting.md#waiting-for-the-channel-to-catch-up));
+  - the same build under another channel's name (`0.6.13-dev.5` → `0.6.13-alpha.1`) is not older; taking it only
+    records the new document (a metadata-only update, no file changes).
+
+## Stepping stones: from 0.6.11 to 0.6.13
+
+Plan 12 removed build names from what a box shows and, from 0.6.13, from the release documents. A 0.6.11 box cannot
+read a document without `build`, so it reaches 0.6.13 through 0.6.12, on every channel:
+
+| Release | Documents | Readers it ships |
+|---|---|---|
+| 0.6.11 | old shape (`build`, member `build_version`), `minimum_reader: 1` | reader 1: requires `build` in documents and index entries, orders by build name |
+| 0.6.12 (the stone) | old shape, exactly as 0.6.11 expects; `minimum_release` `0.6.5-dev.2` | reader 2: reads both shapes, orders by line and sequence, writes State records in both shapes |
+| 0.6.13 | no `build`, no `build_version`, `minimum_reader: 2`, `minimum_release` `0.6.12` | reader 2 |
+
+- 0.6.12 keeps the old shape because a 0.6.11 box runs **its own Spine** for the first steps of the update to 0.6.12,
+  and that Spine compares each member's `build_version` with the name baked into the new files. 0.6.12 also rebuilds
+  the image, so after the update one slot holds a reader-2 seed Spine; 0.6.13 rebuilds it into the other slot.
+- A 0.6.11 box reads `minimum_reader` first, gets "needs a newer reader" for the 0.6.13 head and looks for a
+  stone; a 0.6.12 box installs the head directly. Every channel index keeps 0.6.12 as a stone of the 0.6.13 head,
+  with its `sequence` and its old-shape `build` (0.6.11 readers require it). The 0.6.11 box takes the stone
+  (`youeye update core check` says `"stepping_stone": true` and names `channel_head` and `head_refused`), then
+  updates again to 0.6.13.
+- The tools make the outgoing head the stone in the same index write as the new head: `Tools/release/publish
+  --stone-previous` on dev and `Tools/release/promote youeye <channel> --stone-previous` on alpha, beta and stable.
+  Both refuse when the outgoing head's line is below the new release's `minimum_release` line (0.6.11 as the stone
+  of 0.6.13 would strand its boxes).
+- Old installer ISOs cannot install a channel whose head is 0.6.13; `install.sh` can
+  ([install.md](install.md#old-isos)).
+- Until the Release cleanup: readers accept both shapes, index entries keep the temporary `build`, the 0.6.12
+  stones stay in the indexes, and State and Data records are written in both shapes
+  ([development.md](development.md#compatibility-rules-for-later-changes)). All of it is deleted before the Release
+  (Backlog).
 
 ## Install
 
@@ -194,14 +280,24 @@ fix the app or its configuration. Never loosen the guard.
 
 ## Publishing and promotion (tools in the YouEye Mega workspace)
 
-- `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index.
+- `Tools/release/publish` — next `dev.N`, build, `core-release.json`, Forgejo prerelease, dev index. The
+  document's `sequence` must be higher than every earlier YouEye release; `minimum_release` comes from
+  `.youeye/minimum-release` (a reader-1 document needs a build name there, so 0.6.12 keeps `0.6.5-dev.2`).
+  `--stone-previous` makes the outgoing dev head a stone in the same index write.
 - `Tools/release/app-release <repo>` then `Tools/release/index set dev …` — the same for native apps and Pointer.
 - The Market has none of these steps: a push to the catalog's `dev` or `main` branch is published to
   `market.youeye.me` ([market-format.md](market-format.md#the-official-market)).
 - `Tools/release/promote <product|all> <alpha|beta|stable>` — never rebuilds; writes the channel's document
-  (`alpha.N`, `beta.N`, `X.Y.Z`) for the same build:
+  (`alpha.N`, `beta.N`, `X.Y.Z`) for the same build, found by key and files, never by name. Release texts and
+  commit messages name the version and tree only. `--stone-previous` as for publish. **Promote `youeye` alone**
+  until the native apps and Pointer are rebuilt in the new shape: `all` would carry their old-shape dev heads to
+  every channel, and refuses to move any product besides YouEye without `--yes`.
   - **alpha:** a promotion commit with the build's exact tree on the development forge's `main`; the alpha release
-    and index on the development forge.
+    and index on the development forge. An alpha System document names the Forgejo dev release that holds its files
+    (`release` of each blob); that is an address, not a name shown anywhere.
   - **beta / stable:** after a public hygiene check of the tree (no private host names), one GitHub snapshot commit
     with that tree on `beta` / `main`; the GitHub release with a copy of every file, each verified by SHA-256; the
     GitHub index and the `releases.youeye.me` copy (`install.sh` too on stable).
+- `Tools/release/index show <channel>` prints each product's version, tree, sequence and shape (and, for a promoted
+  release, the dev build it came from); `index clean-check` reports build names (`-dev.`) in published files
+  outside the listed exceptions. Details in the workspace's `Tools/README.md`.

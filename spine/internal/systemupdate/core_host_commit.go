@@ -39,7 +39,7 @@ func (m *Manager) CommitCoreHost(ctx context.Context, request string, observeOnl
 	if slot != host.CandidateSlot || current.ImageVersion != host.TargetImage {
 		return unknown, fmt.Errorf("selected host is not actually running")
 	}
-	if err = BindCoreImage(j.Target, current); err != nil {
+	if err = m.imageBinder().Bind(j.Target, current); err != nil {
 		return unknown, err
 	}
 	if host.Phase == PhaseHealthy {

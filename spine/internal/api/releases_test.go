@@ -116,6 +116,9 @@ func TestReleaseChannelGetAndPut(t *testing.T) {
 	if body = decodeBody(t, w); body["installed_version"] != release.Version {
 		t.Fatal(w.Code, body)
 	}
+	if _, ok := body["installed_build"]; ok {
+		t.Fatal("a box names its release, never its build", body)
+	}
 }
 
 func TestReleaseIndexCachesAndClassifiesErrors(t *testing.T) {

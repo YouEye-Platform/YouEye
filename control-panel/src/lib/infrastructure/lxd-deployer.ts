@@ -424,7 +424,8 @@ export async function resolveUIRelease(): Promise<LXDRelease> {
   const artifact = selected.member.artifact;
   return {
     tag: selected.release.tag,
-    version: selected.member.build_version,
+    // What the box shows: the accepted release's version. The artifact is bound by SHA-256 and size.
+    version: selected.release.version,
     url: releaseAssetURL(repository, selected.release.tag, artifact),
     artifactSHA256: artifact.sha256,
     sizeBytes: artifact.size_bytes,

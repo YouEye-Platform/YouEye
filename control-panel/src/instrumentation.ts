@@ -81,6 +81,9 @@ export async function register() {
     startHealthMonitor();
     const { startBackgroundChecks } = await import("@/lib/apps/update-cache");
     startBackgroundChecks();
+    // The UI reports the installed release (it cannot read State); republished whenever the accepted release changes.
+    const { startUIReleasePublisher } = await import("@/lib/releases/installed-release");
+    startUIReleasePublisher();
     const { startVersionChecker } = await import("@/lib/market/version-checker");
     startVersionChecker();
     const { startHealthChecker } = await import("@/lib/market/health-checker");

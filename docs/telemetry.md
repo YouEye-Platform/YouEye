@@ -23,7 +23,9 @@ Route paths are normalized: UUIDs and numbers become `[id]`.
   set either variable, so it is off on a normal box.
 - When on: the browser batches page views and feature events every 30 s; the server saves counts every 60 s to
   `/opt/youeye-ui-data/telemetry.json` inside `youeye-ui`.
-- `GET /api/v1/telemetry/export` (admin) returns the report; `DELETE` resets it.
+- `GET /api/v1/telemetry/export` (admin) returns the report with a `platform` block: `youeye_version` (the
+  installed release's version, from `/etc/youeye/release.json`, which the Control Panel writes;
+  [control-panel.md](control-panel.md#the-installed-release)), `node_version` and `export_date`. `DELETE` resets it.
 
 ## What is counted
 

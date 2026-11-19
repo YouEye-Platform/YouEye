@@ -166,7 +166,7 @@ func TestFutureChannelIndexIsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	core := parsed.Products["youeye"]
-	if len(parsed.Products) != 2 || core.DownloadBase != "https://releases.youeye.me/v1/files" || len(core.SteppingStones) != 1 || core.SteppingStones[0].Build != "0.7.0-dev.3" {
+	if len(parsed.Products) != 2 || core.DownloadBase != "https://releases.youeye.me/v1/files" || len(core.SteppingStones) != 1 || core.SteppingStones[0].Version != "0.7.0" || core.SteppingStones[0].Sequence != 0 {
 		t.Fatalf("future index read wrongly: %+v", parsed)
 	}
 	if core.DocumentURL() != "https://releases.youeye.me/v1/files/youeye-v0.9.0/core-release.json" {
@@ -174,11 +174,20 @@ func TestFutureChannelIndexIsRead(t *testing.T) {
 	}
 }
 
-// coreDoc returns a variant of the fixture as release version/build with the
-// given minimum_release and reader, and its digest.
-func coreDoc(t *testing.T, version, build, minimum string, reader int) (string, string) {
+// coreDoc returns a variant of the fixture as release version with the given
+// sequence, minimum_release and reader, and its digest. With build empty the
+// document has the shape without build names.
+func coreDoc(t *testing.T, version, build string, sequence int64, minimum string, reader int) (string, string) {
 	raw := mutate(t, func(d map[string]any) {
-		d["version"], d["build"], d["tag"] = version, build, "youeye-v"+version
+		d["version"], d["tag"], d["sequence"] = version, "youeye-v"+version, sequence
+		if build == "" {
+			delete(d, "build")
+			for _, m := range d["members"].([]any) {
+				delete(m.(map[string]any), "build_version")
+			}
+		} else {
+			d["build"] = build
+		}
 		d["compatibility"].(map[string]any)["minimum_release"] = minimum
 		d["minimum_reader"] = reader
 	})
@@ -186,48 +195,211 @@ func coreDoc(t *testing.T, version, build, minimum string, reader int) (string, 
 	return string(raw), hex.EncodeToString(sum[:])
 }
 
+func installedAt(t *testing.T, version string, sequence int64) InstalledRelease {
+	t.Helper()
+	key, err := KeyOfVersion(version, sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return InstalledRelease{Key: key, Version: version}
+}
+
+// stoneChannel serves a channel whose documents and stones the test adds.
+type stoneChannel struct {
+	t     *testing.T
+	repo  string
+	files map[string]string
+}
+
+func newStoneChannel(t *testing.T) *stoneChannel {
+	return &stoneChannel{t: t, repo: "https://forge.example.test/owner/YouEye", files: map[string]string{}}
+}
+
+func (c *stoneChannel) document(version, build string, sequence int64, minimum string, reader int) string {
+	raw, digest := coreDoc(c.t, version, build, sequence, minimum, reader)
+	c.files["forge.example.test/owner/YouEye/releases/download/youeye-v"+version+"/core-release.json"] = raw
+	return digest
+}
+
+// entry is a head entry; entryBuild is the temporary field (empty: absent).
+func (c *stoneChannel) entry(version, entryBuild, digest string) string {
+	build := ""
+	if entryBuild != "" {
+		build = `"build":"` + entryBuild + `",`
+	}
+	return `"repository":"` + c.repo + `","tag":"youeye-v` + version + `","version":"` + version + `",` + build + `"document":"core-release.json","sha256":"` + digest + `"`
+}
+
+// stone is a stone entry; indexSequence 0 leaves the field out (an index
+// written before 0.6.12).
+func (c *stoneChannel) stone(version, build string, sequence, indexSequence int64, minimum string, reader int) string {
+	digest := c.document(version, build, sequence, minimum, reader)
+	extra := ""
+	if build != "" {
+		extra += `"build":"` + build + `",`
+	}
+	if indexSequence != 0 {
+		extra += fmt.Sprintf(`"sequence":%d,`, indexSequence)
+	}
+	return fmt.Sprintf(`{"tag":"youeye-v%s","version":"%s",%s"document":"core-release.json","sha256":"%s","minimum_release":"%s","minimum_reader":%d}`, version, version, extra, digest, minimum, reader)
+}
+
+func (c *stoneChannel) publish(channel, head string, stones ...string) *http.Client {
+	c.files["forge.example.test/owner/YouEye/releases/download/channel-"+channel+"/index.json"] = index(channel, `"youeye":{`+head+`,"stepping_stones":[`+strings.Join(stones, ",")+`]}`)
+	return serve(c.t, c.files, nil)
+}
+
 func TestSteppingStoneWalk(t *testing.T) {
-	repo := "https://forge.example.test/owner/YouEye"
-	files := map[string]string{}
-	entry := func(version, build, digest string) string {
-		return `"repository":"` + repo + `","tag":"youeye-v` + version + `","version":"` + version + `","build":"` + build + `","document":"core-release.json","sha256":"` + digest + `"`
-	}
-	stone := func(version, build, minimum string, reader int) string {
-		raw, digest := coreDoc(t, version, build, minimum, reader)
-		files["forge.example.test/owner/YouEye/releases/download/youeye-v"+version+"/core-release.json"] = raw
-		return fmt.Sprintf(`{"tag":"youeye-v%s","version":"%s","build":"%s","document":"core-release.json","sha256":"%s","minimum_release":"%s","minimum_reader":%d}`, version, version, build, digest, minimum, reader)
-	}
-	s1 := stone("0.6.2-dev.1", "0.6.2-dev.1", "0.6.0", 1)
-	s2 := stone("0.6.2-dev.5", "0.6.2-dev.5", "0.6.2-dev.1", 1)
-	headRaw, headDigest := coreDoc(t, "0.6.3", "0.6.3-dev.2", "0.6.2-dev.5", 1)
-	files["forge.example.test/owner/YouEye/releases/download/youeye-v0.6.3/core-release.json"] = headRaw
-	files["forge.example.test/owner/YouEye/releases/download/channel-stable/index.json"] = index("stable", `"youeye":{`+entry("0.6.3", "0.6.3-dev.2", headDigest)+`,"stepping_stones":[`+s2+`,`+s1+`]}`)
-	client := serve(t, files, nil)
+	c := newStoneChannel(t)
 	ctx := context.Background()
+	// Old-shape stones without a sequence in the index (what 0.6.11 tools
+	// wrote): the stone's document says its sequence.
+	s1 := c.stone("0.6.2-dev.1", "0.6.2-dev.1", 200, 0, "0.6.0", 1)
+	s2 := c.stone("0.6.3", "0.6.3-dev.5", 300, 300, "0.6.2-dev.1", 1)
+	head := c.entry("0.6.4", "0.6.4-dev.2", c.document("0.6.4", "0.6.4-dev.2", 400, "0.6.3-dev.5", 1))
+	client := c.publish("stable", head, s2, s1)
 	// N → stone 1 → stone 2 → head: never skipping a stone.
-	walk := []struct{ installed, want string }{{"0.6.1-dev.1", "0.6.2-dev.1"}, {"0.6.2-dev.1", "0.6.2-dev.5"}, {"0.6.2-dev.5", "0.6.3-dev.2"}, {"0.6.3-dev.2", "0.6.3-dev.2"}}
+	walk := []struct {
+		installed InstalledRelease
+		want      string
+	}{
+		{installedAt(t, "0.6.1", 100), "0.6.2-dev.1"},
+		{installedAt(t, "0.6.2-dev.1", 200), "0.6.3"},
+		{installedAt(t, "0.6.2-beta.1", 200), "0.6.3"}, // the same build under another name
+		{installedAt(t, "0.6.3", 300), "0.6.4"},
+		{installedAt(t, "0.6.3-dev.9", 350), "0.6.4"}, // a later build of the stone's line needs no stone
+		{installedAt(t, "0.6.4", 400), "0.6.4"},
+	}
 	for _, step := range walk {
-		choice, err := ChooseCoreRelease(ctx, client, repo, "stable", step.installed)
-		if err != nil || choice.Release.Build != step.want || choice.Stone != (step.want != "0.6.3-dev.2") || choice.Head.Version != "0.6.3" {
-			t.Fatalf("from %s: %v %+v", step.installed, err, choice.Release.Build)
+		choice, err := ChooseCoreRelease(ctx, client, c.repo, "stable", step.installed)
+		if err != nil || choice.Release.Version != step.want || choice.Stone != (step.want != "0.6.4") || choice.Head.Version != "0.6.4" {
+			t.Fatalf("from %s: %v %+v", step.installed.Version, err, choice.Release.Version)
+		}
+		if choice.Stone && !strings.Contains(choice.HeadRefused, "0.6.4 needs YouEye 0.6.3 or later") {
+			t.Fatalf("from %s: head refused as %q", step.installed.Version, choice.HeadRefused)
 		}
 	}
-	// Too old for every stone.
-	if _, err := ChooseCoreRelease(ctx, client, repo, "stable", "0.5.9"); !errors.Is(err, ErrNoInstallableRelease) {
+	// Too old for every stone. The message names versions only.
+	_, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.5.9", 50))
+	if !errors.Is(err, ErrNoInstallableRelease) || !strings.Contains(err.Error(), "no stepping stone fits 0.5.9") || strings.Contains(err.Error(), "dev.") {
 		t.Fatalf("expected no installable release: %v", err)
 	}
-	// A fresh install takes the head.
-	if _, release, _, err := FetchCoreRelease(ctx, client, repo, "stable"); err != nil || release.Build != "0.6.3-dev.2" {
+	// A fresh install takes the head, whatever its minimum_release.
+	if _, release, _, err := FetchCoreRelease(ctx, client, c.repo, "stable"); err != nil || release.Version != "0.6.4" {
 		t.Fatalf("head: %v", err)
 	}
-	// A head that needs a newer reader sends the box to a stone.
-	newRaw, newDigest := coreDoc(t, "0.6.4", "0.6.4-dev.1", "0.6.0", 2)
-	files["forge.example.test/owner/YouEye/releases/download/youeye-v0.6.4/core-release.json"] = newRaw
-	files["forge.example.test/owner/YouEye/releases/download/channel-stable/index.json"] = index("stable", `"youeye":{`+entry("0.6.4", "0.6.4-dev.1", newDigest)+`,"stepping_stones":[`+s1+`]}`)
-	client = serve(t, files, nil)
-	choice, err := ChooseCoreRelease(ctx, client, repo, "stable", "0.6.1-dev.1")
-	if err != nil || !choice.Stone || choice.Release.Build != "0.6.2-dev.1" || !strings.Contains(choice.HeadRefused, "reader") {
+	// An installed release that is not known is not a fresh install: it gets
+	// neither the head nor a stone.
+	if _, err := ChooseCoreRelease(ctx, client, c.repo, "stable", InstalledRelease{}); !errors.Is(err, ErrNoInstallableRelease) {
+		t.Fatalf("an unknown installed release was offered something: %v", err)
+	}
+}
+
+// The 0.6.11 → 0.6.12 → 0.6.13 walk as reader 2 sees it: the head is a
+// document without build names (minimum_reader 2, minimum_release a line), the
+// stone an old-shape document. Index entries carry the temporary build field
+// or not; it is never compared.
+func TestSteppingStoneWalkAcrossShapes(t *testing.T) {
+	c := newStoneChannel(t)
+	ctx := context.Background()
+	stone := c.stone("0.6.12", "0.6.12-dev.4", 1795100000, 1795100000, "0.6.5-dev.2", 1)
+	for _, entryBuild := range []string{"", "0.6.13", "9.9.9-dev.9"} {
+		head := c.entry("0.6.13", entryBuild, c.document("0.6.13", "", 1795200000, "0.6.12", 2))
+		client := c.publish("stable", head, stone)
+		// A 0.6.11 box (reader 2 only after the stone, but line 0.6.11 here).
+		choice, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.11", 1795042574))
+		if err != nil || !choice.Stone || choice.Release.Version != "0.6.12" || choice.Release.Build != "0.6.12-dev.4" || choice.Entry.Version != "0.6.12" {
+			t.Fatalf("entry build %q: stone not chosen: %v %+v", entryBuild, err, choice.Release.Version)
+		}
+		// On the stone (under any of its names) the head is installable.
+		for _, name := range []string{"0.6.12", "0.6.12-dev.4", "0.6.12-alpha.1"} {
+			choice, err = ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, name, 1795100000))
+			if err != nil || choice.Stone || choice.Release.Version != "0.6.13" || choice.Release.Build != "" {
+				t.Fatalf("entry build %q, on %s: %v %+v", entryBuild, name, err, choice.Release.Version)
+			}
+		}
+		// A dev box on a later build of the head's line still gets the head
+		// offered here; refusing the downgrade is the caller's check.
+		choice, err = ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.13-dev.7", 1795300000))
+		if err != nil || choice.Stone || choice.Release.Version != "0.6.13" {
+			t.Fatalf("later build of the line: %v", err)
+		}
+	}
+}
+
+func TestSteppingStoneChoiceRules(t *testing.T) {
+	ctx := context.Background()
+	// A head that needs a newer reader sends the box to a stone; a fresh
+	// install (an installer that is too old) gets the reader error.
+	c := newStoneChannel(t)
+	s1 := c.stone("0.6.2", "", 200, 200, "0.6.0", 2)
+	client := c.publish("stable", c.entry("0.6.4", "", c.document("0.6.4", "", 400, "0.6.0", 3)), s1)
+	choice, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.1", 100))
+	if err != nil || !choice.Stone || choice.Release.Version != "0.6.2" || !strings.Contains(choice.HeadRefused, "reader") {
 		t.Fatalf("reader stone: %v %+v", err, choice.HeadRefused)
+	}
+	if _, _, _, err := FetchCoreRelease(ctx, client, c.repo, "stable"); !errors.Is(err, ErrNeedsNewerReader) {
+		t.Fatalf("fresh install on a newer-reader head: %v", err)
+	}
+	// A stone that itself needs a newer reader is not offered.
+	c = newStoneChannel(t)
+	client = c.publish("stable", c.entry("0.6.4", "", c.document("0.6.4", "", 400, "0.6.0", 3)), c.stone("0.6.3", "", 300, 300, "0.6.0", 3))
+	if _, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.1", 100)); !errors.Is(err, ErrNoInstallableRelease) {
+		t.Fatalf("stone for a newer reader offered: %v", err)
+	}
+	// The index sequence of a stone must be its document's.
+	c = newStoneChannel(t)
+	client = c.publish("stable", c.entry("0.6.4", "", c.document("0.6.4", "", 400, "0.6.3", 2)), c.stone("0.6.3", "", 300, 301, "0.6.0", 2))
+	if _, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.1", 100)); err == nil || !strings.Contains(err.Error(), "differs from its channel index entry") {
+		t.Fatalf("stone with another sequence accepted: %v", err)
+	}
+	// A box never takes a stone it already has or has passed: with nothing
+	// newer that fits, it waits.
+	c = newStoneChannel(t)
+	client = c.publish("stable", c.entry("0.6.5", "", c.document("0.6.5", "", 500, "0.6.4", 2)),
+		c.stone("0.6.3", "", 300, 300, "0.6.0", 2), c.stone("0.6.2", "", 200, 0, "0.6.0", 2))
+	for _, installed := range []InstalledRelease{installedAt(t, "0.6.3", 300), installedAt(t, "0.6.3-dev.8", 350)} {
+		if choice, err := ChooseCoreRelease(ctx, client, c.repo, "stable", installed); !errors.Is(err, ErrNoInstallableRelease) {
+			t.Fatalf("from %s: took %s: %v", installed.Version, choice.Release.Version, err)
+		}
+	}
+	// The newest stone that fits is taken, whatever the order in the index.
+	choice, err = ChooseCoreRelease(ctx, client, c.repo, "stable", installedAt(t, "0.6.1", 100))
+	if err != nil || choice.Release.Version != "0.6.3" {
+		t.Fatalf("newest stone: %v %+v", err, choice.Release.Version)
+	}
+	// A document that names another version than its entry is refused.
+	c = newStoneChannel(t)
+	_, digest := coreDoc(t, "0.6.4-beta.1", "", 400, "0.6.0", 2)
+	raw, _ := coreDoc(t, "0.6.4-beta.1", "", 400, "0.6.0", 2)
+	c.files["forge.example.test/owner/YouEye/releases/download/youeye-v0.6.4/core-release.json"] = raw
+	client = c.publish("stable", c.entry("0.6.4", "", digest))
+	if _, _, _, err := FetchCoreRelease(ctx, client, c.repo, "stable"); err == nil || !strings.Contains(err.Error(), "the channel index 0.6.4") {
+		t.Fatalf("document of another version accepted: %v", err)
+	}
+}
+
+// From 0.6.13 an entry's build is a temporary copy of its version for readers
+// up to 0.6.11; this reader accepts entries with it, without it and with a
+// value it would not accept as a version, and reads a stone's sequence.
+func TestChannelIndexBuildIsOptionalAndIgnored(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	entry := func(extra string) string {
+		return `"youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.6.13","version":"0.6.13",` + extra + `"document":"core-release.json","sha256":"` + digest + `",
+		 "stepping_stones":[{"tag":"youeye-v0.6.12","version":"0.6.12","build":"0.6.12-dev.4","sequence":1795100000,"document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5-dev.2","minimum_reader":1},
+		  {"tag":"youeye-v0.6.11","version":"0.6.11","document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5","minimum_reader":1},
+		  {"tag":"youeye-v0.6.10","version":"0.6.10","sequence":-4,"document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5","minimum_reader":1}]},
+		"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.4","version":"0.6.4",` + extra + `"document":"product-release.json","sha256":"` + digest + `"}`
+	}
+	for _, extra := range []string{``, `"build":"0.6.13",`, `"build":"not a version",`} {
+		parsed, err := ParseChannelIndex([]byte(index("stable", entry(extra))))
+		if err != nil || len(parsed.Invalid) != 0 || len(parsed.Products) != 2 {
+			t.Fatalf("%q: %v %+v", extra, err, parsed.Invalid)
+		}
+		stones := parsed.Products["youeye"].SteppingStones
+		if len(stones) != 2 || stones[0].Sequence != 1795100000 || stones[0].Build != "0.6.12-dev.4" || stones[1].Sequence != 0 || stones[1].Build != "" {
+			t.Fatalf("%q: stones read wrongly: %+v", extra, stones)
+		}
 	}
 }
 

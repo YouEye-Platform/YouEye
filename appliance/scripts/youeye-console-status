@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-release=${YOUEYE_CONSOLE_RELEASE:-/usr/lib/youeye/appliance-release}
+receipt=${YOUEYE_CONSOLE_RECEIPT:-/var/lib/youeye-state/core-update/committed.json}
+selection=${YOUEYE_CONSOLE_SELECTION:-/var/lib/youeye-state/bootstrap/core-release.json}
 state=${YOUEYE_CONSOLE_STATE:-/var/lib/youeye-state/appliance-state.json}
 first_deploy=${YOUEYE_CONSOLE_FIRST_DEPLOY:-/var/lib/youeye-state/first-deploy/progress.json}
 first_complete=${YOUEYE_CONSOLE_FIRST_COMPLETE:-/var/lib/youeye-state/first-deploy/complete}
@@ -35,7 +36,11 @@ render() {
     [ -n "$ip_address" ] || ip_address=$(hostname -I 2>/dev/null | awk '{print $1}')
     case "$ip_address" in *[!0-9.]*) ip_address=starting ;; esac
 
-    image=$(json_value "$release" '.image_version')
+    # The installed release's version, never a build name: the committed
+    # receipt's, else (before the first commit) the version being installed.
+    release=$(json_value "$receipt" '.release.version')
+    [ -n "$release" ] || { release=$(json_value "$selection" '.version'); [ -z "$release" ] || release="$release (installing)"; }
+    release=$(safe_text "$release")
     slot=$(tr ' ' '\n' < "$cmdline" 2>/dev/null | sed -n 's/^root=PARTLABEL=YE-SYSTEM-\([AB]\)$/\1/p' | head -n 1 || true)
     [ -n "$slot" ] || slot=$(tr ' ' '\n' < "$cmdline" 2>/dev/null | sed -n 's/^youeye.system_slot=\([AB]\)$/\1/p' | head -n 1 || true)
     [ -n "$slot" ] || slot=$(json_value "$state" '.slots.current')
@@ -96,7 +101,11 @@ render() {
         if [ "$setup_completed" = true ] && [ -n "$domain" ]; then
             printf '  Server    https://%-45s\n' "$domain"
         fi
-        printf '  System    slot %-2s  image %-36s\n' "$slot" "${image:-unknown}"
+        if [ -n "$release" ]; then
+            printf '  System    YouEye %-36s slot %s\n' "$release" "$slot"
+        else
+            printf '  System    slot %s\n' "$slot"
+        fi
         if [ -s "$authorized_keys" ]; then
             printf '  Root SSH  ssh root@%-35s public key\n' "$ip_address"
         else

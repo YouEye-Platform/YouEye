@@ -160,6 +160,28 @@ and Language to every user, and Users, System, Network, Backup and About to admi
 DNS, proxy, remote access, containers, permissions, system health and SSH keys. Admin APIs check `session.isAdmin`,
 and changes also need a CSRF token (`X-CSRF-Token`).
 
+### The installed release
+
+What the box shows and reports as its YouEye version is the `version` of the System release document Spine
+accepted (`lib/releases/installed-release.ts`): `0.6.13-dev.5` on dev, `0.6.13-alpha.1`, `0.6.13-beta.1` or
+`0.6.13` for the same files promoted ([releases.md](releases.md#what-a-box-shows)). It is read from the recorded
+selection (`/var/lib/youeye-state/core-selection/core-release.json` in `youeye-control`), else from Spine's
+`GET /api/version` `release`. A version baked into a file (`version.json`, Spine's own `version`) is never shown.
+
+- **About** shows the version and a details line, `<version> · <short git tree>` (`0.6.13 · b39fe307`), with a Copy
+  button for support. Settings → System, Settings → Apps (Spine, Control Panel and UI), the UI's app list and
+  backups show release versions too; the AI page and service health show Pointer's release version.
+- **YouEye Names:** the heartbeat sends it as `youeyeVersion`.
+- **Apps:** the platform context (`lib/market/platform-env.ts`) carries it, and `requires.youeye` is checked
+  against it by line.
+- **The dashboard** cannot read State, so the Control Panel writes `/etc/youeye/release.json` (`{version,
+  source_tree}`, mode 0644) into `youeye-ui`. A publisher started by `instrumentation.ts` looks at the accepted
+  document every 60 s, reads the UI's copy and writes it when it differs (a core update, a promotion that only
+  renamed the release, or a UI container replaced by `apply-ui` after the new Control Panel started); after a failure
+  it retries at 30 s, doubling up to 30 minutes. The UI reports that version in its platform API and in the
+  telemetry export (`youeye_version`, [telemetry.md](telemetry.md)); without the file it falls back to its own
+  `version.json`, and a development server reports `development`.
+
 ## Data on the host
 
 | Path | Contents |
@@ -213,7 +235,11 @@ key and the backups cannot be read.
 
 Each archive is encrypted (`openssl` AES-256-CBC with PBKDF2). The set is then written to a restic repository on the
 drive, checked, and the local copy deleted. A failed set is deleted; it is never a recovery point. The set records
-the source's runtime kind, image, Spine, CP and UI versions and State/Data schema versions.
+the source's identity (`youeye.backup.source.v1`, `lib/backup/compatibility.ts`): runtime kind, image, Spine, the
+State/Data schema versions and, since 0.6.12, the installed releases as `release` (YouEye), `control_panel` and `ui`
+(the YouEye release with each part's own git tree) and `pointer` (its product release), each `{version, line,
+sequence, source_tree}`. The older build-name fields (`control_panel_version`, `ui_version`, `pointer_version`) are
+still written next to them until the Release cleanup. A backup shows the YouEye release version it was made by.
 
 **Schedule.** `POST /api/backup/media` with `action: schedule`: daily or weekly at a time (default 03:00), each app
 daily or weekly. The CP checks every minute whether a backup is due. `action: schedule, enabled: false` turns it
@@ -228,8 +254,11 @@ off. A manual backup: `POST /api/backup/core` with the key, the drive and the ap
 
 Rules:
 
-- The recovery point must be compatible: same runtime kind, and not made by a newer System (higher State or Data
-  schema). Update the box first in that case (`compatibility.ts`).
+- The recovery point must be compatible: same runtime kind, not made by a newer System (higher State or Data
+  schema), and not made by a newer Control Panel, UI or Pointer. Releases are compared by line and sequence (the
+  same git tree is the same software); a backup from before 0.6.12 has build names only and is compared by line,
+  and within one line by the old build rule only between two dev build names. Update the box first in that case
+  (`compatibility.ts`).
 - **Platform restore** (`restoreCore`) first makes a pre-restore backup of the current box, then restores the core
   (settings, secrets, databases, Caddy, Pi-hole) and the chosen apps, and restarts the CP. If it fails, it restores
   that pre-restore backup automatically.

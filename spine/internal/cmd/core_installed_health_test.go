@@ -343,3 +343,32 @@ func TestCopyFromAModifiedBox(t *testing.T) {
 		}
 	}
 }
+
+// The installed release decides stepping stones, by its key from the
+// committed receipt. Only a box without a receipt is a fresh install; a
+// receipt that cannot be read is an error, never "nothing installed" (which
+// would offer the channel head whatever its minimum_release).
+func TestCoreSelectionCarriesTheInstalledKey(t *testing.T) {
+	f := newCoreInstalledHealthFixture(t)
+	selection, err := currentCoreSelection()
+	if err != nil || !selection.FreshInstall || selection.Installed != (releasecache.ReleaseKey{}) {
+		t.Fatalf("a box without a receipt: %+v %v", selection, err)
+	}
+	coreReceiptRoot = f.manager.Root
+	selection, err = currentCoreSelection()
+	want := releasecache.ReleaseKey{Line: "0.6.1", Sequence: int64(f.receipt.Release.Sequence)}
+	if err != nil || selection.FreshInstall || selection.Installed != want || selection.InstalledVersion != f.receipt.Release.Version || selection.Channel != "dev" {
+		t.Fatalf("installed box: %+v %v", selection, err)
+	}
+	// The same box under a promoted name has the same key.
+	promoted := selection.WithInstalled(releasecache.CoreRelease{Version: "0.6.1-beta.1", Sequence: f.receipt.Release.Sequence})
+	if promoted.Installed != want || promoted.InstalledVersion != "0.6.1-beta.1" {
+		t.Fatalf("promoted name changed the key: %+v", promoted)
+	}
+	if err := os.WriteFile(filepath.Join(f.manager.Root, "committed.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if selection, err = currentCoreSelection(); err == nil || selection.FreshInstall {
+		t.Fatalf("an unreadable receipt passed for a fresh install: %+v %v", selection, err)
+	}
+}

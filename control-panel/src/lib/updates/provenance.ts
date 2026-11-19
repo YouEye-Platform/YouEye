@@ -13,6 +13,7 @@
  */
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
+import { releaseKey, type ReleaseKey } from '@/lib/version';
 
 const STORE_PATH = statePath('core-versions.json');
 
@@ -23,7 +24,7 @@ async function pointerProvenance(): Promise<CoreProvenance | null> {
   const {productRuntimeIdentity} = await import('../releases/product-projection');
   if (await productRuntimeIdentity('youeye-pointer') !== state.installed!.runtimeUUID) throw new Error('Pointer runtime differs from accepted release');
   const r = selected.release;
-  return {version:r.version,build:selected.build.build_version,tag:r.tag,branch:null,source:selected.repository,
+  return {version:r.version,key:releaseKey(r),manifest_sha256:selected.manifestSHA256,tag:r.tag,branch:null,source:selected.repository,
     artifact_sha256:selected.build.assets.find(a=>a.name === 'standalone.tar')!.sha256,updated_at:state.installed!.acceptedAt || ''};
 }
 
@@ -31,8 +32,10 @@ async function pointerProvenance(): Promise<CoreProvenance | null> {
 export interface CoreProvenance {
   /** Release name (display). */
   version: string;
-  /** Build version (X.Y.Z-dev.N): the only version that orders updates. */
-  build?: string | null;
+  /** Line and sequence of an installed product release: what orders updates (Pointer only). */
+  key?: ReleaseKey | null;
+  /** SHA-256 of the installed release document (Pointer only). */
+  manifest_sha256?: string | null;
   tag: string | null;
   branch: string | null;
   source: string | null;

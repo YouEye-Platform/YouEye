@@ -190,9 +190,11 @@ What the CP checks when it installs or updates a native app (`src/lib/market/nat
    entries, no hard links or special files, symbolic links only inside the package, and a `server.js`. It is
    hashed again right before it is deployed.
 
-Updates compare **builds**: a newer `X.Y.Z-dev.N` is an update; the same build under a promoted name only updates
-the release record. An update stops the app, replaces `/opt/app` with the new package, writes the env again,
-starts it and waits for its health check; a failure restores the checkpoint (see [market.md](market.md)).
+Updates compare releases by line, then the build's `sequence`, never by name
+([releases.md](releases.md#ordering-line-then-sequence)): a release with a higher key is an update; the same build
+under a promoted name only updates the release record. An update stops the app, replaces `/opt/app` with the new
+package, writes the env again, starts it and waits for its health check; a failure restores the checkpoint (see
+[market.md](market.md)).
 
 ## A new app from Canvas
 

@@ -13,6 +13,7 @@ import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { configureUIIdentitySSO } from '@/lib/identity/core-clients';
 import { removeOAuthClient } from '@/lib/identity/provider';
+import { installedRelease } from '@/lib/releases/installed-release';
 
 export interface UIStatus {
   installed: boolean;
@@ -60,7 +61,8 @@ export async function getUIStatus(): Promise<UIStatus> {
       installed: true,
       enabled: ui.enabled,
       containerStatus: ui.status,
-      version: ui.version,
+      // The installed release's version, never the build name baked into the UI.
+      version: (await installedRelease())?.version,
       ip: ui.ip,
       ssoConfigured,
       serviceActive,

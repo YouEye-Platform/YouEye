@@ -31,7 +31,7 @@ function verifiedRuntime(record: {receipt: InstalledProductReceipt; runtimeUUID:
   // The floor is never below the installed build; at the same build it names the same contents.
   const floor = floors.pointer;
   let consistent = false;
-  try { consistent = validProductFloor(floor) && compareToProductFloor(floor, selected) <= 0; } catch { /* same version, other build */ }
+  try { consistent = validProductFloor(floor) && compareToProductFloor(floor, selected, selected) <= 0; } catch { /* same version, other build */ }
   if (!consistent) throw new Error('Invalid Pointer release replay floor');
   return selected;
 }
@@ -63,6 +63,13 @@ export async function readPointerReleaseState(filePath = FILE): Promise<PointerR
     builtPointerRelease(state);
     return state;
   } finally { await file.close(); }
+}
+/** The version of Pointer's installed (or first-boot built) release, as the box shows it; null when unknown. */
+export async function installedPointerVersion(): Promise<string | null> {
+  try {
+    const state = await readPointerReleaseState();
+    return (pointerRelease(state) ?? builtPointerRelease(state))?.release.version ?? null;
+  } catch { return null; }
 }
 export async function savePointerReleaseState(state: PointerReleaseState, filePath = FILE): Promise<void> {
   pointerRelease(state);
@@ -137,7 +144,7 @@ export class PointerReleaseMetadataProvider implements AppUpdateProvider {
 export async function updateIdenticalPointerRelease(store: AppUpdateJournalStore, selected: VerifiedProductRelease, io = runtimeIO): Promise<boolean> {
   const before = await io.read(), original = pointerRelease(before);
   if (!original || !identicalProductPayloads(original,selected)) return false;
-  const next: PointerReleaseState = {...before,installed:{...before.installed!,receipt:productReceipt(selected),acceptedAt:new Date().toISOString()},floors:acceptProductSequence(before.floors,selected)};
+  const next: PointerReleaseState = {...before,installed:{...before.installed!,receipt:productReceipt(selected),acceptedAt:new Date().toISOString()},floors:acceptProductSequence(before.floors,selected,original)};
   pointerRelease(next);
   const artifacts = original.build.assets.filter(a=>a.name === 'standalone.tar').map(a=>a.sha256);
   await runAppUpdateTransaction(store, {

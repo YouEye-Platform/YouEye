@@ -169,7 +169,16 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		if err != nil {
 			return CoreActionObservation{}, err
 		}
-		if err = BindCoreImage(j.Previous.Release, current); err != nil {
+		// The running image is the installed release's image, and the image
+		// of the target is on record before anything is staged: every later
+		// step of this request (and the boot of a new slot) binds by it.
+		if err = r.ensureImageBinding(ctx, j.Previous.ManifestSHA256); err != nil {
+			return CoreActionObservation{}, err
+		}
+		if err = r.imageBinder().Bind(j.Previous.Release, current); err != nil {
+			return CoreActionObservation{}, err
+		}
+		if err = r.ensureImageBinding(ctx, j.ManifestSHA256); err != nil {
 			return CoreActionObservation{}, err
 		}
 		// The installed service trees are replaced, reused or left alone by
@@ -280,6 +289,12 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		}
 		return CoreActionObservation{State: "unknown", Evidence: "counted host boot requested; awaiting actual boot observation"}, nil
 	case "host-health":
+		// HostHealth and commit-host bind the running image from State or the
+		// cache. Neither may be all that stands between a booted new image and
+		// its commitment: a missing record is fetched again here.
+		if err := r.ensureTargetImageBinding(ctx, j); err != nil {
+			return CoreActionObservation{}, err
+		}
 		return coreActionPassed(r.HostHealth(ctx, j))
 	case "apply-spine":
 		if r.SpineTrial == nil {
@@ -476,7 +491,13 @@ func (r NativeCoreRuntime) Observe(ctx context.Context, j CoreJournal, s CoreSte
 		if err != nil {
 			return observation, err
 		}
-		if err = BindCoreImage(j.Target, current); err != nil {
+		// First check after the reboot. The Spine that staged this release
+		// may have left no image record (one up to 0.6.11 keeps none), and the
+		// cache may be gone: fetch the appliance member again before binding.
+		if err = r.ensureTargetImageBinding(ctx, j); err != nil {
+			return observation, err
+		}
+		if err = r.imageBinder().Bind(j.Target, current); err != nil {
 			return observation, err
 		}
 		return coreActionPassed("actual selected immutable host resumed in counted trial boot", nil)

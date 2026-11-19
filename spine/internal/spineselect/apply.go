@@ -35,7 +35,7 @@ func ApplyTrial(ctx context.Context, root, slot, src string, e Entry, hooks Tria
 		if err := hooks.Restart(ctx); err != nil {
 			return fmt.Errorf("%v; restarting the previous Spine failed: %w", cause, err)
 		}
-		return fmt.Errorf("Spine %s did not become healthy and was rolled back: %w", e.Version, cause)
+		return fmt.Errorf("Spine %s did not become healthy and was rolled back: %w", e.label(), cause)
 	}
 	if err := hooks.Restart(ctx); err != nil {
 		return fail(err)

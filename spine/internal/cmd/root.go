@@ -10,7 +10,6 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/logging"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
-	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // Version and BuildDate are set at build time via ldflags:
@@ -20,6 +19,10 @@ import (
 // Defaults here are used only for development builds.
 var Version = "0.0.0" // set at build time from YOUEYE_VERSION
 var BuildDate = "dev"
+
+// SourceTree is the git tree the binary was built from (set at build time
+// from YOUEYE_SOURCE_TREE; empty in development builds).
+var SourceTree = ""
 
 // Global configuration
 var cfg *config.Config
@@ -77,6 +80,7 @@ func init() {
 
 	// Version command flags
 	versionCmd.Flags().BoolVar(&versionCheckFlag, "check", false, "Check for available updates")
+	versionCmd.Flags().BoolVarP(&versionVerboseFlag, "verbose", "v", false, "add each part's git tree and sha256 and the image identity")
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "emit machine-readable runtime and component status")
 
 	// Infrastructure commands (existing)
@@ -116,7 +120,7 @@ func init() {
 }
 
 // versionCmd shows version info
-var versionCheckFlag bool
+var versionCheckFlag, versionVerboseFlag bool
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
@@ -128,36 +132,32 @@ var versionCmd = &cobra.Command{
 		}
 		output.Header("YouEye Versions")
 		if runtimeStatus.Kind == "appliance-image" {
-			// The installed release's name on its channel (0.6.2, 0.6.2-beta.1)
-			// and the build it is; the image line shows the image's own build.
-			if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
-				output.StatusLine("YouEye", receipt.Release.Version+" (build "+receipt.Release.Build+")", output.Cyan)
-			}
-			output.StatusLine("System image", runtimeStatus.ImageVersion+" (image-managed)", "")
-		}
-		if runtimeStatus.Kind == "appliance-image" {
-			// `version` runs in the seed; the slot may run a selected Spine from State.
-			if report, err := readSpineStatus(); err == nil {
-				running := report.Seed.Version + " (seed, baked into the image)"
-				if report.Running.Entry != nil {
-					running = report.Running.Entry.Version + " (" + report.Running.Role + ", on State, slot " + report.Slot + ")"
+			// The installed release's version, per part (or the release it was
+			// reused from); never a build name. The details add trees and digests.
+			if r, installing, err := installedRelease(); err == nil {
+				for _, line := range releaseVersionLines(r, installing, versionVerboseFlag) {
+					value := line.Value
+					switch line.Label {
+					case "Spine":
+						value = runningSpineVersion(&r)
+					case "Control Panel":
+						value = getControlPanelStatus(GetConfig())
+					}
+					output.StatusLine(line.Label, value, "")
 				}
-				output.StatusLine("Spine", running, output.Cyan)
-				output.StatusLine("Spine seed", report.Seed.Version, "")
 			} else {
-				output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+				output.StatusLine("YouEye", "no installed release recorded", output.Yellow)
+				output.StatusLine("Spine", runningSpineVersion(nil), "")
+				output.StatusLine("Control Panel", getControlPanelStatus(GetConfig()), "")
 			}
 		} else {
 			output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+			output.StatusLine("Control Panel", getControlPanelStatus(GetConfig()), "")
 		}
 
 		// Incus version
 		incusVer := getIncusVersion()
 		output.StatusLine("Incus", incusVer, "")
-
-		// Control Panel version
-		cpStatus := getControlPanelStatus(GetConfig())
-		output.StatusLine("Control Panel", cpStatus, "")
 
 		// App versions from unified endpoint
 		if controlClient != nil && controlClient.Available() && controlClient.HasToken() {

@@ -351,7 +351,7 @@ func TestCoreHandOverDecisionIsWritten(t *testing.T) {
 	j := handOverJournal(t)
 	target, _ := j.Target.Member("spine")
 	yes := func() ([]byte, error) { return canResumeAnswer(t, j, j.RequestID, true), nil }
-	handing := "handing request update-1 over to Spine " + target.BuildVersion + " (sha256 eeeeeeeeeeee)"
+	handing := "handing request update-1 over to Spine of YouEye " + strings.TrimPrefix(partVersion(j.Target, target), "from ") + " (sha256 eeeeeeeeeeee)"
 
 	// Handed over: the line is written before the exec. (The stub exec returns, which the real one does not.)
 	stubHandOver(t, target.Artifact.SHA256, yes, nil)

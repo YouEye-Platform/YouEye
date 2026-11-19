@@ -1,11 +1,15 @@
 package releasecache
 
-// A core release is a flat, immutable assembly. A member's BuildVersion
-// describes its original bytes. Build is the build version (X.Y.Z-dev.N) of
-// the whole selection: the dev release it was published as; only builds are
-// ordered. Version is the release's name on its channel (X.Y.Z-dev.N on dev,
-// X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z on stable): a promotion writes a new
-// document with a new Version and identical members, never new files.
+// A core release is a flat, immutable assembly. Version is the release's name
+// on its channel (X.Y.Z-dev.N on dev, X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z on
+// stable): a promotion writes a new document with a new Version and identical
+// members, never new files. Releases are ordered by their line (X.Y.Z) and
+// then by Sequence, the build's publish time, which every promotion keeps
+// (order.go); names are labels and are never compared.
+//
+// Documents up to 0.6.12 also carry Build (the dev name of the build) and a
+// BuildVersion per member. Both are optional, checked when present and used
+// for nothing: this reader (2) reads both shapes until the Release cleanup.
 import (
 	"bytes"
 	"crypto/sha256"
@@ -20,7 +24,11 @@ import (
 )
 
 const CoreReleaseSchema = "youeye.core-release.v1"
-const CoreReleaseReader = 1
+
+// CoreReleaseReader is this reader's number. A document whose minimum_reader
+// is higher needs a newer reader; reader 2 reads documents with and without
+// build names.
+const CoreReleaseReader = 2
 
 // ErrNeedsNewerReader marks a release document this reader is too old for:
 // its minimum_reader is higher, or it names a role this reader doesn't know.
@@ -35,7 +43,7 @@ const CoreReleaseAuthority = "digest"
 type CoreRelease struct {
 	Schema        string            `json:"schema"`
 	Version       string            `json:"version"`
-	Build         string            `json:"build"`
+	Build         string            `json:"build,omitempty"`
 	Tag           string            `json:"tag"`
 	SourceTree    string            `json:"source_tree"`
 	Sequence      uint64            `json:"sequence"`
@@ -68,7 +76,7 @@ type CoreBlob struct {
 
 type CoreMember struct {
 	Role         string    `json:"role"`
-	BuildVersion string    `json:"build_version"`
+	BuildVersion string    `json:"build_version,omitempty"`
 	SourceTree   string    `json:"source_tree"`
 	InputSHA256  string    `json:"input_sha256"`
 	Artifact     CoreBlob  `json:"artifact"`
@@ -81,8 +89,8 @@ var installationHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 var coreVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$`)
 
-// ValidCoreVersion accepts X.Y.Z[-token.N]: builds are X.Y.Z-dev.N, release
-// names X.Y.Z-dev.N, X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z.
+// ValidCoreVersion accepts X.Y.Z[-token.N]: a line X.Y.Z, or a release name
+// X.Y.Z-dev.N, X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z.
 func ValidCoreVersion(value string) bool {
 	m := coreVersionPattern.FindStringSubmatch(value)
 	if m == nil || len(m[4]) > 63 {
@@ -98,47 +106,6 @@ func ValidCoreVersion(value string) bool {
 		}
 	}
 	return true
-}
-
-// CompareVersions orders build versions X.Y.Z-dev.N numerically: X, Y, Z,
-// then N. Call it with builds only, never with release names (alpha.1 is not
-// "newer" than dev.5). A version without a suffix sorts after every suffixed
-// one of its line. Invalid versions sort first.
-func CompareVersions(a, b string) int {
-	key := func(v string) []uint64 {
-		m := coreVersionPattern.FindStringSubmatch(v)
-		if m == nil {
-			return nil
-		}
-		out := make([]uint64, 5)
-		for i, part := range []string{m[1], m[2], m[3]} {
-			out[i], _ = strconv.ParseUint(part, 10, 64)
-		}
-		if m[5] == "" {
-			out[3] = 1
-		} else {
-			out[4], _ = strconv.ParseUint(m[5], 10, 64)
-		}
-		return out
-	}
-	ka, kb := key(a), key(b)
-	switch {
-	case ka == nil && kb == nil:
-		return 0
-	case ka == nil:
-		return -1
-	case kb == nil:
-		return 1
-	}
-	for i := range ka {
-		if ka[i] != kb[i] {
-			if ka[i] < kb[i] {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
 }
 
 // ValidGitTree accepts a 40-hex git tree id, the build identity.
@@ -179,8 +146,11 @@ func (r CoreRelease) Validate() error {
 	if r.MinimumReader > CoreReleaseReader {
 		return fmt.Errorf("%w: core release needs reader %d", ErrNeedsNewerReader, r.MinimumReader)
 	}
-	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || !ValidCoreVersion(r.Build) || r.Tag != "youeye-v"+r.Version || r.MinimumReader < 1 {
+	if r.Schema != CoreReleaseSchema || !ValidCoreVersion(r.Version) || r.Tag != "youeye-v"+r.Version || r.MinimumReader < 1 {
 		return fmt.Errorf("unsupported core release identity or reader")
+	}
+	if r.Build != "" && !ValidCoreVersion(r.Build) {
+		return fmt.Errorf("unsupported core release build name")
 	}
 	if r.Authority != CoreReleaseAuthority {
 		return fmt.Errorf("unsupported core release authority")
@@ -215,7 +185,7 @@ func (r CoreRelease) Validate() error {
 			return fmt.Errorf("duplicate core role %q", member.Role)
 		}
 		required[member.Role] = true
-		if !ValidCoreVersion(member.BuildVersion) || !ValidGitTree(member.SourceTree) || !installationHash.MatchString(member.InputSHA256) {
+		if (member.BuildVersion != "" && !ValidCoreVersion(member.BuildVersion)) || !ValidGitTree(member.SourceTree) || !installationHash.MatchString(member.InputSHA256) {
 			return fmt.Errorf("incomplete %s provenance", member.Role)
 		}
 		if err := member.Artifact.validate(); err != nil {
@@ -263,6 +233,11 @@ func (r CoreRelease) Validate() error {
 // and of where its files live: the compatibility block and every member with
 // blob Release fields cleared. Two documents of the same build (dev, alpha,
 // beta, stable) have the same payload digest.
+//
+// Boxes keep this digest (the version floor) and compare it across Spines, so
+// the JSON hashed here is frozen: field names, their order and which fields
+// are omitted when empty in CoreCompatibility, CoreMember and CoreBlob must
+// not change for a document that exists (TestPayloadDigestIsFrozen).
 func (r CoreRelease) PayloadSHA256() string {
 	members := make([]CoreMember, len(r.Members))
 	for i, m := range r.Members {

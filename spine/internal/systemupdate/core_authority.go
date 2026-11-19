@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"reflect"
 
-	"github.com/youeye-platform/YouEye/appliance/ordering"
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
@@ -34,21 +33,17 @@ func coreBeforeCheckpoint(j CoreJournal) bool {
 	return true
 }
 
-func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.StateRecord, installedBuild string) error {
+func validateCoreCompatibility(r releasecache.CoreRelease, state appliance.StateRecord, installedVersion string) error {
 	c := r.Compatibility
 	if state.SchemaVersion < c.StateMin || state.SchemaVersion > c.StateMax || state.DataSchemaVersion < c.DataMin || state.DataSchemaVersion > c.DataMax {
 		return fmt.Errorf("core release is incompatible with persistent State or Data")
 	}
-	minimum, err := ordering.ParseVersion(c.MinimumRelease)
-	if err != nil {
-		return err
-	}
-	installed, err := ordering.ParseVersion(installedBuild)
-	if err != nil {
-		return err
-	}
-	if ordering.CompareVersion(minimum, installed) > 0 {
-		return fmt.Errorf("core release requires a newer installed bridge release")
+	// minimum_release is a line (0.6.12); a document up to 0.6.12 names a build
+	// (0.6.5-dev.2), read as its line. Any release of that line or a later one
+	// may install r.
+	if !releasecache.MinimumReleaseMet(installedVersion, c.MinimumRelease) {
+		minimum, _ := releasecache.LineOfVersion(c.MinimumRelease)
+		return fmt.Errorf("YouEye %s needs YouEye %s or later; this box has %s", r.Version, minimum, installedVersion)
 	}
 	for _, capability := range c.Capabilities {
 		if capability != "core-release-v1" {
@@ -105,7 +100,7 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	if err != nil {
 		return err
 	}
-	return validateCoreCompatibility(r, state, j.Previous.Release.Build)
+	return validateCoreCompatibility(r, state, j.Previous.Release.Version)
 }
 
 // AuthorizeTarget checks the frozen, digest-bound target. The channel head is

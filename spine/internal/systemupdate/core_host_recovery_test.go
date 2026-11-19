@@ -76,6 +76,8 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 		t.Fatal(err)
 	}
 	f.manager.config.CoreStatePath = cm.Root
+	bindImageForTest(t, cm.Root, previous.Release, testApplianceManifest("0.6.0-dev.26", baselineCommit))
+	bindImageForTest(t, cm.Root, target, testApplianceManifest("0.6.0-dev.27", targetCommit))
 	host, err := loadJournal(f.manager.config.JournalPath)
 	if err != nil {
 		t.Fatal(err)

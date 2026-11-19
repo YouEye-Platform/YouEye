@@ -1,20 +1,19 @@
 /**
  * LXD App Version & Update Checking (UI and managed Pointer)
  *
- * - UI: a member of the accepted System release. Its version is that
- *   member's build version; it updates only with the System release.
+ * - UI: a member of the accepted System release; it shows that release's
+ *   version and updates only with the System release.
  * - Pointer: installed release from its accepted product-release receipt;
- *   the candidate is the `pointer` entry of the box's channel index. Builds
- *   are compared (entry `build` vs the installed build version), never
- *   release names. A box never downgrades: an older channel head is
- *   reported, not offered.
+ *   the candidate is the release the `pointer` entry of the box's channel
+ *   index names. Releases are ordered by line and sequence, never by name.
+ *   A box never downgrades: an older channel head is reported, not offered.
  *
  * Results are cached in memory with a configurable TTL.
  */
 
-import { compareVersions } from '@/lib/version';
-import { describeReleaseError, readChannelIndex, type ChannelEntry } from '@/lib/releases/channel-index';
-import { selectedCoreRole } from '@/lib/releases/core-release';
+import { compareReleases, releaseKey, type ReleaseKey } from '@/lib/version';
+import { describeReleaseError, readChannelIndex, resolveChannelEntry } from '@/lib/releases/channel-index';
+import { loadSelectedCore } from '@/lib/releases/core-release';
 import { getCoreProvenance } from '@/lib/updates/provenance';
 import { APP_DEFINITIONS, type AppDefinition } from './definitions';
 
@@ -66,34 +65,48 @@ export function clearLxdUpdateCache(appId: string): void {
 
 async function check(appDef: AppDefinition): Promise<LxdUpdateResult> {
   if (appDef.id === 'ui') {
-    const version = selectedCoreRole('ui').member.build_version;
+    const version = loadSelectedCore().version;
     return { appId: appDef.id, installedVersion: version, latestVersion: version, hasUpdate: false };
   }
   if (appDef.id !== 'pointer') {
     return { appId: appDef.id, installedVersion: undefined, latestVersion: undefined, hasUpdate: false };
   }
-  const installed = await getCoreProvenance('app:pointer');
-  const entry = (await readChannelIndex()).index.products.pointer;
-  return pointerUpdateState(installed ? { version: installed.version, build: installed.build ?? undefined } : undefined, entry);
+  const provenance = await getCoreProvenance('app:pointer');
+  const installed: PointerInstalled | undefined = provenance
+    ? { version: provenance.version, key: provenance.key ?? undefined, manifestSHA256: provenance.manifest_sha256 ?? undefined } : undefined;
+  try {
+    const entry = (await readChannelIndex()).index.products.pointer;
+    if (!entry) return pointerUpdateState(installed, undefined);
+    // The installed document needs no download; any other is read for its line and sequence.
+    const key = installed?.key && entry.sha256 === installed.manifestSHA256
+      ? installed.key : releaseKey((await resolveChannelEntry('pointer', entry)).release);
+    return pointerUpdateState(installed, { version: entry.version, tag: entry.tag, key });
+  } catch (error) {
+    // The channel could not be read: Pointer still shows what is installed.
+    return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false, error: describeReleaseError(error) };
+  }
 }
 
+type PointerInstalled = { version: string; key?: ReleaseKey; manifestSHA256?: string };
+type PointerCandidate = { version: string; tag: string; key: ReleaseKey };
+
 /**
- * Pointer's update state from its installed release and the channel entry.
- * Only builds are ordered. The same build under another release name (the
- * box changed channel, or the build was promoted) is a metadata-only update
- * that renames the installed release; it is never behind. An install without
- * a recorded build (an older provenance record) is offered the channel's
- * release.
+ * Pointer's update state from its installed release and the channel's.
+ * Releases are ordered by line and sequence. The same build under another
+ * release name (the box changed channel, or the build was promoted) is a
+ * metadata-only update that renames the installed release; it is never
+ * behind. An install without a recorded release (an older provenance record)
+ * is offered the channel's release.
  */
-export function pointerUpdateState(installed: { version: string; build?: string } | undefined, entry: ChannelEntry | undefined): LxdUpdateResult {
-  if (!entry) return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false };
-  const order = installed?.build ? compareVersions(entry.build, installed.build) : 1;
+export function pointerUpdateState(installed: PointerInstalled | undefined, candidate: PointerCandidate | undefined): LxdUpdateResult {
+  if (!candidate) return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false };
+  const order = installed?.key ? compareReleases(candidate.key, installed.key) : 1;
   return {
     appId: 'pointer',
     installedVersion: installed?.version,
-    latestVersion: entry.version,
-    latestTag: entry.tag,
-    hasUpdate: order > 0 || order === 0 && entry.version !== installed?.version,
+    latestVersion: candidate.version,
+    latestTag: candidate.tag,
+    hasUpdate: order > 0 || order === 0 && candidate.version !== installed?.version,
     behind: order < 0 || undefined,
   };
 }

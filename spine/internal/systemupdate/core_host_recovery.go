@@ -78,10 +78,10 @@ func (m *Manager) RecoverCoreHost(ctx context.Context, request string, observeOn
 		return unknown, fmt.Errorf("running host matches neither retained side of recovery")
 	}
 	if previousBoot {
-		if err = BindCoreImage(j.Previous.Release, current); err != nil {
+		if err = m.imageBinder().Bind(j.Previous.Release, current); err != nil {
 			return unknown, err
 		}
-	} else if err = BindCoreImage(j.Target, current); err != nil {
+	} else if err = m.imageBinder().Bind(j.Target, current); err != nil {
 		return unknown, err
 	}
 	path := filepath.Join(cm.Root, "host-recovery", fmt.Sprintf("%x.json", sha256.Sum256([]byte(request))))

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
@@ -341,12 +343,17 @@ func addInstalledReleaseChecks(manifest appliance.Manifest, add func(string, str
 	}
 }
 
+// installedReleaseIdentity is what an installed service tree says about
+// itself (version.json: Version, and SourceTree in builds from 0.6.12 on) and
+// the artifact digest recorded when it was installed.
 type installedReleaseIdentity struct {
 	Version        string
+	SourceTree     string
 	ArtifactSHA256 string
 }
 
-var firstDeployPackageVersion = containerPackageVersion
+// firstDeployPackageIdentity reads a service tree's version.json. Tests replace it.
+var firstDeployPackageIdentity = containerPackageIdentity
 
 type firstDeployReleaseComponent struct {
 	name      string
@@ -382,9 +389,15 @@ func firstDeploymentServiceComponents(image appliance.Manifest) (appliance.Manif
 	return image, components, nil
 }
 
+// validateInstalledReleaseIdentity compares an installed service tree with the
+// selected release member: the git tree it was built from and the artifact
+// digest. A tree built before 0.6.12 does not say its tree and is compared by
+// version with the member's build name (expected.Version, empty when the
+// document carries none).
 func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, installed installedReleaseIdentity) error {
-	if strings.TrimSpace(installed.Version) != expected.Version {
-		return fmt.Errorf("%s version %q does not match selected release version %q", name, installed.Version, expected.Version)
+	identity := container.InstalledIdentity{Version: strings.TrimSpace(installed.Version), SourceTree: strings.ToLower(strings.TrimSpace(installed.SourceTree))}
+	if err := identity.MatchesMember(releasecache.CoreMember{BuildVersion: expected.Version, SourceTree: expected.SourceTree}); err != nil {
+		return fmt.Errorf("%s is not the selected release's: %v", name, err)
 	}
 	if strings.ToLower(strings.TrimSpace(installed.ArtifactSHA256)) != expected.ArtifactSHA256 {
 		return fmt.Errorf("%s artifact digest does not match the selected release", name)
@@ -415,9 +428,9 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		add("System core provenance", "pass", "the running Spine is the seed or the slot's selected Spine")
 	}
 	for _, component := range components {
-		version := firstDeployPackageVersion(component.container, component.appDir)
+		identity := firstDeployPackageIdentity(component.container, component.appDir)
 		provenance, ok := update.GetProvenance(component.key)
-		installed := installedReleaseIdentity{Version: version}
+		installed := installedReleaseIdentity{Version: identity.Version, SourceTree: identity.SourceTree}
 		if ok {
 			installed.ArtifactSHA256 = provenance.ArtifactSHA256
 		}
@@ -426,24 +439,18 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
-			add(component.name+" provenance", "pass", "the installed version and digest match the selected release")
+			add(component.name+" provenance", "pass", "the installed source tree and digest match the selected release")
 		}
 	}
 }
 
-func containerPackageVersion(containerName, appDir string) string {
-	// version.json is written by the build from YOUEYE_VERSION.
+func containerPackageIdentity(containerName, appDir string) container.InstalledIdentity {
+	// version.json is written by the build.
 	raw, err := exec.Command("incus", "exec", containerName, "--", "cat", filepath.Join(appDir, "version.json")).Output()
 	if err != nil || len(raw) > 1<<20 {
-		return ""
+		return container.InstalledIdentity{}
 	}
-	var manifest struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(raw, &manifest) != nil {
-		return ""
-	}
-	return strings.TrimSpace(manifest.Version)
+	return container.ParseInstalledIdentity(raw)
 }
 
 func fileSHA256(path string) (string, error) {

@@ -1,10 +1,18 @@
 /**
- * Canonical X.Y.Z[-token.N] release identities plus retained numeric versions.
- * Builds are X.Y.Z-dev.N; releases are named X.Y.Z-dev.N, X.Y.Z-alpha.N,
- * X.Y.Z-beta.N or X.Y.Z. Only build versions are ever ordered; a release
- * name is for display and tags.
- * Source/channel authority is selected before comparison. The shared vectors
- * in spine/internal/version/testdata/vectors.json verify Go/TypeScript parity.
+ * Versions in the Control Panel.
+ *
+ * Releases (YouEye, native apps, Pointer) are ordered by one rule, the same as
+ * Go's `releasecache.CompareReleases`: the line `X.Y.Z` numerically, then the
+ * build's `sequence` (its publish time, kept by every promotion). Release names
+ * (`X.Y.Z-dev.N`, `-alpha.N`, `-beta.N`, `X.Y.Z`) are labels and never decide;
+ * an old-shape document's `build` is ignored. `compareReleases` is that rule;
+ * the shared vectors in releasecache/testdata/release-order.json verify Go and
+ * TypeScript parity (tests/version-vectors.spec.ts).
+ *
+ * `compareVersions` orders other version strings (Market app manifests); for a
+ * release it is only the old build rule, used for records written before
+ * releases carried a sequence. The vectors in
+ * spine/internal/version/testdata/vectors.json check it.
  */
 
 /** Canonical release identity. Source/channel policy is checked before ordering. */
@@ -15,6 +23,68 @@ export function parseReleaseVersion(value: string): ReleaseVersion | null {
   const numbers = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[5] ?? 0)];
   if (!numbers.every(Number.isSafeInteger)) return null;
   return { core: [numbers[0], numbers[1], numbers[2]], token: match[4] ?? '', counter: numbers[3] };
+}
+
+/** The line `X.Y.Z` of a release version (`X.Y.Z` or `X.Y.Z-label.N`); null when it is not one. */
+export function releaseLine(version: string): string | null {
+  const parsed = typeof version === 'string' ? parseReleaseVersion(version) : null;
+  return parsed ? parsed.core.join('.') : null;
+}
+
+/** Order of two lines (`X.Y.Z`, or release versions read as their line), numerically. Throws on anything else. */
+export function compareLines(a: string, b: string): number {
+  const left = parseReleaseVersion(a)?.core, right = parseReleaseVersion(b)?.core;
+  if (!left || !right) throw new Error(`Not a release line: ${JSON.stringify(left ? b : a)}`);
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+  return 0;
+}
+
+/** What orders a release: its line and the build's sequence. */
+export type ReleaseKey = { line: string; sequence: number };
+/** A release document (`version`, `sequence`) or a recorded key (`line`, `sequence`). */
+export type ReleaseOrderInput = { version: string; sequence: number } | ReleaseKey;
+
+/** The key of a release document or record. Throws when it has no valid line or sequence. */
+export function releaseKey(release: ReleaseOrderInput): ReleaseKey {
+  const line = releaseLine('line' in release ? release.line : release.version);
+  if (!line || !Number.isSafeInteger(release.sequence) || release.sequence < 1) throw new Error('Release has no valid line and sequence');
+  return { line, sequence: release.sequence };
+}
+
+export function validReleaseKey(value: unknown): value is ReleaseKey {
+  const key = value as Partial<ReleaseKey> | null;
+  return !!key && typeof key === 'object' && typeof key.line === 'string' && /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(key.line)
+    && Number.isSafeInteger(key.sequence) && key.sequence! >= 1;
+}
+
+/**
+ * Order of two releases: the line, then the build's sequence. Names never
+ * decide. 0 means the same build (whatever channel names it); the caller then
+ * requires the same payload.
+ */
+export function compareReleases(a: ReleaseOrderInput, b: ReleaseOrderInput): number {
+  const left = releaseKey(a), right = releaseKey(b);
+  return compareLines(left.line, right.line) || Math.sign(left.sequence - right.sequence);
+}
+
+/**
+ * Whether a release (`installed`) meets a line floor (`minimum`): a document's
+ * `minimum_release` or an app's `requires.youeye`. Compared by line only; an
+ * old-shape value (`0.6.5-dev.2`) is read as its line. False when either is
+ * not a release version (like Go), never a throw.
+ */
+export function meetsMinimumRelease(installed: string, minimum: string): boolean {
+  const left = releaseLine(installed), right = releaseLine(minimum);
+  return !!left && !!right && compareLines(left, right) >= 0;
+}
+
+/**
+ * Whether a value is a build name (`X.Y.Z-dev.N`), the only release names the
+ * old build rule (`compareVersions`) may order against each other. A promoted
+ * name (`-alpha.N`, `-beta.N`, `X.Y.Z`) or a line is a label.
+ */
+export function isBuildName(value: string | undefined): value is string {
+  return typeof value === 'string' && parseReleaseVersion(value)?.token === 'dev';
 }
 
 function comparisonParts(value: string): { core: number[]; token: string; counter: number } {
@@ -61,10 +131,9 @@ export function compareVersions(a: string, b: string): number {
     if (aVal > bVal) return 1;
   }
 
-  // The suffix token never orders builds: callers compare build versions
-  // (X.Y.Z-dev.N), never release names, so N decides within a line. A version
-  // without a suffix sorts after every suffixed one of its line. Matches
-  // releasecache.CompareVersions.
+  // The old build rule: the suffix token never decides, N does within a line,
+  // and a version without a suffix sorts after every suffixed one of its line.
+  // Releases are ordered by compareReleases instead.
   if (!left.token !== !right.token) return left.token ? -1 : 1;
   return Math.sign(left.counter - right.counter);
 }

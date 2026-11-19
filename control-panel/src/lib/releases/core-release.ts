@@ -18,12 +18,17 @@ import { parseReleaseVersion } from '../version';
 export type CoreBlob = { name: string; sha256: string; size_bytes: number; release?: string };
 export type CoreRole = 'cp' | 'ui';
 export type CoreMember = {
-  role: string; build_version: string; source_tree: string; input_sha256: string; depends_on?: string[];
+  /** Old shape (up to 0.6.12) only: the build the member came from. Never shown, never ordered. */
+  role: string; build_version?: string; source_tree: string; input_sha256: string; depends_on?: string[];
   artifact: CoreBlob; build_inputs?: CoreBlob;
 };
 export type CoreRelease = {
-  /** `version` names the release (display, tag); `build` is the build version it carries (ordering). */
-  schema: 'youeye.core-release.v1'; version: string; build: string; tag: string; source_tree: string; sequence: number;
+  /**
+   * `version` names the release (display, tag). Releases are ordered by line
+   * and `sequence` (lib/version.ts `compareReleases`). `build` is the old
+   * shape's build name (up to 0.6.12): validated when present, never used.
+   */
+  schema: 'youeye.core-release.v1'; version: string; build?: string; tag: string; source_tree: string; sequence: number;
   minimum_reader: number; authority: 'digest';
   compatibility: { state_min: number; state_max: number; data_min: number; data_max: number; minimum_release: string; capabilities: string[] };
   members: CoreMember[];
@@ -59,8 +64,15 @@ export function releaseAssetURL(repository: string, tag: string, blob: { name: s
   return downloadBase ? `${downloadBase}/${path}` : `${repository}/releases/download/${path}`;
 }
 
-/** Highest document reader this Control Panel implements (core and product releases). */
-export const RELEASE_READER = 1;
+/**
+ * Highest document reader this Control Panel implements (core and product
+ * releases). Reader 2 reads both shapes: old documents (with `build` and
+ * member `build_version`, `minimum_reader: 1`) and new ones (without them,
+ * `minimum_reader: 2`).
+ */
+export const RELEASE_READER = 2;
+const validReader = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 1 && (n as number) <= RELEASE_READER;
+const optionalReleaseVersion = (v: unknown) => v === undefined || typeof v === 'string' && !!parseReleaseVersion(v);
 /** A release document written for a newer reader (higher `minimum_reader`, or an unknown role). */
 export class ReleaseNeedsNewerReader extends Error { override name = 'ReleaseNeedsNewerReader'; }
 
@@ -105,7 +117,7 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
   object(r);
   if (r.schema !== 'youeye.core-release.v1') throw new Error('Unsupported core release schema');
   if (Number.isSafeInteger(r.minimum_reader) && r.minimum_reader > RELEASE_READER) throw new ReleaseNeedsNewerReader(`Core release needs reader ${r.minimum_reader}`);
-  if (r.authority !== 'digest' || !parseReleaseVersion(r.version) || typeof r.build !== 'string' || !parseReleaseVersion(r.build) || r.tag !== `youeye-v${r.version}` || r.minimum_reader !== 1 || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid core identity');
+  if (r.authority !== 'digest' || !parseReleaseVersion(r.version) || !optionalReleaseVersion(r.build) || r.tag !== `youeye-v${r.version}` || !validReader(r.minimum_reader) || !validSourceTree(r.source_tree) || !Number.isSafeInteger(r.sequence) || r.sequence < 1) throw new Error('Invalid core identity');
   const c = r.compatibility;
   object(c);
   if (![c.state_min,c.state_max,c.data_min,c.data_max].every(n => Number.isSafeInteger(n) && n > 0) || c.state_min > c.state_max || c.data_min > c.data_max || !parseReleaseVersion(c.minimum_release) || !Array.isArray(c.capabilities) || !c.capabilities.includes('core-release-v1') || c.capabilities.some(x => typeof x !== 'string' || !x) || new Set(c.capabilities).size !== c.capabilities.length) throw new Error('Unsupported core compatibility');
@@ -114,7 +126,7 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
   for (const m of r.members) {
     object(m);
     if (!ROLES.includes(m.role)) throw new ReleaseNeedsNewerReader(`Core release names unknown role ${String(m.role).slice(0, 40)}`);
-    if (seen.has(m.role) || !parseReleaseVersion(m.build_version) || !validSourceTree(m.source_tree) || !hash(m.input_sha256)) throw new Error('Invalid core member');
+    if (seen.has(m.role) || !optionalReleaseVersion(m.build_version) || !validSourceTree(m.source_tree) || !hash(m.input_sha256)) throw new Error('Invalid core member');
     const blob = (b: CoreBlob) => {
       object(b);
       if (!validAssetName(b.name) || !hash(b.sha256) || !Number.isSafeInteger(b.size_bytes) || b.size_bytes <= 0 || b.release !== undefined && !canonicalCoreTag(b.release)) throw new Error('Invalid exact core blob');

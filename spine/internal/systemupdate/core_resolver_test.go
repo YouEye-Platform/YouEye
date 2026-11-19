@@ -25,7 +25,7 @@ func TestCoreResolverReadsChannelIndexOnly(t *testing.T) {
 	}
 	repository := "https://forge.example/owner/YouEye"
 	index, _ := json.Marshal(releasecache.ChannelIndex{Schema: releasecache.ChannelIndexSchema, Channel: "dev", PublishedAt: "2026-11-12T10:00:00Z", Products: map[string]releasecache.ChannelEntry{
-		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Build: r.Build, Document: "core-release.json", SHA256: digest},
+		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Document: "core-release.json", SHA256: digest},
 	}})
 	files := map[string][]byte{
 		repository + "/releases/download/channel-dev/index.json":          index,
@@ -46,7 +46,7 @@ func TestCoreResolverReadsChannelIndexOnly(t *testing.T) {
 		return &http.Response{StatusCode: code, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Header: http.Header{}, Request: req}, nil
 	})}
 	ctx := context.Background()
-	selection := CoreReleaseSelection{Repository: repository, Channel: "dev"}
+	selection := CoreReleaseSelection{Repository: repository, Channel: "dev", FreshInstall: true}
 	host, got, gotDigest, err := ResolveCoreRelease(ctx, client, selection)
 	if err != nil || gotDigest != digest || got.Version != r.Version || !bytes.Equal(host.Raw, raw) {
 		t.Fatal(got.Version, gotDigest, err)
@@ -57,7 +57,7 @@ func TestCoreResolverReadsChannelIndexOnly(t *testing.T) {
 		}
 	}
 	// A channel with no index yet is an error, not an empty success.
-	if _, _, _, err := ResolveCoreRelease(ctx, client, CoreReleaseSelection{Repository: repository, Channel: "alpha"}); !errors.Is(err, releasecache.ErrNotFound) {
+	if _, _, _, err := ResolveCoreRelease(ctx, client, CoreReleaseSelection{Repository: repository, Channel: "alpha", FreshInstall: true}); !errors.Is(err, releasecache.ErrNotFound) {
 		t.Fatal("missing channel index", err)
 	}
 	// The document must match the index digest.
@@ -89,7 +89,7 @@ func TestDownloadBaseIsRecordedAndUsed(t *testing.T) {
 	t.Cleanup(func() { DownloadBasesPath, BoxRepository = oldPath, oldRepo })
 	repository, base := "https://forge.example/owner/YouEye", "https://mirror.example/files"
 	index, _ := json.Marshal(releasecache.ChannelIndex{Schema: releasecache.ChannelIndexSchema, Channel: "dev", PublishedAt: "2026-11-12T10:00:00Z", Products: map[string]releasecache.ChannelEntry{
-		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Build: r.Build, Document: "core-release.json", SHA256: digest, DownloadBase: base},
+		"youeye": {Repository: repository, Tag: r.Tag, Version: r.Version, Document: "core-release.json", SHA256: digest, DownloadBase: base},
 	}})
 	files := map[string][]byte{
 		repository + "/releases/download/channel-dev/index.json": index,
@@ -102,7 +102,7 @@ func TestDownloadBaseIsRecordedAndUsed(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Header: http.Header{}, Request: req}, nil
 	})}
-	if _, _, _, err := ResolveCoreRelease(context.Background(), client, CoreReleaseSelection{Repository: repository, Channel: "dev"}); err != nil {
+	if _, _, _, err := ResolveCoreRelease(context.Background(), client, CoreReleaseSelection{Repository: repository, Channel: "dev", FreshInstall: true}); err != nil {
 		t.Fatal(err)
 	}
 	ui, _ := r.Member("ui")

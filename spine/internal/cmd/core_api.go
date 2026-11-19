@@ -24,7 +24,7 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 	if err != nil {
 		return out, err
 	}
-	policy.InstalledBuild = installed.Release.Build
+	policy = policy.WithInstalled(installed.Release)
 	choice, err := systemupdate.ResolveCoreChoice(ctx, runtime.Cache.Client, policy)
 	if err != nil {
 		return out, err
@@ -32,7 +32,7 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 	release, digest := choice.Release, choice.Digest
 	if choice.Stone {
 		out.SteppingStone, out.ChannelHead, out.Message = true, choice.Head.Version,
-			fmt.Sprintf("%s is a stepping stone: the channel's %s can't be installed from this build yet (%s)", release.Version, choice.Head.Version, choice.HeadRefused)
+			fmt.Sprintf("%s is a stepping stone: the channel's %s can't be installed from %s yet (%s)", release.Version, choice.Head.Version, installed.Release.Version, choice.HeadRefused)
 	}
 	out.Release, out.ManifestSHA256 = release, digest
 	if err := systemupdate.RefuseDowngrade(policy.Channel, installed.Release, release); err != nil {
