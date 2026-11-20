@@ -1,14 +1,13 @@
 /**
  * Health Checker — Background periodic health monitoring for installed apps.
  *
- * Checks each installed app's primary container for HTTP health every 5 minutes.
- * Updates the health_status and health_checked_at columns in installed_apps.
- *
- * Pattern: same setInterval + guard flag pattern as version-checker.ts
+ * Probes each installed app about every 30 seconds (jittered, so it never runs in step with the
+ * health monitor) and publishes the result. Probes only read; restarts go to the app reconcile queue.
  */
 
 import { APP_PROBER_DEFAULT_PERIOD_MS, getAppProbeResults, probeInstalledApps, resetHealthyBackoff } from './app-prober';
 import { reconcileApps } from './reconciler';
+import { startJitteredLoop } from '@/lib/health/jittered-timer';
 
 /** Whether a check is currently running */
 let isChecking = false;
@@ -73,30 +72,22 @@ export async function refreshHealthCheck(): Promise<void> {
 
 // ─── Background Timer ─────────────────────────────────────────
 
-let backgroundTimer: ReturnType<typeof setInterval> | null = null;
+let stopBackgroundTimer: (() => void) | null = null;
 
 export function startHealthChecker(): void {
-  if (backgroundTimer) return;
+  if (stopBackgroundTimer) return;
 
-  // Initial check after 60 seconds (after version-checker at 45s)
-  setTimeout(() => {
-    refreshHealthCheck().catch((err) => {
-      console.error('[health-checker] Initial check failed:', err);
-    });
-  }, 60_000);
-
-  backgroundTimer = setInterval(() => {
+  // First check 60–90 s after start (after version-checker at 45s), then every 30 s ±15 %.
+  stopBackgroundTimer = startJitteredLoop(() => {
     refreshHealthCheck().catch((err) => {
       console.error('[health-checker] Periodic check failed:', err);
     });
-  }, CHECK_INTERVAL_MS);
+  }, { periodMs: CHECK_INTERVAL_MS });
 }
 
 export function stopHealthChecker(): void {
-  if (backgroundTimer) {
-    clearInterval(backgroundTimer);
-    backgroundTimer = null;
-  }
+  stopBackgroundTimer?.();
+  stopBackgroundTimer = null;
 }
 
 // NO module-import auto-start. instrumentation.ts is the single owner of

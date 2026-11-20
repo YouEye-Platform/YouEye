@@ -18,6 +18,8 @@ export interface AppLifecycleOptions {
   resources?: UpdateResource[];
   /** Only explicit recovery may enter an unfinished operation. */
   recoveryOperationId?: string;
+  /** The reconcile queue's own hold: the app is marked held, but no operation is announced. */
+  automatic?: boolean;
 }
 
 interface HeldApp {
@@ -73,9 +75,10 @@ const waitContext = waitGlobal[waitContextKey] ??= new AsyncLocalStorage<LockWai
 
 /**
  * Mark `work` as a user-initiated operation (install, uninstall, start/stop/restart,
- * update). Lifecycle locks it enters wait for a busy holder (a probe, reconciler
- * pass or another short operation) instead of failing at once. Background jobs
- * never enter this context and keep skipping on a busy lock.
+ * update). Lifecycle locks it enters wait for a busy holder (a reconciler pass
+ * or another short operation) instead of failing at once. Background jobs never
+ * enter this context: they fail at once on a busy lock, and the app reconcile
+ * queue (lib/apps/app-reconciler.ts) retries within seconds.
  */
 export function withUserOperationLockWait<T>(
   work: () => T | Promise<T>,
@@ -142,6 +145,33 @@ export function isUserOperationWaiting(appId: string): boolean {
   return (waitingUsers.get(appId) ?? 0) > 0;
 }
 
+// Apps an operation of this process holds right now. Probes read it instead of taking the lock.
+const heldKey = Symbol.for('youeye.lifecycle-held-apps');
+const heldGlobal = globalThis as typeof globalThis & { [heldKey]?: Map<string, number> };
+const heldApps = heldGlobal[heldKey] ??= new Map<string, number>();
+
+/** An operation of this process holds this app's lifecycle lock: it is busy, not failing. */
+export function isAppHeld(appId: string): boolean {
+  return heldApps.has(appId);
+}
+
+/** Who took the app: a user's request (inside `withUserOperationLockWait`) or a background pass. */
+export type AppOperationOrigin = 'user' | 'background';
+export type AppOperationListener = (appId: string, phase: 'begin' | 'end', origin: AppOperationOrigin) => void;
+const listenerKey = Symbol.for('youeye.app-operation-listener');
+const listenerGlobal = globalThis as typeof globalThis & { [listenerKey]?: AppOperationListener };
+
+/** The reconcile queue hears every operation that takes an app: it cancels at 'begin' and re-checks at 'end'. */
+export function setAppOperationListener(listener: AppOperationListener | undefined): void {
+  listenerGlobal[listenerKey] = listener;
+}
+
+function announce(appId: string, phase: 'begin' | 'end', origin: AppOperationOrigin): void {
+  try { listenerGlobal[listenerKey]?.(appId, phase, origin); } catch (error) {
+    console.error(`[app-lifecycle] operation listener failed for ${appId}:`, error);
+  }
+}
+
 interface IndependentCopyRequest {request_id:string;source_hardware:string;destination_hardware:string;source_receipt_sha256:string;manifest_sha256:string}
 const copyContextKey=Symbol.for('youeye.independent-copy-admission');
 const copyGlobal=globalThis as typeof globalThis & {[copyContextKey]?:AsyncLocalStorage<string>};
@@ -165,6 +195,15 @@ function readIndependentCopyReservation(directory:string):{role:'source'|'destin
 export function assertIndependentCopyLifecycle(request:IndependentCopyRequest){
  const binding=copyRequestBinding(request),reservation=readIndependentCopyReservation(appUpdateJournalStore().directory);
  if(copyContext.getStore()!==binding||reservation?.role!=='destination'||reservation.binding!==binding)throw new AppLifecycleAdmissionError('Exact native copy lifecycle context required');
+}
+
+/**
+ * Run `work` as nobody's operation. A timer or a promise created inside an operation inherits that operation's
+ * context: its user wait budget and abort signal, its held locks and its core admission. Background work that an
+ * operation only triggers (the reconcile queue, asked again at every operation's end) starts here instead.
+ */
+export function outsideOperation<T>(work: () => T): T {
+  return waitContext.exit(() => coreContext.exit(() => context.exit(() => copyContext.exit(work))));
 }
 
 /** Background/native integrations settle before the source is frozen. Only
@@ -248,6 +287,11 @@ export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore
   return new AppUpdateJournalStore(directory ?? process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR);
 }
 
+/** The calling operation itself holds this app, e.g. a restore checking the health of what it restored. */
+export function isAppHeldByCaller(appId: string, store = appUpdateJournalStore()): boolean {
+  return context.getStore()?.get(`${path.resolve(store.directory)}:${appId}`)?.active === true;
+}
+
 export function isAppUpdateReserved(appId: string, store = appUpdateJournalStore()): boolean {
   return store.isReserved({ kind: 'app', scope: 'market', name: appId, ownerAppId: appId, mutable: false });
 }
@@ -316,6 +360,8 @@ async function withAppLifecycleUnderCore<T>(
   const app: UpdateResource = { kind: 'app', scope: 'market', name: appId, ownerAppId: appId, mutable: false };
   const resources = [app, ...(options.resources ?? [])];
   let lock: AppUpdateExecutorLock | undefined;
+  let admitted = false;
+  const origin: AppOperationOrigin = waitContext.getStore() ? 'user' : 'background';
   try {
     await admitWaiting(() => store.withAdmission(() => {
       // A repeated admission never keeps a descriptor from an earlier attempt.
@@ -338,6 +384,9 @@ async function withAppLifecycleUnderCore<T>(
     const entry: HeldApp = { lock: lock!, active: true };
     const scope = new Map(inherited);
     scope.set(key, entry);
+    admitted = true;
+    heldApps.set(appId, (heldApps.get(appId) ?? 0) + 1);
+    if (!options.automatic) announce(appId, 'begin', origin);
     try {
       return await context.run(scope, async () => {
         entry.lock.assertHeld();
@@ -349,6 +398,12 @@ async function withAppLifecycleUnderCore<T>(
     }
   } finally {
     lock?.release();
+    if (admitted) {
+      const left = (heldApps.get(appId) ?? 1) - 1;
+      if (left > 0) heldApps.set(appId, left); else heldApps.delete(appId);
+      // After the release, so the re-check it triggers can take the lock.
+      if (!options.automatic) announce(appId, 'end', origin);
+    }
   }
 }
 

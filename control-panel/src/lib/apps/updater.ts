@@ -14,6 +14,7 @@
 
 import {
   stopContainer,
+  stopTimeoutSec,
   startContainer,
   rebuildContainer,
   waitForRunning,
@@ -80,7 +81,8 @@ export async function updateOCIApp(
       const name = containers[index];
       originalStates.set(name, await containerState(name));
       emit({ stage: 'snapshot', message: `Creating independent rollback copy of ${name}`, container: name, progress: progress() });
-      await stopContainer(name);
+      // Clean stop; a timeout fails the update here, before any rebuild.
+      await stopContainer(name, { timeoutSec: stopTimeoutSec(appDef.id === 'postgres' ? 'database' : undefined) });
       const backup = `ye-rollback-${maintenance.id.replaceAll('-', '').slice(0, 12)}-${index}`;
       await createRollbackInstanceBackup(name, backup);
       rollbackBackups.set(name, backup);

@@ -77,6 +77,9 @@ export async function register() {
     startDnsProviderMaintenanceLoop();
     const { startNamesMaintenanceLoop } = await import("@/lib/youeye-names/maintenance");
     startNamesMaintenanceLoop();
+    // Before the watchdog and the prober: they only observe app containers; this queue restarts them.
+    const { startAppReconciler } = await import("@/lib/apps/app-reconciler");
+    startAppReconciler();
     const { startHealthMonitor } = await import("@/lib/health/monitor");
     startHealthMonitor();
     const { startBackgroundChecks } = await import("@/lib/apps/update-cache");
@@ -92,8 +95,21 @@ export async function register() {
     startBackupScheduler();
     const { reconcileInstalledAdmission } = await import('@/lib/admission/lifecycle');
     const { startAdmissionProjectionLoop } = await import('@/lib/admission/projection');
+    const { getIdentityIssuerOrigin } = await import('@/lib/identity/config');
+    let admissionAwaitsSetup = false;
     const reconcileAdmission = () => {
-      void reconcileInstalledAdmission().then(() => startAdmissionProjectionLoop()).catch(() => {
+      void (async () => {
+        // Before setup the box has no domain: no app is installed and there is no sign-in address to gate a
+        // route with. That is not a failure; say so once and look again.
+        if (!await getIdentityIssuerOrigin()) {
+          if (!admissionAwaitsSetup) console.log('[admission] The box has no domain yet; app admission starts after setup');
+          admissionAwaitsSetup = true;
+          setTimeout(reconcileAdmission, 20_000);
+          return;
+        }
+        await reconcileInstalledAdmission();
+        startAdmissionProjectionLoop();
+      })().catch(() => {
         console.error('[admission] Installation ownership or ingress reconciliation failed; admission remains pending');
         // A transient startup failure must not permanently disable lease refresh.
         // Only the complete ownership and gateway proof starts the projection loop.

@@ -3,6 +3,7 @@ import {
   rebuildContainer,
   startContainer,
   stopContainer,
+  stopTimeoutSec,
   waitForRunning,
 } from '@/lib/incus/snapshot';
 import { applyResourcePolicy } from './resource-policy';
@@ -288,7 +289,8 @@ export async function updateSystemContainer(
 
   try {
     emit(onEvent, 2, totalSteps, 'running', `Stopping ${plan.containerName}`);
-    await stopContainer(plan.containerName);
+    // Clean stop; a timeout fails the update here, before the rebuild.
+    await stopContainer(plan.containerName, { timeoutSec: stopTimeoutSec(plan.id === 'postgresql' ? 'database' : undefined) });
 
     emit(onEvent, 3, totalSteps, 'running', `Rebuilding ${plan.containerName}`, plan.desiredImage);
     await rebuildContainer(plan.containerName, plan.desiredImage);

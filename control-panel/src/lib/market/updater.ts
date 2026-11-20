@@ -26,13 +26,7 @@ import { logOperationFailure } from './install-tracker';
 import { freezeUpdateOCIImage } from './update-oci';
 import { execShell, incusRequest, incusUploadFile } from '@/lib/incus/server';
 import { readFile } from 'fs/promises';
-import {
-  stopContainer,
-  startContainer,
-  rebuildContainer,
-  waitForContainerExec,
-  waitForRunning,
-} from '@/lib/incus/snapshot';
+import { stopContainer, rebuildContainer } from '@/lib/incus/snapshot';
 import { clearCatalogCache, isMarketAppUnavailable, resolveCatalogApp } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import {
@@ -88,7 +82,8 @@ export interface UpdateResult {
   /** `committed-reopen-pending`: the new version is installed, but the app is still in maintenance until recovery
    * finishes reopening it (`youeye app recover <app>`). */
   errorCode?: string;
-  /** The journal operation this attempt created; absent when it was refused before one (preflight, busy). */
+  /** The journal operation this attempt created (success or not); absent when it ended before one (preflight, busy,
+   * already up to date). */
   operationId?: string;
   /** `setup-changed`: the setup files the new version would run (nothing was changed). */
   setups?: Array<{ name: string; for: string }>;
@@ -299,7 +294,8 @@ async function updateMarketAppLocked(
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
   }
 
-  if (productRelease && channelManifestReference) {
+  // A forced update reinstalls the payload; adopting a release label would not.
+  if (productRelease && channelManifestReference && !config.force) {
     const adopted = await updateIdenticalProductRelease(appUpdateJournalStore(), originalInstallMeta,
       installedApp, manifest, productRelease, channelManifestReference);
     if (adopted) {
@@ -411,7 +407,7 @@ async function updateMarketAppLocked(
       const spec = containerSpecs[i];
       const name = containerNames[i];
       if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.containerName === name)?.role === 'database') {
-        emit(onEvent, step, totalSteps, 'success', `${name} retains its exact PostgreSQL runtime`);
+        emit(onEvent, step, totalSteps, 'success', `${name} keeps its database engine`);
         continue;
       }
 
@@ -444,14 +440,11 @@ async function updateMarketAppLocked(
       }
     }
     await transaction.mutate('apply-generated-configuration', () => preflight.provider.applyConfiguration(transaction.record(), manifest, ctx));
-    for (let i = 0; i < containerSpecs.length; i++) {
-      const name = containerNames[i];
-      if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.containerName === name)?.role === 'database') continue;
-      await transaction.mutate(`first-start-${i}`, async () => {
-        await startContainer(name);
-        await waitForRunning(name);
-        await waitForContainerExec(name);
-      });
+    // Start order: the app's database and caches are ready before its workers and the app itself start.
+    for (const name of preflight.provider.startOrder(transaction.record())) {
+      const i = containerNames.indexOf(name);
+      if (i < 0) throw new Error(`Installed container ${name} is not in the target manifest`);
+      await transaction.mutate(`first-start-${i}`, () => preflight.provider.startRuntime(transaction.record(), name, manifest));
     }
     // Connections to other apps survive the rebuild (Incus keeps devices): re-point their ACLs and prove each NIC is
     // still in place before the app is reopened.
@@ -575,20 +568,22 @@ async function updateMarketAppLocked(
       await saveDirectMarketApp({ manifestUrl: directUpdate.entry.manifestUrl, manifest })
         .catch((error) => logOperationFailure(`Recording the updated Added app ${appId}`, error));
     }
-    return result;
+    return { ...result, operationId: attemptedOperation };
   } catch (error) {
     logOperationFailure(`Update of ${appId} (operation ${attemptedOperation ?? 'not admitted'})`, error);
     const record = attemptedOperation ? appUpdateJournalStore().read(attemptedOperation) : undefined;
     const committed = !!record?.commit;
     // Never "success" while the app is still behind the maintenance fence; never "in maintenance" once it reopened.
     const reopened = !!record?.steps.some(s => s.id === 'reopen-compatible-app' && s.state === 'completed');
+    // Not committed and its rollback not verified: recovery failed. The app is in maintenance, whatever failed first.
+    const recoveryFailed = !!record && !committed && !record.rollbackVerifiedAt;
     const message = committed
       ? reopened
         ? `Version ${targetVersion} is installed and the app is open, but a step after the update failed `
           + '(checkpoint cleanup or access reconciliation); the cause is in the Control Panel journal.'
         : `Version ${targetVersion} is installed, but reopening the app did not finish; it stays in maintenance until `
           + `recovery succeeds (youeye app recover ${appId}).`
-      : record?.phase === 'recovery_required'
+      : recoveryFailed
         ? 'Update recovery requires attention. Maintenance reservations and checkpoints are retained.'
         : error instanceof Error ? error.message : 'Application update failed.';
     emit(onEvent, step, totalSteps, 'error', message);
@@ -597,6 +592,8 @@ async function updateMarketAppLocked(
       newVersion: committed ? targetVersion : installedVersion,
       migrationsRun: 0, error: message, operationId: attemptedOperation,
       errorCode: committed ? (reopened ? 'committed-post-update-failed' : 'committed-reopen-pending')
+        // Never the first failure's code (a stop timeout says "Nothing was changed"): the failed recovery is the news.
+        : recoveryFailed ? 'recovery_required'
         : !attemptedOperation && isLifecycleBusy(error) ? 'operation_in_progress'
         : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined,
     };

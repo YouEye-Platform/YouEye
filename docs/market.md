@@ -335,7 +335,9 @@ on, a failure rolls the install back (`rollbackInstall`).
    creates the database and role in the shared YouEye PostgreSQL.
 8. **YouEye ID client** (apps with `sso:` and sign-in on): OAuth client `youeye-app-<id>`, redirect URIs from
    `sso.callback` and `sso.extra_callbacks`, scopes `openid profile email groups` (plus the `role_claim` name).
-9. **Containers.** Sidecars first, `main` last, because main's health check usually needs its sidecars. Each
+9. **Containers.** Sidecars first, `main` last, because main's health check usually needs its sidecars. The
+   sidecars go in the start order updates use: databases, caches, plain sidecars, workers (the manifest's order
+   within each; [app-update-transactions.md](app-update-transactions.md#stops-and-starts)). Each
    instance is created with the tags `user.youeye.app_id` and `user.youeye.installation_id`, gets its env and
    `files:`, starts, and must pass its health check (an HTTP GET answering 2xx, 3xx, 401 or 403 within the
    manifest's timeout; `market/health.ts`). Container names are `app-<id>` or `app-<id>-<container>`.
@@ -439,6 +441,27 @@ store. Both manifests come from the frozen installed copies.
 only for one named app). `youeye app check-updates` calls `POST /api/apps/check-updates`. `POST /api/market/update`
 (SSE, used by Settings → Apps) and `POST /settings/api/apps/<id>/update` (JSON for a Market app, used by the
 dashboard's Apps panel) end in the same `updateMarketApp`.
+
+The CLI's progress stream is only a view: a dropped stream of a Market app's update (`unexpected EOF`, a reset, or
+a stream that ends without `completed`, `failed` or `pending`) does not fail the command. It prints "Lost the live
+progress; following the update…", then reads `GET /api/market/update/status?appId=<id>` every 3 s until the
+update's returned `result` is there (the Control Panel records it as the update returns, in the stream's words;
+see [app-update-transactions.md](app-update-transactions.md#entry-points)), and prints it: exit 0 only on success.
+A commit is not the end: cleanup and access reconciliation follow it and can still fail, so a committed operation
+is not reported before the result. The update is this one when its operation's id differs from the operation
+before the request (or it was seen pending); an update that ended without an operation (already up to date,
+refused) is this one when its result is newer than the one before. An update that returned with its operation
+still pending (reopening or cleanup unfinished) ends the follow at once with exit 1 and its message, which names
+`youeye app recover <id>`. If the Control Panel restarted (no result, and no update running), the follow reports
+the operation record ("Update complete", rolled back or recovery required) and says the final result was not
+recorded; with no new operation either, it names `youeye app info <id>`. It gives up after 30 minutes and names
+`youeye app info <id>` and `youeye app recover <id>`. Built-in apps (Pointer, Caddy, Pi-hole, Postgres, incus,
+host-system and the core components; the status says `market: false`) have their own updaters and are not
+followed: a lost stream is reported at once. A stream that ends in `pending` exits 1 too, and `--all` exits 1 when
+any app's update did not succeed. `youeye app install <id>` follows a dropped stream the same way through
+`GET /api/market/install-status?app=<id>` (the install is recorded before the stream opens) and ends with the
+stream's "<name> installed successfully!"; `--url` installs are not followed (the app's id is in the manifest the
+Control Panel reads).
 
 - The new manifest comes from the app's recorded source, else the official Market (never another source): the same
   market, which must still be on and accepted and is refreshed first; the URL of an Added app; or the native app's

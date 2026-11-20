@@ -38,7 +38,7 @@ function fixture(mode = 'normal', system = true) {
     }
     return { type: 'sync' };
   };
-  const watchdog = load('src/lib/health/watchdog-start.ts', {
+  const watchdog = load('src/lib/apps/app-reconciler.ts', {
     '../incus/server': { incusRequest: request },
     '../market/update-admission': { withContainerLifecycle: async (_: string, work: () => Promise<any>) => work() },
     '../maintenance/container-maintenance': { isContainerMaintenanceActive: () => false },

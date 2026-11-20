@@ -97,7 +97,7 @@ func SSEProgress(step, total int, status, message string) {
 	icon := "\u23f3"
 	color := ""
 	switch status {
-	case "success", "complete", "done":
+	case "success", "complete", "completed", "done":
 		icon = Green + "\u2713" + Reset
 		color = Green
 	case "error", "failed":

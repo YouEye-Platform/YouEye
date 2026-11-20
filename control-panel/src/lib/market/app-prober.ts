@@ -2,11 +2,14 @@ import { getAllInstalledApps, updateHealthProbeState, updateHealthStatus } from 
 import { readInstallMetadata } from './metadata';
 import { containerExists, getContainerIP } from '@/lib/infrastructure/oci-deployer';
 import { incusRequest, execShell } from '@/lib/incus/server';
-import { observeIssue, resolveIssue, recordTimelineEvent } from '@/lib/health/issues';
+import { observeIssue, resolveIssue } from '@/lib/health/issues';
 import type { InstallMetadata } from './types';
 import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
 import { inspectAppStorage } from './storage';
-import { AppLifecycleAdmissionError, isAppUpdateReserved, withAppLifecycle } from './update-admission';
+import { isAppHeld, isAppHeldByCaller, isAppUpdateReserved } from './update-admission';
+import { appReconciler, shouldSuppressAppRecovery } from '@/lib/apps/app-reconciler';
+
+export { shouldSuppressAppRecovery };
 
 export type AppHealthState = 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
 
@@ -33,11 +36,6 @@ const HEALTHY_RESET_MS = 10 * 60_000;
 
 const states = new Map<string, ProbeState>();
 const results = new Map<string, AppProbeResult>();
-
-export function shouldSuppressAppRecovery(meta: Pick<InstallMetadata, 'enabled' | 'desiredState' | 'lifecycleOperation'>): boolean {
-  return meta.enabled === false || meta.desiredState === 'stopped'
-    || (meta.lifecycleOperation?.desiredState === 'stopped' && meta.lifecycleOperation.state !== 'completed');
-}
 
 export function getAppProbeResults(): Record<string, AppProbeResult> {
   return Object.fromEntries(results);
@@ -68,22 +66,33 @@ export async function probeInstalledApps(): Promise<AppProbeResult[]> {
   return output;
 }
 
+/**
+ * A probe only reads, and never takes the app's lifecycle lock (a probe that held it starved the watchdog).
+ * It reads intent first: an app under an update is in maintenance, an app an operation holds is busy, and
+ * neither counts as a failure. A restart it decides on goes to the app's reconcile queue.
+ */
 export async function probeInstalledApp(appId: string, persistedState?: ProbeState): Promise<AppProbeResult> {
-  try {
-    // The check also applies to reentrant verification calls inside an updater.
-    if (isAppUpdateReserved(appId)) return await publishAppMaintenance(appId);
-    // An app its administrator turned off costs nothing: no lock (a flock process), no Incus call.
-    const meta = await readInstallMetadata(appId);
-    if (meta && shouldSuppressAppRecovery(meta)) return await publishIntentionallyStopped(appId);
-    return await withAppLifecycle(appId, () => probeOneUnderLifecycle(appId, persistedState));
-  } catch (error) {
-    if (error instanceof AppLifecycleAdmissionError) return await publishAppMaintenance(appId);
-    if (error instanceof Error && error.message.includes('executor lock is busy')) {
-      // Another operation (a backup, an install step, a start) holds the app: not maintenance, and not a new state.
-      return { appId, state: 'unknown', detail: 'Busy with another operation on this app' };
-    }
-    throw error;
-  }
+  // The check also applies to verification calls inside an updater.
+  if (isAppUpdateReserved(appId)) return await publishAppMaintenance(appId);
+  const meta = await readInstallMetadata(appId);
+  if (meta && shouldSuppressAppRecovery(meta)) return await publishIntentionallyStopped(appId);
+  if (heldByAnother(appId)) return busy(appId);
+  return await probeOne(appId, meta, persistedState);
+}
+
+/** An operation (a backup, an install step, a start) holds the app: not maintenance, and not a new state. */
+function busy(appId: string): AppProbeResult {
+  return { appId, state: 'unknown', detail: 'Busy with another operation on this app' };
+}
+
+/** An operation may probe the app it holds (a restore checks what it restored); every other holder means busy. */
+function heldByAnother(appId: string): boolean {
+  return isAppHeld(appId) && !isAppHeldByCaller(appId);
+}
+
+/** The app was taken while its probe ran: what the probe saw says nothing about its health. */
+function takenMeanwhile(appId: string, containers: string[]): boolean {
+  return heldByAnother(appId) || isAppUpdateReserved(appId) || containers.some(name => isContainerMaintenanceActive(name));
 }
 
 async function publishIntentionallyStopped(appId: string): Promise<AppProbeResult> {
@@ -101,8 +110,7 @@ async function publishAppMaintenance(appId: string): Promise<AppProbeResult> {
   return { appId, state: 'maintenance', detail };
 }
 
-async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState): Promise<AppProbeResult> {
-  const meta = await readInstallMetadata(appId);
+async function probeOne(appId: string, meta: InstallMetadata | null, persistedState?: ProbeState): Promise<AppProbeResult> {
   if (!meta) {
     await updateHealthStatus(appId, 'unknown', {
       appHealthState: 'unknown',
@@ -111,16 +119,6 @@ async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState
     return { appId, state: 'unknown', detail: 'install metadata missing' };
   }
   const metaAny = meta as any;
-
-  if (shouldSuppressAppRecovery(meta)) {
-    states.delete(appId);
-    await updateHealthStatus(appId, 'unknown', {
-      appHealthState: 'unknown',
-      healthDetail: 'Intentionally stopped by administrator',
-    });
-    await resolveIssue(`app.${appId}.health`);
-    return { appId, state: 'unknown', detail: 'Intentionally stopped by administrator' };
-  }
 
   const storage = await inspectAppStorage(meta.storageVolumes);
   if (!storage.available) {
@@ -143,10 +141,7 @@ async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState
   }
   await resolveIssue(`app.${appId}.storage`);
 
-  const maintenanceContainers = (meta.containers ?? [])
-    .map((container) => container.containerName)
-    .filter((name): name is string => Boolean(name));
-  if (maintenanceContainers.some((name) => isContainerMaintenanceActive(name))) {
+  if (containerNames(meta).some((name) => isContainerMaintenanceActive(name))) {
     states.delete(appId);
     return publishAppMaintenance(appId);
   }
@@ -196,6 +191,8 @@ async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState
     healthDetail: 'L1/L2/L3 healthy',
   });
   await resolveIssue(`app.${appId}.health`);
+  // A crash-loop record left by a prober restart clears on this, not on the container merely running.
+  appReconciler().observeHealthy(appId);
   return { appId, state: 'running', detail: 'L1/L2/L3 healthy' };
 }
 
@@ -207,6 +204,7 @@ async function handleFailure(
   meta: any,
   healthcheck: any,
 ): Promise<AppProbeResult> {
+  if (takenMeanwhile(appId, containerNames(meta))) return busy(appId);
   const now = Date.now();
   const current = states.get(appId) ?? initialProbeState();
   const threshold = Number(healthcheck?.retries ?? DEFAULT_FAILURES);
@@ -219,8 +217,7 @@ async function handleFailure(
     startPeriodMs: Number(healthcheck?.startPeriod ?? 0),
   }, now, startReference);
   const state = decision.state;
-  let resultState = decision.resultState;
-  let restartError = '';
+  const resultState = decision.resultState;
 
   states.set(appId, state);
   await updateHealthProbeState(appId, state);
@@ -231,18 +228,8 @@ async function handleFailure(
   }
 
   if (decision.shouldRestart) {
-    try {
-      await restartWithDependencies(appId, containerName, meta);
-      await recordTimelineEvent({
-        id: `app.${appId}.restart.${now}`,
-        source: 'app-prober',
-        title: `${appId} restarted automatically`,
-        body: `${failingLevel} failed: ${detail}. Next backoff is ${state.backoffMs / 1000}s.`,
-      });
-    } catch (error) {
-      restartError = error instanceof Error ? error.message : String(error);
-      resultState = 'unhealthy';
-    }
+    appReconciler().request(appId, 'restart',
+      `${failingLevel} failed: ${detail}. Next backoff is ${state.backoffMs / 1000}s.`);
   }
 
   await updateHealthStatus(
@@ -258,14 +245,12 @@ async function handleFailure(
     const excerpt = resultState === 'crash-looping' ? await logExcerpt(containerName) : '';
     await observeIssue({
       id: `app.${appId}.health`,
-      severity: resultState === 'crash-looping' || restartError ? 'error' : 'warning',
+      severity: resultState === 'crash-looping' ? 'error' : 'warning',
       source: 'app-prober',
       title: resultState === 'crash-looping'
         ? `${appId} stopped restarting after repeated failures`
         : `${appId} health check failed`,
-      body: restartError
-        ? `${detail}. Automatic recovery failed: ${restartError}`
-        : `${failingLevel}: ${detail}${excerpt ? ` Recent logs: ${excerpt}` : ''}`,
+      body: `${failingLevel}: ${detail}${excerpt ? ` Recent logs: ${excerpt}` : ''}`,
       fixable: false,
       debounce: 1,
     });
@@ -285,19 +270,6 @@ async function handleDependencyWait(
   });
   await resolveIssue(`app.${appId}.health`);
   return { appId, state: 'starting', failingLevel, detail };
-}
-
-async function restartWithDependencies(appId: string, containerName: string, meta: any): Promise<void> {
-  const deps = dependencyOrder(meta.containers);
-  for (const dep of deps) {
-    if (dep === containerName) continue;
-    if (await containerExists(dep)) {
-      await incusRequest('PUT', `/1.0/instances/${dep}/state`, { action: 'start', timeout: 30 });
-    }
-  }
-  await incusRequest('PUT', `/1.0/instances/${containerName}/state`, { action: 'restart', timeout: 30 }).catch(async () => {
-    await incusRequest('PUT', `/1.0/instances/${containerName}/state`, { action: 'start', timeout: 30 });
-  });
 }
 
 async function checkDependencyFailure(
@@ -376,12 +348,8 @@ function inferServiceName(primary: any, containerName: string): string | undefin
   return `${containerName}.service`;
 }
 
-function dependencyOrder(containers: any[] | undefined): string[] {
-  if (!containers) return [];
-  return containers
-    .sort((a, b) => Number(Boolean(a.dependsOn?.length)) - Number(Boolean(b.dependsOn?.length)))
-    .map((c) => c.containerName || c.name)
-    .filter(Boolean);
+function containerNames(meta: Pick<InstallMetadata, 'containers'>): string[] {
+  return (meta.containers ?? []).map((container) => container.containerName).filter(Boolean);
 }
 
 function dependencyContainers(containers: any[] | undefined, primaryContainerName: string): any[] {

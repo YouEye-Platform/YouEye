@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
+import { containerOrder } from './fixtures/update-provider-harness';
 
 function fixture() {
   const id = '12345678-1234-4234-8234-123456789abc';
   const original = {
     name: 'app-fixture', profiles: ['fixture'],
-    config: { 'image.id': 'old', 'volatile.base_image': 'old-image' },
+    config: { 'image.id': 'old', 'volatile.base_image': 'old-image', 'volatile.eth0.hwaddr': '10:66:6a:00:00:01' },
     devices: { data: { type: 'disk', source: 'fixture-data', path: '/data' },
       eth0: { type: 'nic', hwaddr: '10:00:00:00:00:01' } },
     expanded_devices: { data: { type: 'disk', source: 'fixture-data', path: '/data' },
@@ -21,7 +22,8 @@ function fixture() {
     steps: [{ id: 'initialize-recovery-plan', state: 'complete' }, { phase: 'applying' }],
     resources: [{ kind: 'container', scope: 'incus', name: original.name }],
     checkpoints: [{ method: 'runtime-copy', resource: original.name, reference: 'retained' }] };
-  const metadata = { installedVersion: '1.0.0' };
+  const metadata = { installedVersion: '1.0.0',
+    containers: [{ name: 'main', containerName: 'app-fixture', type: 'oci', primary: true }] };
   const output = ts.transpileModule(readFileSync(join(import.meta.dirname, '../src/lib/market/update-provider.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -49,9 +51,11 @@ function fixture() {
     } };
     if (name === '@/lib/incus/snapshot') return {
       containerState: async () => 'Stopped',
+      stopContainer: async () => {}, stopTimeoutSec: () => 60,
       deleteInstance: async (name: string) => { effects.push(`DELETE ${name}`); instances.delete(name); },
       buildRollbackCopyRequest: (source: string, name: string) => ({ name, source: { type: 'copy', source } }),
     };
+    if (name === '@/lib/apps/container-order') return containerOrder();
     if (name === './update-journal') return { updateResourceKey: (r: any) => r.name };
     if (name === './metadata') return { readInstallMetadata: async () => metadata, saveInstallMetadata: async () => {} };
     if (name === './installed-apps') return { restoreInstalledAppUpdateState: async () => {} };
@@ -84,6 +88,8 @@ test('recovery isolates an owned retained copy and restores canonical devices an
   assert.deepEqual(f.instances.get('retained').devices.ingress, { type: 'none' });
   assert.deepEqual(f.instances.get('app-fixture').devices, f.original.devices);
   assert.deepEqual(f.instances.get('app-fixture').profiles, f.original.profiles);
+  // The restored container has the original MAC address.
+  assert.equal(f.instances.get('app-fixture').config['volatile.eth0.hwaddr'], '10:66:6a:00:00:01');
 });
 
 test('recovery refuses foreign retained copies before detaching devices or deleting canonical runtime', async () => {

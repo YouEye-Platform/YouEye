@@ -1,0 +1,145 @@
+schema: youeye.app.v1
+id: cinema
+version: 0.0.0
+name: Cinema
+listing:
+  description: Discover movies and TV shows powered by TMDB. Track what you've watched, build watchlists, and write reviews.
+  long_description: |
+    Cinema is your personal movie and TV tracking app, powered by TMDB. Discover new titles,
+    track what you've watched, build watchlists, write reviews, and keep the experience on your own server.
+  category: media
+  tags: [movies, tv, watchlist, tmdb, native]
+  icon: film
+  screenshots:
+    - {path: assets/screenshots/1.png, caption: Movie discovery and trending titles}
+    - {path: assets/screenshots/2.png, caption: Your watchlist and ratings}
+  website: https://github.com/YouEye-Platform/Cinema
+source: {node: '24'}
+port: 3000
+health: /api/health
+database:
+  postgres: {name: ye_cinema, user: ye_cinema}
+env:
+  DATABASE_URL: ${database.url}
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  CINEMA_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+connects:
+  - app: jellyfin
+    name: Jellyfin
+    description: Media server for streaming
+    port: 8096
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: now-watching
+    kind: widget
+    placement: dashboard
+    name: Now Watching
+    description: Currently watching and recently watched movies and shows
+    embed: /embed/widget/now-watching
+    size: {default: [28, 25], min: [20, 18], max: [50, 45]}
+    refresh: 300
+  - id: trending
+    kind: widget
+    placement: dashboard
+    name: Trending Movies
+    description: Today's trending movies from TMDB
+    embed: /embed/widget/trending
+    size: {default: [35, 28], min: [25, 20], max: [55, 50]}
+    refresh: 3600
+  - id: movie-info
+    kind: info-card
+    placement: timeline
+    name: Movie info
+    description: Movie and TV show details with ratings
+    embed: /embed/card/movie
+    triggers: [imdb.com, themoviedb.org]
+  - id: cinema-movie-viewed
+    kind: timeline-card
+    placement: timeline
+    name: Movie viewed
+    description: Movie detail page viewed
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-movie-viewed]
+  - id: cinema-tv-viewed
+    kind: timeline-card
+    placement: timeline
+    name: TV show viewed
+    description: TV show detail page viewed
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-tv-viewed]
+  - id: cinema-movie-watched
+    kind: timeline-card
+    placement: timeline
+    name: Movie watched
+    description: Movie marked as watched with optional rating
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-movie-watched]
+  - id: cinema-tv-watched
+    kind: timeline-card
+    placement: timeline
+    name: TV show watched
+    description: TV show marked as watched with optional rating
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-tv-watched]
+  - id: cinema-watchlist-add
+    kind: timeline-card
+    placement: timeline
+    name: Added to watchlist
+    description: Added to watchlist
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-watchlist-add]
+  - id: cinema-status-change
+    kind: timeline-card
+    placement: timeline
+    name: Watching status changed
+    description: Watching status changed
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-status-change]
+  - id: cinema-review
+    kind: timeline-card
+    placement: timeline
+    name: Review posted
+    description: Review posted
+    embed: /embed/timeline/movie
+    permissions: ['timeline:write']
+    triggers: [cinema-review]
+  - id: cinema-search
+    kind: timeline-card
+    placement: timeline
+    name: Cinema search
+    description: Cinema search performed
+    embed: /embed/timeline/search
+    permissions: ['timeline:write']
+    triggers: [cinema-search]
+proxy:
+  - {host: api.themoviedb.org, paths: [/3/*], methods: [GET]}
+  - {host: image.tmdb.org, paths: [/t/p/*], methods: [GET]}

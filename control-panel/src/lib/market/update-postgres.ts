@@ -29,7 +29,6 @@ function securityScript(bytes: Buffer): Buffer {
 export interface AppUpdatePostgresScope {
   appId: string;
   engine: string;
-  mode: 'shared' | 'own';
   database: string;
   ownerRole: string;
   adminRole: string;
@@ -44,12 +43,12 @@ export interface AppUpdatePostgresScope {
  * The parent reads these under durable lifecycle/security exclusion, from actual
  * installed credential uses and runtime/ingress state, NOT manifest claims.
  * Include all uses of the owner credentials, even stopped jobs and other apps.
- * Engine remains Running, including for mode=own; never snapshot its raw PG data.
+ * The engine is the shared platform PostgreSQL and stays Running.
  */
 export interface AppUpdatePostgresRuntime {
   lifecycleExcluded: boolean;
   ingressBlocked: boolean;
-  engine: { name: string; state: 'Running' | 'Stopped'; ownerAppId?: string };
+  engine: { name: string; state: 'Running' | 'Stopped' };
   credentialUses: Array<{
     engine: string; database: string; role: string; appId: string;
     container: string; state: 'Running' | 'Stopped'; clientAddresses: string[];
@@ -210,8 +209,7 @@ export function createAppUpdatePostgresProvider(scopeInput: AppUpdatePostgresSco
     || !/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(scope.appId)) fail('unsafe-identity');
   if (FORBIDDEN.has(scope.database) || FORBIDDEN.has(scope.ownerRole)
     || scope.ownerRole === scope.adminRole || scope.adminRoles.includes(scope.ownerRole)) fail('platform-resource-excluded');
-  if ((scope.mode === 'shared') !== (scope.engine === 'youeye-postgres')
-    || (scope.mode === 'shared' && scope.adminRole !== 'youeye')
+  if (scope.engine !== 'youeye-postgres' || scope.adminRole !== 'youeye'
     || !scope.adminRoles.includes(scope.adminRole)
     || new Set(scope.adminRoles).size !== scope.adminRoles.length) fail('invalid-engine-scope');
   if (!Number.isSafeInteger(scope.maxDumpBytes) || scope.maxDumpBytes < 1024
@@ -403,8 +401,7 @@ export function createAppUpdatePostgresProvider(scopeInput: AppUpdatePostgresSco
     let r: AppUpdatePostgresRuntime;
     try { r = await io.runtime(); } catch { return fail('runtime-observation-failed'); }
     if (!r.lifecycleExcluded || (requireIngress && !r.ingressBlocked)
-      || r.engine.name !== scope.engine
-      || (scope.mode === 'own' && r.engine.ownerAppId !== scope.appId)) fail('runtime-not-excluded');
+      || r.engine.name !== scope.engine) fail('runtime-not-excluded');
     if (r.engine.state !== 'Running') fail('engine-stopped-start-after-journal');
     if (!requireClosure) return r;
     checkWriterClosure(r, stopped);

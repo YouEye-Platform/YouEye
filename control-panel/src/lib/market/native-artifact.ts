@@ -83,9 +83,21 @@ export async function nativeManifestFromContract(contract: Buffer, selected: Ver
   }
   manifest.version = selected.release.version;
   if (manifest.frozen) manifest.frozen.version = selected.release.version;
-  manifest.metadata.iconUrl = undefined;
-  if (manifest.detail) manifest.detail.screenshots = [];
-  return manifest;
+  return withoutListingFiles(manifest);
+}
+
+/**
+ * A copy of a manifest without its listing's files (the icon file and the screenshots). A native release presents
+ * none, but its `frozen` source still names them, so an installed copy rebuilt from that source has them back.
+ * Comparing a release's manifest with an installed copy takes both through here. Nothing else is left out: every
+ * other field, and the whole source text in `frozen`, stays.
+ */
+export function withoutListingFiles(manifest: AppManifest): AppManifest {
+  return {
+    ...manifest,
+    metadata: { ...manifest.metadata, iconUrl: undefined },
+    ...(manifest.detail ? { detail: { ...manifest.detail, screenshots: [] } } : {}),
+  };
 }
 
 export async function nativeManifestFromRelease(selected: VerifiedProductRelease): Promise<{ manifest: AppManifest; contract: Buffer }> {

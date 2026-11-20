@@ -37,12 +37,14 @@ function operation(overrides = {}) {
 }
 
 function fixture() {
+  // The update results live on globalThis for the Control Panel's lifetime; each fixture is a fresh Control Panel.
+  delete (globalThis as any)[Symbol.for('youeye.market.update-results')];
   const state = {
     session: { isAdmin: true } as { isAdmin: boolean; authMethod?: string } | null,
     csrf: true, reads: 0, updates: 0, recoveries: 0, installed: true,
     operation: null as ReturnType<typeof operation> | null,
     readError: false,
-    update: async (_config: any, _emit: any) => ({ success: true }),
+    update: async (_config: any, _emit: any): Promise<Record<string, unknown>> => ({ success: true }),
     recover: async (_appId: string, _id: string) => {},
   };
   const next = { NextResponse: { json: (body: unknown, init?: ResponseInit) => Response.json(body, init) } };
@@ -81,7 +83,7 @@ function fixture() {
   dependencies['@/lib/market/update-http'] = load('src/lib/market/update-http.ts', dependencies);
   Object.assign(dependencies, {
     '@/lib/auth': { getSession: async () => state.session },
-    '@/lib/apps/definitions': { getAppDefinition: () => null },
+    '@/lib/apps/definitions': { getAppDefinition: (appId: string) => appId === 'caddy' ? { id: 'caddy' } : undefined },
     '@/lib/apps/updater': {}, '@/lib/apps/lxd-updater': {}, '@/lib/apps/lxd-updates': {},
     '@/lib/spine/client': {}, '@/lib/updates/state': {}, '@/lib/infrastructure/system-updater': {},
     '@/lib/health/issues': { assertNoCriticalIssues: async () => {} },
@@ -161,13 +163,17 @@ test('app and operation IDs are bounded and reject paths, malformed bodies and i
 
 test('status returns a no-store, explicitly projected operation or null without journal handles', async () => {
   const f = fixture();
-  assert.deepEqual(await (await f.status(statusRequest())).json(), { operation: null });
+  const empty = { market: true, result: null, results: [], running: false };
+  assert.deepEqual(await (await f.status(statusRequest())).json(), { operation: null, ...empty });
   f.state.operation = Object.assign(operation({ committed: true, phase: 'cleanup', recoveryRequired: false }), {
     checkpoints: [{ reference: '/secret/dump.sql' }], resources: ['private'], credentials: 'hidden',
   });
   const response = await f.status(statusRequest());
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await response.json(), { operation: operation({ committed: true, phase: 'cleanup', recoveryRequired: false }) });
+  assert.deepEqual(await response.json(),
+    { operation: operation({ committed: true, phase: 'cleanup', recoveryRequired: false }), ...empty });
+  // A built-in app is updated by its own updater, which records no Market update.
+  assert.equal((await (await f.status(statusRequest('caddy'))).json()).market, false);
   f.state.operation.errorCode = '/secret/path password=hidden';
   assert.equal((await (await f.status(statusRequest())).json()).operation.errorCode, null);
   f.state.readError = true;
@@ -322,6 +328,96 @@ test('SSE never exposes provider output or reports intermediate steps as update 
   f.state.operation = null;
   f.state.update = async () => { throw Object.assign(new Error('/secret'), { code: 'unsupported-shared-resource' }); };
   assert.match(await (await f.update(request())).text(), /storage or its database has writers outside this app/);
+});
+
+// A client whose stream dropped reads the update's own outcome from the status: running until the update returns,
+// then its result as the stream said it.
+test('status records each update\'s returned result, on the stream and in JSON', async () => {
+  const f = fixture();
+  const read = async () => await (await f.status(statusRequest())).json();
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  const failedAfterCommit = 'The new version is installed and the app is open, but a step after the update failed; the '
+    + 'cause is in the Control Panel journal.';
+  f.state.update = async () => {
+    f.state.operation = operation({ phase: 'applying', recoveryRequired: false });
+    await gate;
+    // Committed and cleaned up; then a step after the update (access reconciliation) threw.
+    f.state.operation = operation({ phase: 'committed', committed: true, pending: false, cleanupComplete: true,
+      recoveryRequired: false });
+    return { success: false, operationId: id, errorCode: 'committed-post-update-failed', error: '/secret' };
+  };
+  const streamed = await f.update(request());
+  assert.deepEqual({ running: (await read()).running, result: (await read()).result }, { running: true, result: null });
+  finish();
+  const text = await streamed.text();
+  assert.match(text, /"stage":"failed"/);
+  const status = await read();
+  assert.equal(status.running, false);
+  assert.deepEqual({ ...status.result, at: typeof status.result.at }, { operationId: id, success: false,
+    errorCode: 'committed-post-update-failed', message: failedAfterCommit, at: 'string' });
+  assert.ok(text.includes(JSON.stringify(failedAfterCommit)));
+
+  // Left pending as it returned: the result says so (not a success) and names the recovery.
+  f.state.operation = null;
+  f.state.update = async () => {
+    f.state.operation = operation({ committed: true, phase: 'cleanup', recoveryRequired: false, reopened: true });
+    return { success: true, operationId: otherId };
+  };
+  assert.match(await (await f.update(request())).text(), /"stage":"pending"/);
+  assert.deepEqual((({ at: _at, ...rest }) => rest)((await read()).result), { operationId: otherId, success: false,
+    errorCode: 'operation_pending', message: 'The new version is installed and the app is open; removing the update\'s '
+      + 'recovery points did not finish. Retry recovery (youeye app recover wiki); the cause is in the Control Panel '
+      + 'journal.' });
+
+  // The dashboard's JSON answer is recorded the same way, a success with its operation included.
+  f.state.operation = null;
+  f.state.update = async () => {
+    f.state.operation = operation({ phase: 'committed', committed: true, pending: false, cleanupComplete: true,
+      recoveryRequired: false });
+    return { success: true, operationId: id };
+  };
+  const json = await f.http.handleMarketUpdate(request(), 'wiki', 'json');
+  assert.equal(json.status, 200);
+  assert.deepEqual((({ at: _at, ...rest }) => rest)((await read()).result),
+    { operationId: id, success: true, errorCode: null, message: 'Update complete' });
+
+  // A refusal thrown before any operation is recorded too, without one.
+  f.state.operation = null;
+  f.state.update = async () => { throw Object.assign(new Error('/secret'), { code: 'unsupported-shared-resource' }); };
+  await (await f.update(request())).text();
+  const refused = (await read()).result;
+  assert.equal(refused.operationId, null);
+  assert.equal(refused.errorCode, 'unsupported-shared-resource');
+  assert.match(refused.message, /writers outside this app/);
+  assert.equal((await read()).running, false);
+
+  // Every result stays readable by its operation (newest last): a later update of the app does not hide the first
+  // one's failure from a client still following it.
+  const kept = (await read()).results as Array<{ operationId: string | null; errorCode: string | null }>;
+  assert.deepEqual(kept.map((r) => r.operationId), [id, otherId, id, null]);
+  assert.equal(kept[0].errorCode, 'committed-post-update-failed');
+
+  // The stream names this update's operation with its progress, once the operation exists.
+  f.state.operation = null;
+  f.state.update = async (_config, emit) => {
+    emit({ step: 1, totalSteps: 4, status: 'running', message: 'before the operation' });
+    f.state.operation = operation({ phase: 'applying', recoveryRequired: false });
+    emit({ step: 2, totalSteps: 4, status: 'running', message: 'with the operation' });
+    f.state.operation = operation({ phase: 'committed', committed: true, pending: false, cleanupComplete: true,
+      recoveryRequired: false });
+    return { success: true, operationId: id };
+  };
+  const named = await (await f.update(request())).text();
+  const progress = named.split('\n').filter((line) => line.startsWith('data: ') && line.includes('"rebuilding"'));
+  assert.equal(progress.length, 2);
+  assert.ok(!progress[0].includes('operationId'));
+  assert.ok(progress[1].includes(`"operationId":"${id}"`));
+
+  // A thrown code that is not a plain identifier is not recorded.
+  f.state.update = async () => { throw Object.assign(new Error('x'), { code: 'Not A Code / with spaces' }); };
+  await (await f.update(request())).text();
+  assert.equal((await read()).result.errorCode, null);
 });
 
 test('an unavailable status fails closed before update; missing installed apps return 404', async () => {

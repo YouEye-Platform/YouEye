@@ -83,14 +83,15 @@ export async function readFrozenUpdateManifest(appId: string, installedVersion?:
     throw new AppUpdatePreflightError('frozen-digest-mismatch',
       `The install record of ${appId} has no manifest digest, so its installed copy cannot be checked.`);
   }
-  // The registration only changes together with the record's manifestDigest (install, update, restore), so a copy
-  // parsed and verified for this digest stays valid. Reading it on every reconcile pass cost two `psql` execs per
-  // installed app every 30 s.
+  // A copy parsed and verified for this digest is cached: reading it on every reconcile pass cost two `psql` execs per
+  // installed app every 30 s. The digest alone does not identify the copy: a native app's record digest is its Market
+  // listing's, which stays the same when only its release changes (0.6.4 → 0.6.4-dev.2). So the cached copy must also
+  // be of the version the caller expects, or, when the caller gives none, of the record's installed version; any other
+  // copy is read again. (A stale copy failed every reopen and recovery of such an update, refused the next update of a
+  // native app without a database, and could be posted back to the dashboard by a manifest sync.)
   const cached = frozenManifestCache().get(appId);
-  if (cached?.digest === meta.manifestDigest) {
-    if (installedVersion && cached.manifest.version !== installedVersion) {
-      throw new AppUpdatePreflightError('frozen-version-mismatch', 'Installed manifest and recorded runtime version disagree.');
-    }
+  const expectedVersion = installedVersion || meta.installedVersion;
+  if (cached?.digest === meta.manifestDigest && (!expectedVersion || cached.manifest.version === expectedVersion)) {
     return structuredClone(cached.manifest);
   }
   const result = await execCommand('youeye-postgres', [

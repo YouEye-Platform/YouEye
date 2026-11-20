@@ -13,7 +13,9 @@ export async function waitForAppHealth(
   containerName: string,
   port: number,
   path = '/',
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  /** Checked before every probe: true ends the wait at once with false (the caller has to let go of the app). */
+  giveUp?: () => boolean,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
@@ -21,6 +23,7 @@ export async function waitForAppHealth(
   await new Promise((r) => setTimeout(r, 3000));
 
   while (Date.now() < deadline) {
+    if (giveUp?.()) return false;
     const ip = await getContainerIP(containerName);
     if (ip) {
       try {
@@ -44,7 +47,9 @@ export async function waitForAppHealth(
 export async function waitForPostgresHealth(
   containerName: string,
   user = 'postgres',
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  /** Checked before every probe: true ends the wait at once with false (the caller has to let go of the app). */
+  giveUp?: () => boolean,
 ): Promise<boolean> {
   if (!/^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(user)) {
     throw new Error(`Invalid PostgreSQL health-check user: ${user}`);
@@ -55,6 +60,7 @@ export async function waitForPostgresHealth(
   let lastFailure = 'PostgreSQL did not accept the probe';
 
   while (Date.now() < deadline) {
+    if (giveUp?.()) return false;
     for (const executable of ['/usr/local/bin/pg_isready', '/usr/bin/pg_isready']) {
       try {
         const result = await execCommand(containerName, [executable, '-U', user], {

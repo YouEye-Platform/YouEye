@@ -104,9 +104,11 @@ async function uninstallAppLocked(
     metadata.enabled = false;
     metadata.desiredState = 'stopped';
     await saveInstallMetadata(metadata);
+    const existing: string[] = [];
     for (const container of metadata.containers) {
-      if (await containerExists(container.containerName)) await quiesceAppCredentialRuntime([container.containerName]);
+      if (await containerExists(container.containerName)) existing.push(container.containerName);
     }
+    if (existing.length > 0) await quiesceAppCredentialRuntime(existing, metadata.containers);
   }
   await revokeAppCredential(appId);
   if (!metadata) {

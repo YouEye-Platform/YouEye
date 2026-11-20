@@ -189,6 +189,43 @@ func TestCoreRunnerFastChildCompletionSurvivesLostLauncherAndReboot(t *testing.T
 	}
 }
 
+// A fresh install of 0.6.14-dev.3 failed its first deployment attempt here: the
+// child of verify-members wrote "succeeded" and exited between the observer's
+// read of its result and the observer's look at the unit.
+func TestCoreRunnerChildFinishingDuringObservationIsNotUnknown(t *testing.T) {
+	f := newCoreRunnerFixture(t)
+	if got, err := f.runner.Start(context.Background(), f.journal, f.step); err != nil || got.State != "running" {
+		t.Fatal(got, err)
+	}
+	capture, finishing := f.runner.Capture, false
+	f.runner.Capture = func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "systemctl" && !finishing {
+			finishing = true
+			got, err := f.runner.RunAction(ctx, f.journal.RequestID, f.step.Name, f.journal.ManifestSHA256, func(context.Context, CoreJournal, CoreStep) error { return nil }, func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error) {
+				return CoreActionObservation{State: "succeeded", Evidence: "exact fixture effect readback"}, nil
+			})
+			if err != nil || got.State != "succeeded" {
+				t.Fatal(got, err)
+			}
+			f.properties["SubState"], f.properties["MainPID"] = "exited", "0"
+		}
+		return capture(ctx, program, args...)
+	}
+	got, err := f.runner.Observe(context.Background(), f.journal, f.step)
+	if err != nil || got.State != "succeeded" || !finishing {
+		t.Fatal("a child that finished during the observation was not seen", got, err, finishing)
+	}
+	// A child that is gone and left no last word stays unknown.
+	g := newCoreRunnerFixture(t)
+	if _, err := g.runner.Start(context.Background(), g.journal, g.step); err != nil {
+		t.Fatal(err)
+	}
+	g.properties["SubState"], g.properties["MainPID"] = "exited", "0"
+	if got, err := g.runner.Observe(context.Background(), g.journal, g.step); err != nil || got.State != "unknown" {
+		t.Fatal(got, err)
+	}
+}
+
 func TestCoreRunnerRejectsUnownedUnitInvocationAndPendingGraph(t *testing.T) {
 	f := newCoreRunnerFixture(t)
 	f.properties["LoadState"] = "loaded"

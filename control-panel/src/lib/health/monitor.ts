@@ -2,12 +2,13 @@
  * Health Monitor — Background job that watches platform service health
  * and sends notifications on state transitions.
  *
- * Runs every 60 seconds. Only sends notifications when state CHANGES
+ * Runs about every 60 seconds (jittered). Only sends notifications when state CHANGES
  * (running → degraded, degraded → running, etc.) — never on every tick.
  *
  * Monitors:
  * - Container service health (Pi-Hole, Caddy, PostgreSQL, Spine)
- * - Container watchdog — auto-restarts crashed containers, detects crash loops
+ * - Container watchdog — restarts the platform's own containers; app containers are only observed, and
+ *   started by their app's reconcile queue (lib/apps/app-reconciler.ts)
  * - Disk space (every 5 minutes via Spine API)
  * - Memory pressure (via Spine API)
  * - Swap-aware memory throttling — applies soft limits under pressure
@@ -23,7 +24,8 @@ import { spineClient } from '@/lib/spine/client';
 import { readFileSync } from 'fs';
 import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
 import { isContainerHeldByOperation, isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
-import { startWatchdogContainer } from './watchdog-start';
+import { appReconciler, shouldSuppressAppRecovery, startWatchdogContainer } from '@/lib/apps/app-reconciler';
+import { startJitteredLoop } from './jittered-timer';
 import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
 import { syncStartupReconciliationIssue } from '@/lib/incus/startup-reconciliation';
@@ -227,13 +229,12 @@ async function checkContainerWatchdog(): Promise<void> {
     if (!resp.metadata) return;
 
     const now = Date.now();
-    const intentionallyStopped = new Set<string>();
-    const recoverySuppressed = new Set<string>();
+    // Containers of installed apps: the watchdog only observes them. name → [app, recovery allowed]
+    const appContainers = new Map<string, { appId: string; recover: boolean }>();
     let appIntentObservationComplete = false;
     try {
       for (const app of await listReadableInstalledApps()) {
-        const stopIntent = app.enabled === false || app.desiredState === 'stopped'
-          || (app.lifecycleOperation?.desiredState === 'stopped' && app.lifecycleOperation.state !== 'completed');
+        const stopIntent = shouldSuppressAppRecovery(app);
         let storageUnavailable = false;
         try {
           // A stopped-on-purpose app is never restarted, so its storage needn't be inspected (pool and volume reads
@@ -248,12 +249,12 @@ async function checkContainerWatchdog(): Promise<void> {
         }
         for (const container of app.containers ?? []) {
           const name = container.containerName;
-          if (!name) continue;
-          if (stopIntent) intentionallyStopped.add(name);
-          if (storageUnavailable) recoverySuppressed.add(name);
+          if (name) appContainers.set(name, { appId: app.appId, recover: !stopIntent && !storageUnavailable });
         }
       }
       appIntentObservationComplete = true;
+      // A container no install record owns any more (its app was uninstalled) keeps no crash-loop record or issue.
+      appReconciler().retainContainers(new Set(appContainers.keys()));
     } catch (error) {
       console.error('[watchdog] Could not read durable app intent; automatic app recovery is paused:', error);
     }
@@ -268,12 +269,13 @@ async function checkContainerWatchdog(): Promise<void> {
       if (!isApp && !isInfra) continue;
       if (WATCHDOG_EXCLUDE.has(name)) continue;
       if (isApp && !appIntentObservationComplete) continue;
-      if (isApp && (intentionallyStopped.has(name) || recoverySuppressed.has(name))) {
-        const state = watchStates.get(name) ?? { previousStatus: status, restarts: [], crashLoopDetected: false };
-        state.previousStatus = status;
-        state.restarts = [];
-        state.crashLoopDetected = false;
-        watchStates.set(name, state);
+      const owned = appContainers.get(name);
+      if (owned) {
+        // Observe and ask. The app's reconcile queue takes the lock, re-checks and starts; a busy app is retried
+        // there within seconds. An app under an update or a backup is left to that operation.
+        const autostart = ((instance.config ?? {}) as Record<string, string>)['boot.autostart'] !== 'false';
+        appReconciler().observeContainer(owned.appId, name, status,
+          owned.recover && autostart && !isContainerMaintenanceActive(name));
         continue;
       }
 
@@ -292,6 +294,7 @@ async function checkContainerWatchdog(): Promise<void> {
         continue;
       }
 
+      // The platform's own containers (and an app container no install record owns) are started here.
       // Desired-state reconcile: start a container that SHOULD be running but is
       // Stopped — even one we never observed Running (e.g. it crashed at boot,
       // before CP/watchdog started, like an app racing Postgres). The
@@ -318,11 +321,11 @@ async function checkContainerWatchdog(): Promise<void> {
                   severity: 'error',
                   source: 'watchdog',
                   title: `${name} keeps crashing`,
-                  body: `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`,
+                  body: `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Automatic starts are paused; one more try 10 minutes after the last start.`,
                   fixable: false,
                   debounce: 1,
                 });
-                await notify(`${name} keeps crashing`, `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`, 'error', '/settings/system/health');
+                await notify(`${name} keeps crashing`, `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Automatic starts are paused; one more try 10 minutes after the last start.`, 'error', '/settings/system/health');
               }
               s.previousStatus = 'Running';
               watchStates.set(name, s);
@@ -404,13 +407,13 @@ async function checkContainerWatchdog(): Promise<void> {
               severity: 'error',
               source: 'watchdog',
               title: `${name} keeps crashing`,
-              body: `${name} restarted ${state.restarts.length} times in the last 5 minutes. Auto-restart stopped.`,
+              body: `${name} restarted ${state.restarts.length} times in the last 5 minutes. Automatic restarts are paused; one more try 10 minutes after the last restart.`,
               fixable: false,
               debounce: 1,
             });
             await notify(
               `${name} keeps crashing`,
-              `${name} has restarted ${state.restarts.length} times in the last 5 minutes. Auto-restart stopped. Your server may not have enough resources for all installed apps.`,
+              `${name} has restarted ${state.restarts.length} times in the last 5 minutes. Automatic restarts are paused; one more try 10 minutes after the last restart. Your server may not have enough resources for all installed apps.`,
               'error',
               '/settings/system/health'
             );
@@ -830,27 +833,21 @@ async function runHealthChecks(): Promise<void> {
 
 // ─── Background Timer ─────────────────────────────────────────
 
-let monitorTimer: ReturnType<typeof setInterval> | null = null;
+let stopMonitorTimer: (() => void) | null = null;
 let throttleTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start the health monitor background job.
  */
 export function startHealthMonitor(): void {
-  if (monitorTimer) return;
+  if (stopMonitorTimer) return;
 
-  // Initial check after 60 seconds (let services boot)
-  setTimeout(() => {
-    runHealthChecks().catch((err) => {
-      console.error('[health-monitor] Initial check failed:', err);
-    });
-  }, 60_000);
-
-  monitorTimer = setInterval(() => {
+  // First check 60–90 s after start (let services boot), then every 60 s ±15 %: never in step with the app prober.
+  stopMonitorTimer = startJitteredLoop(() => {
     runHealthChecks().catch((err) => {
       console.error('[health-monitor] Periodic check failed:', err);
     });
-  }, SERVICE_CHECK_INTERVAL_MS);
+  }, { periodMs: SERVICE_CHECK_INTERVAL_MS });
 
   // Memory throttle check runs on a faster 15-second interval
   throttleTimer = setInterval(() => {
@@ -859,17 +856,15 @@ export function startHealthMonitor(): void {
     });
   }, THROTTLE_INTERVAL_MS);
 
-  console.log('[health-monitor] Started — health every 60s, throttle every 15s');
+  console.log('[health-monitor] Started — health about every 60s, throttle every 15s');
 }
 
 /**
  * Stop the health monitor.
  */
 export function stopHealthMonitor(): void {
-  if (monitorTimer) {
-    clearInterval(monitorTimer);
-    monitorTimer = null;
-  }
+  stopMonitorTimer?.();
+  stopMonitorTimer = null;
   if (throttleTimer) {
     clearInterval(throttleTimer);
     throttleTimer = null;

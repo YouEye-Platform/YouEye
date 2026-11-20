@@ -25,6 +25,16 @@ const (
 // potentially sensitive details.
 var ErrSSETerminalFailure = errors.New("control panel operation failed")
 
+// StreamLostError reports that the Control Panel accepted a streamed request and began answering, but the stream broke
+// off (a dropped connection, an unexpected EOF) before it ended. The operation itself may still be running: the
+// caller can follow it through the operation's status instead of reporting it as failed.
+type StreamLostError struct{ Err error }
+
+func (e *StreamLostError) Error() string {
+	return "lost the Control Panel's progress stream: " + e.Err.Error()
+}
+func (e *StreamLostError) Unwrap() error { return e.Err }
+
 // SSEEvent represents a server-sent event from the Control Panel.
 type SSEEvent struct {
 	Step       int    `json:"step,omitempty"`
@@ -36,6 +46,8 @@ type SSEEvent struct {
 	Progress   int    `json:"progress,omitempty"`
 	AppID      string `json:"appId,omitempty"`
 	Version    string `json:"version,omitempty"`
+	// OperationID is the update operation the event belongs to (Market app updates, once it exists).
+	OperationID string `json:"operationId,omitempty"`
 }
 
 // Client talks to the Control Panel HTTP API using a CLI token.
@@ -367,7 +379,11 @@ func (c *Client) PostSSE(path string, payload interface{}, handler func(event SS
 		return &HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 
-	return scanSSEEvents(resp.Body, handler)
+	err = scanSSEEvents(resp.Body, handler)
+	if err != nil && !errors.Is(err, ErrSSETerminalFailure) {
+		return &StreamLostError{Err: err}
+	}
+	return err
 }
 
 func scanSSEEvents(reader io.Reader, handler func(event SSEEvent)) error {

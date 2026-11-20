@@ -37,8 +37,10 @@ import {
   writeConfigFileToStorage,
 } from '@/lib/market/config-writer';
 import { incusRequest, execShell } from '@/lib/incus/server';
+import { containerState } from '@/lib/incus/snapshot';
 import { getContainerName } from '@/lib/market/engine-helpers';
 import { restartContainerAndWait } from '@/lib/infrastructure/oci-deployer';
+import { containerRole } from '@/lib/apps/container-order';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import type { InstallMetadata, AppManifest, ConfigFileSpec, VariableContext } from '@/lib/market/types';
 import { runSetup, setupFor } from '@/lib/market/setup-runner';
@@ -288,12 +290,15 @@ function containerEntries(meta: InstallMetadata): Array<{ containerName: string;
  * Replace the old domain in a container's env file (/etc/<container>.env).
  * This is how the install engine provisions LXD (native) app env — IDENTITY_URL,
  * APP_URL, <APP>_EXTERNAL_URL etc. all live here. Returns true when changed.
+ * `beforeWrite` runs once a rewrite is needed, before the file changes (the caller marks the container as waiting for
+ * its restart there): when it throws, the file is left as it was, so a changed file never lacks its mark.
  */
-async function updateContainerEnvFile(
+export async function updateContainerEnvFile(
   containerName: string,
   oldDomain: string,
   newDomain: string,
   identityOrigins?: [string, string],
+  beforeWrite?: () => Promise<void>,
 ): Promise<boolean> {
   const envPath = `/etc/${containerName}.env`;
   let content = '';
@@ -307,6 +312,7 @@ async function updateContainerEnvFile(
   if (!content.includes(oldDomain) && !content.includes(identityOrigins?.[0] || '\0')) return false;
   const next = replacePlatformUrls(content, oldDomain, newDomain, identityOrigins);
   const b64 = Buffer.from(next).toString('base64');
+  await beforeWrite?.();
   const write = await execShell(containerName, `echo '${b64}' | base64 -d > ${envPath}`, { timeout: 10_000 });
   if (write.exitCode !== 0) {
     throw new Error(`Failed to write ${envPath} in ${containerName}: ${write.stderr}`);
@@ -336,7 +342,10 @@ async function updateContainerEnvConfig(
   }
 
   if (Object.keys(updates).length === 0) return false;
-  await incusRequest('PATCH', `/1.0/instances/${containerName}`, { config: updates });
+  // In the same write: the container waits for its restart until the URL change (or, when that is interrupted, the
+  // next settings propagation) has restarted it.
+  const { ENV_RESTART_PENDING } = await import('@/lib/market/propagation');
+  await incusRequest('PATCH', `/1.0/instances/${containerName}`, { config: { ...updates, [ENV_RESTART_PENDING]: '1' } });
   return true;
 }
 
@@ -499,6 +508,7 @@ async function updateInstalledApp(
   warn: (message: string) => void,
   identityOrigins?: [string, string],
   installedManifest?: AppManifest,
+  platformEnv?: Record<string, string>,
 ): Promise<void> {
   return withAppLifecycle(meta.appId, async () => {
     // Enumeration can precede a concurrent lifecycle mutation. Re-read inside
@@ -506,7 +516,7 @@ async function updateInstalledApp(
     const { readInstallMetadata } = await import('@/lib/market/metadata');
     const current = await readInstallMetadata(meta.appId);
     if (!current) throw new Error(`App ${meta.appId} disappeared during URL change`);
-    return updateInstalledAppLocked(current, oldDomain, newDomain, warn, identityOrigins, installedManifest);
+    return updateInstalledAppLocked(current, oldDomain, newDomain, warn, identityOrigins, installedManifest, platformEnv);
   });
 }
 
@@ -514,6 +524,7 @@ async function updateInstalledAppLocked(
   meta: InstallMetadata, oldDomain: string, newDomain: string,
   warn: (message: string) => void, identityOrigins?: [string, string],
   installedManifest?: AppManifest,
+  platformEnv?: Record<string, string>,
 ): Promise<void> {
   const appId = meta.appId;
   const containers = containerEntries(meta);
@@ -526,7 +537,11 @@ async function updateInstalledAppLocked(
   //    use Incus environment.* config; the other path is a cheap no-op.
   for (const { containerName } of containers) {
     try {
-      await updateContainerEnvFile(containerName, oldDomain, newDomain, identityOrigins);
+      // Marked before the file changes: a mark that can't be set leaves the file as it was.
+      await updateContainerEnvFile(containerName, oldDomain, newDomain, identityOrigins, async () => {
+        const { markEnvRestartPending } = await import('@/lib/market/propagation');
+        await markEnvRestartPending(containerName);
+      });
     } catch (err) {
       warn(`${appId}: env file update failed for ${containerName}: ${err}`);
     }
@@ -534,6 +549,17 @@ async function updateInstalledAppLocked(
       await updateContainerEnvConfig(containerName, oldDomain, newDomain, identityOrigins);
     } catch (err) {
       warn(`${appId}: env config update failed for ${containerName}: ${err}`);
+    }
+    // The platform keys (site name, timezone, locale, version) ride on this restart: the propagation step after
+    // the URL change then finds them in place and does not restart the app a second time.
+    if (platformEnv) {
+      try {
+        const { writeContainerEnvironment } = await import('@/lib/market/propagation');
+        await writeContainerEnvironment(containerName, platformEnv);
+      } catch (err) {
+        // Not this step's job: the propagation step writes them (and restarts the app once more).
+        console.warn(`[Reconfigure] ${appId}: platform environment not written to ${containerName} yet:`, err);
+      }
     }
   }
 
@@ -552,7 +578,8 @@ async function updateInstalledAppLocked(
   const intentionallyStopped = meta.desiredState === 'stopped' || meta.enabled === false;
   if (!intentionallyStopped) {
     for (const container of containers) {
-      await restartContainerAndWait(container.containerName);
+      await restartContainerAndWait(container.containerName, 60, { role: containerRole(meta.containers, container.containerName) });
+      await envRestartDone(appId, container.containerName);
     }
 
     for (const configFile of refreshedConfigFiles) {
@@ -576,6 +603,14 @@ async function updateInstalledAppLocked(
         logOperationFailure(`url-change setup of ${appId}`, err);
         warn(`${appId}: url-change setup failed (details in the CP log)`);
       }
+    }
+  }
+
+  // A stopped app's containers read the new environment at their next start. One that runs all the same keeps its
+  // mark: the next settings propagation restarts it.
+  if (intentionallyStopped) {
+    for (const { containerName } of containers) {
+      if (await containerState(containerName) === 'Stopped') await envRestartDone(appId, containerName);
     }
   }
 
@@ -618,10 +653,23 @@ async function updateInstalledAppLocked(
       // Restart so any cached OIDC client rebuilds from the re-applied config.
       for (const containerName of containerNames) {
         try {
-          await restartContainerAndWait(containerName);
+          await restartContainerAndWait(containerName, 60, { role: containerRole(meta.containers, containerName) });
         } catch (err) { warn(`${appId}: SSO restart failed for ${containerName}: ${err}`); }
       }
     }
+  }
+}
+
+/**
+ * The container was restarted (or is stopped) after step 1 wrote its environment: it no longer waits for a restart.
+ * A mark that could not be cleared costs one more restart at the next settings propagation, not the URL change.
+ */
+async function envRestartDone(appId: string, containerName: string): Promise<void> {
+  try {
+    const { clearEnvRestartPending } = await import('@/lib/market/propagation');
+    await clearEnvRestartPending(containerName);
+  } catch (err) {
+    console.warn(`[Reconfigure] ${appId}: restart mark not cleared on ${containerName}:`, err);
   }
 }
 
@@ -667,7 +715,9 @@ export async function runPendingUrlChangeSetup(meta: InstallMetadata): Promise<v
           variables: await installedSetupVariables(manifest, meta),
         });
         if (purpose === 'sso') {
-          for (const name of Object.values(setupContainers(manifest, meta))) await restartContainerAndWait(name);
+          for (const name of Object.values(setupContainers(manifest, meta))) {
+            await restartContainerAndWait(name, 60, { role: containerRole(meta.containers, name) });
+          }
         }
       } catch (error) {
         logOperationFailure(`${purpose} setup of ${meta.appId} after an address change`, error);
@@ -1240,7 +1290,7 @@ async function reconfigureLocked(
   // 10. Refresh infrastructure containers (ensures DNS/DHCP leases are valid before restarting apps)
   if (reconcileRequired && installedApps.length > 0) {
     try {
-      await withContainerLifecycle('youeye-postgres', () => restartContainerAndWait('youeye-postgres'));
+      await withContainerLifecycle('youeye-postgres', () => restartContainerAndWait('youeye-postgres', 60, { role: 'database' }));
       // Wait for postgres to be ready
       await new Promise((resolve) => setTimeout(resolve, 5000));
     } catch {
@@ -1251,6 +1301,12 @@ async function reconfigureLocked(
   // 11. Update installed apps (native and market)
   if (reconcileRequired && installedApps.length > 0) {
     const failures: string[] = [];
+    let platformEnv: Record<string, string> | undefined;
+    try {
+      platformEnv = await (await import('@/lib/market/propagation')).platformEnvironment();
+    } catch {
+      // Best-effort, as step 11c is.
+    }
     for (const app of installedApps) {
       onEvent({ step: `app_${app.appId}`, status: 'running', message: `Updating ${app.appId}...` });
       const warnings: string[] = [];
@@ -1259,7 +1315,7 @@ async function reconfigureLocked(
           warnings.push(m);
           if (/failed|unknown container/.test(m)) throw new Error(m);
           console.warn(`[Reconfigure] ${m}`);
-        }, [journal.oldIdentityOrigin, configuredIdentityUrl], req.installedManifests?.get(app.appId));
+        }, [journal.oldIdentityOrigin, configuredIdentityUrl], req.installedManifests?.get(app.appId), platformEnv);
         onEvent({
           step: `app_${app.appId}`,
           status: 'done',
@@ -1287,7 +1343,9 @@ async function reconfigureLocked(
     }
   }
 
-  // 11c. Propagate platform env vars (site name, timezone, locale) to all installed apps
+  // 11c. Propagate platform env vars (site name, timezone, locale) to all installed apps. Only an app that does
+  //      not hold them yet is written and restarted: none after a reconfigure that changed none of them, and
+  //      none of the apps step 11 just restarted with them.
   if (installedApps.length > 0) {
     try {
       const { propagateSettingsToApps } = await import('@/lib/market/propagation');

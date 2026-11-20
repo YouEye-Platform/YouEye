@@ -142,16 +142,15 @@ test('missing pool, full capacity, unknown runtime and unavailable previous imag
   rejected(f, 'unknown-container-state');
 });
 
-test('app-owned PostgreSQL requires a declared scoped logical database and owned engine', () => {
+function ownDatabaseFixture() {
   const f = fixture();
   f.metadata.databaseMode = 'own';
+  delete f.metadata.databaseName;
+  delete f.metadata.databaseUser;
   f.metadata.containers.push({ name: 'postgres', containerName: 'app-fixture-postgres',
     type: 'oci', role: 'database' });
   for (const manifest of [f.old, f.target]) {
-    manifest.database = { mode: 'own', container: 'postgres' };
-    manifest.backup = { ownPostgres: {
-      container: 'app-fixture-postgres', database: 'fixture', user: 'fixture',
-    } };
+    manifest.database = { mode: 'own', container: 'postgres', name: 'fixture', user: 'fixture' };
     manifest.containers.push({ name: 'postgres', type: 'oci',
       volumes: [{ name: 'data', container: '/var/lib/postgresql/data', type: 'data', read_only: false }] } as AppManifest['containers'][number]);
   }
@@ -164,12 +163,56 @@ test('app-owned PostgreSQL requires a declared scoped logical database and owned
   f.observations.volumes.push({ pool: 'default', name: 'ye-fixture-postgres-data',
     ownerAppId: 'fixture', contentType: 'filesystem', snapshotSupported: true,
     users: ['app-fixture-postgres'] });
-  f.observations.databases[0].engine = 'app-fixture-postgres';
+  // Nothing is asked of the database itself: no admin role, no catalog, no logical restore.
+  f.observations.databases = [];
+  return f;
+}
+
+test('an app-owned database is its engine container and mutable volumes: no database resource, no logical recovery', () => {
+  const f = ownDatabaseFixture();
   const planned = planAppUpdateInventory(f.metadata, f.old, f.target, f.observations);
-  assert.equal(planned.databases[0].mode, 'own');
-  assert.equal(planned.resources.find(r => r.kind === 'volume' && r.name === 'ye-fixture-postgres-data')!.mutable, false);
-  delete f.old.backup;
-  rejected(f, 'own-postgres-recovery-undeclared');
+  assert.deepEqual(planned.databases, []);
+  assert.equal(planned.resources.some(r => r.kind === 'database'), false);
+  assert.equal(planned.resources.find(r => r.kind === 'volume' && r.name === 'ye-fixture-postgres-data')!.mutable, true);
+  assert.ok(planned.resources.some(r => r.kind === 'container' && r.name === 'app-fixture-postgres' && r.mutable));
+  assert.equal(planned.originalRunning['app-fixture-postgres'], true);
+  // The recovery declaration for backups is not needed for an update.
+  assert.equal(f.old.backup, undefined);
+});
+
+test('an app-owned database must keep its files in its own declared storage and keep its declaration', () => {
+  let f = ownDatabaseFixture();
+  f.metadata.containers[1].role = 'sidecar';
+  rejected(f, 'foreign-database-engine');
+
+  f = ownDatabaseFixture();
+  f.metadata.storageVolumes = f.metadata.storageVolumes!.filter(v => v.containerName !== 'app-fixture-postgres');
+  for (const manifest of [f.old, f.target]) manifest.containers[1].volumes = [];
+  f.observations.containers[1].volumes = [];
+  f.observations.volumes.pop();
+  rejected(f, 'own-database-storage-undeclared');
+
+  // The engine's files mounted into another container of the app.
+  f = ownDatabaseFixture();
+  for (const manifest of [f.old, f.target]) {
+    manifest.containers[0].volumes.push({ name: 'pgdata', container: '/pgdata', type: 'data', read_only: false,
+      sourceContainer: 'postgres', sourceVolume: 'data' } as AppManifest['containers'][number]['volumes'][number]);
+  }
+  f.metadata.storageVolumes!.push({ appId: 'fixture', containerName: 'app-fixture', logicalName: 'pgdata',
+    name: 'ye-fixture-postgres-data', pool: 'default', containerPath: '/pgdata', type: 'data', readOnly: false,
+    backup: true });
+  f.observations.containers[0].volumes.push({ pool: 'default', name: 'ye-fixture-postgres-data', readOnly: false });
+  f.observations.volumes[1].users.push('app-fixture');
+  rejected(f, 'unsupported-shared-resource');
+
+  // A writer outside the app on the engine's volume.
+  f = ownDatabaseFixture();
+  f.observations.volumes[1].users.push('app-other');
+  rejected(f, 'unsupported-shared-resource');
+
+  f = ownDatabaseFixture();
+  f.target.database = { mode: 'own', container: 'postgres', name: 'renamed', user: 'fixture' };
+  rejected(f, 'unsupported-database-topology-change');
 });
 
 test('a root-only native runtime still requires recovery and cleanup capacity', () => {

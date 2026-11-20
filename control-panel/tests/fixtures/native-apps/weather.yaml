@@ -1,0 +1,92 @@
+schema: youeye.app.v1
+id: weather
+version: 0.0.0
+name: Weather
+listing:
+  description: Weather forecasts, current conditions, and hourly data for your saved locations. Powered by Open-Meteo.
+  long_description: |
+    Weather provides forecasts, current conditions, and hourly data for your saved locations.
+    Powered by Open-Meteo — free and requires no API key. Save multiple locations, view
+    7-day forecasts, and get real-time weather data.
+  category: utilities
+  tags: [weather, forecast, native, utilities]
+  icon: cloud-sun
+  screenshots:
+    - {path: assets/screenshots/1.png, caption: Current weather and forecast}
+    - {path: assets/screenshots/2.png, caption: Saved locations}
+  website: https://github.com/YouEye-Platform/Weather
+source: {node: '24'}
+port: 3000
+health: /api/health
+database:
+  postgres: {name: ye_weather, user: ye_weather}
+env:
+  DATABASE_URL: ${database.url}
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  WEATHER_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: weather-current
+    kind: widget
+    placement: dashboard
+    name: Current Weather
+    description: Current conditions for your default location
+    embed: /embed/widget/weather-current
+    size: {default: [22, 28], min: [15, 20], max: [35, 40]}
+    refresh: 600
+  - id: weather-forecast
+    kind: widget
+    placement: dashboard
+    name: Weather Forecast
+    description: 5-day forecast for your default location
+    embed: /embed/widget/weather-forecast
+    size: {default: [35, 25], min: [25, 18], max: [50, 40]}
+    refresh: 1800
+  - id: weather-summary
+    kind: info-card
+    placement: timeline
+    name: Weather summary
+    description: Current weather conditions for a location
+    embed: /embed/card/weather
+  - id: weather-check
+    kind: timeline-card
+    placement: timeline
+    name: Weather checked
+    description: Weather checked for a location
+    embed: /embed/timeline/weather
+    permissions: ['timeline:write']
+    triggers: [weather-check]
+  - id: weather-location-added
+    kind: timeline-card
+    placement: timeline
+    name: Weather location added
+    description: Weather location added
+    embed: /embed/timeline/weather
+    permissions: ['timeline:write']
+    triggers: [weather-location-added]
+proxy:
+  - {host: geocoding-api.open-meteo.com, paths: [/v1/search*], methods: [GET]}
+  - {host: api.open-meteo.com, paths: [/v1/forecast*], methods: [GET]}

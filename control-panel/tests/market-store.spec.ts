@@ -386,6 +386,20 @@ test('a picture is fetched once, checked against its hash, kept, and only when t
 
 // ─── When a market is asked ───────────────────────────────
 
+/**
+ * Wait until `done` holds, for work a reader started in the background: no fixed sleep, which a loaded machine can
+ * outlast (a 20 ms sleep failed once under the full suite). Fails after 10 s.
+ */
+async function until(done: () => boolean | Promise<boolean>, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!await done()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
+const answered = (hosts: ReturnType<typeof fakeMarketHosts>) => () => hosts.requests.some((request) => request.status !== 0);
+
 test('readers use the store: no request until the interval is over, then one in the background', withStore(async () => {
   const built = buildFixtureMarket(one());
   const hosts = fakeMarketHosts({ [ADDRESS]: built.files });
@@ -405,7 +419,9 @@ test('readers use the store: no request until the interval is over, then one in 
   // …at 5 min 15 s one conditional request, in the background (the reader already has its answer).
   now = Date.parse('2026-11-18T12:05:15Z');
   await currentMarket(custom, options);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The background attempt is over once it is recorded.
+  await until(async () => (await readMarketRefreshStatus(custom.id)).checked_at === new Date(now).toISOString(),
+    'the background refresh');
   assert.deepEqual(hosts.requests.map((request) => [request.path, request.status]), [[MARKET_POINTER_FILE, 304]]);
   hosts.take();
   await currentMarket(custom, options);
@@ -542,7 +558,7 @@ test('after a restart the timer continues from the recorded attempt', withStore(
   assert.equal(hosts.requests.length, 0, 'two minutes after the last attempt: nothing');
   resetMarketStoreMemory();
   await currentMarket(custom, { deps: hosts.deps, now: () => start + 301_000, random: () => 0 });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await until(answered(hosts), 'the background request');
   assert.equal(hosts.requests.length, 1);
 }));
 
@@ -585,7 +601,7 @@ test('an attempt made while the clock was ahead does not hold the market back on
       requestMarketRefresh(undefined, right + 60_000);
       await currentMarket(custom, { deps: hosts.deps, now: () => right + 61_000, random: () => 0 });
     }
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await until(answered(hosts), background ? 'the background request' : 'the explicit check');
     assert.ok(hosts.requests.length > 0, background ? 'the market is asked in the background' : 'the explicit check asks the market');
     hosts.take();
   }
@@ -612,7 +628,7 @@ test('the old catalog release files go once the official store holds an accepted
 
   hosts.state.down = false;
   await refreshMarket(official, { deps: hosts.deps, channel: stable });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await until(() => !existsSync(path.join(directory, 'catalog-cache.json')), 'the old files to go');
   assert.equal(existsSync(path.join(directory, 'market-releases')), false);
   assert.equal(existsSync(path.join(directory, 'catalog-cache.json')), false);
   assert.ok(existsSync(path.join(marketStoreDirectory('official'), 'state.json')));

@@ -52,3 +52,21 @@ test('oversized and failed artifact reads are rejected without using mutable tag
   await assert.rejects(freezeUpdateOCIImage('docker.io/library/alpine:3.21',
     (async () => new Response(null, { status: 404 })) as typeof fetch), /could not be resolved/);
 });
+
+test('a dropped lookup or a registry 5xx is retried; a 4xx is final', async () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const body = JSON.stringify({ schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: [] });
+  let calls = 0;
+  const flaky = (async () => {
+    calls++;
+    if (calls === 1) throw new TypeError('fetch failed');
+    if (calls === 2) return new Response(null, { status: 503 });
+    return new Response(body, { status: 200, headers: { 'docker-content-digest': digest } });
+  }) as typeof fetch;
+  await freezeUpdateOCIImage('example.test/app:1', flaky, [1, 1]).catch(() => undefined);
+  assert.equal(calls, 3);
+  let final = 0;
+  await assert.rejects(freezeUpdateOCIImage('example.test/app:1',
+    (async () => { final++; return new Response(null, { status: 404 }); }) as typeof fetch, [1, 1]), /could not be resolved/);
+  assert.equal(final, 1);
+});

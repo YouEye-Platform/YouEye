@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as containerOrder from '../src/lib/apps/container-order';
 
 function fixture(credential: string | null = 'protected-existing-key', failEnvironment = false) {
   const effects: Array<{ name: string; value?: any }> = [];
@@ -37,6 +38,7 @@ function fixture(credential: string | null = 'protected-existing-key', failEnvir
       effects.push({ name: 'environment', value }); return failEnvironment ? { type: 'error' } : {};
     } },
     '@/lib/infrastructure/oci-deployer': { restartContainerAndWait: async () => effects.push({ name: 'restart' }) },
+    '@/lib/apps/container-order': containerOrder,
   };
   const exports: any = {};
   const source = readFileSync(path.join(process.env.CONTROL_PANEL_ROOT || process.cwd(), 'src/lib/market/managed-ai.ts'), 'utf8');

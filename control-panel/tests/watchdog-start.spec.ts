@@ -5,13 +5,15 @@ import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 
-function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boolean; running?: boolean; storage?: boolean; disabledAutostart?: boolean; fail?: boolean; userWaiting?: boolean } = {}) {
+// The start gate lives beside the app reconcile queue (tests/app-reconciler.spec.ts covers the queue).
+function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boolean; running?: boolean; storage?: boolean; disabledAutostart?: boolean; fail?: boolean } = {}) {
   let held = false;
   const events: string[] = [];
-  const code = ts.transpileModule(readFileSync(path.join(process.env.CONTROL_PANEL_ROOT || process.cwd(), 'src/lib/health/watchdog-start.ts'), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
+  const code = ts.transpileModule(readFileSync(path.join(process.env.CONTROL_PANEL_ROOT || process.cwd(), 'src/lib/apps/app-reconciler.ts'), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
   const api: any = {};
   runInNewContext(code, {exports: api, encodeURIComponent, require(id: string) {
-    if (id.endsWith('update-admission')) return {isUserOperationWaiting: () => !!options.userWaiting, async withContainerLifecycle(_name: string, work: () => Promise<unknown>) {
+    if (id.endsWith('update-admission')) return {async withContainerLifecycle(_name: string, work: () => Promise<unknown>, lifecycle: { automatic?: boolean }) {
+      assert.equal(lifecycle.automatic, true, 'an automatic start announces no operation');
       if (options.busy) throw Error('App update executor lock is busy');
       held = true; events.push('lock');
       try { return await work(); } finally { held = false; events.push('unlock'); }
@@ -24,6 +26,7 @@ function fixture(options: { busy?: boolean; maintenance?: boolean; stopped?: boo
       return method === 'GET' ? {metadata: {status: options.running ? 'Running' : 'Stopped', config: {'boot.autostart': options.disabledAutostart ? 'false' : 'true'}}} : {operation: '/1.0/operations/start'};
     }};
     if (id.endsWith('oci-deployer')) return {async waitForIncusOperation() {await Promise.resolve(); assert.ok(held); events.push('terminal'); if (options.fail) throw Error('operation failed');}};
+    if (id === './container-order' || id === './container-readiness' || id === '../incus/snapshot') return {};
     throw Error(id);
   }});
   return {api, events};
@@ -36,8 +39,8 @@ test('watchdog holds shared lifecycle admission until terminal start operation',
 test('rename holding app admission prevents the watchdog from starting its stopped dependency', async () => {
   const f = fixture({busy:true}); await assert.rejects(f.api.startWatchdogContainer('app-searxng-redis'), /busy/); assert.deepEqual(f.events, []);
 });
-test('stale stopped observations cannot override current state, owner intent, maintenance, unavailable storage or a waiting user', async () => {
-  for (const options of [{running:true}, {stopped:true}, {maintenance:true}, {storage:false}, {disabledAutostart:true}, {userWaiting:true}]) {
+test('stale stopped observations cannot override current state, owner intent, maintenance or unavailable storage', async () => {
+  for (const options of [{running:true}, {stopped:true}, {maintenance:true}, {storage:false}, {disabledAutostart:true}]) {
     const f = fixture(options); assert.equal(await f.api.startWatchdogContainer('app-searxng-redis'), false); assert.ok(!f.events.includes('PUT')); assert.equal(f.events.at(-1),'unlock');
   }
 });
@@ -59,8 +62,11 @@ test('actual URL update re-reads app intent under admission and never restarts a
     if(id==='@/lib/incus/server')return {async execShell(){assert.ok(held);return {exitCode:1};},async incusRequest(method:string){assert.ok(held);assert.equal(method,'GET');return {metadata:{config:{}}};}};
     if(id==='@/lib/infrastructure/oci-deployer')return {async restartContainerAndWait(){assert.fail('owner-stopped app restarted');}};
     if(id==='@/lib/market/catalog')return {async fetchManifestFromSource(){return null;}};
+    // The stopped app's containers lose their restart mark: they read the new environment at their next start.
+    if(id==='@/lib/incus/snapshot')return {async containerState(){assert.ok(held);return 'Stopped';}};
+    if(id==='@/lib/market/propagation')return {async clearEnvRestartPending(name:string){assert.ok(held);events.push(`unmark:${name}`);}};
     return {};
   }});
   await api.updateInstalledApp({...current,desiredState:'running',marker:'stale'},'first.test','next.test',()=>{});
-  assert.deepEqual(events,['lock','read','save','unlock']);
+  assert.deepEqual(events,['lock','read','unmark:app-searxng-redis','unmark:app-searxng-main','save','unlock']);
 });

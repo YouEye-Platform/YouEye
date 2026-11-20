@@ -6,8 +6,29 @@ const accepts = [
   'application/vnd.docker.distribution.manifest.list.v2+json', 'application/vnd.docker.distribution.manifest.v2+json',
 ].join(', ');
 
+/**
+ * A registry read retried on network errors, 429 and 5xx (three tries, 2 s and 5 s apart): one dropped DNS lookup must
+ * not refuse an update. 4xx answers are final.
+ */
+function retrying(request: typeof fetch, delays = [2_000, 5_000]): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    for (let attempt = 0; ; attempt++) {
+      const last = attempt >= delays.length;
+      try {
+        const timeout = { ...init, signal: AbortSignal.timeout(30_000) };
+        const response = await request(input, timeout);
+        if (last || (response.status !== 429 && response.status < 500)) return response;
+      } catch (error) {
+        if (last) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+    }
+  }) as typeof fetch;
+}
+
 /** Resolve the public registry artifact before mutation, then rebuild by digest. */
-export async function freezeUpdateOCIImage(image: string, request: typeof fetch = fetch) {
+export async function freezeUpdateOCIImage(image: string, fetchImpl: typeof fetch = fetch, retryDelays?: number[]) {
+  const request = retrying(fetchImpl, retryDelays);
   const parsed = parseOCIImage(image);
   const origin = new URL(parsed.server);
   if (origin.protocol !== 'https:' || origin.username || origin.password) throw new Error('OCI update source must use credential-free HTTPS');
@@ -20,7 +41,7 @@ export async function freezeUpdateOCIImage(image: string, request: typeof fetch 
     || !/^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,255}$/.test(reference)) throw new Error('Invalid OCI artifact reference');
   const url = `${registry}/v2/${repository}/manifests/${encodeURIComponent(reference)}`;
   const headers: Record<string, string> = { Accept: accepts };
-  let response = await request(url, { headers, signal: AbortSignal.timeout(30_000), redirect: 'error' });
+  let response = await request(url, { headers, redirect: 'error' });
   if (response.status === 401) {
     const challenge = response.headers.get('www-authenticate') ?? '';
     const realm = /realm="([^"]+)"/.exec(challenge)?.[1];
@@ -33,12 +54,12 @@ export async function freezeUpdateOCIImage(image: string, request: typeof fetch 
       || (!dockerAuth && tokenURL.origin !== registry)) throw new Error('OCI token authority does not match registry');
     tokenURL.searchParams.set('service', service);
     tokenURL.searchParams.set('scope', `repository:${repository}:pull`);
-    const tokenResponse = await request(tokenURL, { signal: AbortSignal.timeout(30_000), redirect: 'error' });
+    const tokenResponse = await request(tokenURL, { redirect: 'error' });
     if (!tokenResponse.ok) throw new Error('OCI public artifact authentication failed');
     const token = await tokenResponse.json() as { token?: string; access_token?: string };
     if (!(token.token ?? token.access_token)) throw new Error('OCI public artifact authentication failed');
     headers.Authorization = `Bearer ${token.token ?? token.access_token}`;
-    response = await request(url, { headers, signal: AbortSignal.timeout(30_000), redirect: 'error' });
+    response = await request(url, { headers, redirect: 'error' });
   }
   if (!response.ok || !response.body) throw new Error('OCI update artifact could not be resolved');
   const chunks: Uint8Array[] = [];

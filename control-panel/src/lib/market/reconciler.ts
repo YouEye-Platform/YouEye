@@ -13,6 +13,8 @@ import { removeCaddyTrustBundle } from './caddy-ca';
 import { deleteAllAppSecrets } from '@/lib/infrastructure/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { execCommand, incusRequest } from '@/lib/incus/server';
+import { stopContainerOrForce, stopTimeoutSec } from '@/lib/incus/snapshot';
+import { containerRole, containerTargets, orderContainers } from '@/lib/apps/container-order';
 import { observeIssue, resolveIssue, recordTimelineEvent } from '@/lib/health/issues';
 import type { ContainerMeta, InstallMetadata } from './types';
 import { CONTAINER_DOMAIN } from './constants';
@@ -191,12 +193,15 @@ export async function reconcileApps(): Promise<ReconcileResult> {
             return;
           }
           unresolved.push(`metadata-without-active-network:${meta.appId}`);
-          for (const name of containers) {
+          // The app's clients first, its database last; each with its role's timeout.
+          const stopOrder = orderContainers(containerTargets(meta.containers), 'stop').map(target => target.name);
+          for (const name of [...stopOrder.filter(name => containers.includes(name)),
+            ...containers.filter(name => !stopOrder.includes(name))]) {
             if (!instances.includes(name)) continue;
             try {
               // Stopping a stopped container is not a repair.
               if (await instanceRunning(name)) {
-                await stopInstance(name);
+                await stopInstance(name, containerRole(meta.containers, name));
                 repaired.push(`stopped-unowned-app:${name}`);
               }
             } catch (error) {
@@ -319,21 +324,16 @@ export async function reconcileApps(): Promise<ReconcileResult> {
   return { repaired, unresolved, skipped };
 }
 
-async function stopInstance(name: string): Promise<void> {
+/**
+ * Stop a container of an app whose network is gone. It is kept (with its data), not deleted: a clean stop with its
+ * role's timeout, forced (and logged) only after that.
+ */
+async function stopInstance(name: string, role?: string): Promise<void> {
   const before = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${encodeURIComponent(name)}`);
   if (before.type === 'error' && (before.error_code === 404 || before.status_code === 404)) return;
   if (before.type === 'error') throw new Error(before.error || before.status);
   if (before.metadata?.status === 'Stopped') return;
-  const stopped = await incusRequest('PUT', `/1.0/instances/${encodeURIComponent(name)}/state`, {
-    action: 'stop',
-    force: true,
-    timeout: 30,
-  });
-  if (stopped.type === 'error') throw new Error(stopped.error || stopped.status);
-  if (stopped.type === 'async' && stopped.operation) {
-    const waited = await incusRequest('GET', `${stopped.operation}/wait?timeout=60`, undefined, { timeout: 70_000 });
-    if (waited.type === 'error') throw new Error(waited.error || waited.status);
-  }
+  await stopContainerOrForce(name, { timeoutSec: stopTimeoutSec(role) });
   const after = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${encodeURIComponent(name)}`);
   if (after.type === 'error' || after.metadata?.status !== 'Stopped') {
     throw new Error(`Container ${name} did not read back as Stopped`);

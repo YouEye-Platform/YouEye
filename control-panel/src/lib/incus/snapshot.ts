@@ -33,12 +33,108 @@ export async function containerState(name: string): Promise<string> {
   }
 }
 
-export async function stopContainer(name: string): Promise<void> {
+export class ContainerStopTimeoutError extends Error {
+  constructor(readonly container: string, readonly timeoutSec: number) {
+    super(`Container ${container} did not stop within ${timeoutSec} s`);
+    this.name = 'ContainerStopTimeoutError';
+  }
+}
+
+/** How long a clean stop may take. A database writes its last checkpoint, so it gets longer. */
+export function stopTimeoutSec(role?: string): number {
+  return role === 'database' ? 120 : 60;
+}
+
+/**
+ * Clean stop: asks the container to shut down and waits for it. Never kills: a container that is still running
+ * after the timeout throws ContainerStopTimeoutError.
+ *
+ * Only the timeout is a timeout. A stop that Incus refuses or fails early (another operation on the instance, a
+ * dropped connection) leaves the container Running long before the time is up, and it may never have been told to
+ * shut down. The container keeps its full time to stop: its state is polled until then and the clean stop is asked
+ * again every STOP_RETRY_MS, with the time that is left, so callers that force or give up after a timeout never do
+ * so at once and never kill a container that was not asked first.
+ */
+export async function stopContainer(name: string, options: { timeoutSec?: number } = {}): Promise<void> {
+  if ((await containerState(name)) !== 'Running') return;
+  const timeoutSec = options.timeoutSec ?? stopTimeoutSec();
+  const deadline = Date.now() + timeoutSec * 1000;
+  /** undefined: Incus took the stop (and it stopped, or its time passed). Otherwise why it did not. */
+  const ask = async (seconds: number): Promise<unknown> => {
+    try {
+      const resp = await incusRequest<Record<string, unknown>>(
+        'PUT', `/1.0/instances/${name}/state`,
+        { action: 'stop', force: false, timeout: seconds },
+        { timeout: (seconds + 30) * 1000 },
+      );
+      if (resp.type === 'error') throw new Error(`Container ${name} could not be stopped: ${resp.error || resp.status || 'Incus refused the stop'}`);
+      if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, seconds + 30);
+      return undefined;
+    } catch (error) {
+      // Incus fails the operation when the timeout passes; the state read below decides.
+      return error ?? new Error(`Container ${name} could not be stopped`);
+    }
+  };
+  let refusal = await ask(timeoutSec);
+  let failure = refusal;
+  let askedAt = Date.now();
+  let state = await containerState(name);
+  while (state === 'Running' && Date.now() < deadline) {
+    if (refusal !== undefined && Date.now() - askedAt >= STOP_RETRY_MS) {
+      refusal = await ask(Math.max(1, Math.ceil((deadline - Date.now()) / 1000)));
+      failure = refusal ?? failure;
+      askedAt = Date.now();
+    } else {
+      await new Promise(resolve => setTimeout(resolve, Math.min(STOP_POLL_MS, Math.max(deadline - Date.now(), 1))));
+    }
+    state = await containerState(name);
+  }
+  if (state === 'Stopped') return;
+  if (state === 'Running') {
+    if (failure) console.warn(`[incus] ${name} is still running ${timeoutSec} s after a stop that failed:`, failure);
+    throw new ContainerStopTimeoutError(name, timeoutSec);
+  }
+  throw failure instanceof Error ? failure : new Error(`Container ${name} is ${state} after stop`);
+}
+
+const STOP_POLL_MS = 1000;
+/** A stop that Incus did not take is asked again this often while the container still runs. */
+const STOP_RETRY_MS = 5000;
+
+/** Kill. Only for a container that is deleted or replaced right after, or after a clean stop timed out. */
+export async function forceStopContainer(name: string): Promise<void> {
   if ((await containerState(name)) !== 'Running') return;
   const resp = await incusRequest<Record<string, unknown>>(
     'PUT', `/1.0/instances/${name}/state`,
     { action: 'stop', force: true, timeout: 30 }
   );
+  if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 60);
+}
+
+/**
+ * A stop that must succeed (the owner's stop, uninstall, restore): clean first, forced after the timeout, with a
+ * logged warning.
+ */
+export async function stopContainerOrForce(name: string, options: { timeoutSec?: number } = {}): Promise<void> {
+  try {
+    await stopContainer(name, options);
+  } catch (error) {
+    if (!(error instanceof ContainerStopTimeoutError)) throw error;
+    console.warn(`[incus] ${name} did not stop cleanly within ${error.timeoutSec} s; forcing it to stop`);
+    await forceStopContainer(name);
+  }
+}
+
+/**
+ * Restart a running container: a clean stop (forced after the timeout, logged, as `stopContainerOrForce`), then a
+ * start. A container that is not running is left alone and the restart fails, as an Incus restart does.
+ */
+export async function restartContainer(name: string, options: { timeoutSec?: number } = {}): Promise<void> {
+  const state = await containerState(name);
+  if (state !== 'Running') throw new Error(`Container ${name} could not restart: it is ${state}`);
+  await stopContainerOrForce(name, options);
+  const resp = await incusRequest<Record<string, unknown>>('PUT', `/1.0/instances/${name}/state`, { action: 'start' });
+  if (resp.type === 'error') throw new Error(`Container ${name} could not start after its stop: ${resp.error || resp.status}`);
   if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 60);
 }
 
@@ -241,9 +337,6 @@ export async function createRollbackInstanceBackup(sourceName: string, backupNam
   const observed = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${backupName}`);
   assertInstanceOperation(observed, `Verify rollback instance ${backupName}`);
   if ((await containerState(backupName)) !== 'Stopped') {
-    await stopContainer(backupName);
-  }
-  if ((await containerState(backupName)) !== 'Stopped') {
     throw new Error(`Rollback instance ${backupName} did not verify as Stopped`);
   }
 }
@@ -252,7 +345,8 @@ export async function deleteInstance(name: string): Promise<void> {
   if (!(await instanceExistsStrict(name))) return;
   const state = await containerState(name);
   if (state === 'Unknown') throw new Error(`Cannot determine state for existing instance ${name}`);
-  if (state === 'Running') await stopContainer(name);
+  // Forced: the instance is deleted right after.
+  if (state === 'Running') await forceStopContainer(name);
   const response = await incusRequest<Record<string, unknown>>(
     'DELETE',
     `/1.0/instances/${name}`,

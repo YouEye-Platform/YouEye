@@ -119,7 +119,8 @@ export async function deleteOwnedInstance(name: string, owner: InstanceOwner | u
   if (!owner?.installationId || !isOwnedBy(config, owner)) {
     throw new InstanceOwnershipError(`Instance ${name} is not tagged with this installation; refusing to delete it`);
   }
-  // A stop failure (already stopped, never started) is not fatal: delete and its read-back decide.
+  // Forced: the instance is deleted right after. A stop failure (already stopped, never started) is not fatal:
+  // delete and its read-back decide.
   try {
     await waitFor(await incusRequest('PUT', `/1.0/instances/${encodeURIComponent(name)}/state`, {
       action: 'stop', force: true, timeout: 30,

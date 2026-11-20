@@ -32,12 +32,14 @@ import {
   type CaddyInstanceState,
 } from './app-network-caddy-nic';
 import { connectionInterface } from './connection-nic';
+import { stopContainerOrForce, stopTimeoutSec } from './snapshot';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { parse as parseYaml } from 'yaml';
 import { assertNoCriticalIssues, observeIssue, resolveIssue } from '@/lib/health/issues';
 import { spineClient } from '@/lib/spine/client';
 import { AppLifecycleAdmissionError, withAppLifecycle } from '@/lib/market/update-admission';
+import { containerTargets, orderContainers } from '@/lib/apps/container-order';
 import {
   applyIncusDeviceMergePatch,
   type IncusDeviceMap,
@@ -1952,13 +1954,15 @@ async function stopAffectedAppContainers(
   network?: IncusNetwork,
 ): Promise<string[]> {
   const names = new Set<string>();
+  const roles = new Map<string, string>();
   if (appId) {
     try {
       const { readInstallMetadata } = await import('../market/metadata');
       const metadata = await readInstallMetadata(appId);
-      for (const container of metadata?.containers ?? []) {
-        const name = container.containerName;
-        if (name) names.add(name);
+      // The app's clients first, its database last, each with its role's timeout.
+      for (const { name, role } of orderContainers(containerTargets(metadata?.containers), 'stop')) {
+        names.add(name);
+        roles.set(name, role);
       }
     } catch {
       // Fall back to the affected network's holders below. The error that caused
@@ -1977,12 +1981,10 @@ async function stopAffectedAppContainers(
     if (before.type === 'error' && (before.status_code === 404 || before.error_code === 404)) continue;
     const instance = assertIncusSuccess(before, `Observe affected app container ${name}`);
     if (instance.status !== 'Stopped') {
-      const result = await incusRequest('PUT', `${path}/state`, {
-        action: 'stop',
-        force: true,
-        timeout: 30,
-      });
-      await waitForIncusOperation(result, `Stop affected app container ${name}`);
+      // An audit never acts (the stop helper does not pass through the audit's request guard).
+      if (readOnlyAudit.getStore()) throw new Error('Network audit requires a fresh admitted repair');
+      // Clean first: the container keeps its data. Forced (and logged) only after its role's timeout.
+      await stopContainerOrForce(name, { timeoutSec: stopTimeoutSec(roles.get(name)) });
     }
     const after = await incusRequest<{ status?: string }>('GET', path);
     if (assertIncusSuccess(after, `Read back affected app container ${name}`).status !== 'Stopped') {
