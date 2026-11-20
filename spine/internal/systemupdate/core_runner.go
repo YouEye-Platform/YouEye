@@ -215,16 +215,26 @@ func (r CoreSystemdRunner) Observe(ctx context.Context, j CoreJournal, s CoreSte
 	if err != nil {
 		return unknown, err
 	}
-	result, resultErr := r.readResult(j, s, launch)
-	if resultErr != nil && !errors.Is(resultErr, os.ErrNotExist) {
-		return unknown, resultErr
+	var result coreRunnerResult
+	var resultErr error
+	// settled reads the child's result and reports whether it is the child's
+	// last word: succeeded, failed, or unknown (sanitized terminal error/stage
+	// evidence, which remains useful across boots and authorizes
+	// reconciliation only, never another execution).
+	settled := func() (bool, error) {
+		result, resultErr = r.readResult(j, s, launch)
+		if resultErr != nil {
+			if errors.Is(resultErr, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, resultErr
+		}
+		state := result.Result.State
+		return state == "succeeded" || state == "failed" || state == "unknown", nil
 	}
-	if resultErr == nil && (result.Result.State == "succeeded" || result.Result.State == "failed") {
-		return result.Result, nil
-	}
-	if resultErr == nil && result.Result.State == "unknown" {
-		// Sanitized terminal error/stage evidence remains useful across boots;
-		// it authorizes reconciliation only, never another execution.
+	if done, err := settled(); err != nil {
+		return unknown, err
+	} else if done {
 		return result.Result, nil
 	}
 	boot, err := r.boot()
@@ -234,6 +244,16 @@ func (r CoreSystemdRunner) Observe(ctx context.Context, j CoreJournal, s CoreSte
 	unit, err := r.observeUnit(ctx, launch)
 	if err != nil {
 		return unknown, err
+	}
+	// The child writes its last word before it exits, and it may do both
+	// between the read above and the unit observation. Only a result read after
+	// the unit was seen can show that a child that is gone left none: judging the
+	// earlier read against the later unit state called a child that had just
+	// succeeded "unknown" and failed the coordinator.
+	if done, err := settled(); err != nil {
+		return unknown, err
+	} else if done {
+		return result.Result, nil
 	}
 	if unit["LoadState"] == "not-found" {
 		return unknown, nil

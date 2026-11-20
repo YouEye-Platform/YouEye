@@ -44,7 +44,8 @@ export interface AppUpdateInventory {
   volumes: Array<{ pool: string; name: string; readOnly: boolean }>;
   /** Shared-folder groups the app mounts (e.g. `media`): left out of checkpoints, restore, reservations and budget. */
   sharedFolders: string[];
-  databases: Array<{ engine: string; name: string; ownerRole: string; mode: 'shared' | 'own' }>;
+  /** Databases in the shared platform PostgreSQL (logical checkpoint). An app's own database is its volumes. */
+  databases: Array<{ engine: string; name: string; ownerRole: string; mode: 'shared' }>;
 }
 
 export class AppUpdatePreflightError extends Error {
@@ -81,16 +82,10 @@ function databaseDeclaration(manifest: AppManifest, metadata: InstallMetadata) {
       ownerRole: resolved(manifest.database?.user, appId),
     } as const;
   }
-  const own = manifest.backup?.ownPostgres;
-  if (!own) reject('own-postgres-recovery-undeclared',
-    'This app must declare its dedicated PostgreSQL database and logical recovery method before updating.');
-  const engine = resolved(own.container, appId);
-  if (!metadata.containers.some(c => c.containerName === engine && c.role === 'database'
-    && c.name === manifest.database?.container)) {
-    reject('foreign-database-engine', 'The PostgreSQL engine is not an app-owned database container.');
-  }
-  return { mode, engine, name: resolved(own.database, appId),
-    ownerRole: resolved(own.user ?? own.database, appId) } as const;
+  // An app's own database: its engine is one of the app's containers, its files are the engine's volumes.
+  const engine = metadata.containers.find(c => c.role === 'database' && c.name === manifest.database?.container);
+  if (!engine) reject('foreign-database-engine', 'The database engine is not an app-owned database container.');
+  return { mode, engine: engine.containerName, name: manifest.database?.name, ownerRole: manifest.database?.user } as const;
 }
 
 /**
@@ -247,7 +242,7 @@ export function planAppUpdateInventory(
     reject('unsupported-database-topology-change', 'The database ownership or recovery mode changes during this update.');
   }
   const databases: AppUpdateInventory['databases'] = [];
-  if (beforeDb) {
+  if (beforeDb?.mode === 'shared') {
     if (['postgres', 'template0', 'template1', 'youeye', 'youeye_ui', 'pointer'].includes(beforeDb.name)) {
       reject('platform-database-excluded', 'An application update cannot restore a platform or maintenance database.');
     }
@@ -257,8 +252,7 @@ export function planAppUpdateInventory(
       reject('foreign-or-unknown-database', 'Dedicated PostgreSQL ownership cannot be verified for this app.');
     }
     const actual = matches[0];
-    if (beforeDb.mode === 'shared'
-      && (metadata.databaseName !== beforeDb.name || metadata.databaseUser !== beforeDb.ownerRole)) {
+    if (metadata.databaseName !== beforeDb.name || metadata.databaseUser !== beforeDb.ownerRole) {
       reject('unknown-database-identity', 'Installed database identity disagrees with the frozen manifest.');
     }
     if (!actual.logicalRestoreSupported) {
@@ -270,22 +264,16 @@ export function planAppUpdateInventory(
     databases.push(beforeDb);
     resources.push({ kind: 'database', scope: beforeDb.engine, name: beforeDb.name,
       ownerAppId: appId, mutable: true });
-    if (beforeDb.mode === 'own') {
-      // PostgreSQL-owned disks are reserved but recovered logically. Rewinding
-      // a raw cluster could resurrect role revocations or cross runtime versions.
-      // The dedicated DB's logical checkpoint is the recovery authority.
-      const engineVolumes = declaredVolumes.filter(v => v.containerName === beforeDb.engine);
-      if (!engineVolumes.length) reject('own-postgres-storage-undeclared',
-        'App-owned PostgreSQL must keep its database files in declared durable storage.');
-      for (const resource of resources.filter(r => r.kind === 'volume')) {
-        if (engineVolumes.some(v => v.pool === resource.scope && v.name === resource.name)) {
-          if (declaredVolumes.some(v => v.pool === resource.scope && v.name === resource.name
-            && v.containerName !== beforeDb.engine)) {
-            reject('unsupported-shared-resource', 'PostgreSQL data storage cannot also be an application-writable mount.');
-          }
-          resource.mutable = false;
-        }
-      }
+  }
+  if (beforeDb?.mode === 'own') {
+    // The restore point of an app's own database is a snapshot of the engine's volumes, taken with the whole app
+    // cleanly stopped, plus the engine's runtime copy. No database resource, no logical dump.
+    const engineVolumes = declaredVolumes.filter(v => v.containerName === beforeDb.engine);
+    if (!engineVolumes.some(v => !v.readOnly && !v.sharedGroup)) reject('own-database-storage-undeclared',
+      'The app\'s own database engine must keep its files in a writable declared volume of its own.');
+    if (engineVolumes.filter(v => !v.sharedGroup).some(v => declaredVolumes.some(other => other.pool === v.pool && other.name === v.name
+      && other.containerName !== beforeDb.engine))) {
+      reject('unsupported-shared-resource', 'The app\'s own database storage cannot also be mounted by another container.');
     }
   }
   const affectedPools = new Set([

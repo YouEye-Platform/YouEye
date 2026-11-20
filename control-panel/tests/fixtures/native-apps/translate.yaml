@@ -1,0 +1,111 @@
+schema: youeye.app.v1
+id: translate
+version: 0.0.0
+name: Translate
+listing:
+  description: Privacy-friendly translation with saved translations and language preferences. Powered by MyMemory.
+  long_description: |
+    Translate is a privacy-friendly translation tool with history and saved translations.
+    Powered by MyMemory — works out of the box with no API key. Supports language preferences,
+    translation history, and favorites.
+  category: productivity
+  tags: [translation, language, productivity, native]
+  icon: languages
+  screenshots:
+    - {path: assets/screenshots/1.png, caption: Translation interface}
+    - {path: assets/screenshots/2.png, caption: Translation history and favorites}
+  website: https://github.com/YouEye-Platform/Translate
+source: {node: '24'}
+port: 3000
+health: /api/health
+database:
+  postgres: {name: ye_translate, user: ye_translate}
+env:
+  DATABASE_URL: ${database.url}
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  TRANSLATE_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+connects:
+  - app: libretranslate
+    name: LibreTranslate
+    description: Self-hosted translation engine
+    port: 5000
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: quick-translate
+    kind: widget
+    placement: dashboard
+    name: Quick Translate
+    description: Translate text directly from your dashboard
+    embed: /embed/widget/quick-translate
+    size: {default: [28, 25], min: [22, 18], max: [45, 40]}
+  - id: recent-translations
+    kind: widget
+    placement: dashboard
+    name: Recent Translations
+    description: Your most recent translations
+    embed: /embed/widget/recent-translations
+    size: {default: [25, 25], min: [18, 18], max: [45, 45]}
+    refresh: 300
+  - id: saved-phrases
+    kind: widget
+    placement: dashboard
+    name: Saved Phrases
+    description: Your bookmarked translations
+    embed: /embed/widget/saved-phrases
+    size: {default: [22, 22], min: [16, 16], max: [40, 40]}
+    refresh: 300
+  - id: phrase-of-the-day
+    kind: widget
+    placement: dashboard
+    name: Phrase of the Day
+    description: Learn a new phrase every day
+    embed: /embed/widget/phrase-of-the-day
+    size: {default: [20, 18], min: [16, 14], max: [30, 28]}
+    refresh: 3600
+  - id: my-activity
+    kind: widget
+    placement: dashboard
+    name: My Activity
+    description: Your translation activity this week
+    embed: /embed/widget/my-activity
+    size: {default: [22, 20], min: [16, 16], max: [35, 30]}
+    refresh: 600
+  - id: translation-preview
+    kind: info-card
+    placement: timeline
+    name: Translation preview
+    description: Translation preview card
+    embed: /embed/card/translation-preview
+  - id: translate-text
+    kind: timeline-card
+    placement: timeline
+    name: Text translated
+    description: Text translation performed
+    embed: /embed/timeline/translation
+    permissions: ['timeline:write']
+    triggers: [translate-text]
+proxy:
+  - {host: api.mymemory.translated.net, paths: [/get*], methods: [GET]}

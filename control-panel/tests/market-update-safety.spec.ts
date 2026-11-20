@@ -147,7 +147,8 @@ test('Market OCI updater delegates recovery and commit to the durable transactio
   assert.ok(metadata > rebuild);
   assert.doesNotMatch(updater.slice(rebuild - 200, rebuild), /deleteSnapshot/);
   assert.match(updater, /withAppLifecycle\(config\.appId/);
-  assert.match(updater, /record\?\.phase === 'recovery_required'/);
+  assert.match(updater, /const recoveryFailed = !!record && !committed && !record\.rollbackVerifiedAt;/);
+  assert.match(updater, /: recoveryFailed \? 'recovery_required'/);
   assert.doesNotMatch(updater, /ociRollbackBackups = new Map/);
 });
 

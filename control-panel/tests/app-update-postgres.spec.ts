@@ -12,16 +12,16 @@ import {
  * files and exec are separate channels. Failure injection models lost replies
  * and interrupted DROP/CREATE. It deliberately never accepts SQL in argv.
  */
-function fixture(mode: 'shared' | 'own' = 'shared') {
+function fixture() {
   const scope: AppUpdatePostgresScope = {
-    appId: 'fixture', engine: mode === 'shared' ? 'youeye-postgres' : 'app-fixture-db',
-    mode, database: 'fixture', ownerRole: 'fixture', adminRole: 'youeye',
+    appId: 'fixture', engine: 'youeye-postgres',
+    database: 'fixture', ownerRole: 'fixture', adminRole: 'youeye',
     adminRoles: ['youeye', 'postgres'], maxDumpBytes: 64 * 1024,
     operationId: '11111111-2222-4333-8444-555555555555',
   };
   const runtime: AppUpdatePostgresRuntime = {
     lifecycleExcluded: true, ingressBlocked: true,
-    engine: { name: scope.engine, state: 'Running', ownerAppId: 'fixture' },
+    engine: { name: scope.engine, state: 'Running' },
     credentialUses: [{ appId: 'fixture', engine: scope.engine, database: 'fixture',
       role: 'fixture', container: 'app-fixture', state: 'Stopped', clientAddresses: ['10.1.1.5'] }],
   };
@@ -324,7 +324,8 @@ test('scope rejects platform databases, maintenance roles, ambiguous engines and
     assert.throws(() => createAppUpdatePostgresProvider({ ...f.scope, ownerRole }, f.io), error('platform-resource-excluded'));
   }
   assert.throws(() => createAppUpdatePostgresProvider({ ...f.scope, database: "app';DROP ROLE x" }, f.io), error('unsafe-identifier'));
-  assert.throws(() => createAppUpdatePostgresProvider({ ...f.scope, mode: 'own' }, f.io), error('invalid-engine-scope'));
+  // Only the shared platform engine: an app's own database is checkpointed with its volumes.
+  assert.throws(() => createAppUpdatePostgresProvider({ ...f.scope, engine: 'app-fixture-db' }, f.io), error('invalid-engine-scope'));
   assert.throws(() => createAppUpdatePostgresProvider({ ...f.scope, maxDumpBytes: Infinity }, f.io), error('invalid-dump-bound'));
   assert.equal(f.commands.length, 0);
 });
@@ -369,12 +370,12 @@ test('all recorded credential uses must be exclusive to this database/app, inclu
   await assert.rejects(f.provider.observe(), error('runtime-not-excluded'));
 });
 
-test('own engine must be owned and available; stopped engine refusal never starts it', async () => {
-  const f = fixture('own');
-  assert.equal((await f.provider.observe()).engine, 'app-fixture-db');
-  f.runtime.engine.ownerAppId = 'other';
+test('the engine must be the observed one and running; a stopped engine is refused, never started', async () => {
+  const f = fixture();
+  assert.equal((await f.provider.observe()).engine, 'youeye-postgres');
+  f.runtime.engine.name = 'other';
   await assert.rejects(f.provider.observe(), error('runtime-not-excluded'));
-  f.runtime.engine.ownerAppId = 'fixture';
+  f.runtime.engine.name = 'youeye-postgres';
   f.runtime.engine.state = 'Stopped';
   await assert.rejects(f.provider.observe(), error('engine-stopped-start-after-journal'));
   assert.ok(f.commands.every(c => c[0] !== 'incus'));
@@ -465,26 +466,24 @@ test('unfence failure returns to hard fence, and a receipt of another operation 
 });
 
 test('logical rollback persists CURRENT grants before drop and preserves current credentials and role identities', async () => {
-  for (const mode of ['shared', 'own'] as const) {
-    const f = fixture(mode);
-    const { f: receipt, cp } = await f.checkpoint();
-    f.catalog.acl.push({ role: 'reader', privilege: 'TEMPORARY', grantable: false, grantor: 'fixture' });
-    let retained: AppUpdatePostgresSecurity | undefined;
-    await f.provider.restore(receipt, cp, {
-      persistSecurity: async s => { retained = s; f.events.push('persist-security'); },
-    });
-    assert.ok(retained);
-    assert.ok(f.events.indexOf('persist-security') < f.events.indexOf('drop'));
-    assert.equal(f.state.data, 'checkpoint data');
-    assert.equal(f.state.credential, 'current-rotated-secret');
-    assert.equal(f.state.currentSecurity, f.securitySql.toString());
-    assert.ok(f.catalog.acl.some(g => g.role === 'reader'));
-    assert.equal(f.state.restoreCount, 1);
-    assert.equal(f.catalog.allowConnections, false);
-    assert.ok(!f.sqlSteps.some(s => /\b(?:DROP|ALTER|CREATE) ROLE\b/.test(s)));
-    assert.ok(f.scripts.some(s => s.includes("'--single-transaction'") && s.includes("'--no-privileges'") && s.includes("'--role' 'fixture'")));
-    assert.ok(!f.commands.some(c => /pg_basebackup|\/var\/lib\/postgresql|snapshot/.test(c.join(' '))));
-  }
+  const f = fixture();
+  const { f: receipt, cp } = await f.checkpoint();
+  f.catalog.acl.push({ role: 'reader', privilege: 'TEMPORARY', grantable: false, grantor: 'fixture' });
+  let retained: AppUpdatePostgresSecurity | undefined;
+  await f.provider.restore(receipt, cp, {
+    persistSecurity: async s => { retained = s; f.events.push('persist-security'); },
+  });
+  assert.ok(retained);
+  assert.ok(f.events.indexOf('persist-security') < f.events.indexOf('drop'));
+  assert.equal(f.state.data, 'checkpoint data');
+  assert.equal(f.state.credential, 'current-rotated-secret');
+  assert.equal(f.state.currentSecurity, f.securitySql.toString());
+  assert.ok(f.catalog.acl.some(g => g.role === 'reader'));
+  assert.equal(f.state.restoreCount, 1);
+  assert.equal(f.catalog.allowConnections, false);
+  assert.ok(!f.sqlSteps.some(s => /\b(?:DROP|ALTER|CREATE) ROLE\b/.test(s)));
+  assert.ok(f.scripts.some(s => s.includes("'--single-transaction'") && s.includes("'--no-privileges'") && s.includes("'--role' 'fixture'")));
+  assert.ok(!f.commands.some(c => /pg_basebackup|\/var\/lib\/postgresql|snapshot/.test(c.join(' '))));
 });
 
 test('failed current-security persistence and corrupt checkpoint never drop the database', async () => {

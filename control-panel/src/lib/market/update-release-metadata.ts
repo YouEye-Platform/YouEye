@@ -4,6 +4,7 @@ import type { InstalledApp, InstalledAppUpdateState } from './installed-apps';
 import { AppUpdateWorkspace, updateDigest } from './update-workspace';
 import { updateResourceKey, type AppUpdateRecord, type UpdateResource, type UpdateCheckpoint, type AppUpdateJournalStore } from './update-journal';
 import { runAppUpdateTransaction, type AppUpdateProvider } from './update-transaction';
+import { withoutListingFiles } from './native-artifact';
 import { acceptProductSequence, identicalProductPayloads, productReceipt, verifyInstalledProductReceipt,
   type InstalledProductReceipt, type VerifiedProductRelease } from '../releases/product-release';
 
@@ -16,6 +17,11 @@ function installedState(app: InstalledApp): InstalledAppUpdateState {
 function registration(metadata: InstallMetadata) {
   return Object.fromEntries(fields.map(key => [key, metadata[key]]));
 }
+/** A value as storage keeps it. A compiled manifest has own keys whose value is `undefined` (`requires`, `apiKey`,
+ * `backup`…); the recovery plan and the registration are JSON, which drops them, so a manifest read from one is
+ * compared with a compiled one in this form. */
+const stored = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const sameStored = (a: unknown, b: unknown) => isDeepStrictEqual(stored(a), stored(b));
 type Projection = { container: string; runtimeUUID: string; receipt: InstalledProductReceipt };
 type RecoveryPlan = {
   before: InstallMetadata; installed: InstalledAppUpdateState; manifest: AppManifest; projections: Projection[];
@@ -31,6 +37,8 @@ export interface ReleaseMetadataIO {
   verifyProjection(projection: Projection): Promise<void>;
   publishProjection(projection: Projection): Promise<void>;
   health(metadata: InstallMetadata): Promise<void>;
+  /** Whether every container of the app runs (a stopped app takes the ordinary update instead). */
+  running?(metadata: InstallMetadata): Promise<boolean>;
 }
 const runtimeIO: ReleaseMetadataIO = {
   metadata: async id => (await import('./metadata')).readInstallMetadata(id),
@@ -46,6 +54,11 @@ const runtimeIO: ReleaseMetadataIO = {
     const api = await import('../releases/product-projection');
     if (await api.productRuntimeIdentity(p.container) !== p.runtimeUUID) throw new Error('Product runtime was replaced');
     if (await api.publishProductProjection(p.container, p.receipt) !== p.runtimeUUID) throw new Error('Product runtime was replaced');
+  },
+  running: async metadata => {
+    const { containerState } = await import('../incus/snapshot');
+    for (const c of metadata.containers) if (await containerState(c.containerName) !== 'Running') return false;
+    return true;
   },
   health: async metadata => {
     const { containerState } = await import('../incus/snapshot');
@@ -114,7 +127,7 @@ export class ReleaseMetadataUpdateProvider implements AppUpdateProvider {
     const p = this.plan(record), current = await this.io.metadata(record.appId), installed = await this.io.installed(record.appId);
     if (!current || !installed || !isDeepStrictEqual(registration(current), registration(p.before))
       || !isDeepStrictEqual(installedState(installed), p.installed)
-      || !isDeepStrictEqual(await this.io.manifest(record.appId, p.before.installedVersion!), p.manifest)) throw new Error('Restored release registration differs');
+      || !sameStored(await this.io.manifest(record.appId, p.before.installedVersion!), p.manifest)) throw new Error('Restored release registration differs');
     for (const projection of p.projections) await this.io.verifyProjection(projection);
     await this.io.health(current);
   }
@@ -133,14 +146,24 @@ export async function updateIdenticalProductRelease(
   if (!artifacts.length || artifacts.some(a => !a.productRelease || !a.runtimeUUID)) return null;
   const originals = artifacts.map(a => verifyInstalledProductReceipt(a.productRelease!, {product:before.appId}));
   if (!originals.every(p => identicalProductPayloads(p, selected))) return null;
+  // Adoption writes into the running runtime and checks its health: an app that is not running (the owner stopped it)
+  // takes the ordinary update, which handles a stopped app, instead of failing.
+  if (io.running && !await io.running(before)) return null;
   const installedVersion = before.installedVersion;
   if (!installedVersion) throw new Error('Installed product release version is missing');
   const oldManifest = await io.manifest(before.appId, installedVersion);
-  // Identical payloads share one installer contract; only the version label differs.
-  if (!isDeepStrictEqual({...manifest, version:''}, {...oldManifest, version:''})) return null;
+  // Identical payloads share one installer contract; only the version label differs: the manifest's and its frozen
+  // source's (a native app's frozen copy carries the release version too). The release's manifest has no listing
+  // files while the installed copy, rebuilt from its frozen source, has them, so both are compared without them.
+  // Everything else must be equal, the source text and its digest (in `frozen`) included.
+  const unlabelled = (m: AppManifest) => withoutListingFiles({...m, version:'', ...(m.frozen ? {frozen:{...m.frozen, version:''}} : {})});
+  if (!sameStored(unlabelled(manifest), unlabelled(oldManifest))) return null;
+  // The record's digest must stay the installed copy's, or the copy could not be read after the adoption.
+  if (!oldManifest.frozen || reference.digest !== oldManifest.frozen.digest || before.manifestDigest !== reference.digest) return null;
   // Keep the already accepted catalog presentation/source projection when only
   // the release label changes. Its exact original build contract is unchanged.
-  manifest = {...oldManifest, version:selected.release.version};
+  const version = selected.release.version;
+  manifest = {...oldManifest, version, ...(oldManifest.frozen ? {frozen:{...oldManifest.frozen, version}} : {})};
   const projections = artifacts.map(a => {
     const container = before.containers.find(c => c.name === a.containerName);
     if (!container || a.sha256 !== selected.build.assets.find(b => b.name === a.artifactName)?.sha256) throw new Error('Installed artifact binding differs');
@@ -153,7 +176,8 @@ export async function updateIdenticalProductRelease(
   next.installedVersion = r.version;
   next.manifestPath = reference.path; next.manifestRepo = reference.repo;
   next.manifestBranch = reference.branch; next.manifestDigest = reference.digest;
-  next.nativeArtifacts = artifacts.map(a => ({...a,sourceRepo:selected.repository, releaseTag:r.tag, version:r.version, productRelease:productReceipt(selected)}));
+  next.nativeArtifacts = artifacts.map(a => ({...a,sourceRepo:selected.repository, releaseTag:r.tag, version:r.version,
+    productReleaseSHA256:selected.manifestSHA256, productRelease:productReceipt(selected)}));
   const targetProjections = projections.map(p => ({...p,receipt:productReceipt(selected)}));
   const resources: UpdateResource[] = [
     {kind:'app',scope:'market',name:before.appId,ownerAppId:before.appId,mutable:false},
@@ -189,7 +213,7 @@ export async function updateIdenticalProductRelease(
     if (!saved || !registered || !isDeepStrictEqual(registration(saved),registration(next))
       || registered.installedVersion !== r.version || registered.installedTag !== r.tag
       || registered.channelSource !== selected.repository
-      || !isDeepStrictEqual(await io.manifest(before.appId,r.version),manifest)) throw new Error('Release metadata did not converge');
+      || !sameStored(await io.manifest(before.appId,r.version),manifest)) throw new Error('Release metadata did not converge');
     return {value:{success:true,previousVersion:installedVersion,newVersion:r.version,migrationsRun:0},metadataDigest:updateDigest(JSON.stringify(saved))};
   });
 }

@@ -358,6 +358,8 @@ async function fixture(t: test.TestContext) {
       resolveIssue: async (id: string) => { issues.delete(id); },
     },
     '@/lib/spine/client': { spineClient }, '@/lib/market/update-admission': updateAdmission,
+    './snapshot': load('incus/snapshot.ts', { './server': incus, '../infrastructure/image-fetch-retry': {} }),
+    '@/lib/apps/container-order': load('apps/container-order.ts', {}),
   });
 
   const operations = load('apps/service-credential-operations.ts', {
@@ -493,7 +495,7 @@ async function fixture(t: test.TestContext) {
   });
 
   // The watchdog's start of one container, as its tick calls it (the real gate, under the container's lifecycle).
-  const watchdog = load('health/watchdog-start.ts', {
+  const watchdog = load('apps/app-reconciler.ts', {
     '../market/update-admission': { isUserOperationWaiting: () => false,
       withContainerLifecycle: (_name: string, work: () => unknown) => work() },
     '../maintenance/container-maintenance': maintenance,
@@ -501,6 +503,9 @@ async function fixture(t: test.TestContext) {
     '../market/storage': { inspectAppStorage: async () => ({ available: true }) },
     '../incus/server': incus,
     '../infrastructure/oci-deployer': { waitForIncusOperation: async () => {} },
+    './container-order': load('apps/container-order.ts', {}),
+    './container-readiness': load('apps/container-readiness.ts', {}),
+    '../incus/snapshot': load('incus/snapshot.ts', { './server': incus, '../infrastructure/image-fetch-retry': {} }),
   });
 
   /** Every lease is an active one of an installed app with its bridge, and every bridge has its lease. */

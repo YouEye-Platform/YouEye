@@ -6,6 +6,7 @@ import { buildCanonicalContext, resolveEnvMapping } from './platform-env';
 import { enforceConfigFilePermissions, writeConfigFileToStorage } from './config-writer';
 import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
 import { restartContainerAndWait } from '@/lib/infrastructure/oci-deployer';
+import { containerRole } from '@/lib/apps/container-order';
 import {
   addSystemProxyDevices,
   applyAppEgressAcl,
@@ -194,7 +195,7 @@ async function applyAIEnvironment(
 
   if (meta.desiredState !== 'stopped' && meta.enabled !== false) {
     for (const container of containers) {
-      await restartContainerAndWait(container.containerName);
+      await restartContainerAndWait(container.containerName, 60, { role: containerRole(meta.containers, container.containerName) });
     }
     for (const configFile of updatedConfigFiles) {
       await enforceConfigFilePermissions(configFile.containerName, configFile.configFile, context);

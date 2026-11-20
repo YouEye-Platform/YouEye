@@ -20,7 +20,8 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { spineClient } from '@/lib/spine/client';
 import { incusRequest } from '@/lib/incus/server';
-import { containerState, waitForOperation } from '@/lib/incus/snapshot';
+import { containerState, stopContainerOrForce, stopTimeoutSec, waitForOperation } from '@/lib/incus/snapshot';
+import { containerTargets, orderContainers, type ContainerRole } from '@/lib/apps/container-order';
 import { readInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from '@/lib/market/metadata';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { installApp } from '@/lib/market/engine';
@@ -55,12 +56,12 @@ const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
 const RESTORE_CONTAINER_STATE_ATTEMPTS = 5;
 const RESTORE_CONTAINER_STATE_DELAY_MS = 1500;
 
-async function stopContainerForRestore(container: string): Promise<void> {
-  const response = await incusRequest('PUT', `/1.0/instances/${encodeURIComponent(container)}/state`, {
-    action: 'stop', force: true, timeout: 60,
-  });
-  if (response.type === 'error') throw new Error(`Could not stop restored container ${container}`);
-  if (response.type === 'async' && response.operation) await waitForOperation(response.operation, 60);
+/**
+ * A restore must go on: clean stop first (the container holds restored data), forced after the timeout, which is
+ * the container's role's (a database gets longer).
+ */
+async function stopContainerForRestore(container: string, role?: ContainerRole): Promise<void> {
+  await stopContainerOrForce(container, { timeoutSec: stopTimeoutSec(role) });
   if ((await runningContainers([container])).includes(container)) {
     throw new Error(`Restored container did not stop: ${container}`);
   }
@@ -433,8 +434,14 @@ async function restoreAppOnce(
       const maintenance = beginContainerMaintenance(containers, { operation: `backup-restore-${appId}` });
       const stoppedContainers: string[] = [];
       try {
-        for (const containerName of dependentContainers) {
-          await stopContainerForRestore(containerName);
+        // The app's clients first (stop order), each with its role's timeout, from the record the reinstall wrote.
+        const installed = orderContainers(containerTargets((await readInstallMetadata(appId))?.containers), 'stop')
+          .filter(target => dependentContainers.includes(target.name));
+        for (const { name: containerName, role } of [
+          ...installed,
+          ...dependentContainers.filter(name => !installed.some(target => target.name === name)).map(name => ({ name, role: undefined })),
+        ]) {
+          await stopContainerForRestore(containerName, role);
           stoppedContainers.push(containerName);
         }
         // A restored disabled installation may have quiesced this database.
@@ -453,7 +460,8 @@ async function restoreAppOnce(
         });
       } finally {
         const startFailures: string[] = [];
-        for (const containerName of stoppedContainers) {
+        // Start order is the stop order reversed: the main container last.
+        for (const containerName of [...stoppedContainers].reverse()) {
           try {
             await startContainerAfterRestore(containerName);
           } catch {

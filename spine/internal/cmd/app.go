@@ -148,6 +148,8 @@ var appInstallCmd = &cobra.Command{
 				return fmt.Errorf("an app from a URL is not reviewed by YouEye; add --i-trust-this-publisher to install it")
 			}
 			output.Info("Installing from URL: " + appInstallURL)
+			// Not followed when the stream drops: the app's id is in the manifest the Control Panel reads, so the
+			// CLI can't name the install to poll for.
 			return cleanServerError(controlClient.PostSSE("/api/market/install-url", installAccessFields(cmd, map[string]interface{}{
 				"url":                       appInstallURL,
 				"acceptUnverifiedPublisher": true,
@@ -156,7 +158,7 @@ var appInstallCmd = &cobra.Command{
 		}
 
 		output.Info("Installing " + args[0] + "...")
-		return newerYouEyeRefusal(controlClient.PostSSE("/api/market/install", installRequest(cmd, args[0], appInstallSource), terminalSSE))
+		return runAppInstall(args[0], installRequest(cmd, args[0], appInstallSource))
 	},
 }
 
@@ -235,38 +237,50 @@ var appUpdateCmd = &cobra.Command{
 		}
 
 		if appUpdateAll {
-			output.Info("Checking for app updates...")
-			updates, err := controlClient.Get("/api/market/updates")
-			if err != nil {
-				return err
-			}
-			if apps, ok := updates["apps"].([]interface{}); ok {
-				count := 0
-				for _, a := range apps {
-					if app, ok := a.(map[string]interface{}); ok {
-						if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
-							name := firstOf(app, "appId", "name")
-							shown := terminalText(name, false)
-							output.Info("Updating " + shown + "...")
-							if err := controlClient.PostSSE("/api/apps/"+name+"/update", nil, terminalSSE); err != nil {
-								output.Error("Failed to update " + shown + ": " + cleanServerError(err).Error())
-							}
-							count++
-						}
-					}
-				}
-				if count == 0 {
-					output.Success("All apps are up to date")
-				}
-			}
-			return nil
+			return updateAllApps()
 		}
 
 		output.Info("Updating " + args[0] + "...")
 		// Canonical CP route; /api/market/update remains as a CP-side alias for
 		// older CLIs.
-		return newerYouEyeRefusal(controlClient.PostSSE("/api/apps/"+args[0]+"/update", appUpdatePayload(appUpdateAssumeYes, appUpdateAllowSetup), terminalSSE))
+		return runAppUpdate(args[0], appUpdatePayload(appUpdateAssumeYes, appUpdateAllowSetup))
 	},
+}
+
+// updateAllApps updates every app with an update available, one after the other; exit 1 when any did not succeed.
+func updateAllApps() error {
+	output.Info("Checking for app updates...")
+	updates, err := controlClient.Get("/api/market/updates")
+	if err != nil {
+		return err
+	}
+	failed := 0
+	if apps, ok := updates["apps"].([]interface{}); ok {
+		count := 0
+		for _, a := range apps {
+			if app, ok := a.(map[string]interface{}); ok {
+				if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
+					name := firstOf(app, "appId", "name")
+					shown := terminalText(name, false)
+					output.Info("Updating " + shown + "...")
+					if err := runAppUpdate(name, nil); err != nil {
+						failed++
+						if message := err.Error(); message != "" {
+							output.Error("Failed to update " + shown + ": " + message)
+						}
+					}
+					count++
+				}
+			}
+		}
+		if count == 0 {
+			output.Success("All apps are up to date")
+		}
+	}
+	if failed > 0 {
+		return &ExitError{Code: 1}
+	}
+	return nil
 }
 
 var appRemoveKeepData bool

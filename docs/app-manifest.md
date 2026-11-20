@@ -61,6 +61,7 @@ database: postgres               # none (default) | postgres | { postgres: { nam
                                  # `postgres`: the shared YouEye PostgreSQL, database and user named after the id
                                  # with "-" → "_" (paperless-ngx → paperless_ngx). Any database gets the generated
                                  # secret db_password (${database.password}; a sidecar database uses it as well).
+                                 # `{ sidecar: db, … }`: the app's own PostgreSQL in that sidecar (see below)
 data:                            # private volumes of the main container (named after the last path segment)
   - /app/data                    # short form: kind data
   - { path: /config, kind: config }       # kinds: data | config | media | cache (cache gets no Incus volume
@@ -163,6 +164,22 @@ backed up and checkpointed once. It must name one of main's `data:` paths (not `
 and not a `shared:` folder). With sidecars every container's runtime name is `app-<id>-<name>` (main becomes
 `app-<id>-main`), and an update refuses container or storage topology changes, so adding a worker to an installed app
 means removing and reinstalling it.
+
+**An app's own database** (`database: { sidecar: db, name, user }`) is a PostgreSQL server in one of the app's
+sidecars. An app update restores it from a snapshot of its volumes taken with the whole app cleanly stopped, never
+from a dump ([app-update-transactions.md](app-update-transactions.md#databases)). So:
+
+- its database files must be in that sidecar's own `data:` (at least one writable volume, mounted by no other
+  container); an update refuses it otherwise;
+- an update never changes its `image:` (`postgres-runtime-change-excluded`): the files open only with the same
+  PostgreSQL version and extensions. A major-version change is not an app update;
+- the compiled `backup.ownPostgres` (container, database, user) is for app backups only: they dump the database
+  with the app's own login. Updates don't use it.
+
+Another engine (MariaDB, MongoDB, Valkey) is a plain sidecar with `data:`; the app's env names its host and
+credentials. Updates stop it cleanly, snapshot its volumes and restore them with the rest of the app, with no engine
+code. Every container's PID 1 must end on the stop signal: an update stops each one cleanly and refuses to start
+when one is still running after 60 s (120 s for a database; `writer-stop-timeout`).
 
 ### Native apps
 A native app has `source:` instead of `image:` (exactly one of the two) and no sidecars. It can add dashboard

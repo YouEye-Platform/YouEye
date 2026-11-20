@@ -819,7 +819,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
         app.enabled = false;
         app.desiredState = 'stopped';
         await saveInstallMetadata(app);
-        await quiesceAppCredentialRuntime(names);
+        await quiesceAppCredentialRuntime(names, app.containers);
         // The app is stopped; the dashboard is told as well, but need not hear it: the restore-databases step
         // marks every credential not ready before the dashboard serves again. And a dashboard whose table an
         // unfinished restore already replaced cannot accept this at all, which must not stop the restore that
@@ -1093,7 +1093,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       try {
         try { await saveInstallMetadata(app); } finally {
           await quiesceAppCredentialRuntime(app.containers.map(container =>
-            container.containerName));
+            container.containerName), app.containers);
         }
       } catch (cleanupError) {
         notStopped.push(app.appId);

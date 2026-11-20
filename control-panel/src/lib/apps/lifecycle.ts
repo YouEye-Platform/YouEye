@@ -1,10 +1,13 @@
 import { incusRequest } from '@/lib/incus/server';
 import { listReadableInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import type { ContainerMeta, InstallMetadata } from '@/lib/market/types';
+import { containerTargets, orderContainers, type ContainerTarget } from './container-order';
+import { stopContainerOrForce, stopTimeoutSec } from '@/lib/incus/snapshot';
 import { setPointerManagedAppEnabled } from '@/lib/pointer/managed-apps';
 import { pushAppRuntimeStatusToUI } from '@/lib/ui/app-status';
 import { randomUUID } from 'crypto';
 import { withAppLifecycle } from '@/lib/market/update-admission';
+import { appReconciler } from './app-reconciler';
 
 export type AppPowerAction = 'start' | 'stop' | 'restart' | 'status';
 export type AppRuntimeStatus = 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown';
@@ -30,13 +33,6 @@ export interface AppLifecycleResult {
   repairRequired: boolean;
   uiStatusSynced?: boolean;
   message: string;
-}
-
-interface ContainerTarget {
-  name: string;
-  role: NonNullable<ContainerMeta['role']>;
-  primary: boolean;
-  order: number;
 }
 
 function isIncusError(resp: { type?: string; error?: string; error_code?: number; status_code?: number }): boolean {
@@ -84,15 +80,16 @@ async function setBootAutostart(name: string, enabled: boolean): Promise<void> {
   if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation);
 }
 
+/** true: the action was taken; false: the container already was where the action leads. */
 async function changeContainerState(
   name: string,
   action: 'start' | 'stop' | 'restart',
   force = false,
-): Promise<void> {
+): Promise<boolean> {
   const status = await getContainerStatus(name);
   if (status === 'not-found') throw new Error(`Container ${name} does not exist`);
-  if (action === 'start' && status === 'running') return;
-  if (action === 'stop' && status === 'stopped') return;
+  if (action === 'start' && status === 'running') return false;
+  if (action === 'stop' && status === 'stopped') return false;
   if (action === 'restart' && status !== 'running') {
     throw new Error(`Container ${name} must be running before restart`);
   }
@@ -105,56 +102,31 @@ async function changeContainerState(
   );
   assertIncusOK(resp, `Failed to ${action} ${name}`);
   if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation);
+  return true;
 }
 
-function inferRole(container: ContainerMeta, primary: boolean): NonNullable<ContainerMeta['role']> {
-  if (container.role) return container.role;
-  const name = `${container.name} ${container.containerName}`.toLowerCase();
-  if (/(postgres|postgresql|mysql|mariadb|mongo|database|\bdb\b)/.test(name)) return 'database';
-  if (/(redis|memcached|cache)/.test(name)) return 'cache';
-  if (/(worker|queue|cron|scheduler|job)/.test(name)) return 'worker';
-  if (primary) return 'app';
-  return 'sidecar';
+/**
+ * A container this start (or restart) started read its environment: it no longer waits for the restart a settings
+ * propagation or URL change owes it (`ENV_RESTART_PENDING`, lib/market/propagation.ts). A mark that could not be
+ * cleared costs one more restart at the next propagation, not the start.
+ */
+async function envRestartDone(appId: string, containerName: string): Promise<void> {
+  try {
+    const { clearEnvRestartPending } = await import('@/lib/market/propagation');
+    await clearEnvRestartPending(containerName);
+  } catch (err) {
+    console.warn(`[lifecycle] ${appId}: restart mark not cleared on ${containerName}:`, err);
+  }
+}
+
+/** The owner's stop must always succeed: clean with the role's timeout, then forced (logged). */
+async function stopContainerCleanly(container: ContainerTarget): Promise<void> {
+  if (await getContainerStatus(container.name) === 'not-found') throw new Error(`Container ${container.name} does not exist`);
+  await stopContainerOrForce(container.name, { timeoutSec: stopTimeoutSec(container.role) });
 }
 
 function normalizeContainers(meta: InstallMetadata): ContainerTarget[] {
-  const raw = meta.containers ?? [];
-  const primaryIndex = raw.findIndex((c) => c.primary);
-
-  return raw
-    .map((entry, index) => {
-      const primary = entry.primary === true || (primaryIndex === -1 && index === 0);
-      return {
-        name: entry.containerName,
-        role: inferRole(entry, primary),
-        primary,
-        order: index,
-      };
-    })
-    .filter((container) => !!container.name);
-}
-
-function orderContainers(containers: ContainerTarget[], action: 'start' | 'stop'): ContainerTarget[] {
-  const startRank: Record<ContainerTarget['role'], number> = {
-    database: 0,
-    cache: 1,
-    sidecar: 2,
-    worker: 3,
-    app: 4,
-  };
-  const stopRank: Record<ContainerTarget['role'], number> = {
-    app: 0,
-    worker: 1,
-    sidecar: 2,
-    cache: 3,
-    database: 4,
-  };
-  const ranks = action === 'start' ? startRank : stopRank;
-  return [...containers].sort((a, b) => {
-    const byRole = ranks[a.role] - ranks[b.role];
-    if (byRole !== 0) return byRole;
-    return action === 'start' ? a.order - b.order : b.order - a.order;
-  });
+  return containerTargets(meta.containers);
 }
 
 function aggregateStatus(statuses: string[]): AppRuntimeStatus {
@@ -303,6 +275,8 @@ export async function controlInstalledApp(
   options: { force?: boolean } = {},
 ): Promise<AppLifecycleResult> {
   if (action === 'status') return controlInstalledAppLocked(appId, action, actor, options);
+  // The owner's start gives automatic starts a fresh count after a crash loop.
+  if (action === 'start' || action === 'restart') appReconciler().resetCrashLoop(appId.toLowerCase());
   return withAppLifecycle(appId.toLowerCase(), () => controlInstalledAppLocked(appId, action, actor, options));
 }
 
@@ -350,7 +324,7 @@ async function controlInstalledAppLocked(
         await updateLifecycleProgress(meta, container.name, 'bootAutostart');
       }
       for (const container of ordered) {
-        await changeContainerState(container.name, 'stop', true);
+        await stopContainerCleanly(container);
         await updateLifecycleProgress(meta, container.name, 'runtime');
       }
       await finishLifecycleOperation(meta);
@@ -377,7 +351,10 @@ async function controlInstalledAppLocked(
         await updateLifecycleProgress(meta, container.name, 'bootAutostart');
       }
       for (const container of ordered) {
-        await changeContainerState(container.name, 'start', options.force === true);
+        // A container that already ran keeps its mark: its process still has the environment it started with.
+        if (await changeContainerState(container.name, 'start', options.force === true)) {
+          await envRestartDone(meta.appId, container.name);
+        }
         await updateLifecycleProgress(meta, container.name, 'runtime');
       }
       await finishLifecycleOperation(meta);
@@ -424,9 +401,10 @@ async function controlInstalledAppLocked(
         await setBootAutostart(container.name, true);
         await updateLifecycleProgress(meta, container.name, 'bootAutostart');
       }
-      for (const container of stopOrder) await changeContainerState(container.name, 'stop', true);
+      for (const container of stopOrder) await stopContainerCleanly(container);
       for (const container of startOrder) {
         await changeContainerState(container.name, 'start', true);
+        await envRestartDone(meta.appId, container.name);
         await updateLifecycleProgress(meta, container.name, 'runtime');
       }
       await finishLifecycleOperation(meta);

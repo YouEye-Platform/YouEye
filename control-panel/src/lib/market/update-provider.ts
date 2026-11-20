@@ -1,11 +1,13 @@
 import { rm, readdir, lstat, readFile, statfs } from 'node:fs/promises';
-import { logOperationFailure } from './install-tracker';
 import { incusRequest, execCommand, incusDownloadFile, incusUploadFile } from '@/lib/incus/server';
 import {
-  containerState, stopContainer, startContainer, waitForRunning, waitForContainerExec,
+  containerState, stopContainer, forceStopContainer, stopTimeoutSec, ContainerStopTimeoutError,
+  startContainer, waitForRunning, waitForContainerExec,
   deleteInstance, waitForOperation,
   buildRollbackCopyRequest,
 } from '@/lib/incus/snapshot';
+import { containerTargets, orderContainers, type ContainerTarget } from '@/lib/apps/container-order';
+import { ownDatabaseEngine, readinessCheck } from '@/lib/apps/container-readiness';
 import { getConfig, setConfig } from '@/lib/caddy/client';
 import { routeServers } from '@/lib/caddy/servers';
 import { withCaddyMutation } from '@/lib/caddy/serial';
@@ -153,24 +155,21 @@ async function securityParts(metadata: InstallMetadata): Promise<SecurityParts> 
     resources: updateDigest(stable(resources)),
   };
 }
+/** The logical checkpoint is for an app's database in the shared platform PostgreSQL only. */
 function postgresScope(metadata: InstallMetadata, manifest: AppManifest): AppUpdatePostgresScope | undefined {
-  if (!manifest.database || manifest.database.mode === 'none') return undefined;
-  const own = manifest.backup?.ownPostgres;
+  if (manifest.database?.mode !== 'shared') return undefined;
   const resolve = (value: string | undefined) => {
     if (!value) code('unknown-database-identity', 'A database resource identity is missing.');
     return value.replaceAll('${app.id}', metadata.appId).replaceAll('${app.name}', metadata.appId);
   };
-  if (manifest.database.mode === 'own' && !own) code('own-postgres-recovery-undeclared', 'Declare an app-owned logical PostgreSQL recovery method.');
   return {
-    appId: metadata.appId, mode: manifest.database.mode,
-    engine: manifest.database.mode === 'shared' ? 'youeye-postgres' : resolve(own!.container),
-    database: resolve(manifest.database.mode === 'shared' ? manifest.database.name : own!.database),
-    ownerRole: resolve(manifest.database.mode === 'shared' ? manifest.database.user : (own!.user ?? own!.database)),
-    adminRole: manifest.database.mode === 'shared' ? 'youeye' : 'postgres',
-    adminRoles: manifest.database.mode === 'shared' ? ['youeye', 'postgres'] : ['postgres'],
+    appId: metadata.appId, engine: 'youeye-postgres',
+    database: resolve(manifest.database.name), ownerRole: resolve(manifest.database.user),
+    adminRole: 'youeye', adminRoles: ['youeye', 'postgres'],
     maxDumpBytes: 64 * 1024 * 1024,
   };
 }
+/** The container that runs an app's own database (`database.mode: own`), by its installed name. */
 async function postgresProvider(
   scope: AppUpdatePostgresScope, metadata: InstallMetadata, ingressBlocked: boolean,
   persistStaging?: (receipt: AppUpdatePostgresStaging) => Promise<void>,
@@ -201,14 +200,12 @@ async function postgresProvider(
           // Apps on their own network reach the shared Postgres through the doorway proxy device, which connects
           // from the host's address on the platform bridge: their sessions arrive from there. The session's role
           // (one per app, with its own password) is what identifies the app on that path.
-          ...(engine === 'youeye-postgres' ? [await platformBridgeHostAddress()] : [])] });
+          await platformBridgeHostAddress()] });
       }
     }
     const state = await containerState(scope.engine);
     if (state !== 'Running' && state !== 'Stopped') throw new Error('PostgreSQL engine identity unavailable');
-    return { lifecycleExcluded: true, ingressBlocked,
-      engine: { name: scope.engine, state, ownerAppId: scope.mode === 'own' ? scope.appId : undefined },
-      credentialUses };
+    return { lifecycleExcluded: true, ingressBlocked, engine: { name: scope.engine, state }, credentialUses };
   });
   io.persistStaging = persistStaging;
   return createAppUpdatePostgresProvider(scope, io);
@@ -235,6 +232,13 @@ async function activeConnectionPeers(appId: string): Promise<Set<string>> {
   }
   return peers;
 }
+
+/**
+ * The migration runner's idle init. A bare `sleep` as PID 1 ignores stop signals, so a clean stop would always time
+ * out. This one ends on the signals a clean stop may send (HUP, INT, QUIT, TERM, WINCH, PWR, RTMIN+3), given by number
+ * so every shell accepts them, and with no quotes so it survives both entrypoint parsers.
+ */
+const IDLE_INIT = 'trap : 1 2 3 15 28 30 37; sleep 86400 & wait';
 
 export async function observeUpdateInventory(metadata: InstallMetadata): Promise<{
   observations: UpdateInventoryObservations; instances: Instance[];
@@ -403,9 +407,11 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
   async applyConfiguration(record: AppUpdateRecord, target: AppManifest, context: Partial<VariableContext>): Promise<void> {
     const plan = this.load(record);
     const environments = await this.environments(plan);
+    const ownEngine = ownDatabaseEngine(plan.metadata, plan.manifest);
     for (const spec of target.containers) {
       const metadata = plan.metadata.containers.find(c => c.name === spec.name)!;
-      if (metadata.containerName === plan.postgres?.engine) continue;
+      // An app's own database keeps its exact runtime: image, environment and configuration.
+      if (metadata.containerName === ownEngine) continue;
       const old = plan.manifest.containers.find(c => c.name === spec.name)!;
       // The app's env belongs to its own container; sidecars carry only their own env.
       const env = updateEnvironment({ ...(old.primary ? plan.manifest.env_mapping : {}), ...old.environment },
@@ -448,17 +454,18 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
   }
   /** Run offline hooks without booting ordinary services/queues from the old app. */
   async withMigrationRunner<T>(record: AppUpdateRecord, name: string, run: () => Promise<T>): Promise<T> {
-    const original = this.load(record).instances.find(i => i.name === name);
-    if (!original || this.load(record).postgres?.engine === name) throw new Error('Migration runner is outside the application writer set');
-    if (await containerState(name) !== 'Stopped') await stopContainer(name);
+    const plan = this.load(record);
+    const original = plan.instances.find(i => i.name === name);
+    if (!original || ownDatabaseEngine(plan.metadata, plan.manifest) === name) throw new Error('Migration runner is outside the application writer set');
+    if (await containerState(name) !== 'Stopped') await stopContainer(name, { timeoutSec: this.stopTimeout(plan, name) });
     const current = await read<Instance>(`/1.0/instances/${e(name)}`);
-    const oci = this.load(record).metadata.containers.find(c => c.containerName === name)?.type === 'oci';
+    const oci = plan.metadata.containers.find(c => c.containerName === name)?.type === 'oci';
     const config = { ...current.config };
     if (oci) {
-      config['oci.entrypoint'] = "/bin/sh -c 'exec sleep 86400'";
+      config['oci.entrypoint'] = `/bin/sh -c '${IDLE_INIT}'`;
       delete config['oci.command'];
     } else {
-      config['raw.lxc'] = `${config['raw.lxc'] ?? ''}\nlxc.init.cmd = /bin/sh -c 'exec sleep 86400'\n`;
+      config['raw.lxc'] = `${config['raw.lxc'] ?? ''}\nlxc.init.cmd = /bin/sh -c '${IDLE_INIT}'\n`;
     }
     await effect('PUT', `/1.0/instances/${e(name)}`, { ...current, config });
     try {
@@ -601,21 +608,91 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     if (Object.values(observed.apps?.http?.servers ?? {}).some(s =>
       (s.routes ?? []).some(r => r['@id'] === id)) !== blocked) throw new Error('App ingress fence did not converge');
   }
+  private targets(plan: RecoveryPlan, action: 'start' | 'stop'): ContainerTarget[] {
+    return orderContainers(containerTargets(plan.metadata.containers), action);
+  }
+  private stopTimeout(plan: RecoveryPlan, name: string): number {
+    return stopTimeoutSec(containerTargets(plan.metadata.containers).find(c => c.name === name)?.role);
+  }
+  /**
+   * Every restore point the plan needs for container `name` exists: its runtime copy and the snapshot of each mutable
+   * volume it mounts. Only then may a recovery kill it: what a kill could damage is overwritten by the restore, and
+   * a restore point is never taken from a killed container.
+   */
+  private restorePointsTaken(record: AppUpdateRecord, plan: RecoveryPlan, name: string): boolean {
+    const mounted = new Set((plan.metadata.storageVolumes ?? []).filter(v => v.containerName === name)
+      .map(v => `${v.pool}\u0000${v.name}`));
+    const needed = record.resources.filter(r => r.mutable && (
+      (r.kind === 'container' && r.name === name)
+      || (r.kind === 'volume' && mounted.has(`${r.scope}\u0000${r.name}`))));
+    return needed.every(r => record.checkpoints.some(c => c.resource === updateResourceKey(r)
+      && c.method === (r.kind === 'container' ? 'runtime-copy' : 'volume-snapshot')));
+  }
+  /** The update reached its apply phase: only then does `restore()` put the restore points back. */
+  private mutated(record: AppUpdateRecord): boolean {
+    return record.steps.some(s => s.phase === 'applying' || s.phase === 'verifying');
+  }
+  /**
+   * A stop during recovery: clean, one more clean try, then forced. Forced only when a kill can cost nothing: the
+   * restore points exist (a restore point is never taken from a killed container) and `restore()` will put them
+   * back, which it does only for an update that reached its apply phase. Before that nothing is restored, so what a
+   * kill damaged would stay damaged: the stop stays clean and recovery waits (retried).
+   */
+  private async stopForRecovery(record: AppUpdateRecord, plan: RecoveryPlan, name: string): Promise<void> {
+    const timeoutSec = this.stopTimeout(plan, name);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await stopContainer(name, { timeoutSec });
+        return;
+      } catch (error) {
+        if (!(error instanceof ContainerStopTimeoutError)) throw error;
+        if (attempt < 2) continue;
+        if (!this.mutated(record) || !this.restorePointsTaken(record, plan, name)) throw error;
+        console.warn(`[app-update] ${record.appId} ${record.id}: ${name} did not stop cleanly during recovery; forcing it (its restore point exists and is restored next)`);
+        await forceStopContainer(name);
+        return;
+      }
+    }
+  }
+  /** Start one container. A database or cache must accept work before the next container starts. */
+  async startRuntime(record: AppUpdateRecord, name: string, manifest?: AppManifest): Promise<void> {
+    const plan = this.load(record);
+    if (await containerState(name) !== 'Running') await startContainer(name);
+    await waitForRunning(name);
+    await waitForContainerExec(name);
+    const role = containerTargets(plan.metadata.containers).find(c => c.name === name)?.role;
+    if (role === 'database' || role === 'cache') await this.waitReady(plan, name, manifest ?? plan.manifest);
+  }
+  /** The app's containers in start order: databases and caches first, the app last. */
+  startOrder(record: AppUpdateRecord): string[] {
+    return this.targets(this.load(record), 'start').map(c => c.name);
+  }
+  /** Readiness of one running container (`readinessCheck`): `pg_isready` for a database, else its HTTP health check. */
+  private async waitReady(plan: RecoveryPlan, name: string, manifest: AppManifest): Promise<void> {
+    const check = readinessCheck(plan.metadata, manifest, name);
+    if (check?.type === 'postgres') {
+      if (!await waitForPostgresHealth(name, check.user, check.timeoutMs)) throw new Error(`${name} did not accept database connections`);
+    } else if (check?.type === 'http') {
+      if (!await waitForAppHealth(name, check.port, check.path, check.timeoutMs)) throw new Error(`${name} did not pass its health check`);
+    }
+  }
   async quiesce(record: AppUpdateRecord): Promise<void> {
+    const plan = this.load(record);
     await this.bootFence(record, true);
     await this.ingress(record, true);
-    for (const name of Object.keys(record.originalRunning)) {
-      if (this.load(record).postgres?.engine === name) continue;
-      if (await containerState(name) === 'Running') await stopContainer(name);
+    // Clean stops in stop order: the app first, its database last, so every volume is at rest for its snapshot.
+    for (const { name } of this.targets(plan, 'stop')) {
+      try {
+        await stopContainer(name, { timeoutSec: this.stopTimeout(plan, name) });
+      } catch (error) {
+        if (!(error instanceof ContainerStopTimeoutError)) throw error;
+        // No clean stop, no restore point, no update. Recovery starts what was stopped and reopens the app.
+        code('writer-stop-timeout', `Update not started: ${name} did not stop in time. Nothing was changed.`);
+      }
       if (await containerState(name) !== 'Stopped') throw new Error('App writers did not quiesce');
     }
     const pg = await this.postgres(record);
     if (pg) {
-      const scope = this.load(record).postgres!;
-      if (scope.mode === 'own' && await containerState(scope.engine) === 'Stopped') {
-        await startContainer(scope.engine);
-        await waitForRunning(scope.engine);
-      }
       await pg.preflightFence(async receipt => {
         this.workspace(record).put('postgres-fence', Buffer.from(JSON.stringify(receipt)));
       });
@@ -626,6 +703,10 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     if (pg) await pg.unfence(this.fence(record), 'apply');
   }
   async executeSQL(record: AppUpdateRecord, sql: string): Promise<void> {
+    const plan = this.load(record);
+    if (plan.manifest.database?.mode === 'own') {
+      code('sql-migration-own-database-unsupported', 'SQL migrations run in the shared platform database only.');
+    }
     const pg = await this.postgres(record);
     if (!pg) throw new Error('SQL migration has no dedicated recovery database');
     await pg.executeSQL(this.fence(record), sql);
@@ -635,9 +716,9 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     const plan = this.load(record);
     await this.bootFence(record, true);
     await this.ingress(record, true);
-    for (const original of plan.instances) {
-      if (original.name === plan.postgres?.engine) continue;
-      const instance = await optionalInstance(original.name);
+    for (const { name } of this.targets(plan, 'stop')) {
+      const original = plan.instances.find(i => i.name === name)!;
+      const instance = await optionalInstance(name);
       // A absent/replaced runtime cannot be started by us; a foreign UUID is
       // never stopped based merely on a reused canonical name.
       if (!instance) continue;
@@ -645,18 +726,12 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       if (!restored && instance.config['volatile.uuid'] !== original.config['volatile.uuid']) {
         throw new Error('Recovery fence cannot prove runtime identity');
       }
-      if (await containerState(original.name) === 'Running') await stopContainer(original.name);
-      if (await containerState(original.name) !== 'Stopped') throw new Error('Recovery writer fence did not verify');
+      await this.stopForRecovery(record, plan, name);
+      if (await containerState(name) !== 'Stopped') throw new Error('Recovery writer fence did not verify');
     }
     const pg = await this.postgres(record);
     const fence = this.optionalFence(record);
-    if (pg && fence) {
-      if (plan.postgres?.mode === 'own' && await containerState(plan.postgres.engine) === 'Stopped') {
-        await startContainer(plan.postgres.engine);
-        await waitForRunning(plan.postgres.engine);
-      }
-      await pg.refence(fence);
-    }
+    if (pg && fence) await pg.refence(fence);
   }
   async checkpoint(record: AppUpdateRecord, resource: UpdateResource): Promise<UpdateCheckpoint> {
     const plan = this.load(record);
@@ -669,13 +744,10 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     if (resource.kind === 'container') {
       const index = plan.instances.findIndex(c => c.name === resource.name);
       const reference = runtimeReference(record, index);
-      // The database engine is stopped only while copying its exact old runtime.
-      // Logical dumps remain the authority for its data.
-      const databaseEngine = plan.postgres?.engine === resource.name;
-      if (databaseEngine && await containerState(resource.name) === 'Running') await stopContainer(resource.name);
+      // Every container is stopped (quiesce), an app's own database included: its copy and its volumes'
+      // snapshots are one restore point.
       await this.copyRuntime(record, resource.name, reference, resource.name);
       const original = plan.instances[index];
-      if (databaseEngine) { await startContainer(resource.name); await waitForRunning(resource.name); }
       return { ...point, method: 'runtime-copy', reference,
         sha256: updateDigest(JSON.stringify([original.config['volatile.uuid'], resource.name, record.id])) };
     }
@@ -751,11 +823,10 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     }
     await this.ingress(record, true);
     await this.bootFence(record, true);
-    for (const name of Object.keys(record.originalRunning)) {
-      if (await containerState(name) === 'Running') await stopContainer(name);
-    }
-    const mutated = record.steps.some(s => s.phase === 'applying' || s.phase === 'verifying');
+    const mutated = this.mutated(record);
+    // Nothing was changed before the apply phase: what still runs keeps running, and verifyRestored starts the rest.
     if (mutated) {
+      for (const { name } of this.targets(plan, 'stop')) await this.stopForRecovery(record, plan, name);
       await this.validateCheckpoints(record);
       for (const point of record.checkpoints.filter(c => c.method === 'runtime-copy')) {
         const resource = record.resources.find(r => updateResourceKey(r) === point.resource)!;
@@ -794,6 +865,27 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
         const canonical = await read<Instance>(`/1.0/instances/${e(resource.name)}`);
         await effect('PUT', `/1.0/instances/${e(resource.name)}`, { ...canonical,
           devices: original.devices, profiles: original.profiles });
+        // A copy gets new MAC addresses, and with them new addresses on the app network. Give the restored
+        // container the original ones, so its routes, doorways and connections keep working. A separate write:
+        // putting a NIC back (it was masked as `none`) makes Incus clear that NIC's volatile keys, including a MAC
+        // set in the same request.
+        // Not a reason to leave the app in recovery: its data is restored, and DHCP usually gives the address
+        // back. So neither a rejected write nor a MAC that did not stick fails the rollback; both are logged.
+        const macs = originalHardwareAddresses(original);
+        let kept = false;
+        try {
+          const reattached = await read<Instance>(`/1.0/instances/${e(resource.name)}`);
+          await effect('PUT', `/1.0/instances/${e(resource.name)}`, { ...reattached,
+            config: { ...reattached.config, ...macs } });
+          const written = await read<Instance>(`/1.0/instances/${e(resource.name)}`);
+          kept = Object.entries(macs).every(([key, value]) => written.config[key] === value);
+        } catch (error) {
+          console.warn(`[app-update] ${record.appId} ${record.id}: the MAC addresses of restored ${resource.name} could not be written:`, error);
+        }
+        if (!kept) {
+          console.warn(`[app-update] ${record.appId} ${record.id}: restored ${resource.name} did not keep its MAC `
+            + 'addresses; its address on the app network may change');
+        }
       }
       for (const point of record.checkpoints.filter(c => c.method === 'volume-snapshot')) {
         const resource = record.resources.find(r => updateResourceKey(r) === point.resource)!;
@@ -803,7 +895,6 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       }
       const pg = await this.postgres(record);
       if (pg) {
-        if (plan.postgres!.mode === 'own') { await startContainer(plan.postgres!.engine); await waitForRunning(plan.postgres!.engine); }
         const header = JSON.parse(this.workspace(record).get('postgres-header').toString());
         const checkpoint: AppUpdatePostgresCheckpoint = { ...header, bytes: this.workspace(record).get('postgres-dump') };
         let retained: AppUpdatePostgresSecurity | undefined;
@@ -842,32 +933,22 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     // No checkpoint/provider effects exist if initialization itself was interrupted.
     if (this.noProviderEffects(record)) return;
     const plan = this.load(record);
-    if (plan.postgres?.mode === 'own' && await containerState(plan.postgres.engine) === 'Stopped') {
-      await startContainer(plan.postgres.engine);
-      await waitForRunning(plan.postgres.engine);
-    }
     const pg = await this.postgres(record);
     const fence = this.optionalFence(record);
     if (pg && fence) { await pg.unfence(fence, 'apply'); }
     const metadata = await readInstallMetadata(record.appId);
     if (metadata?.installedVersion !== plan.metadata.installedVersion) throw new Error('Restored version does not agree with checkpoint');
-    for (const original of plan.instances) {
-      const current = await read<Instance>(`/1.0/instances/${e(original.name)}`);
+    // Start order: the database is ready before the app that needs it starts.
+    for (const { name } of this.targets(plan, 'start')) {
+      const original = plan.instances.find(i => i.name === name)!;
+      const current = await read<Instance>(`/1.0/instances/${e(name)}`);
       if (current.config['volatile.base_image'] !== original.config['volatile.base_image']) throw new Error('Restored runtime differs from checkpoint');
-      if (record.originalRunning[original.name]) {
-        if (await containerState(original.name) !== 'Running') await startContainer(original.name);
-        await waitForRunning(original.name);
-        await waitForContainerExec(original.name);
-        const spec = plan.manifest.containers.find(c => c.name === plan.metadata.containers.find(m => m.containerName === original.name)?.name)!;
-        if (spec.healthCheck?.type === 'http'
-          && !await waitForAppHealth(original.name, spec.port ?? 80, spec.healthCheck.path, spec.healthCheck.timeout)) {
-          throw new Error('Restored app health did not verify');
-        }
-        if (spec.healthCheck?.type === 'postgres'
-          && !await waitForPostgresHealth(original.name, spec.healthCheck.user, spec.healthCheck.timeout)) {
-          throw new Error('Restored PostgreSQL health did not verify');
-        }
-      } else if (await containerState(original.name) !== 'Stopped') throw new Error('Original stopped state was not restored');
+      if (record.originalRunning[name]) {
+        if (await containerState(name) !== 'Running') await startContainer(name);
+        await waitForRunning(name);
+        await waitForContainerExec(name);
+        await this.waitReady(plan, name, plan.manifest);
+      } else if (await containerState(name) !== 'Stopped') throw new Error('Original stopped state was not restored');
     }
   }
   async reopen(record: AppUpdateRecord): Promise<void> {
@@ -880,27 +961,29 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     const fence = this.optionalFence(record);
     if (pg && fence) {
       // Original grants are restored while ordinary app clients are stopped.
-      for (const name of Object.keys(record.originalRunning).filter(n => n !== plan.postgres!.engine)) {
-        if (await containerState(name) === 'Running') await stopContainer(name);
-      }
-      // A reboot can stop the fenced app-owned engine after durable commit.
-      // Bring only that scoped engine up before logical grant reconciliation,
-      // then restore its original desired state with the rest of the app.
-      if (plan.postgres!.mode === 'own') {
-        const engine = plan.postgres!.engine;
-        if (await containerState(engine) === 'Stopped') {
-          await startContainer(engine);
-          await waitForRunning(engine);
-        }
-        if (!await waitForPostgresHealth(engine, plan.postgres!.adminRole, 60_000)) {
-          throw new Error('Scoped PostgreSQL is not ready to finish application recovery');
-        }
+      for (const { name } of this.targets(plan, 'stop')) {
+        await stopContainer(name, { timeoutSec: this.stopTimeout(plan, name) });
       }
       await pg.unfence(fence, 'original');
     }
-    for (const [name, running] of Object.entries(record.originalRunning)) {
-      if (!running && await containerState(name) === 'Running') await stopContainer(name);
-      if (running && await containerState(name) === 'Stopped') { await startContainer(name); await waitForRunning(name); }
+    // Clean stops only: after a commit the data is live, so a container that will not stop leaves the reopen
+    // pending (retried by recovery) instead of being killed.
+    for (const { name } of this.targets(plan, 'stop')) {
+      if (!record.originalRunning[name]) await stopContainer(name, { timeoutSec: this.stopTimeout(plan, name) });
+    }
+    // After a commit the new version runs: its databases and caches are ready by the installed (new) manifest's
+    // checks. Before one, the old version was restored and the plan's manifest is the one that describes it.
+    let manifest = plan.manifest;
+    if (record.commit) {
+      try {
+        manifest = await readFrozenUpdateManifest(record.appId);
+      } catch (error) {
+        console.warn(`[app-update] ${record.appId} ${record.id}: the installed manifest could not be read for the reopen; `
+          + 'checking readiness as the previous version declared it:', error);
+      }
+    }
+    for (const { name } of this.targets(plan, 'start')) {
+      if (record.originalRunning[name]) await this.startRuntime(record, name, manifest);
     }
     await this.bootFence(record, false);
     await this.ingress(record, false);
@@ -961,6 +1044,11 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
   }
 }
 
+/** The MAC addresses Incus recorded for the original container's NICs (`volatile.<nic>.hwaddr`). */
+function originalHardwareAddresses(original: Instance): Record<string, string> {
+  return Object.fromEntries(Object.entries(original.config).filter(([key]) => /^volatile\.[^.]+\.hwaddr$/.test(key)));
+}
+
 const RECOVERY_LABELS = ['user.youeye.update_operation', 'user.youeye.update_source', 'user.youeye.update_restored'];
 
 /**
@@ -979,30 +1067,28 @@ export async function clearRecoveryLabels(operationId: string, containerNames: s
   }
 }
 
+/**
+ * An app's own database is checkpointed with its volumes, and those files only open with the same engine version and
+ * extensions: an update that changes the engine's image is refused.
+ */
+export function assertOwnDatabaseEngineUnchanged(old: AppManifest, target: AppManifest): void {
+  if (old.database?.mode !== 'own') return;
+  const before = old.containers.find(c => c.name === old.database!.container);
+  const after = target.containers.find(c => c.name === old.database!.container);
+  if (!before || !after || before.image !== after.image || before.type !== after.type) {
+    code('postgres-runtime-change-excluded', 'Update the PostgreSQL platform separately; app transactions retain the exact database runtime.');
+  }
+}
+
 export async function prepareIncusAppUpdate(metadata: InstallMetadata, target: AppManifest) {
   const old = await readFrozenUpdateManifest(metadata.appId);
   if (old.version !== metadata.installedVersion) code('frozen-version-mismatch', 'Installed manifest and recorded runtime version disagree.');
+  assertOwnDatabaseEngineUnchanged(old, target);
   const { observations, instances } = await observeUpdateInventory(metadata);
   let stateBytes = 32 * 1024 * 1024;
   const postgres = postgresScope(metadata, old);
-  if (postgres?.mode === 'own') {
-    const engine = metadata.containers.find(c => c.containerName === postgres.engine);
-    const before = old.containers.find(c => c.name === engine?.name);
-    const after = target.containers.find(c => c.name === engine?.name);
-    if (!before || !after || before.image !== after.image || before.type !== after.type) {
-      code('postgres-runtime-change-excluded', 'Update the PostgreSQL platform separately; app transactions retain the exact database runtime.');
-    }
-  }
   if (postgres) {
     const pg = await postgresProvider(postgres, metadata, false);
-    if (postgres.mode === 'own') {
-      // The logical checkpoint needs a separate admin role, a non-superuser owner and no extensions. An app whose
-      // own server has one superuser login or extensions (Immich: vector search) can't be checkpointed that way yet.
-      try { await pg.observations(); } catch (error) {
-        logOperationFailure(`Own PostgreSQL observation for the ${metadata.appId} update`, error);
-        code('own-postgres-update-unsupported', 'This app runs its own PostgreSQL in a way in-place updates cannot checkpoint yet (a superuser app login or extensions).');
-      }
-    }
     const staging = await pg.stagingCapacity();
     stateBytes = staging.reservedBytes + 16 * 1024 * 1024;
     if (staging.availableBytes < staging.reservedBytes + 16 * 1024 * 1024) {

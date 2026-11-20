@@ -352,6 +352,78 @@ youeye update core check
 
 then `stage` and `activate` as usual. After the update, `youeye app recover <app>` reports the operation complete.
 
+## `youeye app update` said "Error: unexpected EOF" but the update went on
+
+Up to 0.6.14-dev.4 the CLI reported a dropped progress stream (the connection to the Control Panel at
+`localhost:3000` broke off) as a failed update, while the update kept running and finished in the Control Panel; a
+second call meanwhile got 409 "An update is pending". Now the CLI says "Lost the live progress; following the
+update…" and reads the update's status until the update returns, then prints its outcome as the stream would have
+([market.md](market.md#updates)); a built-in app's update (Pointer, Caddy, Pi-hole, Postgres) is not followed. On
+an older CLI, or if the follow says the final result was not recorded, wait a few minutes, then check the app with
+`youeye app info <app>`; an update left pending is finished with `youeye app recover <app>`.
+
+## An app stays stopped after a reboot
+
+Up to 0.6.13 an app container that did not come back (after a reboot or a crash) could stay stopped for good: the
+app prober held the app's lock at every watchdog tick, and the watchdog's start failed with "App update executor
+lock is busy" every minute. Now the prober takes no lock and the watchdog asks the app's reconcile queue, which
+retries a busy app within seconds ([control-panel.md](control-panel.md#app-health-and-automatic-restarts)). A
+container that should run is started within about a minute of being seen Stopped; the first check comes 60–90 s
+after the Control Panel starts. If one stays stopped:
+
+```
+incus list app-<id>                       # which container is Stopped
+incus exec youeye-control -- journalctl -u youeye-control -b --no-pager | grep '\[app-reconciler\] <id>'
+```
+
+- **"started `<container>` (…)"** and it stops again: the app itself fails. Read its log: `incus console
+  --show-log <container>` for an OCI container, `youeye logs <id>` for a native app.
+- **"`<container>` keeps crashing; automatic starts paused, one more try in 10 minutes"**, and the issue
+  "`<container>` keeps crashing" in System Health ("Automatic starts are paused; one more try 10 minutes after the
+  last start."): three automatic starts within 5 minutes did not hold. A restart after failed health checks counts
+  as a start, so an app that runs but never gets healthy ends here too. Automatic starts and restarts wait 10
+  minutes, then try one more round. Fix the cause, then `youeye app start <id>`: the owner's start also clears the
+  count. Uninstalling the app closes the issue within a minute.
+- **No line at all:** the app is meant to be off. The owner's stop (`youeye app stop`, or Turn off) holds across
+  reboots: `"desiredState": "stopped"` in `/var/lib/youeye/app-<id>/install.json`, `boot.autostart` `false` on its
+  containers. Nothing starts it automatically; `youeye app start <id>` does.
+- **"busy, retrying in N s"**: something else holds the app's lock; it normally clears at the next retry. Lines
+  that repeat for minutes mean an operation on the app is still running: look for it earlier in the same log.
+- **"automatic recovery failed: …"**: the error follows. A storage location that is not reachable also raises
+  "`<id>` storage is disconnected"; reconnect it first.
+
+## "Update not started: … did not stop in time"
+
+"Update not started: `<container>` did not stop in time. Nothing was changed." (`writer-stop-timeout`): the update
+asks every container of the app to shut down, the app first and its database last, and gives each 60 s (a database
+120 s). This one was still running, so no restore point was taken and nothing changed; the app was started again.
+If it could not be started again the message is another one: "The update failed and the app could not be brought
+back: it stays in maintenance…" (`recovery_required`, shown as a pending update); then run `youeye app recover <id>`.
+A clean stop takes seconds for most apps. To see how long this one takes:
+
+```
+time incus stop --timeout 60 <container>  # seconds is normal; 60 s and an error means it ignores the stop
+incus start <container>
+incus exec <container> -- cat /proc/1/cmdline | tr '\0' ' '   # what runs as PID 1
+```
+
+- **It took long once** (a busy app flushing its data): update again.
+- **It always times out:** the image's PID 1 ignores the stop signal, typically a shell script that starts the app
+  without `exec`, or a bare `sleep`. The app's manifest must be fixed (its `command:`); report it to the market that
+  ships it.
+
+## "did not stop cleanly … forcing it" in the log
+
+`[incus] <container> did not stop cleanly within N s; forcing it to stop` in the Control Panel's log: a stop or
+restart that must succeed (the owner's stop or restart, an uninstall, an app restore, a credential revocation, a
+restart after a URL, AI, site-name or SMTP change or a setup file's `restart` step, an app stopped because its network
+could not be verified) asked the container to shut down, waited (60 s, 120 s for a database) and then killed it. The
+stop worked. A line before it, "`<container>` is still running N s after a stop that failed: …", means Incus refused
+or lost the stop request; the container still got its whole time before it was killed. A
+database in that container recovers at its next start (PostgreSQL logs "database system was not properly shut down;
+automatic recovery in progress"). The cause is the same as for "did not stop in time" above, and the same container
+will refuse updates until it is fixed: check it the same way.
+
 ## The Market is empty or stale
 
 The Market lists what the box last accepted from each market (`/var/lib/youeye/markets/<id>/`); it asks each market

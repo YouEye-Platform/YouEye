@@ -26,7 +26,8 @@ test('watchdog keeps Pi-hole and Control Panel outside CP restart ownership', ()
   assert.match(monitor, /WATCHDOG_EXCLUDE = new Set\(\['youeye-pihole', 'youeye-control'\]\)/);
   assert.match(monitor, /cfg\['boot\.autostart'\] \?\? 'true'/);
   assert.match(monitor, /inspectAppStorage\(app\.storageVolumes\)/);
-  assert.match(monitor, /recoverySuppressed\.has\(name\)/);
+  // Unreachable storage or a stop on purpose: the app's containers are observed, never recovered.
+  assert.match(monitor, /recover: !stopIntent && !storageUnavailable/);
   assert.doesNotMatch(monitor, /Auto-start when module is imported/);
 });
 
@@ -41,6 +42,7 @@ test('identity service mode skips platform background jobs', () => {
   const gate = instrumentation.indexOf('IDENTITY_SERVICE === "true"');
   assert.ok(gate >= 0, 'instrumentation must check IDENTITY_SERVICE');
   for (const job of [
+    'startAppReconciler()',
     'startHealthMonitor()',
     'startDnsProviderMaintenanceLoop()',
     'startVersionChecker()',

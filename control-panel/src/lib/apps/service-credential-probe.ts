@@ -1,13 +1,24 @@
 import { execCommand } from '../incus/server';
 import { getContainerName } from '../market/engine-helpers';
-import type { AppManifest } from '../market/types';
-import { containerState, stopContainer } from '../incus/snapshot';
+import type { AppManifest, ContainerMeta } from '../market/types';
+import { containerState, stopContainerOrForce, stopTimeoutSec } from '../incus/snapshot';
+import { containerTargets, orderContainers, type ContainerRole } from './container-order';
 
-export async function quiesceAppCredentialRuntime(names: string[]): Promise<void> {
+/**
+ * These stops must succeed (uninstall, restore, copy, revocation): clean first, forced after the timeout. With the
+ * app's recorded `containers`, its containers stop in stop order (the database last) with their role's timeout;
+ * names it does not list stop afterwards, in the given order, with the default timeout.
+ */
+export async function quiesceAppCredentialRuntime(names: string[], containers?: ContainerMeta[]): Promise<void> {
+  const known = orderContainers(containerTargets(containers), 'stop').filter(target => names.includes(target.name));
+  const ordered: Array<{ name: string; role?: ContainerRole }> = [
+    ...known,
+    ...names.filter(name => !known.some(target => target.name === name)).map(name => ({ name })),
+  ];
   let failed = false;
-  for (const name of names) {
+  for (const { name, role } of ordered) {
     try {
-      await stopContainer(name);
+      await stopContainerOrForce(name, { timeoutSec: stopTimeoutSec(role) });
       if (await containerState(name) !== 'Stopped') failed = true;
     } catch { failed = true; }
   }

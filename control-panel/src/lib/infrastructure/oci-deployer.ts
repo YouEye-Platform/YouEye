@@ -4,6 +4,7 @@
  */
 
 import { incusRequest } from '../incus/server';
+import { restartContainer, stopTimeoutSec } from '../incus/snapshot';
 import { applyStaticIP } from '../incus/static-ips';
 import type { OCIManifest } from './types';
 import { ownershipConfig, type InstanceOwner } from '../market/instance-ownership';
@@ -45,6 +46,7 @@ export async function removePlatformInstance(name: string, attempts = 3): Promis
   let lastError = '';
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
+      // Forced: the instance is deleted right after.
       const stop = await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 30 });
       if (stop.type === 'async' && stop.operation) await incusRequest('GET', `${stop.operation}/wait?timeout=40`);
     } catch { /* may already be stopped */ }
@@ -151,18 +153,16 @@ export async function waitForContainerRunning(containerName: string, timeoutSeco
   throw new Error(`Container ${containerName} did not reach Running state`);
 }
 
-export async function restartContainerAndWait(containerName: string, timeoutSeconds = 60): Promise<void> {
-  const restartResult = await incusRequest<Record<string, unknown>>(
-    'PUT',
-    `/1.0/instances/${containerName}/state`,
-    { action: 'restart', force: true, timeout: 30 },
-  );
-  if (restartResult.type === 'error') {
-    throw new Error(`Container ${containerName} could not restart: ${restartResult.error || restartResult.status}`);
-  }
-  if (restartResult.type === 'async' && restartResult.operation) {
-    await waitForIncusOperation(restartResult.operation, timeoutSeconds);
-  }
+/**
+ * Restart a running container and wait until it runs again. The stop is clean, with the role's timeout (a database
+ * gets longer); only after that timeout is it forced, with a logged warning.
+ */
+export async function restartContainerAndWait(
+  containerName: string,
+  timeoutSeconds = 60,
+  options: { role?: string } = {},
+): Promise<void> {
+  await restartContainer(containerName, { timeoutSec: stopTimeoutSec(options.role) });
   await waitForContainerRunning(containerName, timeoutSeconds);
 }
 

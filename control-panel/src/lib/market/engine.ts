@@ -123,6 +123,7 @@ import { appServiceCredentials } from '../apps/service-credential-store';
 import { prepareCredentialForAppInstall } from '../apps/service-credential-lifecycle';
 import { activateProvisionedCredential, revokeAppCredential, AppServiceIntegrationPending } from '../apps/service-credential-bridge';
 import { probeNativeAppCredential, quiesceAppCredentialRuntime } from '../apps/service-credential-probe';
+import { containerTargets, orderContainers } from '../apps/container-order';
 import { assertPrivateCredentialMapping, assertPrivateCredentialConfig } from '../apps/service-credential-runtime';
 
 // ─── Install Rollback ─────────────────────────────────────
@@ -671,6 +672,20 @@ export function installWantsPublicAccess(
   config: Pick<InstallConfig, 'publicAccess' | 'sourceId'>,
 ): boolean {
   return config.publicAccess ?? (manifest.publicAccess === true && config.sourceId === OFFICIAL_MARKET_SOURCE_ID);
+}
+
+/**
+ * The order an install creates and starts containers in: the start order of updates and the reconcile queue
+ * (database, cache, sidecar, worker; the manifest's order within a role), main last.
+ */
+export function installStartOrder(manifest: AppManifest): AppManifest['containers'] {
+  const order = orderContainers(containerTargets(describeContainers(manifest)), 'start').map((target) => target.name);
+  const primary = describeContainers(manifest).find((meta) => meta.primary)?.containerName;
+  const rank = (spec: AppManifest['containers'][number]) => {
+    const name = getContainerName(manifest.metadata.id, spec.name, manifest.containers.length);
+    return name === primary ? order.length : order.indexOf(name);
+  };
+  return [...manifest.containers].sort((a, b) => rank(a) - rank(b));
 }
 
 function describeContainers(manifest: AppManifest): ContainerMeta[] {
@@ -1601,7 +1616,7 @@ async function installAppLocked(
   }
 
   try {
-    for (const containerSpec of manifest.containers) {
+    for (const containerSpec of installStartOrder(manifest)) {
       const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
       containerNames.push(containerName);
       rollbackCtx.containerNames.push(containerName);
@@ -1991,7 +2006,9 @@ async function installAppLocked(
     enabled: false,
     desiredState: 'stopped',
     autoRestart: true,
-    containers: containerMetas,
+    // The record keeps the manifest's order (containers are started in role order, see installStartOrder).
+    containers: describeContainers(manifest).flatMap((described) =>
+      containerMetas.filter((meta) => meta.name === described.name)),
     ssoSlug,
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
@@ -2168,7 +2185,7 @@ async function installAppLocked(
       finalMetadata.desiredState = 'stopped';
       finalMetadata.serviceCredentialDesiredState = 'running';
       await saveInstallMetadata(finalMetadata);
-      await quiesceAppCredentialRuntime(rollbackCtx.containerNames);
+      await quiesceAppCredentialRuntime(rollbackCtx.containerNames, finalMetadata.containers);
       emit(onEvent, step, totalSteps, 'error', 'App service integration is pending; reconcile credentials');
       throw new AppServiceIntegrationPending();
     }

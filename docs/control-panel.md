@@ -45,12 +45,84 @@ Background jobs start in `src/instrumentation.ts`, only in the CP process (not i
 
 - app-network bootstrap, then recovery of unfinished app updates (before anything else touches apps);
 - DNS-provider and YouEye Names maintenance ([youeye-names.md](youeye-names.md));
-- health monitor every 60 s: service checks, container watchdog with crash-loop detection, disk every 5 min,
-  certificate expiry every 6 h, notifications on state changes (`lib/health/monitor.ts`);
+- the app reconcile queue, then the health monitor (about every 60 s: service checks, container watchdog, disk every
+  5 ticks, certificate expiry every 360 ticks, notifications on state changes; `lib/health/monitor.ts`) and the app
+  prober (about every 30 s); see [App health and automatic restarts](#app-health-and-automatic-restarts);
 - the Market version checker (45 s after start, then every 6 hours plus jitter), the UI and Pointer update checks
-  (`lib/apps/update-cache.ts`, every 3 hours plus jitter), the health checkers, the backup scheduler;
+  (`lib/apps/update-cache.ts`, every 3 hours plus jitter), the backup scheduler;
 - admission reconciliation and the 20 s admission push to the dashboard ([app-admission.md](app-admission.md));
 - startup reconciliation of Incus containers.
+
+## App health and automatic restarts
+
+Three parts keep an app container that should run running, and none of them fights an update, a backup or the
+owner (since 0.6.14):
+
+- **The app prober** (`lib/market/app-prober.ts`, run by `lib/market/health-checker.ts`) checks each installed app
+  and publishes its health. It never takes the app's lifecycle lock. It reads intent first: an app reserved by an
+  update is `maintenance`; an app the owner stopped is "Intentionally stopped by administrator"; an app another
+  operation of this process holds (the in-memory held marker that `withAppLifecycle` sets) is "Busy with another
+  operation on this app". None of these counts as a failure. Then: storage reachable, the main container Running
+  (L1), its service active for a native app (L2), its other containers Running (else `starting`), and its HTTP
+  health check (L3; 2xx, 401 and 403 pass). A failure seen while the app was taken by an operation counts as busy.
+  After `retries` failures in a row (default 3) and with auto-restart on, it asks the app's queue for a restart,
+  with a backoff from 10 s doubling to 5 minutes; after two rounds at 5 minutes the app is `crash-looping` and an
+  issue is raised. Ten healthy minutes reset the backoff.
+- **The watchdog** (in the health monitor) lists the Incus instances each tick. It starts the platform's own
+  `youeye-*` containers itself (not `youeye-control` and `youeye-pihole`), with its own crash-loop rule (below).
+  App containers it only observes: one that should run (the app not stopped by the owner, its storage reachable,
+  `boot.autostart` not `false`, no container maintenance) and is Stopped is a start request for the app's queue.
+- **One reconcile queue per app** (`lib/apps/app-reconciler.ts`, one per process) is the only part that starts or
+  restarts app containers by itself. Requests merge (start and start is one start; anything with a restart is a
+  restart). Every operation that takes the app with `withAppLifecycle` (the owner's stop or start, an update, a
+  backup, a restore) cancels what is pending at its begin and asks again at its end, so a container that crashed
+  meanwhile is started at once. The listener hears who took the app. A user's request (anything inside
+  `withUserOperationLockWait`: the owner's stop, start, restart or uninstall, an update) drops what was pending for
+  good, and its end asks for a plain start. A background pass (the 30 s app reconcile, a scheduled backup) only
+  postpones a restart the prober asked for: its end asks for that restart again, also when the worker was already
+  working on it (it finds the app busy and gives up). If the background operation restarted the app itself, that
+  restart is one too many; the two are not told apart. The queue's own work runs outside
+  the context of the operation whose end asked (`outsideOperation` in `update-admission.ts`): it never waits like a
+  user, is never cancelled by a user's request ending, and holds no admission of that operation. The worker takes
+  the app's lock without waiting, re-checks every condition under
+  it, then starts the stopped containers in the order updates use (database, cache, sidecar, worker, the main
+  container last; `lib/apps/container-order.ts`), waiting after a database or cache until it accepts work as an
+  update's reopen does (`pg_isready` as the app's user for its own PostgreSQL, else its declared HTTP health check;
+  one that is not ready in time is logged and the rest start anyway). A restart starts the stopped dependencies the
+  same way, then reads the main container's state again and restarts it cleanly (forced only after 20 s, logged:
+  shorter than the 30 s a user waits for the app), or starts it when it is not running any more. If that fails, the
+  dependencies it had started still count towards the crash loop. Every rule of an automatic
+  start holds for a restart too: the owner's stop, container maintenance, unreachable storage, an update's
+  reservation, `boot.autostart` `false` on the main container and the crash-loop pause (below) each leave the app as
+  it is, and a stopped dependency that is paused or has autostart off is not started. A busy
+  lock is retried after 2–5 s. A user operation waiting for the lock goes first, for at most two minutes, then the
+  queue takes its turn. That also holds while the queue has the lock: the wait for a database to get ready ends as
+  soon as a user waits (polled every 2 s), and a restart checks before each dependency and before it stops the main
+  container; the queue gives the lock back and asks again. Only a clean stop of the main container that has begun
+  is finished first (seconds for most apps, 20 s at most). An app reserved by an update or stopped by the owner is
+  left alone.
+
+**Crash loops.** Three automatic starts of one app container within 5 minutes pause its automatic starts and raise
+the issue `container.<name>.crash-loop` ("`<name>` keeps crashing", "Automatic starts are paused; one more try 10
+minutes after the last start."). A restart the prober asked for is an automatic start: it counts (for the main
+container and for each dependency it had to start), and while a container is paused neither the watchdog's start nor
+the prober's restart touches it. Ten minutes after the last start one more round is allowed. The record and the
+issue clear when the container has run for 10 minutes after its last automatic start, if that was a start of a
+stopped container; if it was a restart the prober asked for, the container ran all along without answering, so they
+clear only when the prober finds the app healthy 10 minutes or more after that restart (an app that runs but never
+gets healthy keeps its issue). They also clear when the owner starts or
+restarts the app, or at the next watchdog tick once no install record owns the container any more (the app was
+uninstalled). The platform's own containers follow the same numbers in the watchdog: 3 starts in 5 minutes, one
+more try 10 minutes after the last, cleared after 10 minutes without a restart.
+
+**Timers** (`lib/health/jittered-timer.ts`): the prober and the health monitor each run first at a random point
+60–90 s after the Control Panel starts, then every period ±15 % (30 s and 60 s). Their ticks never line up for
+long. The memory throttle check runs every 15 s on a plain interval.
+
+The queue logs every action as `[app-reconciler] <app>: …`: "started `<container>` (`<reason>`)", "restarted
+(`<reason>`)", "busy, retrying in N s", "a user operation goes first, retrying in N s", "automatic recovery
+failed: …", "`<container>` keeps crashing; automatic starts paused, one more try in 10 minutes". An automatic
+restart is also written to the Timeline.
 
 ## Deploy job
 
@@ -97,8 +169,8 @@ re-checks the security posture; it never replaces running ones.
 - **Waiting for a busy app:** user-facing lifecycle routes (install, remove, start/stop, update and recovery,
   connections and suggestions, access, credentials, AI Settings, bundles, restore, URL and Names changes, Health's
   Fix) run as user operations (`withUserOperationLockWait`, `lib/http/lifecycle-busy.ts`): every app, inventory and
-  app-network lock they take waits up to 30 s for its holder. Background passes never wait, skip a busy app, and a
-  watchdog start yields to a waiting user. Still busy after 30 s: `409 {"code": "operation_in_progress"}`, never a
+  app-network lock they take waits up to 30 s for its holder. Background passes never wait, skip a busy app, and an
+  automatic start yields to a waiting user. Still busy after 30 s: `409 {"code": "operation_in_progress"}`, never a
   500. Other failures are logged with their cause chain (`[Market] <operation> failed: …`) and answered with a fixed
   message.
 - **Market sources:** an install, bundle install, app update or source switch reads only the official Market, a
@@ -149,6 +221,26 @@ Keys the CP uses:
 | `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_require_tls` | outgoing mail (password in `/var/lib/youeye/control/.secret_smtp_password`) |
 | `identity` | `provider: youeye-id`, optional display `name` |
 | `extra` | free key/value settings |
+
+Changed settings reach installed apps through their containers' environment (`lib/market/propagation.ts`): saving
+SMTP settings writes `SMTP_*` to every app whose manifest declares `capabilities.smtp`, and a reconfigure writes
+`YOUEYE_SITE_NAME`, `YOUEYE_TIMEZONE`, `YOUEYE_LOCALE` and `YOUEYE_PLATFORM_VERSION` to every app. An app whose
+containers already hold every value is left alone: no lock, no write, no restart, so a reconfigure that changed none
+of them restarts no app. Any other app is changed under its lifecycle lock; its running containers are then restarted
+as one (clean stops in stop order, forced only after each role's timeout, then starts in start order). A stopped
+container reads the new values at its next start. A domain change restarts each app once: its URL step writes the
+four platform keys before its own restart, and the propagation after it finds them in place.
+
+Every such write also sets `user.youeye.env-restart-pending: "1"` on the container, in the same request; the mark
+is removed once the container has been stopped or restarted (a stopped one loses it at once). While it is set the
+container does not count as holding the values, so a write whose restart never happened (the Control Panel died, a
+stop failed, a URL change threw after writing its keys) is finished by the next propagation: it restarts the app's
+running containers and clears the mark. The URL step sets the same mark with the domain values it writes, and an
+env file it changed is marked before it is rewritten. The restart happens only when at least one marked container
+is Running or Stopped: a container that is Frozen, or whose state can't be read, keeps its mark without restarting
+the app's other containers at every propagation. The owner's start clears the mark of each container it starts (one
+that already ran keeps it), and the owner's restart clears it on every container. A mark that can't be cleared is
+logged and costs one more restart at the next propagation; it never leaves stopped containers unstarted.
 
 The backup schedule is also in `youeye.yaml`, but Spine reads and writes it (`spine/internal/backup/scheduler.go`).
 The release channel is Spine's host policy (`youeye channel get|set`, `/api/releases/channel`).

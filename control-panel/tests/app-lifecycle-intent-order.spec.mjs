@@ -7,7 +7,7 @@ test('app lifecycle persists desired state before any stop-side Incus mutation',
   const stop = source.slice(source.indexOf("if (action === 'stop')"), source.indexOf("if (action === 'start')"));
   const persist = stop.indexOf('await beginLifecycleOperation');
   const autostart = stop.indexOf('await setBootAutostart');
-  const runtime = stop.indexOf('await changeContainerState');
+  const runtime = stop.indexOf('await stopContainerCleanly');
   assert.ok(persist >= 0 && persist < autostart && autostart < runtime);
   assert.match(stop, /await finishLifecycleOperation\(meta, error\)/);
 });

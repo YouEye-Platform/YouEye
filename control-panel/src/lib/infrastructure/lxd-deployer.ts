@@ -344,6 +344,7 @@ export async function deployPointerLXDContainer(
 
 async function removeLXDContainer(spec: LXDContainerSpec): Promise<void> {
   if (await containerExists(spec.containerName)) {
+    // Forced: the instance is deleted right after.
     const stopped = await incusRequest<Record<string, unknown>>(
       'PUT',
       `/1.0/instances/${encodeURIComponent(spec.containerName)}/state`, {

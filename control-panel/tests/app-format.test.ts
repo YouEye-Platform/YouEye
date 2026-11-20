@@ -460,15 +460,15 @@ test('an Immich-like app deploys its sidecars, healthy, before main', () => {
       { name: 'machine-learning', image: `ml${PIN}`, port: 3003 },
     ],
   });
-  // The engine creates, starts and health-checks containers in manifest order
-  // (engine.ts installApp), so this order is the deploy order.
+  // The engine creates, starts and health-checks containers in start order (database, cache, sidecar, worker,
+  // main last; engine.ts installStartOrder), which for this manifest is its own order.
   assert.deepEqual(manifest.containers.map((spec) => spec.name), ['postgres', 'redis', 'machine-learning', 'main']);
   assert.deepEqual(manifest.containers.filter((spec) => spec.primary).map((spec) => spec.name), ['main']);
   assert.equal(manifest.containers.at(-1)!.healthCheck?.path, '/api/server/ping');
   assert.equal(manifest.containers[0].healthCheck?.type, 'postgres');
   assert.deepEqual(manifest.database, { mode: 'own', container: 'postgres', name: 'immich', user: 'immich' });
   const engine = readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
-  const loop = engine.indexOf('for (const containerSpec of manifest.containers) {', engine.indexOf('async function installAppLocked'));
+  const loop = engine.indexOf('for (const containerSpec of installStartOrder(manifest)) {', engine.indexOf('async function installAppLocked'));
   assert.ok(loop !== -1 && loop < engine.indexOf('Health check failed for ${containerName}', loop));
 });
 
