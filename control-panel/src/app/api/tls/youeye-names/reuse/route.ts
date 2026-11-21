@@ -2,7 +2,7 @@
  * GET /api/tls/youeye-names/reuse
  *
  * What the setup address step should offer instead of new names:
- * - `reuse`: a YouEye Names bundle staged by the installer (`--names-bundle`);
+ * - `reuse`: a YouEye Names bundle staged before setup (`youeye names import`);
  *   the address is locked to it.
  * - `lease`: a name this server already claimed during setup (the Names job
  *   is running or finished, setup is not complete). The owner continues with

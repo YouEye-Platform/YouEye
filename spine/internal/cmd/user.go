@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
@@ -62,6 +64,12 @@ var userCreateCmd = &cobra.Command{
 		}
 		username := args[0]
 
+		// With --password-stdin, stdin is the password: a prompt would read it as its answer (a missing
+		// --last-name took the password as the last name, and creation failed with "password could not be read").
+		if err := userCreateStdinCheck(userCreatePasswordStdin, userCreateFirstName, userCreateEmail); err != nil {
+			return err
+		}
+
 		if userCreateFirstName == "" {
 			fmt.Print("First name: ")
 			scanner := bufio.NewScanner(os.Stdin)
@@ -73,7 +81,7 @@ var userCreateCmd = &cobra.Command{
 			return fmt.Errorf("first name is required")
 		}
 
-		if !cmd.Flags().Changed("last-name") {
+		if !cmd.Flags().Changed("last-name") && !userCreatePasswordStdin {
 			fmt.Print("Last name (optional): ")
 			scanner := bufio.NewScanner(os.Stdin)
 			if scanner.Scan() {
@@ -116,15 +124,45 @@ var userCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Success("User created: " + str(result, "username"))
+		output.Success("User created: " + createdUsername(result, username))
 		return nil
 	},
 }
 
+// createdUsername reads the name from the Control Panel's answer ({"user": {"username": …}}); the line used to
+// read a top-level "username" that is not there and printed "User created: " with nothing after it.
+func createdUsername(result map[string]interface{}, asked string) string {
+	if user, ok := result["user"].(map[string]interface{}); ok {
+		if name := str(user, "username"); name != "" {
+			return name
+		}
+	}
+	return asked
+}
+
+// userCreateStdinCheck: with --password-stdin nothing may be asked on stdin, so what a prompt would ask for must
+// come as flags (the optional last name is then simply not asked for).
+func userCreateStdinCheck(passwordStdin bool, firstName, email string) error {
+	if passwordStdin && (firstName == "" || email == "") {
+		return fmt.Errorf("with --password-stdin, give --first-name and --email as flags (stdin is the password)")
+	}
+	return nil
+}
+
+var userDeleteRetainData bool
+
 var userDeleteCmd = &cobra.Command{
 	Use:   "delete <username>",
 	Short: "Delete a user",
-	Args:  cobra.ExactArgs(1),
+	Long: `Delete a user.
+
+A user whose data apps keep (an app with a folder or account per user) is refused until that data is decided on.
+--retain-data retains it first, in every app: it stays on the box, held for no one, and the apps go on for everyone
+else (the "retain" choice of an app's Access settings). There is no way to dispose of retained data: such an app
+can afterwards be removed only keeping its data. A user who administers an app or installed one (its app-wide
+data is theirs) is still refused: transfer the app's administration in its Access settings, and remove such an app
+(youeye app remove <app>) or retain its data there, which closes the app, first.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireCP(); err != nil {
 			return err
@@ -149,13 +187,37 @@ var userDeleteCmd = &cobra.Command{
 			return fmt.Errorf("user '%s' not found", args[0])
 		}
 
-		_, err = controlClient.Delete("/api/people/" + userID)
+		path := "/api/people/" + userID
+		if userDeleteRetainData {
+			path += "?retainData=true"
+		}
+		result, err := controlClient.Delete(path)
 		if err != nil {
-			return err
+			return userDeleteError(err, userDeleteRetainData)
+		}
+		if apps, ok := result["retainedDataApps"].([]interface{}); ok && len(apps) > 0 {
+			names := make([]string, 0, len(apps))
+			for _, app := range apps {
+				names = append(names, fmt.Sprint(app))
+			}
+			output.Info("Retained their data in: " + strings.Join(names, ", "))
 		}
 		output.Success("User deleted: " + args[0])
 		return nil
 	},
+}
+
+// userDeleteError: a refusal (409) says why in the Control Panel's own words, and how to go on when --retain-data can.
+func userDeleteError(err error, retainData bool) error {
+	var httpErr *controlapi.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != 409 || httpErr.Field("error") == "" {
+		return err
+	}
+	message := httpErr.Field("error")
+	if !retainData && httpErr.Field("code") == "disposition_required" && !strings.HasPrefix(message, "Appliance owner") {
+		message += ". To retain the data apps keep for this user and delete them: youeye user delete <user> --retain-data"
+	}
+	return errors.New(message)
 }
 
 var userPasswordCmd = &cobra.Command{
@@ -237,6 +299,8 @@ func init() {
 	userCreateCmd.Flags().StringVar(&userCreateLastName, "last-name", "", "User last name (optional)")
 	userCreateCmd.Flags().StringVar(&userCreateEmail, "email", "", "User email address")
 	userCreateCmd.Flags().BoolVar(&userCreatePasswordStdin, "password-stdin", false, "Read one password from stdin without echoing it in arguments")
+
+	userDeleteCmd.Flags().BoolVar(&userDeleteRetainData, "retain-data", false, "Retain (quarantine) the data apps keep for this user, then delete them")
 
 	userCmd.AddCommand(userListCmd)
 	userCmd.AddCommand(userCreateCmd)

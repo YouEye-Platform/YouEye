@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requireAdminCsrf } from '@/lib/auth/rbac';
 import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
 import {
@@ -23,11 +23,11 @@ async function getExistingUIJwtSecret(): Promise<string | undefined> {
   return undefined;
 }
 
-export async function POST() {
-  const session = await getSession();
-  if (!session?.isAdmin) {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+export async function POST(request: Request) {
+  // It rewrites the Control Panel's and the dashboard's sign-in clients and restarts the Control Panel: an admin's
+  // request with the session's CSRF token (or the CLI token), like the other identity changes.
+  const auth = await requireAdminCsrf(request);
+  if (auth.error) return auth.error;
 
   const raw = await settingsService.getRaw();
   const domain = raw.domain;

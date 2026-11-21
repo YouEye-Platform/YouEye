@@ -22,7 +22,9 @@ import { installApp } from '@/lib/market/engine';
 import {
   finishTracking, logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent,
 } from '@/lib/market/install-tracker';
-import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { holdPlatformLifecycle, withUserOperationLockWait, type PlatformLifecycleHold } from '@/lib/market/update-admission';
+import { lifecycleRefusalResponse } from '@/lib/http/lifecycle-busy';
+import type { SessionPayload } from '@/lib/auth/session';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
 import { settingsService } from '@/lib/settings';
@@ -58,6 +60,30 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
+  // The platform lifecycle is held from here until the install has ended, the market read included: Spine's Control
+  // Panel restart waits for it, so it never stops the Control Panel under an install that is still loading the
+  // catalog (a fresh box whose DNS is slow). Everything after this runs inside the hold, and the install reuses it.
+  let hold: PlatformLifecycleHold;
+  try {
+    hold = await withUserOperationLockWait(() => holdPlatformLifecycle());
+  } catch (error) {
+    logOperationFailure('Admitting an install', error);
+    return lifecycleRefusalResponse(error)
+      ?? Response.json({ error: 'The install could not start; the cause is in the Control Panel journal.' }, { status: 500 });
+  }
+  let streaming = false;
+  try {
+    return await hold.run(() => admittedInstall(request, auth.session, hold, () => { streaming = true; }));
+  } finally {
+    if (!streaming) hold.release();
+  }
+}
+
+/** The install request under its platform lifecycle hold; `streaming` hands the hold to the install's stream. */
+async function admittedInstall(
+  request: NextRequest, session: SessionPayload, hold: PlatformLifecycleHold, streaming: () => void,
+): Promise<Response> {
+  const auth = { session };
   let config: InstallConfig;
   try {
     config = await request.json();
@@ -236,10 +262,10 @@ export async function POST(request: NextRequest) {
 
       try {
         // Unified install path — engine handles both native (LXD) and Market-installed (OCI)
-        await withUserOperationLockWait(
+        await hold.run(() => withUserOperationLockWait(
           () => installApp(manifest, config, onEvent, abortController.signal),
           { signal: abortController.signal },
-        );
+        ));
         if (config.sourceId?.startsWith('direct:') && config.sourceRepoUrl) {
           await updateInstalledAppSource(config.appId, 'url', config.sourceRepoUrl);
         }
@@ -283,6 +309,7 @@ export async function POST(request: NextRequest) {
           appId: config.appId,
         }).catch(() => { /* best effort */ });
       } finally {
+        hold.release();
         try {
           controller.close();
         } catch {
@@ -291,6 +318,7 @@ export async function POST(request: NextRequest) {
       }
     },
   });
+  streaming();
 
   return new Response(stream, {
     headers: {

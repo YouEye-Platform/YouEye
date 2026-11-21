@@ -9,17 +9,32 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 )
 
-// ReleaseCompleted restores only the frozen autostart settings and the owned
+// ReleaseCompleted restores the frozen autostart settings and the owned
 // ingress/lifecycle holds, after the shared commit or full recovery is durable.
-// It never starts a guest, restores data, deletes checkpoints or accepts health.
+// It never restores data or accepts health.
+//
+// Power: a finished request's containers normally run already (the health step
+// started them). After a reboot or power cut between the commit and this
+// release they do not: every held container has boot.autostart=false, so the
+// boot left them stopped, the Control Panel included. The release therefore
+// starts each container that ran at the checkpoint and is stopped now, once
+// its own settings are back (startCompletedPower). A container that cannot be
+// started, and one that runs although it was stopped at the checkpoint, never
+// keeps the box closed: the request is finished, and what holds remain protect
+// nothing. The Control Panel's monitor looks after such a container afterwards.
+//
+// Once the release has ended, old checkpoints are pruned (PruneCheckpoints).
 func (p NativeCoreCheckpoint) ReleaseCompleted(ctx context.Context, request string) (string, error) {
 	// A health check or another short-lived exec can overlap either observation.
 	// Retry the whole reconciliation so identity, ownership and power intent are
 	// revalidated after waiting. Unknown state and all other errors fail closed.
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	// The bound covers a release after a restart, which starts every container
+	// that ran at the checkpoint, one after the other.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -93,6 +108,15 @@ func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request 
 	if err != nil || machine != j.Previous.Machine {
 		return "", fmt.Errorf("platform release machine changed")
 	}
+	// The shared database carries no hold and no changed setting. Should a
+	// boot have left it stopped, start it: the identity check below wants it.
+	for _, c := range record.Inventory.Containers {
+		if c.Name == "youeye-postgres" && c.Running {
+			if actual, err := p.completionContainer(ctx, c); err == nil && actual.Status == "Stopped" {
+				_, _ = p.capture(ctx, "incus", "start", c.Name)
+			}
+		}
+	}
 	if err = p.verifyContainerIdentities(ctx, record.Inventory, false); err != nil {
 		return "", err
 	}
@@ -103,14 +127,12 @@ func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request 
 	if err = p.requireProviderSettled(ctx); err != nil {
 		return "", err
 	}
-	// Verify all identities and original power intent before any setting changes.
+	// Verify all identities and ownership before any setting changes. Power is
+	// not a condition: see ReleaseCompleted.
 	for _, c := range record.Inventory.Containers {
 		actual, err := p.completionContainer(ctx, c)
 		if err != nil {
 			return "", err
-		}
-		if (actual.Status == "Running") != c.Running {
-			return "", fmt.Errorf("original container power intent has not been restored")
 		}
 		if c.Name == "youeye-postgres" {
 			continue
@@ -163,9 +185,13 @@ func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request 
 		}
 		_ = ackErr
 	}
+	started, stopped, err := p.startCompletedPower(ctx, record.Inventory)
+	if err != nil {
+		return "", err
+	}
 	for _, c := range record.Inventory.Containers {
 		actual, err := p.completionContainer(ctx, c)
-		if err != nil || (actual.Status == "Running") != c.Running || (c.Name != "youeye-postgres" && (actual.Config["user.youeye.core-request"] != "" || !coreOriginalAutostart(actual.Config, c))) {
+		if err != nil || (c.Name != "youeye-postgres" && (actual.Config["user.youeye.core-request"] != "" || !coreOriginalAutostart(actual.Config, c))) {
 			return "", fmt.Errorf("platform release postconditions changed before reopening")
 		}
 	}
@@ -188,7 +214,50 @@ func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request 
 		return "", err
 	}
 	record.CompletionState = "released"
-	return "original power settings restored and exact ingress/lifecycle holds released", p.saveRecord(record)
+	evidence := "original power settings restored and exact ingress/lifecycle holds released"
+	if len(started) > 0 {
+		evidence += "; started after a restart: " + strings.Join(started, ", ")
+	}
+	if len(stopped) > 0 {
+		evidence += "; could not be started: " + strings.Join(stopped, ", ")
+	}
+	return evidence, p.saveRecord(record)
+}
+
+// startCompletedPower starts every container that ran at the checkpoint and is
+// stopped now (see ReleaseCompleted), the Control Panel and the dashboard
+// first. It returns the names it started and the names that still do not run.
+// The container's state after the command decides, not the command's answer.
+// Only an unreadable or replaced container is an error.
+func (p NativeCoreCheckpoint) startCompletedPower(ctx context.Context, inventory CoreCheckpointInventory) (started, stopped []string, err error) {
+	order := []CoreCheckpointContainer{}
+	for _, first := range []bool{true, false} {
+		for _, c := range inventory.Containers {
+			if c.Running && (c.Name == "youeye-control" || c.Name == "youeye-ui") == first {
+				order = append(order, c)
+			}
+		}
+	}
+	for _, c := range order {
+		actual, err := p.completionContainer(ctx, c)
+		if err != nil {
+			return started, stopped, err
+		}
+		if actual.Status == "Running" {
+			continue
+		}
+		_, _ = p.capture(ctx, "incus", "start", c.Name)
+		actual, err = p.completionContainer(ctx, c)
+		if err != nil {
+			return started, stopped, err
+		}
+		if actual.Status == "Running" {
+			started = append(started, c.Name)
+		} else {
+			stopped = append(stopped, c.Name)
+		}
+	}
+	return started, stopped, nil
 }
 
 type coreCompletionContainer struct {

@@ -12,13 +12,13 @@ import { updateBridge } from '@/lib/bridges/store';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { settingsService } from '@/lib/settings';
-import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAdmin } from '@/lib/auth/rbac';
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
 import { logOperationFailure } from '@/lib/market/install-tracker';
 
 export async function GET() {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
   const suggestions = await listSuggestions();

@@ -29,7 +29,9 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
   cannot be deleted or disabled.
 - Deleting or disabling a user goes through one store transaction that also checks app data disposition and
   suspends the user in Pointer (`provider.ts` `updateUser`/`deleteUser`; details in
-  [app-admission.md](app-admission.md)).
+  [app-admission.md](app-admission.md)). A refusal answers 409 `disposition_required` with its reason. Every user
+  has a reserved data namespace in each app that declares per-user data (the six bundled apps do), so deleting one
+  needs `youeye user delete <user> --retain-data` (`?retainData=true`), which retains that data first.
 - The sign-in page is `/identity/login`. It allows 10 attempts per IP and username per 15 minutes.
 
 ## Clients
@@ -185,7 +187,9 @@ A signed-in user reads or withdraws their own consent with `GET`/`DELETE /api/id
 
 ## Changing the domain or identity host
 
-`POST /api/identity/route` or the domain change in Settings runs the server rename (`lib/reconfigure`). App
+`POST /api/identity/route` (admin, with the CSRF token or the CLI token; nothing in the UI or the CLI calls it) or
+the domain change in Settings runs the server rename (`lib/reconfigure`) as a user operation: it waits for a busy
+lifecycle lock and answers HTTP 409 when the lock stays busy. App
 clients and URLs are updated by the normal reconfigure steps. Pointer keeps a trust record of the issuer, so the
 rename first checks that the installed Pointer has its identity-transition command
 (`lib/pointer/identity-transition.ts`). If not, or if Pointer's stored identity is unexpected, the rename stops

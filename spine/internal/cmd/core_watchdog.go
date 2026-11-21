@@ -19,21 +19,22 @@ const (
 )
 
 func newCoreContinuationWatchdog() *systemupdate.CoreContinuationWatchdog {
+	runner := systemupdate.CoreControlRunner{Root: systemupdate.CoreStatePath, Executable: coreBakedExecutable}
+	actions := systemupdate.CoreSystemdRunner{Root: systemupdate.CoreStatePath, Executable: coreBakedExecutable}
 	return &systemupdate.CoreContinuationWatchdog{
 		Root: systemupdate.CoreStatePath, Lifecycle: systemupdate.CoreAppLifecycleRoot, Idle: coreWatchdogIdle,
 		Coordinating: func() (bool, error) { return systemupdate.CoreCommandRunning("/proc") },
-		Start:        systemupdate.CoreControlRunner{Root: systemupdate.CoreStatePath, Executable: coreBakedExecutable}.Start,
+		Start:        runner.Start, Delivered: runner.Delivered, Forget: runner.Forget,
+		ChildGone: actions.ChildGone, ChildLingering: actions.ChildLingering,
 	}
 }
 
 // startCoreContinuationWatchdog runs in the API service (the selected Spine).
 // See systemupdate.CoreContinuationWatchdog for what it does and when.
 //
-// The first look happens here, before the API socket exists. What it finds is
-// the journal state from before this service, which the watchdog never acts
-// on. It must not be later: a Spine step restarts this service and is recorded
-// as succeeded once the API answers, and the state written then is the one a
-// continuation lost at the hand-over leaves.
+// The first look happens here, before the API socket exists: the idle time of
+// a request that was already there (after a boot, or after a restart of this
+// service by a Spine step) counts from the start of the service.
 func startCoreContinuationWatchdog() {
 	watchdog := newCoreContinuationWatchdog()
 	checkCoreContinuation(watchdog)

@@ -138,7 +138,7 @@ func DeployControlPanel(cfg *config.Config) error {
 	progress.Report("server_interface", "Downloading and starting the Control Panel", 56)
 	if err := DeployControlPanelApp(cfg); err != nil {
 		util.LogError(fmt.Sprintf("Could not deploy Control Panel app: %v", err))
-		fmt.Println("You can deploy manually later using 'spine update control'")
+		fmt.Println("Run 'youeye deploy' again to retry")
 		return err
 	}
 	if err := writeControlProvisionJournal(containerName, "control-ready"); err != nil {
@@ -417,7 +417,17 @@ func controlPanelPortProxyArgs(containerName string, port int) []string {
 // RepairControlPanelPortProxy makes the raw Control Panel host proxy
 // localhost-only. Existing installs previously exposed this on 0.0.0.0:3000;
 // update/reconcile paths call this to repair that drift in place.
+//
+// It verifies first and changes nothing when the device is already right.
+// Removing and adding the device restarts Incus' proxy process and cuts every
+// connection through it: the CLI's event streams ("unexpected EOF") and the
+// dashboard's requests. This runs at every start of the API service (the
+// host-IP check: every boot, every Spine update) and in every steady-state
+// repair, where it used to do that each time.
 func RepairControlPanelPortProxy(containerName string, port int) error {
+	if VerifyControlPanelPortProxy(containerName, port) == nil {
+		return nil
+	}
 	deviceName := fmt.Sprintf("port%d", port)
 	_ = exec.Command("incus", "config", "device", "remove", containerName, deviceName).Run()
 
@@ -434,16 +444,34 @@ func VerifyControlPanelPortProxy(containerName string, port int) error {
 	if err != nil {
 		return fmt.Errorf("read %s devices: %w: %s", containerName, err, strings.TrimSpace(out))
 	}
-	deviceName := fmt.Sprintf("port%d:", port)
-	wantListen := fmt.Sprintf("listen: tcp:127.0.0.1:%d", port)
-	wantConnect := fmt.Sprintf("connect: tcp:127.0.0.1:%d", port)
-	for _, want := range []string{deviceName, "bind: host", wantListen, wantConnect, "type: proxy"} {
-		if !strings.Contains(out, want) {
-			return fmt.Errorf("%s proxy missing %q", containerName, want)
+	// `incus config device show` prints one YAML map per device: the name at
+	// the start of a line, its keys indented below. Read this device's own keys.
+	device := map[string]string{}
+	found, inside := false, false
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") {
+			inside = strings.TrimSpace(line) == fmt.Sprintf("port%d:", port)
+			found = found || inside
+			continue
+		}
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && inside {
+			device[key] = strings.Trim(strings.TrimSpace(value), `"'`)
 		}
 	}
-	if strings.Contains(out, fmt.Sprintf("listen: tcp:0.0.0.0:%d", port)) {
-		return fmt.Errorf("%s proxy still listens on all interfaces", containerName)
+	if !found {
+		return fmt.Errorf("%s has no port%d proxy device", containerName, port)
+	}
+	address := fmt.Sprintf("tcp:127.0.0.1:%d", port)
+	for key, want := range map[string]string{"type": "proxy", "bind": "host", "listen": address, "connect": address} {
+		if device[key] != want {
+			if key == "listen" && strings.HasPrefix(device[key], "tcp:0.0.0.0:") {
+				return fmt.Errorf("%s proxy still listens on all interfaces", containerName)
+			}
+			return fmt.Errorf("%s proxy %s is %q, want %q", containerName, key, device[key], want)
+		}
 	}
 	return nil
 }

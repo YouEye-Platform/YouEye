@@ -19,6 +19,7 @@ import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { getRoutes } from '@/lib/caddy/client';
 import type {
   AppBackupConfig,
+  BackupEncryption,
   BackupEvent,
   BackupEventCallback,
   ManifestBackupSection,
@@ -43,15 +44,16 @@ const YOUEYE_DATA_DIR = '/var/lib/youeye';
 export async function backupApp(
   config: AppBackupConfig,
   onEvent: BackupEventCallback
-): Promise<void> {
+): Promise<BackupEncryption | undefined> {
   return runWithBackupAdmission(() => backupAppUnderLifecycle(config, onEvent),
     work => withAppLifecycle(config.appId, work));
 }
 
+/** Returns how Spine encrypted the archive (undefined from a Spine that does not say: the parameters before 0.6.15). */
 async function backupAppUnderLifecycle(
   config: AppBackupConfig,
   onEvent: BackupEventCallback,
-): Promise<void> {
+): Promise<BackupEncryption | undefined> {
   const { appId } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const stagingDir = path.join(STAGING_BASE, `app-${appId}-${timestamp}`);
@@ -247,6 +249,7 @@ async function backupAppUnderLifecycle(
     const backupId = spineResult.backup_id;
     let completed = false;
     let terminalError = '';
+    let encryption: BackupEncryption | undefined;
     const pollInterval = 2000;
     const maxPollTime = 30 * 60 * 1000;
     const startTime = Date.now();
@@ -269,6 +272,7 @@ async function backupAppUnderLifecycle(
 
         if (status.status === 'completed') {
           completed = true;
+          encryption = status.encryption;
           emit('completed', `Backup of ${appId} completed successfully`, 'completed');
           onEvent({
             step: totalSteps,
@@ -315,6 +319,7 @@ async function backupAppUnderLifecycle(
       });
       throw new Error(`App backup for ${appId} timed out after 30 minutes`);
     }
+    return encryption;
   } finally {
     // Clean up staging directory
     try {

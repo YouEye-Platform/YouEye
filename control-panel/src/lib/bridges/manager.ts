@@ -214,7 +214,6 @@ async function computeInternetProxyScopes(appId: string): Promise<Array<Record<s
       host: scope.host,
       paths: scope.paths,
       methods: scope.methods?.length ? scope.methods : ['GET'],
-      scope: scope.scope ?? 'user',
     }));
   } catch {
     return [];

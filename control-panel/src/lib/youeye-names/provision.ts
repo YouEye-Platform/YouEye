@@ -459,7 +459,7 @@ export async function activateNamesCertificate(fqdn: string, io: NamesJobIO = de
 }
 
 /**
- * A saved name from the installer (`--names-bundle`): install its certificate,
+ * A saved name staged before setup (`youeye names import`): install its certificate,
  * resume the lease and point it at this server. No new claim or certificate.
  */
 export async function activateStagedNamesBundle(name: string, fqdn: string): Promise<boolean> {

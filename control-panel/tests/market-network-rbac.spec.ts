@@ -30,7 +30,7 @@ test('Market and app-network mutations require an administrator session', async 
   }
 });
 
-test('app-network reads require an authenticated session in the handler too', async () => {
+test('app-network reads require an admin in the handler too', async () => {
   for (const route of [
     'src/app/api/bridges/route.ts',
     'src/app/api/bridges/[bridgeId]/route.ts',
@@ -39,7 +39,8 @@ test('app-network reads require an authenticated session in the handler too', as
     'src/app/api/suggestions/route.ts',
   ]) {
     const contents = await source(route);
-    assert.match(contents, /import \{[^}]*requireAuth[^}]*\} from '@\/lib\/auth\/rbac';/, route);
-    assert.match(contents, /const auth = await requireAuth\(\);\s*if \(auth\.error\) return auth\.error;/, route);
+    assert.match(contents, /import \{[^}]*\brequireAdmin\b[^}]*\} from '@\/lib\/auth\/rbac';/, route);
+    assert.match(contents, /const auth = await requireAdmin\(\);\s*if \(auth\.error\) return auth\.error;/, route);
+    assert.doesNotMatch(contents, /requireAuth\(/, route);
   }
 });

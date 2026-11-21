@@ -18,11 +18,12 @@ import { fetchUrlApp, UrlAppError, validateAppUrl } from '@/lib/market/url-app';
 import {
   finishTracking, logOperationFailure, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent,
 } from '@/lib/market/install-tracker';
-import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { holdPlatformLifecycle, withUserOperationLockWait, type PlatformLifecycleHold } from '@/lib/market/update-admission';
+import { lifecycleRefusalResponse } from '@/lib/http/lifecycle-busy';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { settingsService } from '@/lib/settings';
 import { requireAdmin } from '@/lib/auth/rbac';
-import { verifyCSRFToken } from '@/lib/auth/session';
+import { verifyCSRFToken, type SessionPayload } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
 import type { AppManifest, InstallConfig, InstallEvent } from '@/lib/market/types';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
@@ -50,6 +51,29 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
+  // Held from here until the install has ended, the manifest fetch included, as the catalog install holds it: Spine's
+  // Control Panel restart waits for it instead of stopping the Control Panel under a request that is still fetching.
+  let hold: PlatformLifecycleHold;
+  try {
+    hold = await withUserOperationLockWait(() => holdPlatformLifecycle());
+  } catch (error) {
+    logOperationFailure('Admitting a URL install', error);
+    return lifecycleRefusalResponse(error)
+      ?? Response.json({ error: 'The install could not start; the cause is in the Control Panel journal.' }, { status: 500 });
+  }
+  let streaming = false;
+  try {
+    return await hold.run(() => admittedUrlInstall(request, auth.session, hold, () => { streaming = true; }));
+  } finally {
+    if (!streaming) hold.release();
+  }
+}
+
+/** The URL install request under its platform lifecycle hold; `streaming` hands the hold to the install's stream. */
+async function admittedUrlInstall(
+  request: NextRequest, session: SessionPayload, hold: PlatformLifecycleHold, streaming: () => void,
+): Promise<Response> {
+  const auth = { session };
   let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean; publicAccess?: boolean };
   try {
     body = await request.json();
@@ -188,10 +212,10 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        await withUserOperationLockWait(
+        await hold.run(() => withUserOperationLockWait(
           () => installApp(manifest, config, onEvent, abortController.signal),
           { signal: abortController.signal },
-        );
+        ));
         baseInstallComplete = true;
 
         // After install, update metadata to track URL source
@@ -213,9 +237,9 @@ export async function POST(request: NextRequest) {
         const errorMsg = sensitivitySafeInstallError(err);
         if (baseInstallComplete) {
           const { uninstallApp } = await import('@/lib/market/uninstaller');
-          const rollback = await withUserOperationLockWait(
+          const rollback = await hold.run(() => withUserOperationLockWait(
             () => uninstallApp(config.appId, { keepData: false }),
-          ).catch(() => null);
+          )).catch(() => null);
           if (!rollback?.success) {
             onEvent({
               step: 0,
@@ -245,10 +269,12 @@ export async function POST(request: NextRequest) {
           appId: config.appId,
         }).catch(() => { /* best effort */ });
       } finally {
+        hold.release();
         try { controller.close(); } catch { /* Already closed */ }
       }
     },
   });
+  streaming();
 
   return new Response(stream, {
     headers: {

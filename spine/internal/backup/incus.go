@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -16,6 +17,10 @@ import (
 
 var incusNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 var imageFingerprintPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+// temporaryIncusVolumePattern is the one-use name a restore imports a volume under (temporaryIncusVolumeName).
+// Nothing else in YouEye names a volume so.
+var temporaryIncusVolumePattern = regexp.MustCompile(`^ye-restore-[0-9a-f]{16}$`)
 
 const incusStoragePoolsRoot = "/var/lib/incus/storage-pools"
 
@@ -135,8 +140,9 @@ func deleteIncusVolumeSnapshot(volume IncusVolumeRef, snapshot string) {
 	_ = exec.Command("incus", "storage", "volume", "snapshot", "delete", volume.Pool, volume.Name, snapshot).Run()
 }
 
-func runIncus(args ...string) error {
-	output, err := exec.Command("incus", args...).CombinedOutput()
+// runIncus runs an incus command that ends with ctx (stepCommand).
+func runIncus(ctx context.Context, args ...string) error {
+	output, err := runStep(ctx, "incus", args...)
 	if err != nil {
 		return fmt.Errorf("incus %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -188,7 +194,7 @@ func exportIncusAssets(
 					return err
 				}
 				prefix := filepath.Join(imageDir, "image")
-				if err := runIncus("image", "export", fingerprint, prefix); err != nil {
+				if err := runIncus(context.Background(), "image", "export", fingerprint, prefix); err != nil {
 					return err
 				}
 				matches, err := filepath.Glob(prefix + "*")
@@ -220,11 +226,11 @@ func exportIncusAssets(
 		} else {
 			clone := fmt.Sprintf("ye-backup-%s-%d", backupID[:min(12, len(backupID))], index)
 			_ = exec.Command("incus", "delete", "-f", clone).Run()
-			if err := runIncus("copy", runtime.Name+"/"+snapshot, clone); err != nil {
+			if err := runIncus(context.Background(), "copy", runtime.Name+"/"+snapshot, clone); err != nil {
 				return err
 			}
 			archive := filepath.Join(runtimeDir, "instance.tar.gz")
-			exportErr := runIncus("export", clone, archive, "--instance-only")
+			exportErr := runIncus(context.Background(), "export", clone, archive, "--instance-only")
 			_ = exec.Command("incus", "delete", "-f", clone).Run()
 			if exportErr != nil {
 				return exportErr
@@ -237,7 +243,7 @@ func exportIncusAssets(
 	for index, volume := range volumes {
 		clone := fmt.Sprintf("ye-backup-%s-v%d", backupID[:min(10, len(backupID))], index)
 		_ = exec.Command("incus", "storage", "volume", "delete", volume.Pool, clone).Run()
-		if err := runIncus("storage", "volume", "copy", volume.Pool+"/"+volume.Name+"/"+snapshot, volume.Pool+"/"+clone); err != nil {
+		if err := runIncus(context.Background(), "storage", "volume", "copy", volume.Pool+"/"+volume.Name+"/"+snapshot, volume.Pool+"/"+clone); err != nil {
 			return err
 		}
 		volumeDir := filepath.Join(root, "volumes", volume.Pool)
@@ -245,7 +251,7 @@ func exportIncusAssets(
 			return err
 		}
 		archive := filepath.Join(volumeDir, volume.Name+".tar.gz")
-		exportErr := runIncus("storage", "volume", "export", volume.Pool, clone, archive)
+		exportErr := runIncus(context.Background(), "storage", "volume", "export", volume.Pool, clone, archive)
 		_ = exec.Command("incus", "storage", "volume", "delete", volume.Pool, clone).Run()
 		if exportErr != nil {
 			return exportErr
@@ -336,7 +342,59 @@ func exportedIncusImageFingerprint(files []string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResult, returnErr error) {
+// incusKnows asks incus whether something is there (`incus … show`). When ctx has ended the answer is no; the
+// caller's next command, or its stepEnded check, then says why.
+func incusKnows(ctx context.Context, args ...string) bool {
+	_, err := runStep(ctx, "incus", args...)
+	return err == nil
+}
+
+// incusLooks asks like incusKnows and also says whether incus answered that the thing is not there. A command that
+// failed for another reason (incusd did not answer, ctx ended) is neither known nor absent.
+func incusLooks(ctx context.Context, args ...string) (known, absent bool) {
+	output, err := runStep(ctx, "incus", args...)
+	if err == nil {
+		return true, false
+	}
+	return false, stepEnded(ctx) == nil && strings.Contains(strings.ToLower(string(output)), "not found")
+}
+
+// removeLeftoverRestoreVolumes deletes the one-use volumes an earlier restore left in pools: an import that was
+// stopped can still end in incusd after its cleanup ran. Only one restore runs at a time (the Control Panel's
+// backup operation lock), so a volume of that name belongs to no run. Best effort, each command under the cleanup
+// limit: a pool that does not answer is reported by the import that needs it.
+func removeLeftoverRestoreVolumes(ctx context.Context, pools []string) {
+	for _, pool := range pools {
+		listCtx, cancel := context.WithTimeout(ctx, stepCleanupLimit)
+		output, err := stepOutput(listCtx, stepCommand(listCtx, "incus", "storage", "volume", "list", pool, "--format", "json"), true)
+		cancel()
+		var volumes []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err != nil || json.Unmarshal(output, &volumes) != nil {
+			continue
+		}
+		for _, volume := range volumes {
+			if volume.Type != "custom" || !temporaryIncusVolumePattern.MatchString(volume.Name) {
+				continue
+			}
+			deleteCtx, cancel := context.WithTimeout(ctx, stepCleanupLimit)
+			_, _ = runStep(deleteCtx, "incus", "storage", "volume", "delete", pool, volume.Name)
+			cancel()
+		}
+	}
+}
+
+// PrepareIncusRecovery imports the images and custom volumes of a restore's archive. Its incus commands end with
+// ctx or at StepCeiling. Stopping the incus client does not stop incusd, so what a stopped command leaves is
+// either nothing or a whole object: an image under the hash of its files (found by the next run), a volume under
+// a one-use name that no run reads (deleted here when incusd still answers, and by the next run otherwise), or,
+// after a stopped rename, the volume under its final name (looked for and deleted here). All cleanup of one failed
+// run shares stepCleanupTotal.
+func PrepareIncusRecovery(ctx context.Context, request IncusPrepareRequest) (result *IncusPrepareResult, returnErr error) {
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 	stagingDir := filepath.Clean(request.StagingDir)
 	if !pathWithin(backupStagingRoot, stagingDir) {
 		return nil, fmt.Errorf("staging directory is outside the protected backup workspace")
@@ -363,16 +421,33 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 		Volumes:  []IncusVolumeRef{},
 	}
 	createdVolumes := []IncusVolumeRef{}
+	cleanup := &stepCleanup{}
+	defer cleanup.done()
 	defer func() {
 		if returnErr == nil {
 			return
 		}
 		for _, volume := range createdVolumes {
-			_ = exec.Command("incus", "storage", "volume", "delete", volume.Pool, volume.Name).Run()
+			cleanup.run("incus", "storage", "volume", "delete", volume.Pool, volume.Name)
 		}
 	}()
 
+	targetPools := []string{}
+	for _, volume := range document.Volumes {
+		pool := volume.Pool
+		if mapped := request.PoolMap[volume.Pool]; mapped != "" {
+			pool = mapped
+		}
+		if incusNamePattern.MatchString(pool) && !containsString(targetPools, pool) {
+			targetPools = append(targetPools, pool)
+		}
+	}
+	removeLeftoverRestoreVolumes(ctx, targetPools)
+
 	for _, runtime := range document.Runtimes {
+		if err := stepEnded(ctx); err != nil {
+			return nil, err
+		}
 		if !incusNamePattern.MatchString(runtime.Name) || (runtime.Type != "oci" && runtime.Type != "lxd") {
 			return nil, fmt.Errorf("invalid Incus runtime archive")
 		}
@@ -381,7 +456,7 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 			if !imageFingerprintPattern.MatchString(runtime.Fingerprint) || len(runtime.Files) == 0 || len(runtime.Files) > 2 {
 				return nil, fmt.Errorf("invalid OCI image recovery record")
 			}
-			if exec.Command("incus", "image", "show", runtime.Fingerprint).Run() != nil {
+			if !incusKnows(ctx, "image", "show", runtime.Fingerprint) {
 				args := []string{"image", "import"}
 				imageFiles := make([]string, 0, len(runtime.Files))
 				for _, relative := range runtime.Files {
@@ -401,22 +476,25 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 				if err != nil {
 					return nil, err
 				}
-				if exec.Command("incus", "image", "show", importedFingerprint).Run() != nil {
-					if err := runIncus(args...); err != nil {
+				if !incusKnows(ctx, "image", "show", importedFingerprint) {
+					if err := runIncus(ctx, args...); err != nil {
 						return nil, err
 					}
 				}
-				if exec.Command("incus", "image", "show", importedFingerprint).Run() != nil {
+				if !incusKnows(ctx, "image", "show", importedFingerprint) {
+					if err := stepEnded(ctx); err != nil {
+						return nil, err
+					}
 					return nil, fmt.Errorf("imported OCI image identity did not read back")
 				}
 				// `incus image export` preserves the OCI rootfs but its generated
 				// metadata tar does not retain the `type=oci` image property. Without
 				// restoring it, Incus rejects OCI-only instance configuration such as
 				// `oci.entrypoint` when the app is recreated from the local export.
-				if err := runIncus("image", "set-property", importedFingerprint, "type=oci"); err != nil {
+				if err := runIncus(ctx, "image", "set-property", importedFingerprint, "type=oci"); err != nil {
 					return nil, err
 				}
-				property, err := exec.Command("incus", "image", "get-property", importedFingerprint, "type").CombinedOutput()
+				property, err := runStep(ctx, "incus", "image", "get-property", importedFingerprint, "type")
 				if err != nil || strings.TrimSpace(string(property)) != "oci" {
 					return nil, fmt.Errorf("imported OCI image type did not read back")
 				}
@@ -445,11 +523,21 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 		if !incusNamePattern.MatchString(targetPool) {
 			return nil, fmt.Errorf("invalid target storage pool")
 		}
-		if exec.Command("incus", "storage", "show", targetPool).Run() != nil {
+		if err := stepEnded(ctx); err != nil {
+			return nil, err
+		}
+		if !incusKnows(ctx, "storage", "show", targetPool) {
+			if err := stepEnded(ctx); err != nil {
+				return nil, err
+			}
 			return nil, fmt.Errorf("target storage pool %s is unavailable", targetPool)
 		}
 		created := false
-		if exec.Command("incus", "storage", "volume", "show", targetPool, volume.Name).Run() != nil {
+		// Only a volume incus said is not there can later be called one this run made.
+		if known, absentBefore := incusLooks(ctx, "storage", "volume", "show", targetPool, volume.Name); !known {
+			if err := stepEnded(ctx); err != nil {
+				return nil, err
+			}
 			if err := removeStaleCustomVolumeMountpoint(incusStoragePoolsRoot, targetPool, volume.Name); err != nil {
 				return nil, err
 			}
@@ -465,20 +553,28 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 			if err != nil {
 				return nil, err
 			}
-			if err := runIncus("storage", "volume", "import", targetPool, archive, temporaryName); err != nil {
+			if err := runIncus(ctx, "storage", "volume", "import", targetPool, archive, temporaryName); err != nil {
+				// An import that was stopped may still end in incusd; the name is used once, so nothing reads it,
+				// and the next run deletes what this delete came too early for.
+				cleanup.run("incus", "storage", "volume", "delete", targetPool, temporaryName)
 				return nil, err
 			}
 			if err := removeStaleCustomVolumeMountpoint(incusStoragePoolsRoot, targetPool, volume.Name); err != nil {
-				_ = exec.Command("incus", "storage", "volume", "delete", targetPool, temporaryName).Run()
+				cleanup.run("incus", "storage", "volume", "delete", targetPool, temporaryName)
 				return nil, err
 			}
-			if err := runIncus("storage", "volume", "rename", targetPool, temporaryName, volume.Name); err != nil {
-				_ = exec.Command("incus", "storage", "volume", "delete", targetPool, temporaryName).Run()
+			if err := runIncus(ctx, "storage", "volume", "rename", targetPool, temporaryName, volume.Name); err != nil {
+				cleanup.run("incus", "storage", "volume", "delete", targetPool, temporaryName)
+				// A rename that was stopped may have ended in incusd: the volume then has its final name, which
+				// was not there before, and is deleted with the others this run created.
+				if absentBefore && cleanup.succeeds("incus", "storage", "volume", "show", targetPool, volume.Name) {
+					createdVolumes = append(createdVolumes, IncusVolumeRef{Pool: targetPool, Name: volume.Name, Created: true})
+				}
 				return nil, err
 			}
 			created = true
 			createdVolumes = append(createdVolumes, IncusVolumeRef{Pool: targetPool, Name: volume.Name, Created: true})
-			if exec.Command("incus", "storage", "volume", "show", targetPool, volume.Name).Run() != nil {
+			if !incusKnows(ctx, "storage", "volume", "show", targetPool, volume.Name) {
 				return nil, fmt.Errorf("imported app storage did not read back")
 			}
 		}
@@ -487,7 +583,14 @@ func PrepareIncusRecovery(request IncusPrepareRequest) (result *IncusPrepareResu
 	return result, nil
 }
 
-func ImportIncusInstance(request IncusInstanceImportRequest) error {
+// ImportIncusInstance imports one instance of a restore's archive. Its incus commands end with ctx or at
+// StepCeiling. An import that is stopped may still end in incusd and leave the instance: when incus had said the
+// name was free and the instance is there right after the stop, it is deleted. One that appears later stays; the
+// caller got an error, and a later import of that name is refused while it is there, so it is never taken for a
+// restored one.
+func ImportIncusInstance(ctx context.Context, request IncusInstanceImportRequest) error {
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 	archive := filepath.Clean(request.ArchivePath)
 	request.ArchivePath = archive
 	args, err := incusInstanceImportArgs(request)
@@ -501,14 +604,35 @@ func ImportIncusInstance(request IncusInstanceImportRequest) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("instance archive is missing or unsafe")
 	}
-	if exec.Command("incus", "info", request.Name).Run() == nil {
+	known, absentBefore := incusLooks(ctx, "info", request.Name)
+	if known {
 		return fmt.Errorf("target instance already exists")
 	}
-	if !request.Offline && exec.Command("incus", "network", "show", request.Network).Run() != nil {
+	networkKnown := request.Offline || incusKnows(ctx, "network", "show", request.Network)
+	if err := stepEnded(ctx); err != nil {
+		return err
+	}
+	if !networkKnown {
 		return fmt.Errorf("target instance network is unavailable")
 	}
-	if err := runIncus(args...); err != nil {
+	if err := runIncus(ctx, args...); err != nil {
+		if stepEnded(ctx) != nil && absentBefore {
+			cleanup := &stepCleanup{}
+			defer cleanup.done()
+			if cleanup.succeeds("incus", "info", request.Name) {
+				cleanup.run("incus", "delete", "-f", request.Name)
+			}
+		}
 		return err
 	}
 	return nil
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }

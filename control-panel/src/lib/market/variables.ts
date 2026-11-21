@@ -8,6 +8,11 @@ import type { VariableContext } from './types';
 
 const VAR_PATTERN = () => /\$\{([^}]+)\}/g;
 
+/** Why a registry variable that the context left out is unknown at this render. */
+const UNAVAILABLE: Record<string, string> = {
+  'app.network_cidr': 'the app network lease was not found (or the app has no app network)',
+};
+
 /**
  * Resolve all ${...} variable references in a string.
  * Throws if a variable cannot be resolved.
@@ -16,7 +21,8 @@ export function resolveVariables(template: string, ctx: Partial<VariableContext>
   return template.replace(VAR_PATTERN(), (match, path: string) => {
     const value = resolvePath(path.trim(), ctx);
     if (value === undefined) {
-      throw new Error(`Unresolved variable: ${match}`);
+      const reason = UNAVAILABLE[path.trim()];
+      throw new Error(reason ? `Unresolved variable: ${match}: ${reason}` : `Unresolved variable: ${match}`);
     }
     return value;
   });

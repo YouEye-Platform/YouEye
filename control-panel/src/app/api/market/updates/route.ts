@@ -16,6 +16,7 @@ import {
   refreshVersionCheck,
 } from '@/lib/market/version-checker';
 import { getAppsWithUpdatesAvailable } from '@/lib/market/installed-apps';
+import { requireAdmin } from '@/lib/auth/rbac';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +44,9 @@ export async function GET() {
 }
 
 export async function POST() {
+  // A version check reads every market again: an admin's (or the CLI's) request. Reading the result is not.
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
   try {
     if (isVersionCheckInProgress()) {
       return Response.json({

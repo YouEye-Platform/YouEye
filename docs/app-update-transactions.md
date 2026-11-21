@@ -38,6 +38,15 @@ A metadata operation reserves the app and its containers, checkpoints only the r
 running. It may not declare runtime, volume or database resources. Product release documents are described in
 [releases.md](releases.md).
 
+A native app's release is adopted this way when the new release document names the identical build (byte-equal
+build manifest, same artifacts) and its manifest equals the installed copy apart from the version labels (`version`
+and `frozen.version`) and the listing files (`metadata.iconUrl`, `detail.screenshots`); the frozen source text, setup
+files and digest must be equal. The record's `productReleaseSHA256` then names the adopted document, so the next
+check says "already up to date". A stopped app takes the ordinary update instead (adoption needs the running runtime).
+A rollback is verified against the stored (JSON) form of the registration. Installed copies are cached per app by
+the record's `manifestDigest` and version: a native app's digest is its Market listing's and does not change with its
+release.
+
 Native app packages are downloaded from the app's product release (`youeye.product-release.v1`) and checked
 against the SHA-256 and size it lists (`native-artifact.ts`).
 

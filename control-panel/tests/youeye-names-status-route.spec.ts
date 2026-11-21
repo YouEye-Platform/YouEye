@@ -56,7 +56,7 @@ function fixture(options: {
   certificateDomains?: string[];
 } = {}) {
   const state = options.state === undefined ? lifecycle() : options.state;
-  const session = options.session === undefined ? { isAdmin: false } : options.session;
+  const session = options.session === undefined ? { isAdmin: true } : options.session;
   const calls = { state: 0, certificate: 0, readiness: 0, terms: 0 };
   const api: { GET?: () => Promise<Response> } = {};
   runInNewContext(code, {
@@ -92,9 +92,8 @@ function fixture(options: {
   return { get: () => api.GET!(), calls, state };
 }
 
-for (const isAdmin of [false, true]) {
-  test(`Names status excludes provisioning credentials for ${isAdmin ? 'administrator' : 'ordinary'} sessions`, async () => {
-    const f = fixture({ session: { isAdmin } });
+test('Names status excludes provisioning credentials', async () => {
+    const f = fixture();
     const protectedBefore = structuredClone(f.state);
     const response = await f.get();
     assert.equal(response.status, 200);
@@ -115,15 +114,17 @@ for (const isAdmin of [false, true]) {
       certificateMatches: true, currentTerms: terms, serviceReachable: true, readiness,
     });
     assert.deepEqual(f.state, protectedBefore, 'status must preserve server-side resumption material');
-  });
-}
+});
 
-test('Names status rejects an absent session before reading protected state', async () => {
-  const f = fixture({ session: null });
-  const response = await f.get();
-  assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'Unauthorized' });
-  assert.deepEqual(f.calls, { state: 0, certificate: 0, readiness: 0, terms: 0 });
+// The Names status is the Network page's (admins only): a standard user's session is refused like none.
+test('Names status refuses a standard user and an absent session before reading protected state', async () => {
+  for (const session of [null, { isAdmin: false }]) {
+    const f = fixture({ session });
+    const response = await f.get();
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'Admin access required' });
+    assert.deepEqual(f.calls, { state: 0, certificate: 0, readiness: 0, terms: 0 });
+  }
 });
 
 test('Names status retains inactive state and certificate mismatch behavior', async () => {

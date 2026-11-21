@@ -151,6 +151,18 @@ first deployment does not need the Market for them. Each container records its i
 `user.youeye.market.image` and `user.youeye.market.version` (the names are older than the pins and are kept so that
 existing containers stay tracked). Each container gets the `critical` resource policy.
 
+Pi-hole's own update check is off: Pi-hole changes only with a System release. The pinned image has no setting for
+it (its `start.sh` runs `pihole updatechecker` at every start and its crontab daily, and that script asks
+`api.github.com` and `git ls-remote https://github.com/pi-hole/…`), so `lib/infrastructure/pihole-update-check.ts`
+replaces each line of `/opt/pihole/updatecheck.sh` that asks GitHub with `echo "null"`; the local versions that
+`pihole -v` and the web interface show are still recorded. A new container is created stopped and edited before its
+first start (deploy, reconcile, repair, image rebuild), and the Control Panel edits an existing one at every start.
+The edit never fails a deploy or an update, and Pi-hole always starts after it: only whole simple lines are replaced
+(no continuation, keyword or brace, balanced quotes), the result must name no GitHub address and pass `bash -n`, and
+otherwise (a future pin with another form, or a failed write, which puts the original back) the original script
+stays and `[Pi-hole] Update check left as it is: …` is logged.
+Pi-hole's block list still comes from GitHub (`raw.githubusercontent.com`, weekly) until it moves to a YouEye host.
+
 `POST /api/deploy/infrastructure/reconcile` (used by `youeye deploy --resume`) creates only missing containers and
 re-checks the security posture; it never replaces running ones.
 
@@ -164,8 +176,13 @@ re-checks the security posture; it never replaces running ones.
   request's own origin (scheme from `X-Forwarded-Proto`), or no `Origin` and no cross-site `Sec-Fetch-Site`; else 403.
   The session cookie is `SameSite=None` on HTTPS names, so this is what stops other sites posting with it.
 - **In the handler:** admin routes call `requireAdmin()`, and admin writes `requireAdminCsrf(request)`
-  (`lib/auth/rbac.ts`; the CLI token passes both). `tests/route-auth.spec.ts` walks every `route.ts`: each handler
-  calls an auth helper, or is listed there as public or signed-in-only with the reason.
+  (`lib/auth/rbac.ts`; the CLI token passes both), or guard with `if (!session?.isAdmin)`. `tests/route-auth.spec.ts`
+  walks every `route.ts`: each handler checks for an admin, or is listed there as public or as one a standard user may
+  call, with the reason. A session check alone is not enough: the standard-user list holds reads (the Market, the
+  Apps list, the domain, branding) and the caller's own account (profile, avatar, password, consents, sign-out).
+  The Pi-hole, Caddy, TLS, Names, bridges, people and container reads are admin-only. There is no SQL console
+  (0.6.15 deleted `/api/apps/postgres/*`, whose `query` let any signed-in user run SQL and a root shell in
+  `youeye-postgres`).
 - **Waiting for a busy app:** user-facing lifecycle routes (install, remove, start/stop, update and recovery,
   connections and suggestions, access, credentials, AI Settings, bundles, restore, URL and Names changes, Health's
   Fix) run as user operations (`withUserOperationLockWait`, `lib/http/lifecycle-busy.ts`): every app, inventory and
@@ -294,10 +311,10 @@ YouEye ID and the admission tables are in PostgreSQL (`youeye` database); the da
 
 | What | How |
 |---|---|
-| Spine, CP, dashboard, image | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). |
+| Spine, CP, dashboard, image (Incus and the host packages with it) | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). |
 | Release channel | `GET`/`PUT /api/releases/channel` (`dev`, `alpha`, `beta`, `stable`). The box never downgrades. |
-| PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image pinned in `system-images.ts` and rebuilds it on that image (`lib/infrastructure/system-updater.ts`). Settings → Apps and the `/embed/apps` page use `POST /settings/api/apps/{postgres,caddy,pihole}/update` with the same acknowledgements (`confirmMaintenanceWindow`, `confirmContainerName`, and `allowDatabaseUpdate` for PostgreSQL). Both answer HTTP 423 naming the issue while a critical health issue is open. The `/settings/api/apps/<id>/update` route ignores that container's own issue (`service.<id>.down`, `container.<name>.crash-loop`), which the update may repair; `system-updates` makes no such exception. There is no moving-tag update path. |
-| Incus, host packages | `POST /settings/api/apps/{incus,host-system}/update` asks Spine (`/api/update/{incus,system}`) to update Incus or the host packages; `host-system` answers HTTP 423 naming the issue while a critical health issue is open. |
+| PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image pinned in `system-images.ts` and rebuilds it on that image (`lib/infrastructure/system-updater.ts`). Settings → Apps and the `/embed/apps` page use `POST /settings/api/apps/{postgres,caddy,pihole}/update` with the same acknowledgements (`confirmMaintenanceWindow`, `confirmContainerName`, and `allowDatabaseUpdate` for PostgreSQL). `POST /api/apps/{postgres,caddy,pihole}/update` (the progress stream behind `youeye app update <id>`) runs the same action (`lib/apps/system-container-update.ts`) when the body carries those acknowledgements; without them, as from the CLI, which has no flags for them, its stream ends `failed` with "… is a system container … Update it in Settings → Apps" before anything is touched. The two JSON routes answer HTTP 423 naming the issue while a critical health issue is open. The `/settings/api/apps/<id>/update` route ignores that container's own issue (`service.<id>.down`, `container.<name>.crash-loop`), which the update may repair; `system-updates` makes no such exception. There is no moving-tag update path (`updateOCIApp`, which no built-in app could use, was deleted in 0.6.15). |
+| Incus, host packages | only with the image of a System release. There is no apt route: `/settings/api/apps/<id>/update` and `/api/apps/<id>/update` answer that Spine, the Control Panel, the UI and Incus have no app update (HTTP 404, nothing recorded). |
 | Market apps | `POST /api/market/update`; a journaled, recoverable transaction. Status and recovery: `GET /api/market/update/status?appId=…`, `POST /api/market/update/recovery`. See [app-update-transactions.md](app-update-transactions.md). |
 
 All update routes need an admin session; changes also need a CSRF token.
@@ -326,8 +343,39 @@ key and the backups cannot be read.
 - one archive per selected app (`app-backup.ts`): its frozen manifest, `install.json`, secrets, database dump,
   volumes and admission metadata.
 
-Each archive is encrypted (`openssl` AES-256-CBC with PBKDF2). The set is then written to a restic repository on the
-drive, checked, and the local copy deleted. A failed set is deleted; it is never a recovery point. The set records
+Each archive is encrypted by Spine (`openssl enc`, AES-256-CBC, the key from the passphrase by PBKDF2-SHA256 with
+10,000 iterations; `spine/internal/backup/encryption.go`) and authenticated by an HMAC-SHA256 file beside it
+(`.hmac`, `integrity.go`). Since 0.6.15 the HMAC key is derived from the passphrase by PBKDF2 too (the same digest and
+iterations, salted with the label `youeye-backup-archive-mac:` and the archive's own OpenSSL salt), so guessing the
+passphrase against the `.hmac` file costs as much as against the ciphertext. Spine passes every parameter to OpenSSL
+and reports them with the finished archive. Since 0.6.15 the set records them in `backup-set.json` as
+`encryption: {cipher, kdf, digest, iterations, mac}` (`mac: "hmac-sha256-pbkdf2"`), and a restore sends them back
+with each archive of the set (`readBackupEncryption` in `full-restore.ts`; an app's rollback archive uses its own
+backup's). A set with no `backup-set.json`, or one with no `encryption` (made up to 0.6.14), or one without `mac`,
+is read with the parameters of that time, which are the same values, and its `.hmac` file is checked with the raw
+passphrase as its key. A `backup-set.json` that is there but cannot be read, or is not a JSON object, is refused
+with "The backup set's record (backup-set.json) is damaged" (never read as an older set, which would fail as a wrong
+passphrase). Spine refuses parameters it cannot read. The set is then written to a restic repository on the
+drive, checked, and the local copy deleted. A failed set is deleted; it is never a recovery point. A set left `creating` by a backup that
+ended midway (a power cut) is deleted by the next backup, before it writes anything. One whose store to the drive
+never finished is complete (its record already says `completed`, which restic reads; `sets/<id>.storing` marks it
+from just before the store until its local copy is gone) and may be the only complete copy of that backup, so it
+goes only when a later set that holds what it holds is safe: written, and stored on the drive when it was made for
+one. The same holds when the store ends without Spine's answer (Spine restarted under it, as a System update may
+do: a store holds only the backup operation lock; its socket was not there or refused at that moment; or it did
+not answer within the step's limit; all three are a `SpineTransportError` of the Spine client): the backup fails, but the set is kept as such a set instead of
+being deleted as a failed one (since 0.6.15; a store that Spine refuses, or that fails on the drive, still deletes
+it). Every set holds the core, so "holds" means each of the kept set's apps that is still installed (its
+`backup-set.json` lists them); a set of fewer apps (a scheduled backup of the apps that are due, a selection, a
+set that skipped an app with an unfinished update) leaves it alone (the first cut let any successful set delete
+it, and with it the only complete copy of the other apps). A backup that fails
+keeps it (before that, it was deleted before anything was written, and a backup that then failed left no complete
+copy). Of several such sets, one that a newer one of them holds goes when the next backup starts, and so does one
+whose record is missing or does not say `completed` (not a recovery point). Until such a backup succeeds it takes
+a whole backup's space on
+Data; `rm -rf /var/lib/youeye/backups/sets/<id> /var/lib/youeye/backups/sets/<id>.storing` removes it by hand. A
+completed set without the marker (made without a drive, or a pre-restore backup the drive
+could not take) is a local recovery point and stays. The set records
 the source's identity (`youeye.backup.source.v1`, `lib/backup/compatibility.ts`): runtime kind, image, Spine, the
 State/Data schema versions and, since 0.6.12, the installed releases as `release` (YouEye), `control_panel` and `ui`
 (the YouEye release with each part's own git tree) and `pointer` (its product release), each `{version, line,
@@ -372,6 +420,15 @@ Rules:
     claim) is read before the databases are replaced and written back after: the box's own client, not the
     backup's. Nothing changes inside the app and no setup file runs. (A restored app is reinstalled and gets a new
     client. Forward-auth sign-in has no client.) The rollback of a failed restore writes back the same rows.
+  - **AI Settings.** Pointer's database comes back from the backup, and Pointer keeps only the hashes of the app keys
+    it issued. A kept app still holds the key it was given last, so after its credential is reconciled its AI
+    connection is checked against Pointer (`reconcileKeptManagedAI` in `managed-ai.ts`): when Pointer still has that
+    key, the model group (while it still has models) and the enabled state the owner chose since the backup are
+    applied again; when it does not (AI connected
+    after the backup), the backup's record is archived and the app gets a new connection for the same owner, in its
+    group (or the owner's default group), in the state it had, with a new key written into it. When that is not
+    possible (Pointer not ready, the owner or every model group gone), the restore still finishes and its log asks
+    the owner to connect the app's AI again.
   - **App service credentials.** The dashboard's credential table comes back with its database; the Control
     Panel's credential store is outside every restored volume. A kept app is reconciled, a restored app gets a new
     credential, and every other app either side knows is revoked at one revision on both sides, so that it can be

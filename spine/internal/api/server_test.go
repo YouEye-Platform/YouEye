@@ -99,26 +99,6 @@ func TestHandleAuthVerify_EmptyCredentials(t *testing.T) {
 	}
 }
 
-func TestControlSSORestartRequested(t *testing.T) {
-	tests := []struct {
-		url  string
-		want bool
-	}{
-		{url: "/api/control/sso", want: true},
-		{url: "/api/control/sso?restart=true", want: true},
-		{url: "/api/control/sso?restart=false", want: false},
-		{url: "/api/control/sso?restart=FALSE", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.url, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tt.url, nil)
-			if got := controlSSORestartRequested(req); got != tt.want {
-				t.Fatalf("controlSSORestartRequested() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestJsonResponse(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]string{"key": "value"}

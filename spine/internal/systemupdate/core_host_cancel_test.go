@@ -168,10 +168,12 @@ func TestNativeCoreHostCancellationReconcilesLostJournalWrite(t *testing.T) {
 	if string(imageAfter) != string(imageBefore) {
 		t.Fatal("running image changed")
 	}
+	// A checkpoint that ran is past preparation. (One that is only "started" reaches "cancelling" after the
+	// coordinator proved that its admission never ended in a launch; this guard then lets the stage go.)
 	j.ActivationRequested = true
 	for i := range j.Steps {
 		if j.Steps[i].Name == "checkpoint" {
-			j.Steps[i].State = "started"
+			j.Steps[i].State, j.Steps[i].Evidence = "succeeded", "fixture checkpoint"
 		}
 	}
 	if err = m.saveCore(&j); err != nil {

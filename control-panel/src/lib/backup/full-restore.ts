@@ -36,6 +36,7 @@ import { quiesceAppCredentialRuntime } from '@/lib/apps/service-credential-probe
 import { ensureClient, getClient, type IdentityClient } from '@/lib/identity/store';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import type {
+  BackupEncryption,
   FullRestoreConfig,
   FullRestoreProgress,
   BackupEvent,
@@ -474,6 +475,40 @@ async function waitForRestoredPiholeAPI(): Promise<void> {
   throw new Error(`Pi-hole API did not become ready after restoring DNS: ${lastError ?? 'readiness did not stabilize'}`);
 }
 
+/**
+ * The encryption the set records (backup-set.json `encryption`), passed to Spine with each of its archives. A set
+ * without a record, or whose record has no `encryption` (made before 0.6.15), gives undefined, and Spine uses the
+ * parameters of that time. A record that is there but cannot be read or parsed is refused: reading it as an older
+ * set would decrypt a 0.6.15 set with the wrong parameters, which fails as "wrong passphrase".
+ */
+export function readBackupEncryption(backupPath: string): BackupEncryption | undefined {
+  const file = path.join(backupPath, 'backup-set.json');
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new Error(`The backup set's record (backup-set.json) cannot be read: ${(error as NodeJS.ErrnoException).code ?? 'read error'}.`);
+  }
+  let record: { encryption?: unknown };
+  try {
+    record = JSON.parse(text) as { encryption?: unknown };
+  } catch {
+    throw new Error('The backup set\'s record (backup-set.json) is damaged: it is not valid JSON.');
+  }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    throw new Error('The backup set\'s record (backup-set.json) is damaged: it is not a JSON object.');
+  }
+  const value = record.encryption as Partial<BackupEncryption> | undefined;
+  if (value === undefined) return undefined;
+  if (!value || typeof value.cipher !== 'string' || typeof value.kdf !== 'string' || typeof value.digest !== 'string'
+    || typeof value.iterations !== 'number' || (value.mac !== undefined && typeof value.mac !== 'string')) {
+    throw new Error('The backup set records its encryption in a form this server cannot read.');
+  }
+  return { cipher: value.cipher, kdf: value.kdf, digest: value.digest, iterations: value.iterations,
+    ...(value.mac !== undefined ? { mac: value.mac } : {}) };
+}
+
 function readSkippedApps(backupPath: string): string[] {
   try {
     const record = JSON.parse(readFileSync(path.join(backupPath, 'backup-set.json'), 'utf8')) as { skippedApps?: Array<{ appId?: unknown }> };
@@ -574,7 +609,8 @@ export async function restoreApps(
       const archives = existsSync(appDirectory)
         ? readdirSync(appDirectory).filter(file => file.endsWith('.tar.enc')).sort().reverse() : [];
       if (!archives[0]) throw new Error(`No archive found for ${appId}`);
-      await restoreApp({ appId, archivePath: path.join(appDirectory, archives[0]), passphrase: config.passphrase }, onEvent);
+      await restoreApp({ appId, archivePath: path.join(appDirectory, archives[0]), passphrase: config.passphrase,
+        encryption: readBackupEncryption(config.backupPath) }, onEvent);
       restored.push(appId);
     } catch (error) {
       failures.push(`Failed to restore ${appId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -726,6 +762,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
       archive_path: coreArchive,
       passphrase,
       staging_dir: coreStagingDir,
+      encryption: readBackupEncryption(backupPath),
     });
 
     // Validate every mandatory core input before changing the live server.
@@ -1014,6 +1051,25 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
           await operateAppCredential(app.appId, { action: 'reconcile' }, { maintenance: retainedLeases.get(app.appId) });
         }
       }
+      // Pointer's database came back from the backup; a kept app's AI key can be newer (reconcileKeptManagedAI).
+      // The app works without AI meanwhile, so a failure here asks the owner to connect it again, not to restore.
+      const withAI = retainedApps.filter(app => app.aiConnection);
+      if (withAI.length) {
+        const { waitForPointer } = await import('@/lib/pointer/lifecycle');
+        const { reconcileKeptManagedAI } = await import('@/lib/market/managed-ai');
+        const ready = await waitForPointer();
+        for (const app of withAI) {
+          try {
+            if (!ready) throw new Error('AI is not ready');
+            if (await reconcileKeptManagedAI(app.appId) === 'reconnected') {
+              emit('reconcile-apps', `${app.appId} was given a new AI key: its AI connection was newer than the backup`);
+            }
+          } catch (error) {
+            logOperationFailure(`Reconnecting the AI of kept app ${app.appId}`, error);
+            emit('reconcile-apps', `${app.appId}: connect its AI again in its AI Settings (${error instanceof Error ? error.message : String(error)})`);
+          }
+        }
+      }
     });
 
     if (marketState) {
@@ -1039,7 +1095,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
         emit('restore-app', `Restoring app: ${appId}...`);
         try {
           await restoreApp(
-            { appId, archivePath, passphrase },
+            { appId, archivePath, passphrase, encryption: readBackupEncryption(backupPath) },
             (event) => {
               // Relay app restore events as sub-events
               onEvent({

@@ -47,8 +47,9 @@ test('setup defers the Control Panel restart until the durable transaction is co
   const clients = read('src/lib/identity/core-clients.ts');
   const spine = read('src/lib/spine/client.ts');
 
-  assert.match(clients, /setControlSSO\([\s\S]*\}, false\)/);
-  assert.match(spine, /control\/sso\?restart=\$\{restartControl\}/);
+  // Saving the SSO environment never restarts; Spine restarts when asked, once no app or platform work runs.
+  assert.match(clients, /setControlSSO\(/);
+  assert.doesNotMatch(spine, /control\/sso\?restart=/);
   assert.match(run, /markApplianceSetupComplete\([\s\S]*restartControl\(5\)[\s\S]*complete: true/);
 });
 

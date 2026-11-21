@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
@@ -67,6 +70,13 @@ func (s *Server) handleCoreUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, candidate)
 }
+
+// How long an action waits for a gap in the pruning of finished updates, and how often it looks.
+var (
+	coreActionPruneWait = 90 * time.Second
+	coreActionPrunePoll = 500 * time.Millisecond
+)
+
 func (s *Server) handleCoreUpdateAction(action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -88,7 +98,21 @@ func (s *Server) handleCoreUpdateAction(action string) http.HandlerFunc {
 			return
 		}
 		result, err := s.coreUpdateOperations.Submit(r.Context(), action, request)
+		// The pruning of finished updates holds the coordinator lock for one finished request at a time. The
+		// refused call has left it a request to yield (systemupdate: lock.wanted) and it ends its run after that
+		// request: wait for that instead of refusing an Update or Cancel pressed just then.
+		for deadline := time.Now().Add(coreActionPruneWait); err != nil && errors.Is(err, systemupdate.ErrCorePruning) && time.Now().Before(deadline); {
+			select {
+			case <-r.Context().Done():
+				deadline = time.Time{}
+			case <-time.After(coreActionPrunePoll):
+				result, err = s.coreUpdateOperations.Submit(r.Context(), action, request)
+			}
+		}
 		if err != nil {
+			// The answer names no cause (it may carry paths and identities); the journal does, or a refusal
+			// leaves no trace anywhere (journalctl -u youeye | grep core-update).
+			fmt.Printf("[core-update] %s of request %s was refused: %v\n", action, request.RequestID, err)
 			errorResponse(w, "System action requires reconciliation; retain the same update and delivery IDs", http.StatusConflict)
 			return
 		}

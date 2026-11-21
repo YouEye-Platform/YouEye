@@ -117,6 +117,15 @@ official Market).
   an entry whose bundle holds another app's manifest (the id is checked on every read, also of a cached manifest).
 - **Listing.** Cards of apps that are not from the official Market show the source's name ("Added" for an app added
   by URL). A bundle id found in several markets is shown once, the official Market's first.
+- **Who may read it.** Any signed-in user, standard users included, may read the Market APIs: `GET /api/market`,
+  `/api/market/catalog`, `/api/market/app/<id>` (and its `connections` and `provider-options`), `/api/market/status`,
+  `/api/market/install-status`, `/api/market/providers`, `/api/market/updates` and `/api/market/validate-subdomain`.
+  Everything that changes the box stays admin-only: install, update, uninstall, recovery, sources, sign-in and access
+  settings, AI Settings, credentials, and starting a version check (`POST /api/market/updates`,
+  `POST /api/apps/check-updates`, which read every market again). So does `POST /api/market/validate`: it changes
+  nothing, but its image check makes the box reach any registry a manifest names. The Market
+  pages (`/market`) are for admins: a standard user who opens them is sent to Settings, so no Install button is shown
+  that would fail. `tests/route-auth.spec.ts` lists every handler that a standard user may call; every other one checks for an admin.
 
 ## Markets and consent
 
@@ -237,7 +246,7 @@ channel and is never "changed". The remedy is an explicit switch on the app's pa
 | Bundle install: `POST /api/market/bundles/<id>/install[?source=<id>]` | the bundle's market, else the official Market | the rule above; every member installs from that market and is recorded with it |
 | App update: `POST /api/apps/<id>/update`, `POST /api/market/update`, `POST /settings/api/apps/<id>/update` (all `updateMarketApp`) | the app's recorded source, else the official Market | the rule above; `source-changed` when the source id now names another address; an app added by URL: `setup-changed` without `allowSetup` |
 | Update check (every 6 hours plus jitter, `youeye app check-updates`) | the app's recorded source, else the official Market | a refused or missing source gives no offer and `updateBlocked`; a changed address gives no offer and `updateBlocked` (`source-changed`); it writes a source into an app only when it is the recorded one or the official one |
-| Source switch ("Change"): `PATCH /api/market/app/<id>/source` `{ sourceId, acceptUnverifiedPublisher?, allowSetup? }` | the named source | admin with CSRF token; the rule above; 409 `requires-newer-youeye` when that market's version needs a newer YouEye. The source is resolved first; the record is then changed inside the app's lifecycle lock: 409 `operation_in_progress` when the app is busy (after a 30 s wait), 409 `recovery_required` when it has an unfinished update. Only the source identity changes (id, name, market address): the installed copy and its digest stay until the next update |
+| Source switch ("Change"): `PATCH /api/market/app/<id>/source` `{ sourceId, acceptUnverifiedPublisher?, allowSetup? }` | the named source | admin with CSRF token; the rule above; 409 `requires-newer-youeye` when that market's version needs a newer YouEye. The whole switch holds the platform lifecycle (a Control Panel restart waits for it); the source is resolved first, and the record is then changed inside the app's lifecycle lock: 409 `operation_in_progress` when the app is busy (after a 30 s wait), 409 `recovery_required` when it has an unfinished update. Only the source identity changes (id, name, market address): the installed copy and its digest stay until the next update |
 | Restore, independent copy | none | a restore rebuilds the app from its backed-up frozen manifest; a copy reads no source |
 
 ## Core containers are not Market apps
@@ -277,7 +286,10 @@ Lucide icon name.
 
 ## Installing an app
 
-Every install is admin-only and CSRF-checked and streams progress as server-sent events:
+Every install is admin-only and CSRF-checked and streams progress as server-sent events. From its start (before the
+market, the manifest or the bundle is read) to the end of its stream it holds the platform lifecycle, so a Control
+Panel restart waits for it; while a System update owns the platform it is refused with 409 and that reason, and a
+gate held by a waiting System update is waited for up to 30 s (then 409 `operation_in_progress`):
 
 - **`POST /api/market/install`** with `{ appId }`. Optional: `sourceId`, `subdomain`, `selectedIntegrations`
   (`["youeye-id"]` turns YouEye ID sign-in on for an app with `setup/sso.yaml`; on by default), `aiSettings`,
@@ -406,6 +418,14 @@ permissions.
   `GET /api/suggestions` lists them; `POST /api/suggestions` with `{ action: approve | dismiss | remove, id }` acts.
   From the box: `youeye app suggestions` lists them and `youeye app connect <from> <to>` approves one.
   Uninstalling an app drops its suggestions and marks suggestions pointing at it as waiting again.
+  An update drops the suggestions its new release no longer asks for and adds the new ones, and each start of
+  the CP drops what installed apps no longer ask for (`dropSuggestionsOfDroppedWants`; an update before 0.6.15
+  kept them). What an app wants and what a target provides are both read from the installed copy (the frozen
+  manifest), never from the install metadata, which can still name the release the app was installed from; a
+  target whose installed copy cannot be read keeps the suggestions made for a capability. Every change of the
+  store (`/var/lib/youeye/bridges/suggestions.json`) is a read, an edit and a write, and they run one at a time
+  (a queue in the CP process, `lib/bridges/suggestions.ts`), so the cleanup at start and an install or a
+  dismissal at the same moment do not undo each other.
 - **Approval** creates a connection record and activates it: the consumer gets a second network interface on the
   peer's app bridge, or, for a `proxy:` connection, a scoped grant through the UI gateway. That interface's ACL
   allows traffic only to and from the peer's main container address (so the peer can call the consumer back on
@@ -455,8 +475,8 @@ still pending (reopening or cleanup unfinished) ends the follow at once with exi
 `youeye app recover <id>`. If the Control Panel restarted (no result, and no update running), the follow reports
 the operation record ("Update complete", rolled back or recovery required) and says the final result was not
 recorded; with no new operation either, it names `youeye app info <id>`. It gives up after 30 minutes and names
-`youeye app info <id>` and `youeye app recover <id>`. Built-in apps (Pointer, Caddy, Pi-hole, Postgres, incus,
-host-system and the core components; the status says `market: false`) have their own updaters and are not
+`youeye app info <id>` and `youeye app recover <id>`. Built-in apps (Pointer, Caddy, Pi-hole, Postgres and
+the core components; the status says `market: false`) have their own updaters and are not
 followed: a lost stream is reported at once. A stream that ends in `pending` exits 1 too, and `--all` exits 1 when
 any app's update did not succeed. `youeye app install <id>` follows a dropped stream the same way through
 `GET /api/market/install-status?app=<id>` (the install is recorded before the stream opens) and ends with the

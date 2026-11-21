@@ -1,8 +1,9 @@
 /**
  * Core-component provenance (CP side).
  *
- * Provenance for spine + control lives spine-side (core-provenance.json, written
- * by `spine update self/control`). CP owns provenance for the components IT
+ * Provenance for Spine and the Control Panel lives Spine-side (core-provenance.json,
+ * written when Spine deploys the Control Panel: `youeye deploy`, and the System
+ * updates of `youeye update core …`). CP owns provenance for the components IT
  * updates: the UI (and, in general, anything the Control Panel deploys directly).
  *
  * Stored in CP's json-store at state/core-versions.json:

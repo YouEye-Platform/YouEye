@@ -84,7 +84,7 @@ function fixture() {
   Object.assign(dependencies, {
     '@/lib/auth': { getSession: async () => state.session },
     '@/lib/apps/definitions': { getAppDefinition: (appId: string) => appId === 'caddy' ? { id: 'caddy' } : undefined },
-    '@/lib/apps/updater': {}, '@/lib/apps/lxd-updater': {}, '@/lib/apps/lxd-updates': {},
+    '@/lib/apps/system-container-update': {}, '@/lib/apps/lxd-updater': {}, '@/lib/apps/lxd-updates': {},
     '@/lib/spine/client': {}, '@/lib/updates/state': {}, '@/lib/infrastructure/system-updater': {},
     '@/lib/health/issues': { assertNoCriticalIssues: async () => {} },
   });

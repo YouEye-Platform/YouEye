@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { freeLifecycle } from './fixtures/free-lifecycle';
 
 function fixture(route: string, administrator = true) {
   const effects: Array<unknown> = [];
@@ -20,7 +21,7 @@ function fixture(route: string, administrator = true) {
     '@/lib/market/uninstaller': { uninstallApp: async (...args: unknown[]) => {
       effects.push(args); return { success: true }; } },
     '@/lib/events/emitter': { emitEvent: () => {} },
-    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/update-admission': freeLifecycle,
     '@/lib/market/install-tracker': { logOperationFailure: () => {} },
   };
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {

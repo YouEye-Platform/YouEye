@@ -197,7 +197,11 @@ func (r CoreSystemdRunner) Start(ctx context.Context, j CoreJournal, s CoreStep)
 	if err = atomicWrite(r.path(j, s), raw, 0600); err != nil {
 		return CoreActionObservation{}, err
 	}
-	args := []string{"--quiet", "--no-ask-password", "--unit=" + expected.Unit, "--description=" + coreRunnerDescription(expected.Unit), "--service-type=exec", "--remain-after-exit", "--uid=root", "--working-directory=/", "--property=KillMode=control-group", "--property=Restart=no", "--property=TimeoutStopSec=90s", "--property=RuntimeMaxSec=2h", "--property=UMask=0077", "--property=StandardOutput=null", "--property=StandardError=null", "--", r.Executable, "update", "core", "run-action", "--request", j.RequestID, "--action", s.Name, "--manifest-sha256", j.ManifestSHA256}
+	// Standard error goes to the system journal, as for the continuation and boot units: the action's command
+	// writes there only the error it ended with (the same text its result file keeps as evidence), so
+	// `journalctl -u 'youeye-core-*'` shows why an action died even when it could not write its result.
+	// Standard output is the result document; nothing reads it here.
+	args := []string{"--quiet", "--no-ask-password", "--unit=" + expected.Unit, "--description=" + coreRunnerDescription(expected.Unit), "--service-type=exec", "--remain-after-exit", "--uid=root", "--working-directory=/", "--property=KillMode=control-group", "--property=Restart=no", "--property=TimeoutStopSec=90s", "--property=RuntimeMaxSec=2h", "--property=UMask=0077", "--property=StandardOutput=null", "--property=StandardError=journal", "--", r.Executable, "update", "core", "run-action", "--request", j.RequestID, "--action", s.Name, "--manifest-sha256", j.ManifestSHA256}
 	if _, err = r.capture(ctx, "systemd-run", args...); err != nil {
 		return CoreActionObservation{State: "unknown", Evidence: "native launch acknowledgement unavailable"}, nil
 	}
@@ -270,6 +274,101 @@ func (r CoreSystemdRunner) Observe(ctx context.Context, j CoreJournal, s CoreSte
 		return CoreActionObservation{State: "running", Evidence: "owned native service invocation is active"}, nil
 	}
 	return unknown, nil
+}
+
+// What ChildState says about the action child of a started step.
+const (
+	// CoreChildGone: nothing of the child runs any more.
+	CoreChildGone = "gone"
+	// CoreChildLingering: the child's main process has ended without a last
+	// word, and processes it started are still in the unit's cgroup.
+	CoreChildLingering = "lingering"
+	// CoreChildNotKnown: the child runs, or it cannot be told.
+	CoreChildNotKnown = ""
+)
+
+// ChildState reports where the action child of a started step is. It is
+// CoreChildGone when the child left its last word, or was launched in an
+// earlier boot, or systemd has no such unit (or the unit has no main process
+// any more) and the unit's cgroup is absent or empty. The unit is started with
+// RemainAfterExit=yes, so a process the child started can outlive its main
+// process inside the cgroup: that is CoreChildLingering, never "gone" (the
+// recovery fence asks the same of the cgroup, requireEmptyCgroup). A unit or a
+// cgroup that cannot be observed, an unreadable receipt and a child that still
+// runs are all CoreChildNotKnown. It reads only; the continuation that follows
+// decides what the step's outcome is.
+func (r CoreSystemdRunner) ChildState(ctx context.Context, j CoreJournal, s CoreStep) string {
+	launch, err := r.read(j, s)
+	if errors.Is(err, os.ErrNotExist) {
+		// The coordinator was lost before it asked for a child.
+		if launch, err = r.expected(j, s); err != nil {
+			return CoreChildNotKnown
+		}
+		unit, err := r.observeUnit(ctx, launch)
+		if err != nil || unit["LoadState"] != "not-found" {
+			return CoreChildNotKnown
+		}
+		return r.cgroupState(launch.Unit)
+	}
+	if err != nil {
+		return CoreChildNotKnown
+	}
+	if result, err := r.readResult(j, s, launch); err == nil && (result.Result.State == "succeeded" || result.Result.State == "failed" || result.Result.State == "unknown") {
+		return CoreChildGone
+	}
+	boot, err := r.boot()
+	if err != nil {
+		return CoreChildNotKnown
+	}
+	if boot != launch.BootID {
+		return CoreChildGone
+	}
+	unit, err := r.observeUnit(ctx, launch)
+	if err != nil {
+		return CoreChildNotKnown
+	}
+	if unit["LoadState"] == "not-found" || (unit["MainPID"] == "0" && unit["ActiveState"] != "activating" && unit["SubState"] != "running") {
+		return r.cgroupState(launch.Unit)
+	}
+	return CoreChildNotKnown
+}
+
+// ChildSucceeded reports whether the action child of a step left "succeeded"
+// as its last word. ChildState is CoreChildGone for every last word, a good
+// one included; the coordinator asks this before it gives a step up because a
+// look at it failed. Anything that cannot be read is "no".
+func (r CoreSystemdRunner) ChildSucceeded(_ context.Context, j CoreJournal, s CoreStep) bool {
+	launch, err := r.read(j, s)
+	if err != nil {
+		return false
+	}
+	result, err := r.readResult(j, s, launch)
+	return err == nil && result.Result.State == "succeeded"
+}
+
+// cgroupState is the cgroup's part of ChildState, for a unit without a main
+// process.
+func (r CoreSystemdRunner) cgroupState(unit string) string {
+	err := r.requireEmptyCgroup(unit, true)
+	switch {
+	case err == nil:
+		return CoreChildGone
+	case errors.Is(err, errCoreCgroupPopulated):
+		return CoreChildLingering
+	}
+	return CoreChildNotKnown
+}
+
+// ChildGone reports that the action child of a started step positively does
+// not run (ChildState is CoreChildGone).
+func (r CoreSystemdRunner) ChildGone(ctx context.Context, j CoreJournal, s CoreStep) bool {
+	return r.ChildState(ctx, j, s) == CoreChildGone
+}
+
+// ChildLingering reports that only processes the child started are left
+// (ChildState is CoreChildLingering).
+func (r CoreSystemdRunner) ChildLingering(ctx context.Context, j CoreJournal, s CoreStep) bool {
+	return r.ChildState(ctx, j, s) == CoreChildLingering
 }
 
 func lockCoreRunner(path string) (func(), error) {

@@ -160,3 +160,36 @@ for (const [locale, cancelled, rolledBack] of [
     assert.ok(!failed.includes("The last update") && !restored.includes("The last update"));
   });
 }
+
+test("a first admission that timed out offers Cancel beside Retry update", () => {
+  const timedOut: Partial<Step> = { state: "started", action_state: "retryable", stage: "admission", code: "admission_timeout", effect_state: "not-started" };
+  const steps = graph({ "verify-members": { state: "succeeded" }, checkpoint: timedOut });
+  for (const activation_requested of [false, true]) {
+    const html = panel(steps, { phase: "applying", activation_requested });
+    assert.match(html, /Cancel preparation/);
+    assert.match(html, /Retry update/);
+    assert.doesNotMatch(html, /Restore previous release/);
+  }
+  // A checkpoint that was launched, is still waiting, or whose outcome is unknown offers no Cancel.
+  for (const checkpoint of [
+    { state: "started" }, { state: "started", action_state: "running", stage: "admission", effect_state: "not-started" },
+    { state: "started", action_state: "unknown" }, { ...timedOut, effect_state: "started" },
+  ] as Partial<Step>[]) {
+    assert.doesNotMatch(panel(graph({ "verify-members": { state: "succeeded" }, checkpoint }), { phase: "applying" }), /Cancel preparation/);
+  }
+  // Nor does a later step whose admission ended.
+  assert.doesNotMatch(panel(graph({ "verify-members": { state: "succeeded" }, checkpoint: { state: "succeeded" }, "apply-cp": timedOut }), { phase: "applying" }), /Cancel preparation/);
+  // A cancellation that did not finish over such a checkpoint can be finished.
+  assert.match(panel(graph({ "verify-members": { state: "succeeded" }, checkpoint: { state: "started" } }), { phase: "cancelling" }), /Cancel preparation/);
+});
+
+test("a System update action waits longer for Spine than Spine waits for a gap in the pruning", async () => {
+  const { CORE_UPDATE_ACTION_TIMEOUT_MS } = await import("../src/lib/spine/client");
+  const spine = readFileSync(new URL("../../spine/internal/api/core_update_actions.go", import.meta.url), "utf8");
+  const wait = spine.match(/coreActionPruneWait = (\d+) \* time\.Second/);
+  assert.ok(wait, "Spine's wait for the pruning");
+  // Half a minute on top: the action itself (staging reads and checks the release document) comes after the wait.
+  assert.ok(CORE_UPDATE_ACTION_TIMEOUT_MS >= (Number(wait[1]) + 30) * 1000, `${CORE_UPDATE_ACTION_TIMEOUT_MS} ms against ${wait[1]} s`);
+  const client = readFileSync(new URL("../src/lib/spine/client.ts", import.meta.url), "utf8");
+  assert.match(client, /core-update\/\$\{action\}`, 'POST', \{ \.\.\.request \}, CORE_UPDATE_ACTION_TIMEOUT_MS\)/);
+});

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { holdPlatformLifecycle, withUserOperationLockWait, type PlatformLifecycleHold } from '@/lib/market/update-admission';
+import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { fullRestore, holdRestoreServices, restoreApps, rollBackRestore } from '@/lib/backup/full-restore';
 import {
@@ -42,6 +43,30 @@ export async function POST(request: NextRequest) {
   if (!(await verifyCSRFToken(request.headers.get('X-CSRF-Token') ?? ''))) {
     return new Response('Invalid CSRF token', { status: 403 });
   }
+  // The platform lifecycle is held from here until the restore and its rollback have ended, as an install holds it:
+  // the recovery point is first imported from the drive, before the restore takes the backup operation lock, and
+  // Spine's Control Panel restart (which waits for either lock) must not stop the Control Panel under that import.
+  // Everything below runs inside the hold; the restore's own lifecycle locks reuse it.
+  let hold: PlatformLifecycleHold;
+  try {
+    hold = await withUserOperationLockWait(() => holdPlatformLifecycle());
+  } catch (error) {
+    logOperationFailure('Admitting a restore', error);
+    if (isLifecycleBusy(error)) return new Response('Another operation is in progress. Try again in a moment.', { status: 409 });
+    // A System update, its recovery or an independent copy owns the platform: its own reason, which names no secret.
+    if (error instanceof Error && error.name === 'AppLifecycleAdmissionError') return new Response(error.message, { status: 409 });
+    return new Response('The restore could not start; the cause is in the Control Panel journal.', { status: 500 });
+  }
+  let streaming = false;
+  try {
+    return await hold.run(() => admittedRestore(request, hold, () => { streaming = true; }));
+  } finally {
+    if (!streaming) hold.release();
+  }
+}
+
+/** The restore request under its platform lifecycle hold; `streaming` hands the hold to the restore's stream. */
+async function admittedRestore(request: NextRequest, hold: PlatformLifecycleHold, streaming: () => void): Promise<Response> {
   const body = await request.json().catch(() => null);
   if (!body || typeof body.backupId !== 'string' || typeof body.mediaId !== 'string' || body.confirm !== true) {
 	return new Response('A confirmed backup drive and recovery point are required', { status: 400 });
@@ -88,6 +113,7 @@ export async function POST(request: NextRequest) {
 
   let streamOpen = true;
   const stream = new ReadableStream({
+    // Started inside the hold (a stream starts as it is made), so the locks taken below reuse its admission.
     async start(controller) {
       const encoder = new TextEncoder();
       const sendChunk = (chunk: string) => {
@@ -188,6 +214,7 @@ export async function POST(request: NextRequest) {
         send({ status: 'error', stage: 'failed', message });
       } finally {
 		releaseServices();
+		hold.release();
         if (streamOpen) {
           try {
             controller.close();
@@ -202,5 +229,6 @@ export async function POST(request: NextRequest) {
       streamOpen = false;
     },
   });
+  streaming();
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' } });
 }

@@ -35,8 +35,9 @@ test('Settings app update route is admin-scoped and reuses existing update engin
   assert.match(route, /updateLXDApp/);
   assert.match(route, /handleMarketUpdate\(request, appId, 'json'\)/);
   assert.match(read('src/lib/market/update-http.ts'), /updateMarketApp/);
-  assert.match(route, /updateOCIApp/);
+  assert.match(route, /updateSystemContainerApp/);
+  assert.doesNotMatch(route, /updateOCIApp/);
   assert.doesNotMatch(route, /spineClient\.update(Control|Self)/);
-  assert.match(route, /spineClient\.updateIncus/);
-  assert.match(route, /statusComponentFor\(appId\)/);
+  // Incus and the host packages update with the System release: no apt route through Spine.
+  assert.doesNotMatch(route, /spineClient|host-system|incus/);
 });

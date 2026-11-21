@@ -472,8 +472,8 @@ async function dropSharedPostgresDatabase(databaseName: string, databaseUser: st
     POSTGRES_CONTAINER,
     [
       '/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres',
-      '-c', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${databaseName}' AND pid <> pg_backend_pid();`,
-      '-c', `DROP DATABASE IF EXISTS ${database}`,
+      // FORCE ends open sessions under the drop's lock; no reconnect can slip in between.
+      '-c', `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`,
       '-c', `DROP ROLE IF EXISTS ${role}`,
     ],
     { timeout: 15_000 },

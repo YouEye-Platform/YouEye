@@ -803,14 +803,24 @@ async function deleteIdentityUserUnderLifecycle(id: string): Promise<void> {
 export async function assertIdentityDisposition(id: string, action: 'disable' | 'delete'): Promise<void> {
   await ensureIdentitySchema();
   const owner = await queryRows(`SELECT owner_user_id FROM identity_appliance_claim WHERE owner_user_id = ${sql(id)}::uuid`);
-  if (owner.length) throw new Error('Appliance owner and management recovery access must remain active');
+  if (owner.length) throw dispositionError('Appliance owner and management recovery access must remain active');
   if (action === 'delete') {
     const owned = await queryRows(`SELECT installation_id FROM admission_policies
       WHERE owner_id = ${sql(id)}::uuid AND state <> 'deleted'
       UNION SELECT installation_id FROM admission_resources
       WHERE (owner_id = ${sql(id)}::uuid OR private_user_id = ${sql(id)}::uuid) AND state IN ('active','retained')`);
-    if (owned.length) throw new Error('Transfer application administration and explicitly retain/quarantine or dispose of private data before deleting this user');
+    if (owned.length) throw dispositionError('Transfer application administration and explicitly retain/quarantine or dispose of private data before deleting this user');
   }
+}
+
+/** A refusal to disable or delete a user until their apps and data are decided on (HTTP 409, not a failure). */
+function dispositionError(message: string): Error {
+  return Object.assign(new Error(message), { name: 'IdentityDispositionError' });
+}
+
+export function isIdentityDispositionError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'IdentityDispositionError'
+    || /Owned application or private data requires explicit disposition/.test(error.message));
 }
 
 export async function ensureClient(input: {

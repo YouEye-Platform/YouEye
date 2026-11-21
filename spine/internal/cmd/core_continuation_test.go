@@ -75,6 +75,21 @@ func (e *continuationExecutor) started(name string) int {
 // spine it also changes the Spine, so the request has an apply-spine step.
 func continuationFixture(t *testing.T, spine bool) (systemupdate.CoreManager, *continuationExecutor, systemupdate.CoreJournal) {
 	t.Helper()
+	roles := []string{"cp"}
+	if spine {
+		roles = append(roles, "spine")
+	}
+	m, executor, j := continuationFixtureChanging(t, roles...)
+	if j.SpineChanged != spine || j.RestartRequired {
+		t.Fatalf("fixture graph: spine=%v restart=%v", j.SpineChanged, j.RestartRequired)
+	}
+	return m, executor, j
+}
+
+// continuationFixtureChanging prepares an update that changes the members of
+// the given roles ("system-root" makes it an image update).
+func continuationFixtureChanging(t *testing.T, changed ...string) (systemupdate.CoreManager, *continuationExecutor, systemupdate.CoreJournal) {
+	t.Helper()
 	release := releasecache.CoreRelease{Schema: releasecache.CoreReleaseSchema, Version: "0.5.37", Build: "0.5.37", Tag: "youeye-v0.5.37", SourceTree: strings.Repeat("a", 40), Sequence: 1, MinimumReader: 1, Authority: releasecache.CoreReleaseAuthority,
 		Compatibility: releasecache.CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
 	for _, role := range []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "spine", "cp", "ui"} {
@@ -131,17 +146,16 @@ func continuationFixture(t *testing.T, spine bool) (systemupdate.CoreManager, *c
 		Machine: systemupdate.CoreMachineIdentity{InstallIDRef: "install:fixture", DeviceIDRef: "device:fixture", ParentDiskID: "disk:fixture", StatePartUUID: "state", DataPartUUID: "data"}})
 	release.Version, release.Build, release.Tag, release.Sequence = "0.5.38", "0.5.38", "youeye-v0.5.38", 2
 	for i := range release.Members {
-		if release.Members[i].Role == "cp" || (spine && release.Members[i].Role == "spine") {
-			release.Members[i].Artifact.SHA256 = strings.Repeat("e", 64)
+		for _, role := range changed {
+			if release.Members[i].Role == role {
+				release.Members[i].Artifact.SHA256 = strings.Repeat("e", 64)
+			}
 		}
 	}
 	raw, digest = digestOf(release)
 	j, err := m.Prepare(context.Background(), "update-1", raw, digest)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if j.SpineChanged != spine || j.RestartRequired {
-		t.Fatalf("fixture graph: spine=%v restart=%v", j.SpineChanged, j.RestartRequired)
 	}
 	return m, executor, j
 }
@@ -558,5 +572,607 @@ func TestCoreHandOverIsRefusedUnlessTheNewSpineReadsThisRequest(t *testing.T) {
 	calls := stubHandOver(t, target.Artifact.SHA256, yes(j), fmt.Errorf("exec format error"))
 	if err := coreHandOverToSelectedSpine(context.Background(), j); err == nil || !strings.Contains(err.Error(), "exec format error") || len(calls.execs) != 1 {
 		t.Fatalf("failed exec: %v %v", err, calls.execs)
+	}
+}
+
+// recoveringExecutor is the continuation executor with recovery, and with
+// steps that can be made to fail or to leave no word (a killed child, a power
+// cut).
+type recoveringExecutor struct {
+	*continuationExecutor
+	fail, lose map[string]bool
+}
+
+func (e recoveringExecutor) AuthorizeRecovery(context.Context, systemupdate.CoreJournal) error {
+	return nil
+}
+
+func (e recoveringExecutor) Start(ctx context.Context, j systemupdate.CoreJournal, s systemupdate.CoreStep) (systemupdate.CoreActionObservation, error) {
+	out, err := e.continuationExecutor.Start(ctx, j, s)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fail[s.Name] {
+		out = systemupdate.CoreActionObservation{State: "failed", Evidence: "fixture: " + s.Name + " failed"}
+		e.results[s.RequestID] = out
+	}
+	if e.lose[s.Name] {
+		out = systemupdate.CoreActionObservation{State: "unknown", Evidence: "fixture: no word from " + s.Name}
+		e.results[s.RequestID] = out
+	}
+	return out, err
+}
+
+func runToAnEnd(m systemupdate.CoreManager, request string, once bool) (systemupdate.CoreJournal, error, []string) {
+	old := coreRecoveryGrace
+	coreRecoveryGrace = time.Millisecond
+	defer func() { coreRecoveryGrace = old }()
+	finished := []string{}
+	j, err := runCoreContinuationToAnEnd(context.Background(), coreContinuation{
+		manager: m,
+		finished: func(_ context.Context, j systemupdate.CoreJournal) error {
+			finished = append(finished, j.Phase)
+			return nil
+		},
+	}, request, false, false, once)
+	return j, err, finished
+}
+
+// An update that stops past its checkpoint holds the platform with the Control
+// Panel closed. Its coordinator restores the previous release itself, whether
+// a step failed or left no word (a power cut in the middle of a step, seen by
+// the boot continuation). Before 0.6.15 the request stayed in needs-recovery
+// and the box stayed closed until someone ran `recover` on the console.
+func TestCoreContinuationRestoresThePreviousReleaseWhenAnUpdateCannotGoOn(t *testing.T) {
+	for _, tc := range []struct{ name, step, how string }{
+		{"a step failed", "apply-cp", "fail"},
+		{"a step left no word", "apply-ui", "lose"},
+		{"the checkpoint left no word", "checkpoint", "lose"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := captureCoreNotices(t)
+			m, base, j := continuationFixture(t, false)
+			e := recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{}}
+			if tc.how == "fail" {
+				e.fail[tc.step] = true
+			} else {
+				e.lose[tc.step] = true
+			}
+			m.Executor = e
+			got, err, finished := runToAnEnd(m, j.RequestID, false)
+			if err != nil || got.Phase != "rolled-back" || fmt.Sprint(finished) != "[rolled-back]" {
+				t.Fatalf("the previous release was not restored: phase=%s finished=%v err=%v steps=%v", got.Phase, finished, err, stepStates(got))
+			}
+			if e.started("recovery-fence") != 1 || e.started("recovery-paired-restore") != 1 || e.started("recovery-health") != 1 {
+				t.Fatalf("recovery steps: %v", e.starts)
+			}
+			if len(*lines) != 1 || !strings.Contains((*lines)[0], "restoring the previous release") {
+				t.Fatalf("the decision was not written: %v", *lines)
+			}
+			// The ended request stays ended.
+			again, err, finished := runToAnEnd(m, j.RequestID, false)
+			if err != nil || again.Phase != "rolled-back" || e.started("recovery-fence") != 1 || fmt.Sprint(finished) != "[rolled-back]" {
+				t.Fatal(again.Phase, err, e.starts, finished)
+			}
+		})
+	}
+}
+
+// Never before the checkpoint (nothing is held; the panel offers Cancel),
+// never in a single pass, and never a second time when the recovery itself
+// stops.
+func TestCoreContinuationStartsNoRecoveryItShouldNot(t *testing.T) {
+	// Before the checkpoint.
+	m, base, j := continuationFixture(t, false)
+	e := recoveringExecutor{continuationExecutor: base, fail: map[string]bool{"verify-members": true}, lose: map[string]bool{}}
+	m.Executor = e
+	got, err, finished := runToAnEnd(m, j.RequestID, false)
+	if err == nil || got.Phase != "needs-recovery" || len(got.RecoverySteps) != 0 || len(finished) != 0 || e.started("recovery-fence") != 0 {
+		t.Fatalf("a failed preparation step: phase=%s err=%v recovery=%v", got.Phase, err, got.RecoverySteps)
+	}
+
+	// A single pass.
+	m, base, j = continuationFixture(t, false)
+	e = recoveringExecutor{continuationExecutor: base, fail: map[string]bool{"apply-cp": true}, lose: map[string]bool{}}
+	m.Executor = e
+	got, err, _ = runToAnEnd(m, j.RequestID, true)
+	if err == nil || got.Phase != "needs-recovery" || e.started("recovery-fence") != 0 {
+		t.Fatalf("a single pass started a recovery: phase=%s err=%v", got.Phase, err)
+	}
+	// The next continuation without --once (the boot unit, the watchdog, "Resume") restores.
+	if got, err, _ = runToAnEnd(m, j.RequestID, false); err != nil || got.Phase != "rolled-back" {
+		t.Fatalf("a request found in needs-recovery was not restored: phase=%s err=%v", got.Phase, err)
+	}
+
+	// The recovery itself fails: it is left for a person, and resuming does not start another.
+	m, base, j = continuationFixture(t, false)
+	e = recoveringExecutor{continuationExecutor: base, fail: map[string]bool{"apply-cp": true, "recovery-paired-restore": true}, lose: map[string]bool{}}
+	m.Executor = e
+	got, err, finished = runToAnEnd(m, j.RequestID, false)
+	if err == nil || got.Phase != "needs-recovery" || len(got.RecoverySteps) == 0 || len(finished) != 0 || e.started("recovery-paired-restore") != 1 {
+		t.Fatalf("a failed recovery: phase=%s err=%v starts=%v", got.Phase, err, e.starts)
+	}
+	got, err, _ = runToAnEnd(m, j.RequestID, false)
+	if err == nil || got.Phase != "needs-recovery" || e.started("recovery-fence") != 1 || e.started("recovery-paired-restore") != 1 {
+		t.Fatalf("a failed recovery was started again: phase=%s err=%v starts=%v", got.Phase, err, e.starts)
+	}
+}
+
+// An outcome that could not be learned at first (a lost launch acknowledgement)
+// while the child runs after all: the second look follows it, and the update
+// commits instead of being rolled back.
+func TestCoreContinuationLooksAgainBeforeGivingAnUpdateUp(t *testing.T) {
+	lines := captureCoreNotices(t)
+	m, base, j := continuationFixture(t, false)
+	e := &onceLostExecutor{recoveringExecutor: recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{"apply-cp": true}}}
+	m.Executor = e
+	got, err, finished := runToAnEnd(m, j.RequestID, false)
+	if err != nil || got.Phase != "committed" || fmt.Sprint(finished) != "[committed]" || e.started("recovery-fence") != 0 || e.started("apply-cp") != 1 || len(*lines) != 0 {
+		t.Fatalf("phase=%s finished=%v err=%v starts=%v notices=%v", got.Phase, finished, err, e.starts, *lines)
+	}
+}
+
+// onceLostExecutor: the lost step has no word for the first two observations
+// (the pass that started it), then its child's success.
+type onceLostExecutor struct {
+	recoveringExecutor
+	observed int
+}
+
+func (e *onceLostExecutor) Observe(ctx context.Context, j systemupdate.CoreJournal, s systemupdate.CoreStep) (systemupdate.CoreActionObservation, error) {
+	if e.lose[s.Name] {
+		e.observed++
+		if e.observed > 1 {
+			return systemupdate.CoreActionObservation{State: "succeeded", Evidence: "fixture: the child finished"}, nil
+		}
+	}
+	return e.recoveringExecutor.Observe(ctx, j, s)
+}
+
+// flakyExecutor fails the first `looks` observations of a started step with
+// err, as a look that failed does: the step itself is as healthy as before.
+type flakyExecutor struct {
+	recoveringExecutor
+	step  string
+	err   error
+	looks int
+	seen  int
+}
+
+func (e *flakyExecutor) Observe(ctx context.Context, j systemupdate.CoreJournal, s systemupdate.CoreStep) (systemupdate.CoreActionObservation, error) {
+	if s.Name == e.step {
+		e.mu.Lock()
+		e.seen++
+		fail := e.seen <= e.looks
+		e.mu.Unlock()
+		if fail {
+			return systemupdate.CoreActionObservation{}, e.err
+		}
+	}
+	return e.recoveringExecutor.Observe(ctx, j, s)
+}
+
+func runToAnEndWith(c coreContinuation, request string) (systemupdate.CoreJournal, error, []string) {
+	oldGrace, oldPause := coreRecoveryGrace, coreUncertainPause
+	coreRecoveryGrace, coreUncertainPause = time.Millisecond, time.Millisecond
+	defer func() { coreRecoveryGrace, coreUncertainPause = oldGrace, oldPause }()
+	finished := []string{}
+	c.finished = func(_ context.Context, j systemupdate.CoreJournal) error {
+		finished = append(finished, j.Phase)
+		return nil
+	}
+	j, err := runCoreContinuationToAnEnd(context.Background(), c, request, false, false, false)
+	return j, err, finished
+}
+
+// A look that failed says nothing about the step. The action lock held for a
+// moment by a second coordinator, and `systemctl show` failing while the child
+// runs, each made the coordinator mark the request needs-recovery; a second
+// such look 15 seconds later made it fence the live child and restore the
+// previous release over a healthy update. Now it looks again, and the update
+// commits. Only a step whose child is positively gone is given up.
+func TestCoreContinuationDoesNotGiveUpAStepOverAFailedLook(t *testing.T) {
+	busy := fmt.Errorf("%w: resource temporarily unavailable", systemupdate.ErrCoreActionOwned)
+	unobservable := fmt.Errorf("native unit observation unavailable")
+	notKnown := func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string {
+		return systemupdate.CoreChildNotKnown
+	}
+	gone := func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string {
+		return systemupdate.CoreChildGone
+	}
+	for _, tc := range []struct {
+		name       string
+		err        error
+		childState func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string
+		looks      int
+		want       string
+		succeeded  bool // the child ended with "succeeded" before the looks failed
+	}{
+		// "Gone" is also a child that succeeded: until 0.6.15 the failed look rolled the update back.
+		{"the look fails after the child succeeded", unobservable, gone, 4, "committed", true},
+		{"the action lock is held by a second coordinator", busy, nil, 4, "committed", false},
+		{"the lock is held and the child is gone", busy, gone, 4, "committed", false},
+		{"systemd does not answer while the child may run", unobservable, notKnown, 4, "committed", false},
+		// One look by the first pass, one by the second after the grace.
+		{"the look fails and the child is positively gone", unobservable, gone, 2, "rolled-back", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := captureCoreNotices(t)
+			m, base, j := continuationFixture(t, false)
+			base.running = "apply-cp"
+			e := &flakyExecutor{recoveringExecutor: recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{}}, step: "apply-cp", err: tc.err, looks: tc.looks}
+			if tc.want == "rolled-back" {
+				// The child died without a word.
+				base.running, e.lose["apply-cp"] = "", true
+			}
+			m.Executor = e
+			go func() {
+				// A child that runs ends by itself after the failed looks.
+				if tc.want == "rolled-back" {
+					return
+				}
+				for {
+					e.mu.Lock()
+					seen := e.seen
+					e.mu.Unlock()
+					if seen > e.looks {
+						base.finish(j.RequestID, "apply-cp")
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}()
+			c := coreContinuation{manager: m, childState: tc.childState}
+			if tc.succeeded {
+				c.childSucceeded = func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool { return true }
+			}
+			got, err, finished := runToAnEndWith(c, j.RequestID)
+			if err != nil || got.Phase != tc.want || fmt.Sprint(finished) != "["+tc.want+"]" {
+				t.Fatalf("phase=%s finished=%v err=%v steps=%v", got.Phase, finished, err, stepStates(got))
+			}
+			if recovered := e.started("recovery-fence") == 1; recovered != (tc.want == "rolled-back") || (len(*lines) != 0) != recovered {
+				t.Fatalf("recovery starts=%v notices=%v", e.starts, *lines)
+			}
+			if e.started("apply-cp") != 1 {
+				t.Fatalf("apply-cp was started %d times", e.started("apply-cp"))
+			}
+		})
+	}
+}
+
+// untilRecoveryExecutor fails the looks at its step only while the update is applied: the recovery can look.
+type untilRecoveryExecutor struct{ *flakyExecutor }
+
+func (e untilRecoveryExecutor) Observe(ctx context.Context, j systemupdate.CoreJournal, s systemupdate.CoreStep) (systemupdate.CoreActionObservation, error) {
+	if j.Phase != "applying" {
+		return e.recoveringExecutor.Observe(ctx, j, s)
+	}
+	return e.flakyExecutor.Observe(ctx, j, s)
+}
+
+// A step whose child succeeded and whose success no look can record is not looked at for ever: after
+// coreSucceededPatience it is given up, and the previous release is restored, so the box does not stay held.
+func TestCoreContinuationGivesUpASucceededStepNoLookCanRecord(t *testing.T) {
+	old, pause := coreSucceededPatience, coreUncertainPause
+	coreSucceededPatience, coreUncertainPause = 40*time.Millisecond, 5*time.Millisecond
+	defer func() { coreSucceededPatience, coreUncertainPause = old, pause }()
+	captureCoreNotices(t)
+	m, base, j := continuationFixture(t, false)
+	e := &flakyExecutor{recoveringExecutor: recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{"apply-cp": true}}, step: "apply-cp", err: fmt.Errorf("native unit observation unavailable"), looks: 1 << 30}
+	m.Executor = untilRecoveryExecutor{e}
+	began := time.Now()
+	got, err, finished := runToAnEndWith(coreContinuation{manager: m,
+		childState: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string {
+			return systemupdate.CoreChildGone
+		},
+		childSucceeded: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool { return true }}, j.RequestID)
+	if err != nil || got.Phase != "rolled-back" || fmt.Sprint(finished) != "[rolled-back]" {
+		t.Fatalf("phase=%s finished=%v err=%v", got.Phase, finished, err)
+	}
+	if time.Since(began) < coreSucceededPatience {
+		t.Fatalf("given up after %s", time.Since(began))
+	}
+}
+
+// untilExecutor fails every look at its step until a moment.
+type untilExecutor struct {
+	recoveringExecutor
+	step  string
+	until time.Time
+}
+
+func (e untilExecutor) Observe(ctx context.Context, j systemupdate.CoreJournal, s systemupdate.CoreStep) (systemupdate.CoreActionObservation, error) {
+	if s.Name == e.step && time.Now().Before(e.until) {
+		return systemupdate.CoreActionObservation{}, fmt.Errorf("native unit observation unavailable")
+	}
+	return e.recoveringExecutor.Observe(ctx, j, s)
+}
+
+// The bounded waits count from when their own reason began. Looks that fail while the child runs are waited for
+// without a limit; until 0.6.15 they used up the patience for what follows, so a child that then succeeded (or
+// left processes that ended a moment later) was given up at the first look and a good update was rolled back.
+func TestCoreContinuationCountsEachPatienceFromItsOwnBeginning(t *testing.T) {
+	for _, after := range []string{systemupdate.CoreChildGone, systemupdate.CoreChildLingering} {
+		t.Run(after, func(t *testing.T) {
+			oldSucceeded, oldLingering := coreSucceededPatience, coreLingeringPatience
+			coreSucceededPatience, coreLingeringPatience = 400*time.Millisecond, 400*time.Millisecond
+			defer func() { coreSucceededPatience, coreLingeringPatience = oldSucceeded, oldLingering }()
+			lines := captureCoreNotices(t)
+			m, base, j := continuationFixture(t, false)
+			base.running = "apply-cp"
+			began := time.Now()
+			// The child runs, unobservable, for longer than either patience; then it ends with success and the
+			// looks keep failing for a moment more.
+			ends := began.Add(2 * coreSucceededPatience)
+			e := untilExecutor{recoveringExecutor: recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{}}, step: "apply-cp", until: ends.Add(50 * time.Millisecond)}
+			m.Executor = e
+			var once sync.Once
+			c := coreContinuation{manager: m,
+				childState: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string {
+					if time.Now().Before(ends) {
+						return systemupdate.CoreChildNotKnown
+					}
+					once.Do(func() { base.finish(j.RequestID, "apply-cp") })
+					return after
+				},
+				childSucceeded: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool { return true }}
+			got, err, finished := runToAnEndWith(c, j.RequestID)
+			if err != nil || got.Phase != "committed" || fmt.Sprint(finished) != "[committed]" || len(*lines) != 0 {
+				t.Fatalf("phase=%s finished=%v err=%v notices=%v steps=%v", got.Phase, finished, err, *lines, stepStates(got))
+			}
+			if e.started("recovery-fence") != 0 || e.started("apply-cp") != 1 {
+				t.Fatalf("starts=%v", e.starts)
+			}
+		})
+	}
+}
+
+// A step's patience is its own: failing passes can go from one step to the next without a look that succeeds in
+// between, and the next step then began with what was left of the previous one's wait (or none).
+func TestCoreUncertainStepBeginsTheWaitsAnewForAnotherStep(t *testing.T) {
+	for _, state := range []string{systemupdate.CoreChildGone, systemupdate.CoreChildLingering} {
+		t.Run(state, func(t *testing.T) {
+			oldSucceeded, oldLingering := coreSucceededPatience, coreLingeringPatience
+			coreSucceededPatience, coreLingeringPatience = 30*time.Millisecond, 30*time.Millisecond
+			defer func() { coreSucceededPatience, coreLingeringPatience = oldSucceeded, oldLingering }()
+			c := coreContinuation{
+				childState: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string { return state },
+				childSucceeded: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool {
+					return true
+				}}
+			var waits coreUncertainWaits
+			look := func(step string) bool {
+				return c.coreUncertainStep(context.Background(), systemupdate.CoreJournal{}, systemupdate.CoreStep{Name: step}, fmt.Errorf("native unit observation unavailable"), &waits)
+			}
+			if !look("apply-cp") {
+				t.Fatal("the first step was given up at its first look")
+			}
+			time.Sleep(2 * coreLingeringPatience)
+			if !look("apply-ui") {
+				t.Fatal("the next step was given up at its first look: it had the previous step's wait")
+			}
+			if !look("apply-ui") {
+				t.Fatal("the next step's wait did not begin at its first look")
+			}
+			time.Sleep(2 * coreLingeringPatience)
+			if look("apply-ui") {
+				t.Fatal("the same step's wait began anew")
+			}
+		})
+	}
+}
+
+// A single pass (--once) reports a failed look and gives nothing up either.
+func TestCoreContinuationSinglePassLeavesAFailedLookAlone(t *testing.T) {
+	m, base, j := continuationFixture(t, false)
+	base.running = "apply-cp"
+	e := &flakyExecutor{recoveringExecutor: recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{}}, step: "apply-cp", err: fmt.Errorf("%w: busy", systemupdate.ErrCoreActionOwned), looks: 1000}
+	m.Executor = e
+	c := coreContinuation{manager: m, finished: func(context.Context, systemupdate.CoreJournal) error { return nil }}
+	// Passes until apply-cp is started, then one more that meets the held lock.
+	var err error
+	for pass := 0; pass < 10 && err == nil; pass++ {
+		_, err = runCoreContinuation(context.Background(), c, j.RequestID, false, false, true)
+	}
+	got, readErr := m.Read()
+	if err == nil || readErr != nil || got.Phase != "applying" || stepStates(got)["apply-cp"] != "started" {
+		t.Fatalf("phase=%s err=%v steps=%v", got.Phase, err, stepStates(got))
+	}
+}
+
+// Processes that outlive their action's main process are waited for, for a
+// bounded time; then the step is given up and the recovery (whose fence stops
+// them) restores the previous release.
+func TestCoreContinuationWaitsForLingeringProcessesOnlySoLong(t *testing.T) {
+	old := coreLingeringPatience
+	coreLingeringPatience = 30 * time.Millisecond
+	defer func() { coreLingeringPatience = old }()
+	captureCoreNotices(t)
+	m, base, j := continuationFixture(t, false)
+	e := recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{"apply-cp": true}}
+	m.Executor = e
+	looks := 0
+	began := time.Now()
+	got, err, finished := runToAnEndWith(coreContinuation{manager: m, childState: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string {
+		looks++
+		return systemupdate.CoreChildLingering
+	}}, j.RequestID)
+	if err != nil || got.Phase != "rolled-back" || fmt.Sprint(finished) != "[rolled-back]" {
+		t.Fatalf("phase=%s finished=%v err=%v", got.Phase, finished, err)
+	}
+	if looks < 3 || time.Since(began) < coreLingeringPatience {
+		t.Fatalf("the step was given up after %d looks in %s", looks, time.Since(began))
+	}
+}
+
+// A started activate-host whose outcome is unknown is left to the next boot,
+// unless the restart did not happen: then it is asked for again, and when that
+// cannot help the previous release is restored. Before 0.6.15 the continuation
+// ended without an error and the box stayed held with the Control Panel closed.
+func TestCoreContinuationJudgesAHostStepWhoseRestartDidNotHappen(t *testing.T) {
+	prepare := func(t *testing.T) (systemupdate.CoreManager, recoveringExecutor, systemupdate.CoreJournal) {
+		m, base, j := continuationFixtureChanging(t, "cp", "system-root")
+		if !j.RestartRequired {
+			t.Fatal("fixture is not an image update")
+		}
+		e := recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{"activate-host": true}}
+		m.Executor = e
+		// Staged, waiting for the owner's restart; then the owner asks for it.
+		c := coreContinuation{manager: m, finished: func(context.Context, systemupdate.CoreJournal) error { return nil }}
+		if staged, err := runCoreContinuation(context.Background(), c, j.RequestID, false, false, false); err != nil || staged.Phase != "awaiting-restart" {
+			t.Fatal(staged.Phase, err)
+		}
+		if _, err := m.RequestActivation(context.Background(), j.RequestID, j.ManifestSHA256); err != nil {
+			t.Fatal(err)
+		}
+		return m, e, j
+	}
+	t.Run("left to the next boot", func(t *testing.T) {
+		m, e, j := prepare(t)
+		asked := 0
+		got, err, finished := runToAnEndWith(coreContinuation{manager: m, rebootAgain: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) (bool, error) {
+			asked++
+			return false, nil
+		}}, j.RequestID)
+		if err != nil || got.Phase != "applying" || stepStates(got)["activate-host"] != "started" || len(finished) != 0 || asked != 1 || e.started("recovery-fence") != 0 {
+			t.Fatalf("phase=%s err=%v steps=%v asked=%d", got.Phase, err, stepStates(got), asked)
+		}
+	})
+	t.Run("asked for again", func(t *testing.T) {
+		lines := captureCoreNotices(t)
+		m, e, j := prepare(t)
+		got, err, _ := runToAnEndWith(coreContinuation{manager: m, rebootAgain: func(_ context.Context, _ systemupdate.CoreJournal, s systemupdate.CoreStep) (bool, error) {
+			return s.Name == "activate-host", nil
+		}}, j.RequestID)
+		if err != nil || got.Phase != "applying" || e.started("recovery-fence") != 0 || len(*lines) != 1 || !strings.Contains((*lines)[0], "asked for it again") {
+			t.Fatalf("phase=%s err=%v notices=%v", got.Phase, err, *lines)
+		}
+	})
+	t.Run("given up", func(t *testing.T) {
+		lines := captureCoreNotices(t)
+		m, e, j := prepare(t)
+		got, err, finished := runToAnEndWith(coreContinuation{manager: m, rebootAgain: func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) (bool, error) {
+			return false, fmt.Errorf("the restart into the new system image was asked for 3 times and did not happen")
+		}}, j.RequestID)
+		if err != nil || got.Phase != "rolled-back" || fmt.Sprint(finished) != "[rolled-back]" || e.started("recovery-host") != 1 {
+			t.Fatalf("phase=%s finished=%v err=%v starts=%v", got.Phase, finished, err, e.starts)
+		}
+		if len(*lines) != 1 || !strings.Contains((*lines)[0], "did not happen") {
+			t.Fatalf("notices: %v", *lines)
+		}
+	})
+}
+
+// The whole chain for a box whose restart into the new image never comes, with nobody at it: the watchdog finds the
+// host step lost and starts a continuation; that is the real `resume` loop, which ends at coreHostStepUnknown and
+// asks RebootAgain; the journal does not change, so the watchdog goes on (three attempts of its own, then the slow
+// ones, each after Forget); when RebootAgain gives the update up, the same continuation records it
+// (RecordAttention) and restores the previous release, and the watchdog has nothing left to do. The parts are
+// tested where they live (RebootAgain with the watchdog in systemupdate, the loop above); this is what joins them.
+// RebootAgain is modelled by its contract here: it asks coreOwedRebootRequests times, then returns an error.
+func TestCoreWatchdogResumeAndRecoveryEndAnOwedRestart(t *testing.T) {
+	lines := captureCoreNotices(t)
+	m, base, j := continuationFixtureChanging(t, "cp", "system-root")
+	if !j.RestartRequired {
+		t.Fatal("fixture is not an image update")
+	}
+	e := recoveringExecutor{continuationExecutor: base, fail: map[string]bool{}, lose: map[string]bool{"activate-host": true}}
+	m.Executor = e
+	staging := coreContinuation{manager: m, finished: func(context.Context, systemupdate.CoreJournal) error { return nil }}
+	if staged, err := runCoreContinuation(context.Background(), staging, j.RequestID, false, false, false); err != nil || staged.Phase != "awaiting-restart" {
+		t.Fatal(staged.Phase, err)
+	}
+	if _, err := m.RequestActivation(context.Background(), j.RequestID, j.ManifestSHA256); err != nil {
+		t.Fatal(err)
+	}
+	// The coordinator that started activate-host; its child asked for a restart that never came, and it is gone.
+	const requests = 2 // coreOwedRebootRequests
+	asked, looks := 0, 0
+	c := coreContinuation{manager: m, rebootAgain: func(_ context.Context, _ systemupdate.CoreJournal, s systemupdate.CoreStep) (bool, error) {
+		looks++
+		if s.Name != "activate-host" {
+			return false, nil
+		}
+		if asked >= requests {
+			return false, fmt.Errorf("the restart into the new system image was asked for %d times and did not happen", asked+1)
+		}
+		asked++
+		return true, nil
+	}}
+	if got, err, _ := runToAnEndWith(c, j.RequestID); err != nil || got.Phase != "applying" || stepStates(got)["activate-host"] != "started" || asked != 1 {
+		t.Fatalf("the first coordinator: phase=%s err=%v asked=%d", got.Phase, err, asked)
+	}
+
+	at := time.Unix(1_800_000_000, 0)
+	delivered := map[string]bool{}
+	var commands []string
+	var last systemupdate.CoreJournal
+	var lastErr error
+	var finished []string
+	w := &systemupdate.CoreContinuationWatchdog{Root: m.Root, Lifecycle: filepath.Join(t.TempDir(), "app-updates"), Idle: coreWatchdogIdle,
+		Now:          func() time.Time { return at },
+		Coordinating: func() (bool, error) { return false, nil },
+		ChildGone:    func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool { return true },
+		Delivered:    func(_, command string) bool { return delivered[command] },
+		Forget:       func(_ context.Context, _, command string) error { delete(delivered, command); return nil },
+	}
+	// What the continuation unit runs: `update core resume --request …`, to its end.
+	w.Start = func(_ context.Context, request, command string) (systemupdate.CoreControlObservation, error) {
+		if delivered[command] {
+			t.Fatalf("command %s was delivered twice", command)
+		}
+		delivered[command] = true
+		commands = append(commands, command)
+		last, lastErr, finished = runToAnEndWith(c, request)
+		return systemupdate.CoreControlObservation{RequestID: request, CommandID: command, State: "running"}, nil
+	}
+	if command, err := w.Check(context.Background()); command != "" || err != nil {
+		t.Fatalf("the first look: %q %v", command, err)
+	}
+	// Within the idle time nothing is started.
+	at = at.Add(coreWatchdogIdle - time.Second)
+	if command, err := w.Check(context.Background()); command != "" || err != nil {
+		t.Fatalf("started within the idle time: %q %v", command, err)
+	}
+	quiet := 0
+	for look := 0; look < 20; look++ {
+		at = at.Add(31 * time.Minute) // longer than the idle time and than the slow wait
+		command, err := w.Check(context.Background())
+		if err != nil {
+			t.Fatalf("look %d: %v", look, err)
+		}
+		if got, readErr := m.Read(); readErr != nil || got.Phase == "rolled-back" {
+			break
+		}
+		// A continuation that wrote the journal is a new state for the watchdog: one look to see it, the next to act.
+		if command == "" {
+			quiet++
+		} else {
+			quiet = 0
+		}
+		if quiet > 1 {
+			t.Fatalf("look %d: two looks started nothing and the box is still held (asked=%d)", look, asked)
+		}
+	}
+	got, err := m.Read()
+	if err != nil || got.Phase != "rolled-back" {
+		t.Fatalf("the box stayed held: phase=%s err=%v asked=%d continuations=%d", got.Phase, err, asked, len(commands))
+	}
+	// One more request by the first continuation, the next one gave the update up and restored the previous release.
+	if asked != requests || len(commands) != 2 || lastErr != nil || last.Phase != "rolled-back" || fmt.Sprint(finished) != "[rolled-back]" {
+		t.Fatalf("asked=%d continuations=%d err=%v phase=%s finished=%v", asked, len(commands), lastErr, last.Phase, finished)
+	}
+	if states := stepStates(got); states["activate-host"] == "succeeded" || e.started("activate-host") != 1 || e.started("recovery-host") != 1 || e.started("recovery-fence") != 1 {
+		t.Fatalf("steps=%v starts=%v", states, e.starts)
+	}
+	notices := strings.Join(*lines, "\n")
+	if strings.Count(notices, "asked for it again") != requests || !strings.Contains(notices, "did not happen") || !strings.Contains(notices, "restoring the previous release") {
+		t.Fatalf("notices: %v", *lines)
+	}
+	// Nothing is lost any more: the watchdog starts nothing, however long it looks.
+	for look := 0; look < 3; look++ {
+		at = at.Add(31 * time.Minute)
+		if command, err := w.Check(context.Background()); command != "" || err != nil {
+			t.Fatalf("after the recovery: %q %v", command, err)
+		}
 	}
 }

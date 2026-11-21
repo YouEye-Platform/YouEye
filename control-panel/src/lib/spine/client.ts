@@ -8,12 +8,17 @@
  */
 
 import http from 'http';
-import type { BackupSourceIdentity } from '@/lib/backup/types';
+import type { BackupEncryption, BackupSourceIdentity, SpineBackupStatus } from '@/lib/backup/types';
 
 const SPINE_SOCKET = '/var/run/youeye/youeye.sock';
 const UNREACHABLE_SOCKET_CODES = new Set(['ENOENT', 'ECONNREFUSED', 'ENOTSOCK']);
 
-class SpineTransportError extends Error {
+/**
+ * The request did not get Spine's answer: the socket is not there or refused (`ENOENT`, `ECONNREFUSED`, `ENOTSOCK`),
+ * closed before Spine answered, or Spine did not answer within the request's limit (`ETIMEDOUT`). Spine did not
+ * refuse anything; what it did with the request is not known.
+ */
+export class SpineTransportError extends Error {
   constructor(
     message: string,
     public readonly code: string | undefined,
@@ -188,15 +193,6 @@ export interface SpineMetricsResponse {
   };
 }
 
-interface SpineUpdateResponse {
-  status: string;
-  message: string;
-  output?: string;
-  reboot_required?: boolean;
-  old_version?: string;
-  new_version?: string;
-}
-
 interface SpineUpdateStatus {
   attempt_id?: string;
   authority?: 'spine';
@@ -289,6 +285,32 @@ interface SpinePiholeCredentials {
   password: string;
 }
 
+/**
+ * How long a System update action (stage, activate, resume, recover, cancel) waits for Spine's answer. Spine itself
+ * waits up to 90 s for a gap in the pruning of finished updates before it stages or cancels
+ * (spine/internal/api/core_update_actions.go, coreActionPruneWait); with the default 60 s the Control Panel gave up
+ * first and showed an error for a request that Spine staged a moment later.
+ */
+export const CORE_UPDATE_ACTION_TIMEOUT_MS = 150_000;
+
+/**
+ * How long the start of a backup archive step (`/api/backup/run`) waits for Spine's answer. Spine waits up to 90 s
+ * to admit the step when a System update or a Control Panel restart holds the admission gate at that moment
+ * (spine/internal/systemupdate/core_lifecycle.go, OrdinaryAdmissionWait), so the wait here is that plus the default
+ * 60 s for the start itself (the archive is then made in the background and polled).
+ */
+export const ARCHIVE_STEP_TIMEOUT_MS = 150_000;
+
+/**
+ * How long a backup or restore step waits in which Spine does the whole work before it answers: the archive
+ * restore, the restore's volume, Incus prepare and import steps, and the drive store and import, whose time grows
+ * with the data. Spine ends such a step itself after 6 hours (spine/internal/backup/step.go, StepCeiling) and
+ * answers with an error, so this is that plus 15 minutes for its commands to stop and its cleanup: the Control
+ * Panel, which holds the lifecycle lock and the backup operation lock meanwhile, always ends too, also when Spine
+ * hangs. Spine stops the step's commands when the Control Panel hangs up.
+ */
+export const BACKUP_STEP_TIMEOUT_MS = 6 * 60 * 60_000 + 15 * 60_000;
+
 export class SpineClient {
   private readonly socketPath: string;
 
@@ -306,7 +328,12 @@ export class SpineClient {
       return await this.requestOnSocket<T>(this.socketPath, path, method, body, timeoutMs);
     } catch (error) {
       if (error instanceof SpineTransportError && UNREACHABLE_SOCKET_CODES.has(error.code || '')) {
-        throw new Error(`Control Panel could not reach the Spine API through its socket (${this.socketPath}): ${error.message}`);
+        // The same message as ever, and still a transport error for a caller that asks (the backup's drive store).
+        throw new SpineTransportError(
+          `Control Panel could not reach the Spine API through its socket (${this.socketPath}): ${error.message}`,
+          error.code,
+          this.socketPath,
+        );
       }
       throw error;
     }
@@ -359,11 +386,13 @@ export class SpineClient {
         reject(new SpineTransportError(`Spine API transport error: ${err.message}`, err.code, socketPath));
       });
 
-      // Set timeout — 60s for longer operations like UI SSO setup
-      req.setTimeout(timeoutMs, () => {
-        req.destroy();
-        reject(new Error('Request timeout'));
-      });
+      // Set timeout — 60s for longer operations like UI SSO setup.
+      if (timeoutMs > 0) {
+        req.setTimeout(timeoutMs, () => {
+          req.destroy();
+          reject(new SpineTransportError('Request timeout', 'ETIMEDOUT', socketPath));
+        });
+      }
 
       if (body) {
         req.write(JSON.stringify(body));
@@ -406,20 +435,6 @@ export class SpineClient {
    */
   async verifyAuth(username: string, password: string): Promise<SpineAuthResponse> {
     return this.request('/api/auth/verify', 'POST', { username, password });
-  }
-
-  /**
-   * Update Incus
-   */
-  async updateIncus(): Promise<SpineUpdateResponse> {
-    return this.request('/api/update/incus', 'POST');
-  }
-
-  /**
-   * Update host system
-   */
-  async updateSystem(): Promise<SpineUpdateResponse> {
-    return this.request('/api/update/system', 'POST');
   }
 
   /**
@@ -485,7 +500,7 @@ export class SpineClient {
   }
 
   async submitCoreUpdate(action: CoreUpdateAction, request: CoreUpdateRequest): Promise<CoreUpdateActionResult> {
-    return this.request(`/api/appliance/core-update/${action}`, 'POST', { ...request });
+    return this.request(`/api/appliance/core-update/${action}`, 'POST', { ...request }, CORE_UPDATE_ACTION_TIMEOUT_MS);
   }
 
   async addRemoteAccessKey(publicKey: string): Promise<SpineRemoteAccessKey> {
@@ -539,7 +554,7 @@ export class SpineClient {
   }
 
   /**
-   * Set SSO environment variables for Control Panel (triggers restart)
+   * Set SSO environment variables for Control Panel. They take effect at its next start: call restartControl.
    */
   async setControlSSO(params: {
     identity_url: string;
@@ -548,15 +563,8 @@ export class SpineClient {
     internal_url: string;
     identity_internal_url?: string;
     control_url: string;
-  }, restartControl: boolean = true): Promise<{ status: string; message: string }> {
-    return this.request(`/api/control/sso?restart=${restartControl}`, 'POST', params);
-  }
-
-  /**
-   * Remove SSO configuration (triggers restart)
-   */
-  async deleteControlSSO(): Promise<{ status: string; message: string }> {
-    return this.request('/api/control/sso', 'DELETE');
+  }): Promise<{ status: string; message: string }> {
+    return this.request('/api/control/sso', 'POST', params);
   }
 
   /**
@@ -627,11 +635,19 @@ export class SpineClient {
   }
 
   /**
-   * Schedule a Control Panel restart after a delay (seconds).
-   * Used by reconfigure to restart CP after all changes are applied.
+   * Schedule a Control Panel restart: after the delay (seconds), once no app or platform lifecycle work runs (Spine
+   * waits for it, so an install started meanwhile finishes first). Answers at once with status 'scheduled'.
    */
   async restartControl(delaySeconds: number = 5): Promise<{ status: string; message: string }> {
     return this.request(`/api/control/restart?delay=${delaySeconds}`, 'POST');
+  }
+
+  /**
+   * Whether a Control Panel restart waits, since when, and since when it is known to wait past its longest wait
+   * under a platform backup or restore (lib/health/control-restart-held.ts).
+   */
+  async controlRestartStatus(): Promise<{ waiting?: boolean; waiting_since?: string; backup_held_since?: string }> {
+    return this.request('/api/control/restart', 'GET');
   }
 
   /**
@@ -651,7 +667,7 @@ export class SpineClient {
     backup_type: 'core' | 'app';
     app_id?: string;
   }): Promise<{ status: string; backup_id: string }> {
-    return this.request('/api/backup/run', 'POST', params);
+    return this.request('/api/backup/run', 'POST', params, ARCHIVE_STEP_TIMEOUT_MS);
   }
 
   /**
@@ -671,17 +687,23 @@ export class SpineClient {
   /**
    * Decrypt and extract a backup archive to a staging directory.
    * Used during restore operations.
+   *
+   * Spine verifies, decrypts and extracts before it answers, so the wait is the long one (BACKUP_STEP_TIMEOUT_MS):
+   * a large archive takes its time. Spine stops when the caller hangs up, so a wait that ends here never leaves
+   * Spine writing the staging directory. A Spine that stops closes the socket, which ends the wait.
    */
   async restoreArchive(params: {
     archive_path: string;
     passphrase: string;
     staging_dir: string;
+    /** The set's recorded encryption; left out for a set made before it was recorded. */
+    encryption?: BackupEncryption;
   }): Promise<{ staging_dir: string; message: string }> {
-    return this.request('/api/backup/restore', 'POST', params);
+    return this.request('/api/backup/restore', 'POST', params, BACKUP_STEP_TIMEOUT_MS);
   }
 
   async applyBackupVolumes(stagingDir: string): Promise<{ status: string; restored: number }> {
-    return this.request('/api/backup/apply-volumes', 'POST', { staging_dir: stagingDir });
+    return this.request('/api/backup/apply-volumes', 'POST', { staging_dir: stagingDir }, BACKUP_STEP_TIMEOUT_MS);
   }
 
   async prepareIncusRecovery(
@@ -699,7 +721,7 @@ export class SpineClient {
     }>('/api/backup/incus/prepare', 'POST', {
       staging_dir: stagingDir,
       pool_map: poolMap,
-    });
+    }, BACKUP_STEP_TIMEOUT_MS);
     return {
       ...response,
       runtimes: Array.isArray(response.runtimes) ? response.runtimes : [],
@@ -720,7 +742,7 @@ export class SpineClient {
       pool: params.pool,
       network: params.network,
       ...(params.offline ? { offline: true } : {}),
-    });
+    }, BACKUP_STEP_TIMEOUT_MS);
   }
 
   /**
@@ -767,7 +789,7 @@ export class SpineClient {
     reason: 'manual' | 'scheduled' | 'pre-restore';
     source: BackupSourceIdentity;
   }): Promise<{ status: string; backup_id: string }> {
-    return this.request('/api/backup/repository/store', 'POST', params);
+    return this.request('/api/backup/repository/store', 'POST', params, BACKUP_STEP_TIMEOUT_MS);
   }
 
   async importBackupSet(params: {
@@ -776,7 +798,7 @@ export class SpineClient {
     passphrase?: string;
     use_stored_passphrase?: boolean;
   }): Promise<{ status: string; backup_path: string }> {
-    return this.request('/api/backup/repository/import', 'POST', params);
+    return this.request('/api/backup/repository/import', 'POST', params, BACKUP_STEP_TIMEOUT_MS);
   }
 
   async getExternalRecoveryPoints(mediaId: string): Promise<{ recovery_points: import('@/lib/backup/types').ExternalRecoveryPoint[] }> {
@@ -784,22 +806,6 @@ export class SpineClient {
     // A recovery point without apps may list them as null (written by an older Spine).
     return { recovery_points: (catalog.recovery_points ?? []).map(point => ({ ...point, apps: point.apps ?? [] })) };
   }
-}
-
-interface SpineBackupStatus {
-  backup_id: string;
-  status: string;
-  progress: number;
-  message: string;
-  stage?: string;
-  stages?: string[];
-  current_step: number;
-  total_steps: number;
-  archive_path?: string;
-  archive_size?: number;
-  error?: string;
-  started_at?: string;
-  updated_at: string;
 }
 
 // Export singleton instance

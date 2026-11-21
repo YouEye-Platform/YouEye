@@ -28,8 +28,11 @@ const stageTreeSweepDelay = 15 * time.Minute
 
 func startHostMaintenance() {
 	go func() {
-		for {
+		for first := true; ; first = false {
 			runHostMaintenance()
+			if !first {
+				pruneFinishedCoreUpdates()
+			}
 			time.Sleep(24 * time.Hour)
 		}
 	}()
@@ -39,6 +42,9 @@ func startHostMaintenance() {
 	go func() {
 		time.Sleep(stageTreeSweepDelay)
 		sweepFinishedCoreStageTrees()
+		// Not at the start itself: after a boot the boot unit may be releasing the request at that moment, and
+		// the pruning holds the coordinator lock while it deletes snapshots.
+		pruneFinishedCoreUpdates()
 	}()
 }
 
@@ -63,6 +69,29 @@ func runHostMaintenance() {
 func sweepFinishedCoreStageTrees() {
 	if removed := removeFinishedCoreStageTrees(); len(removed) > 0 {
 		util.LogSuccess(fmt.Sprintf("Removed %d old service trees left by finished System updates", len(removed)))
+	}
+}
+
+// pruneFinishedCoreUpdates removes the checkpoints, cached release files and receipts that finished System updates
+// left, except the last good checkpoint (NativeCoreRuntime.PruneFinished). A finished request prunes when it ends;
+// this catches what earlier versions left (they never removed any), a request that an earlier Spine finished and
+// whatever could not be removed at that moment. It runs 15 minutes after the API service started and then daily.
+// It does nothing while a System request is unfinished or on a
+// machine that is not an installed appliance.
+func pruneFinishedCoreUpdates() {
+	defer func() {
+		if r := recover(); r != nil {
+			util.LogError(fmt.Sprintf("System update pruning: %v", r))
+		}
+	}()
+	runtime, err := installedCoreRuntime()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if pruned := runtime.PruneFinished(ctx); pruned.Changed() {
+		util.LogSuccess("System updates: " + pruned.String())
 	}
 }
 

@@ -39,12 +39,7 @@ export async function GET(
     // Check authentication
     const session = await getSession();
     
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 
     const { name } = await params;
 

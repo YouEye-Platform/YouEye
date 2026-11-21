@@ -208,3 +208,86 @@ func TestCoreFinishedRequestResetsOnlyItsOwnFailedUnits(t *testing.T) {
 		t.Fatal("reset-failed without a unit", units, calls)
 	}
 }
+
+// Forget removes an ended continuation's unit and delivery receipt, so the same command ID launches again (the
+// watchdog's attempts without end are one delivery made again). It never touches a continuation that runs.
+func TestCoreControlForgetLetsACommandIDBeDeliveredAgain(t *testing.T) {
+	m, _, target := coreJournalFixture(t)
+	j := prepareCoreFixture(t, m, target)
+	launches := 0
+	state := "" // "", running, exited, failed, dead
+	var calls []string
+	runner := CoreControlRunner{Root: m.Root, Executable: "/usr/local/bin/youeye"}
+	runner.Capture = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		unit := args[len(args)-1]
+		switch {
+		case name == "systemd-run":
+			launches++
+			state = "running"
+			return nil, nil
+		case name == "systemctl" && args[0] == "stop":
+			calls = append(calls, "stop")
+			if state == "exited" || state == "dead" {
+				state = ""
+			}
+			return nil, nil
+		case name == "systemctl" && args[0] == "reset-failed":
+			calls = append(calls, "reset-failed")
+			if state == "failed" {
+				state = ""
+				return nil, nil
+			}
+			return nil, fmt.Errorf("Unit %s not loaded", unit)
+		case name != "systemctl" || args[0] != "show":
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		if state == "" {
+			return []byte("Id=" + unit + "\nLoadState=not-found\n"), nil
+		}
+		active := map[string]string{"starting": "ActiveState=activating\nSubState=start\nResult=success\nMainPID=123", "stopping": "ActiveState=deactivating\nSubState=stop-sigterm\nResult=success\nMainPID=123", "odd": "ActiveState=active\nSubState=exited\nResult=success\nMainPID=123",
+			"running": "ActiveState=active\nSubState=running\nResult=success\nMainPID=123", "exited": "ActiveState=active\nSubState=exited\nResult=success\nMainPID=0", "failed": "ActiveState=failed\nSubState=failed\nResult=exit-code\nMainPID=0", "dead": "ActiveState=inactive\nSubState=dead\nResult=success\nMainPID=0", "odd-dead": "ActiveState=inactive\nSubState=dead\nResult=success\nMainPID=123"}[state]
+		return []byte("Id=" + unit + "\nLoadState=loaded\n" + active + "\nDescription=YouEye core continuation " + unit + "\nTransient=yes\nType=exec\nUser=root\nWorkingDirectory=/\nRootDirectory=\nRootImage=\nKillMode=control-group\nRestart=no\nRemainAfterExit=yes\n"), nil
+	}
+	ctx := context.Background()
+	// Nothing delivered: nothing to forget.
+	if err := runner.Forget(ctx, j.RequestID, "slow"); err != nil || len(calls) != 0 {
+		t.Fatalf("forgetting nothing: %v %v", err, calls)
+	}
+	// "dead": loaded, inactive and without a main process (ended, not unloaded yet). Until 0.6.15 it was
+	// refused at every look.
+	for round, ended := range []string{"exited", "failed", "dead", ""} {
+		if out, err := runner.Start(ctx, j.RequestID, "slow"); err != nil || out.State != "running" || launches != round+1 {
+			t.Fatalf("round %d: %+v %v launches=%d", round, out, err, launches)
+		}
+		if !runner.Delivered(j.RequestID, "slow") {
+			t.Fatal("no receipt")
+		}
+		// While it runs it is not forgotten, and the same command ID launches nothing.
+		if err := runner.Forget(ctx, j.RequestID, "slow"); err == nil || !runner.Delivered(j.RequestID, "slow") {
+			t.Fatalf("a running continuation was forgotten: %v", err)
+		}
+		if _, err := runner.Start(ctx, j.RequestID, "slow"); err != nil || launches != round+1 {
+			t.Fatalf("the same delivery launched twice: %v launches=%d", err, launches)
+		}
+		// Nor in a state between running and ended (it starts, it stops, its main process is reported both
+		// ways): until 0.6.15 such a unit was stopped, which could end a coordinator in the middle of a step.
+		for _, between := range []string{"starting", "stopping", "odd", "odd-dead"} {
+			state, calls = between, nil
+			if err := runner.Forget(ctx, j.RequestID, "slow"); err == nil || !runner.Delivered(j.RequestID, "slow") || len(calls) != 0 || state != between {
+				t.Fatalf("a continuation that is %s was forgotten: %v %v", between, err, calls)
+			}
+		}
+		state = ended // "" is a unit that is gone already (after a reboot)
+		if err := runner.Forget(ctx, j.RequestID, "slow"); err != nil || state != "" || runner.Delivered(j.RequestID, "slow") {
+			t.Fatalf("round %d (%q): %v state=%q delivered=%v", round, ended, err, state, runner.Delivered(j.RequestID, "slow"))
+		}
+	}
+	// Another delivery of the request is not touched.
+	if _, err := runner.Start(ctx, j.RequestID, "other"); err != nil {
+		t.Fatal(err)
+	}
+	state = ""
+	if err := runner.Forget(ctx, j.RequestID, "slow"); err != nil || !runner.Delivered(j.RequestID, "other") {
+		t.Fatalf("another delivery's receipt: %v", err)
+	}
+}

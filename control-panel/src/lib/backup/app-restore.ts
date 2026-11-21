@@ -139,12 +139,13 @@ async function restoreAppOnce(
   onEvent: BackupEventCallback,
   protectCurrentState: boolean,
 ): Promise<void> {
-  const { appId, archivePath, passphrase } = config;
+  const { appId, archivePath, passphrase, encryption } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const operationID = randomUUID();
   const stagingDir = path.join(STAGING_BASE, `app-${appId}-${timestamp}-${operationID}`);
   const rollbackRoot = path.join('/var/lib/youeye/backups/.rollback', `app-${appId}-${timestamp}-${operationID}`);
   let rollbackArchive = '';
+  let rollbackEncryption: AppRestoreConfig['encryption'];
   let retainRollbackPoint = false;
   let installedDuringRestore = false;
   let createdRecoveryStorage: Array<{ pool: string; name: string }> = [];
@@ -174,6 +175,7 @@ async function restoreAppOnce(
       archive_path: archivePath,
       passphrase,
       staging_dir: stagingDir,
+      encryption,
     });
 
     // ── Step 2: Read and validate backup metadata ──────────
@@ -245,7 +247,7 @@ async function restoreAppOnce(
     const currentMeta = await readInstallMetadata(appId);
     if (currentMeta && protectCurrentState) {
       onEvent({ step, totalSteps, status: 'progress', stage: 'rollback-point', message: `Protecting the current ${appId} state before restore`, progress: Math.round((step / totalSteps) * 100) });
-      await backupApp({ appId, targetPath: rollbackRoot, passphrase }, () => undefined);
+      rollbackEncryption = await backupApp({ appId, targetPath: rollbackRoot, passphrase }, () => undefined);
       const rollbackDirectory = path.join(rollbackRoot, 'youeye', 'apps', appId);
       const rollbackFiles = (await readdir(rollbackDirectory)).filter(file => file.endsWith('.tar.enc')).sort().reverse();
       if (!rollbackFiles[0]) throw new Error(`Could not create a rollback point for ${appId}`);
@@ -401,6 +403,7 @@ async function restoreAppOnce(
           desiredState: restoredIntent.desiredState,
           runtimeImages,
           runtimeInstances,
+          recoveredNativeArtifacts: backedUpInstallMeta?.nativeArtifacts,
           recoveryCreatedStorage: createdRecoveryStorage.map((volume) => `${volume.pool}/${volume.name}`),
         },
       );
@@ -564,7 +567,7 @@ async function restoreAppOnce(
     if (rollbackArchive && protectCurrentState) {
       onEvent({ step, totalSteps, status: 'progress', stage: 'rollback', message: `Restore failed; returning ${appId} to its previous state`, progress: Math.round((step / totalSteps) * 100) });
       try {
-        await restoreAppOnce({ appId, archivePath: rollbackArchive, passphrase }, () => undefined, false);
+        await restoreAppOnce({ appId, archivePath: rollbackArchive, passphrase, encryption: rollbackEncryption }, () => undefined, false);
       } catch (rollbackError) {
         retainRollbackPoint = true;
         throw new Error(`Restore failed (${error}); rollback also failed (${rollbackError})`);

@@ -294,6 +294,12 @@ export async function updateSystemContainer(
 
     emit(onEvent, 3, totalSteps, 'running', `Rebuilding ${plan.containerName}`, plan.desiredImage);
     await rebuildContainer(plan.containerName, plan.desiredImage);
+    // A new root file system brings Pi-hole's own update check back; it goes off before the first start. The edit
+    // never stops the update: Pi-hole is the LAN's DNS, so it starts whatever the edit did.
+    if (plan.id === 'pihole') {
+      await import('./pihole-update-check').then(m => m.turnOffPiholeUpdateCheck(plan.containerName))
+        .catch(error => console.warn('[SystemUpdater] Pi-hole update check left as it is:', error));
+    }
 
     emit(onEvent, 4, totalSteps, 'running', `Starting ${plan.containerName}`);
     await startContainer(plan.containerName);

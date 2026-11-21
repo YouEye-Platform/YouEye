@@ -82,21 +82,24 @@ type CorePreparationCanceller interface {
 	CancelPreparation(context.Context, CoreJournal) error
 }
 
-// CoreCheckpointRefusalVerifier proves that a failed checkpoint ended in its read-only preflight, before any
-// writer, ingress or snapshot was touched. Only then may the request end by cancellation instead of recovery.
+// CoreCheckpointRefusalVerifier proves that a checkpoint step touched no writer, ingress or snapshot: a failed one
+// ended in its read-only preflight, and a started one never got past its admission (the lifecycle locks stayed
+// busy, or the coordinator was lost while it waited), so no child was launched. Only then may the request end by
+// cancellation instead of recovery.
 type CoreCheckpointRefusalVerifier interface {
 	VerifyCheckpointRefusal(context.Context, CoreJournal) error
 }
 
-// corePreparationOnly: no step past preparation has started, except a checkpoint recorded "failed". Cancellation
-// publishes "cancelling" over such a checkpoint only after CoreCheckpointRefusalVerifier passed, so native
-// cancellation guards use this instead of rejecting every non-pending checkpoint.
+// corePreparationOnly: no step past preparation has started, except the checkpoint itself (recorded "failed", or
+// "started" when its admission never ended in a launch). Cancellation publishes "cancelling" over such a checkpoint
+// only after CoreCheckpointRefusalVerifier passed, so native cancellation guards (which all require that phase)
+// use this instead of rejecting every non-pending checkpoint.
 func corePreparationOnly(j CoreJournal) bool {
 	if len(j.RecoverySteps) > 0 {
 		return false
 	}
 	for _, step := range j.Steps {
-		if step.State == "pending" || step.Name == "verify-members" || step.Name == "stage-host" || (step.Name == "checkpoint" && step.State == "failed") {
+		if step.State == "pending" || step.Name == "verify-members" || step.Name == "stage-host" || (step.Name == "checkpoint" && (step.State == "failed" || step.State == "started")) {
 			continue
 		}
 		return false
@@ -128,35 +131,136 @@ func (m CoreManager) lockCore() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := m.requireNoCopy(); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
+}
+
+// requireNoCopy: no independent copy owns the platform or this installation.
+// Called with the coordinator lock held.
+func (m CoreManager) requireNoCopy() error {
 	if m.Root == CoreStatePath {
 		if _, err := (CoreLifecycleBarrier{Root: CoreAppLifecycleRoot}).ReadCopy(); !errors.Is(err, os.ErrNotExist) {
-			unlock()
-			return nil, fmt.Errorf("independent copy owns the platform lifecycle")
+			return fmt.Errorf("independent copy owns the platform lifecycle")
 		}
 	}
 	copy, err := m.readCopy()
 	if (err == nil && copy.Phase != "committed") || (err != nil && !errors.Is(err, os.ErrNotExist)) {
-		unlock()
-		return nil, fmt.Errorf("independent copy preparation owns this installation")
+		return fmt.Errorf("independent copy preparation owns this installation")
 	}
-	return unlock, nil
+	return nil
 }
 func (m CoreManager) lockCoreRaw() (func(), error) {
+	_, unlock, err := m.lockCoreFile(false)
+	return unlock, err
+}
+
+// corePruningMark is what the coordinator lock file holds while its holder is
+// PruneFinished. The file is empty at every other time.
+const corePruningMark = "pruning\n"
+
+// ErrCorePruning: the coordinator lock is held by PruneFinished, which removes
+// one finished request per hold. The caller can try again in a moment.
+var ErrCorePruning = errors.New("old checkpoints of finished System updates are being removed; try again in a minute")
+
+// A holder that is the pruning writes its mark right after it has taken the
+// lock. Whoever finds the lock busy and the file still empty in that moment
+// looks again, coreLockLooks times in all, coreLockLookPause apart, before it
+// says "already running".
+var (
+	coreLockLooks     = 6
+	coreLockLookPause = 10 * time.Millisecond
+)
+
+// pruneYieldPath is the file that asks a running PruneFinished to stop after
+// the request it is removing: whoever wanted the coordinator lock and found
+// the pruning holding it leaves it there (lockCoreFile). The pruning looks for
+// it between two holds. Its content means nothing.
+func (m CoreManager) pruneYieldPath() string { return filepath.Join(m.Root, "lock.wanted") }
+
+// pruneYieldAsked: somebody waits for the coordinator lock.
+func (m CoreManager) pruneYieldAsked() bool {
+	_, err := os.Lstat(m.pruneYieldPath())
+	return err == nil
+}
+
+// lockCoreFile takes the coordinator lock without waiting. forPrune is the
+// pruning asking: it never asks itself to yield.
+func (m CoreManager) lockCoreFile(forPrune bool) (*os.File, func(), error) {
 	if !filepath.IsAbs(m.Root) {
-		return nil, fmt.Errorf("core updater requires an absolute protected state directory")
+		return nil, nil, fmt.Errorf("core updater requires an absolute protected state directory")
 	}
 	if err := os.MkdirAll(m.Root, 0700); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(m.Root, "lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
+		return nil, nil, err
+	}
+	for look := 1; ; look++ {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		// Say what holds it when that is the pruning: "already running" sent the
+		// owner looking for an update that does not exist.
+		mark := make([]byte, len(corePruningMark))
+		n, _ := f.ReadAt(mark, 0)
+		if string(mark[:n]) == corePruningMark {
+			f.Close()
+			if !forPrune {
+				// The pruning stops after the request it is at, so the next try gets in.
+				_ = atomicWrite(m.pruneYieldPath(), []byte("wanted\n"), 0600)
+			}
+			return nil, nil, fmt.Errorf("core update cannot start yet: %w", ErrCorePruning)
+		}
+		// No mark: a coordinator, or the pruning between taking the lock and
+		// writing its mark. Until 0.6.15 the second was answered "already running".
+		if look >= coreLockLooks {
+			f.Close()
+			return nil, nil, fmt.Errorf("core update is already running: %w", err)
+		}
+		time.Sleep(coreLockLookPause)
+	}
+	if !forPrune {
+		// A pruning that was killed left its mark: this holder is not pruning.
+		if info, err := f.Stat(); err == nil && info.Size() != 0 {
+			_ = f.Truncate(0)
+		}
+		// Whoever asked the pruning to yield has the lock now, or gave up.
+		_ = os.Remove(m.pruneYieldPath())
+	}
+	return f, func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+}
+
+// lockCoreForPrune is lockCore for PruneFinished: while it is held, everyone
+// who finds the lock busy is told that it is the pruning (ErrCorePruning) and
+// leaves a request to yield. first is the first hold of a run: it forgets a
+// request to yield that an earlier run left (nobody can have asked this run
+// yet: the mark is written after it).
+func (m CoreManager) lockCoreForPrune(first bool) (func(), error) {
+	f, unlock, err := m.lockCoreFile(true)
+	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("core update is already running: %w", err)
+	if first {
+		_ = os.Remove(m.pruneYieldPath())
 	}
-	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+	// The mark comes first: the moment in which the lock is held without it is
+	// as short as it can be.
+	if _, err := f.WriteAt([]byte(corePruningMark), 0); err != nil {
+		_ = f.Truncate(0)
+		unlock()
+		return nil, err
+	}
+	release := func() { _ = f.Truncate(0); unlock() }
+	if err := m.requireNoCopy(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 func (m CoreManager) saveCore(j *CoreJournal) error {
@@ -631,8 +735,11 @@ func CoreSpineJustApplied(before, after CoreJournal) bool {
 
 // Cancel is permitted only before an effectful checkpoint/lifecycle step.
 // Once effects exist, explicit recovery must reconcile their actual outcomes.
-// A checkpoint whose read-only preflight refused has no such effects; it is
-// cancellable once the executor verifies that refusal.
+// A checkpoint whose read-only preflight refused has no such effects, and
+// neither has one whose admission never ended in a launch (the lifecycle lock
+// stayed busy for the whole wait: the step is "started", the request waits for
+// "Retry update", and before 0.6.15 nothing but a console `recover` could end
+// it). Both are cancellable once the executor verifies them.
 func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal, error) {
 	unlock, err := m.lockCore()
 	if err != nil {
@@ -655,8 +762,8 @@ func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal,
 	return m.cancelLocked(ctx, j)
 }
 
-// verifyCheckpointRefusal requires a recorded failed checkpoint, nothing started after it, no recovery graph,
-// and the executor's positive proof that the failure was the read-only preflight refusal.
+// verifyCheckpointRefusal requires a checkpoint recorded failed or started, nothing started after it, no recovery
+// graph, and the executor's positive proof that it had no effect (see CoreCheckpointRefusalVerifier).
 func (m CoreManager) verifyCheckpointRefusal(ctx context.Context, j CoreJournal) error {
 	verifier, ok := m.Executor.(CoreCheckpointRefusalVerifier)
 	if !ok || !corePreparationOnly(j) {
@@ -677,9 +784,14 @@ func (m CoreManager) cancelLocked(ctx context.Context, j CoreJournal) (CoreJourn
 		if step.State == "pending" {
 			continue
 		}
-		if step.Name == "checkpoint" && step.State == "failed" {
-			// Verified before cancel intent is published: once "cancelling", Advance and
-			// Recover refuse, so an unverified checkpoint must never reach that phase.
+		if step.Name == "checkpoint" {
+			// Failed or started. Verified before cancel intent is published: once
+			// "cancelling", Advance and Recover refuse, so an unverified checkpoint must
+			// never reach that phase. Observing a started step first settles the record
+			// of a coordinator that was lost at admission (NativeCoreExecutor.observe).
+			if step.State == "started" && m.Executor != nil {
+				_, _ = m.Executor.Observe(ctx, j, step)
+			}
 			if err := m.verifyCheckpointRefusal(ctx, j); err != nil {
 				return j, fmt.Errorf("core update requires lifecycle recovery before cancellation: %w", err)
 			}

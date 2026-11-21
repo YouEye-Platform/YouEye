@@ -2,12 +2,18 @@
  * Single User API
  *
  * PATCH  /api/people/[id] - Update user fields (isActive, isAdmin, name, email)
- * DELETE /api/people/[id] - Delete user
+ * DELETE /api/people/[id] - Delete user. `?retainData=true` first retains (quarantines) the data apps keep private
+ *   to the user, in every app (`retainUserPrivateData`); a user who administers or installed an app is still refused.
+ *   A user with undecided apps or data is refused with 409 and the reason.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { deleteUser, getUser, updateUser } from '@/lib/identity/provider';
+import { assertIdentityDisposition, isIdentityDispositionError } from '@/lib/identity/store';
+import { admissionAdministrator, retainUserPrivateData } from '@/lib/admission/management';
+import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { lifecycleRefusalResponse } from '@/lib/http/lifecycle-busy';
 
 export async function PATCH(
   request: NextRequest,
@@ -51,6 +57,10 @@ export async function PATCH(
     const updated = await updateUser(id, patch as Parameters<typeof updateUser>[1]);
     return NextResponse.json({ user: updated, success: true });
   } catch (error) {
+    if (isIdentityDispositionError(error)) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Refused', code: 'disposition_required' },
+        { status: 409 });
+    }
     console.error('Error updating user:', error);
     return NextResponse.json(
       { error: 'Failed to update user', details: error instanceof Error ? error.message : 'Unknown' },
@@ -75,9 +85,25 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    await deleteUser(id);
-    return NextResponse.json({ success: true });
+    let retained: string[] = [];
+    if (request.nextUrl.searchParams.get('retainData') === 'true') {
+      const actorId = await admissionAdministrator(session);
+      if (!actorId) return NextResponse.json({ error: 'Active administrator required' }, { status: 403 });
+      // The appliance owner is refused before anything is retained.
+      await assertIdentityDisposition(id, 'disable');
+      // The deletion runs under the locks the retention took: a busy app refuses before anything is retained.
+      retained = await withUserOperationLockWait(() => retainUserPrivateData(id, actorId, () => deleteUser(id)));
+    } else {
+      await deleteUser(id);
+    }
+    return NextResponse.json({ success: true, retainedDataApps: retained });
   } catch (error) {
+    if (isIdentityDispositionError(error)) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Refused', code: 'disposition_required' },
+        { status: 409 });
+    }
+    const refused = lifecycleRefusalResponse(error);
+    if (refused) return refused;
     console.error('Error deleting user:', error);
     return NextResponse.json(
       { error: 'Failed to delete user', details: error instanceof Error ? error.message : 'Unknown' },

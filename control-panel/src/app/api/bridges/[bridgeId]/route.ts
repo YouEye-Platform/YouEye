@@ -14,13 +14,13 @@ import {
   deleteBridge,
 } from '@/lib/bridges/manager';
 import { getBridge, updateBridge } from '@/lib/bridges/store';
-import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAdmin } from '@/lib/auth/rbac';
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ bridgeId: string }> },
 ) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
   const { bridgeId } = await params;

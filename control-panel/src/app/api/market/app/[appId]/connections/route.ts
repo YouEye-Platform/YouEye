@@ -27,7 +27,7 @@ export interface ConnectionsResponse {
   incoming: ConnectionInfo[];
   internet: {
     /** UI-gateway proxy scopes: the only per-host internet mechanism. */
-    proxy: Array<{ host: string; paths: string[]; methods: string[]; scope: string }>;
+    proxy: Array<{ host: string; paths: string[]; methods: string[] }>;
     /** `internet: true`: the app network's NAT is on (no per-host allowlist). */
     needsInternet: boolean;
   };
@@ -95,7 +95,6 @@ export async function GET(
       host: scope.host,
       paths: scope.paths,
       methods: scope.methods?.length ? scope.methods : ['GET'],
-      scope: scope.scope ?? 'user',
     }));
     const internet = {
       proxy,

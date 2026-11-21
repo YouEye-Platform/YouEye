@@ -136,11 +136,50 @@ installed release. Each update has a request ID (`--request`), shown in the jour
 | Situation | Command |
 |---|---|
 | Interrupted (lost connection, reboot) | `youeye update core resume --request <id>` |
-| Failed after the checkpoint (`needs-recovery`) | `youeye update core recover --request <id>` restores the checkpoint and the previous release |
+| Failed after the checkpoint (`needs-recovery`) | since 0.6.15 the coordinator restores the previous release by itself; if that recovery stopped too (or on an older Spine), `youeye update core recover --request <id>` restores the checkpoint and the previous release |
 | Staged but not wanted, nothing changed yet | `youeye update core cancel --request <id>` |
 
-- Cancel works only before any service was touched: while only `verify-members` and `stage-host` ran, or when the
-  checkpoint preflight refused. After that, use `recover` (`spine/internal/systemupdate/core_journal.go`).
+- Cancel works only before any service was touched: while only `verify-members` and `stage-host` ran, when the
+  checkpoint preflight refused, or when the checkpoint's first admission timed out ("Waiting to retry": the
+  lifecycle lock was busy for 60 s; since 0.6.15 the panel offers Cancel beside "Retry update"). After that, use
+  `recover` (`spine/internal/systemupdate/core_journal.go`).
+- **The power failed during an update** (since 0.6.15 the box finishes by itself; nothing to do on the console):
+  - before the checkpoint: the boot unit continues the update;
+  - while the checkpoint waited for the lifecycle locks: the boot unit admits the request again;
+  - between the checkpoint and the commit: the boot unit finds a step without a result, records `needs-recovery`
+    and restores the previous release (`journalctl -u youeye-core-update.service` shows "core update: the update of
+    request … cannot continue (…); restoring the previous release"); the box comes back on the release it had;
+  - between the commit and the release of the holds: the boot unit starts the containers and finishes the release;
+    the box comes back on the new release.
+  If the boot unit could not finish (`systemctl status youeye-core-update.service`), the API service's watchdog
+  starts `resume` again after 5 minutes, up to three times (`journalctl -u youeye | grep
+  "System update watchdog"`); for a finished update that still holds the box closed it goes on every 30 minutes
+  (as one unit and one receipt that are replaced each time).
+  `youeye update core resume --request <id>` does the same by hand.
+- **An image update asked for the restart and the box did not restart** (since 0.6.15 the box handles it). After
+  5 minutes the watchdog starts `resume`, which asks for the restart again ("the restart that activate-host of
+  request … asked for did not happen; asked for it again" in `journalctl -u 'youeye-core-control-*'`), twice; the
+  third time, or at once when the activation itself failed, it restores the previous release and the box opens on
+  the release it had. A restart owed by a recovery (`recovery-host`) is asked for again without a count. The
+  watchdog goes on starting `resume` for as long as the restart is owed: three times 5 minutes apart, then every
+  30 minutes.
+- **"core update cannot start yet: old checkpoints of finished System updates are being removed"** when staging
+  or cancelling on the CLI: the pruning holds the coordinator lock for one old request at a time, and the refused
+  command has asked it to stop after that one. Try again in a minute. The panel's Update and Cancel wait for it by
+  themselves (up to 90 s).
+- **The panel's update action "needs reconciliation"** (HTTP 409 from `POST /api/appliance/core-update/<action>`):
+  the answer names no cause; Spine's journal does: `journalctl -u youeye | grep '\[core-update\]'` ("stage of
+  request … was refused: …"). The same request and delivery IDs can be sent again.
+- **The update's processes were killed** (out of memory, a person) without a reboot. When no `update core`
+  process runs and the step's unit has no process either (none in its cgroup; processes that outlive the unit's
+  main process are waited for 30 minutes), the watchdog starts `resume` after 5 minutes: it reads
+  the step's result and continues, or restores the previous release. The same holds for a request left in
+  `needs-recovery` and for a recovery that stopped half-way (not for a recovery step that failed).
+- **Disk use after updates.** Old checkpoints are pruned after every finished update, 15 minutes after the API
+  service starts and daily; only the last good checkpoint stays. `youeye update core prune` runs it by hand and
+  prints what was removed and kept; `incus snapshot list youeye-control`, `zfs list -t snapshot | grep youeye-core`
+  and `ls /var/lib/youeye/state/core-checkpoints/` show what is left
+  ([core-release-contract.md](core-release-contract.md#checkpoint-and-recovery)).
 - `youeye update core check` says `"behind": true` when the channel's release is older than the installed one. A box
   never downgrades; it waits for the channel to catch up ([below](#waiting-for-the-channel-to-catch-up)).
 - **An update started right after a boot** (a box running 0.6.13 or later) waits for the box to finish starting:
@@ -184,7 +223,9 @@ installed release. Each update has a request ID (`--request`), shown in the jour
   in `needs-recovery`, which only `recover` ended.
 - **A step's outcome is uncertain** (`needs-recovery` with a step left `started`, for example after a crash). When
   the step's action recorded an error, the panel shows it next to the step as "Reason: …"; when the action left no
-  result (a killed child), nothing is shown. Recover the request.
+  result (a killed child), nothing is shown. Since 0.6.15 the coordinator recovers such a request by itself when it
+  is past its checkpoint; recover it by hand only when that did not happen (an older Spine, or a recovery that
+  stopped). The action's own error is also in the journal: `journalctl -u 'youeye-core-*'`.
 - **After the update ended.** A rolled-back update shows "The last update was rolled back. The installed release is
   unchanged."; a cancelled one with a failed step shows "The last update was cancelled. The installed release is
   unchanged." Below it come "This step failed: …" and "Reason: …" for the apply step that stopped it
@@ -454,8 +495,8 @@ Market → Sources shows the same ("Last refreshed …", the error, Refresh now)
 - **"… is not the file its hash names"**: the market's files do not match each other (an interrupted upload, a
   cache serving an old file). The box keeps its copy; the next refresh tries again.
 - **The official Market shows the wrong lane:** it follows the box's channel (`youeye channel get`): dev and alpha
-  read `/dev/`, beta and stable read `/`. Boxes up to 0.6.10 do not read `market.youeye.me` at all; they keep the
-  0.6.4 catalog of their channel until they update YouEye.
+  read `/dev/`, beta and stable read `/`. Boxes up to 0.6.10 do not read `market.youeye.me` at all, and since 0.6.13
+  no channel index carries their old Market entry: they have no Market until they update YouEye.
 
 ## An app says it has no update source
 

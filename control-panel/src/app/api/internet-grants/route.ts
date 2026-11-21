@@ -14,10 +14,10 @@ import {
   type InternetGrant,
 } from '@/lib/bridges/internet-store';
 import { setAppNetworkNAT } from '@/lib/incus/app-network';
-import { requireAdminCsrf, requireAuth } from '@/lib/auth/rbac';
+import { requireAdminCsrf, requireAdmin } from '@/lib/auth/rbac';
 
 export async function GET(request: Request) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
   const url = new URL(request.url);

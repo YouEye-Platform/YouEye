@@ -145,6 +145,15 @@ function StatusDot({ status }: { status: string }) {
 }
 
 /** `release`: the installed release's version, shown for the parts it installed (System, Server interface). */
+
+// Unsafe requests carry the session's CSRF token, which the route checks (requireAdminCsrf).
+async function systemUpdateCsrfToken(): Promise<string> {
+  const response = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || typeof body.csrfToken !== "string") throw new Error("Could not get a CSRF token; reload the page.");
+  return body.csrfToken as string;
+}
+
 export function SystemClient({ release }: { release?: string }) {
   const locale = useLocale();
   const translateInterface = useInterfaceTranslations("interface");
@@ -284,7 +293,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
     try {
       const response = await fetch("/settings/api/deploy/infrastructure/system-updates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await systemUpdateCsrfToken() },
         body: JSON.stringify({
           systemId: plan.id,
           dryRun: true,
@@ -313,7 +322,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
     try {
       const response = await fetch("/settings/api/deploy/infrastructure/system-updates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": await systemUpdateCsrfToken() },
         body: JSON.stringify({
           systemId: plan.id,
           dryRun: false,

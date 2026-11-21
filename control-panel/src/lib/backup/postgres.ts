@@ -13,6 +13,16 @@ export function isPlatformDatabase(value: string): value is (typeof PLATFORM_DAT
   return (PLATFORM_DATABASES as readonly string[]).includes(value);
 }
 
+/** The platform's own roles: its administrator and PostgreSQL's superuser. No app may name them. */
+function isPlatformRole(value: string): boolean {
+  return value === PLATFORM_POSTGRES_ADMIN || value === 'postgres';
+}
+
+/** The platform's databases and PostgreSQL's own (maintenance and templates). No app may name them. */
+function isReservedDatabase(value: string): boolean {
+  return isPlatformDatabase(value) || ['postgres', 'template0', 'template1'].includes(value);
+}
+
 export async function platformDatabaseExists(databaseInput: string): Promise<boolean> {
   const database = checkedIdentifier(databaseInput, 'Database name');
   const result = await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
@@ -54,8 +64,37 @@ async function checkedExec(
   operation: string,
 ) {
   const result = await execCommand(container, command, { timeout });
-  if (result.exitCode !== 0) throw new Error(`${operation} failed`);
+  if (result.exitCode !== 0) {
+    const reason = postgresFailureReason(result.stderr);
+    throw new Error(reason ? `${operation} failed: ${reason}` : `${operation} failed`);
+  }
   return result;
+}
+
+/**
+ * PostgreSQL's own reason for a failure, for errors, restore events and logs: "failed" alone cannot be diagnosed.
+ * Only its ERROR/FATAL/PANIC lines (and pg_dump's or psql's own `error:` lines) are kept, the last two, bounded. The
+ * DETAIL, CONTEXT and HINT lines are dropped: while a dump is applied they quote rows (`Key (email)=(…)`, a COPY
+ * line). Statements carrying a credential never come through here (they run from a private file).
+ */
+export function postgresFailureReason(stderr: string): string {
+  return stderr.split('\n')
+    .map(line => line.trim())
+    .filter(line => /^(?:psql:\S*:\d+: )?(?:ERROR|FATAL|PANIC):|^(?:pg_dump|pg_restore|psql): error:/.test(line))
+    .slice(-2)
+    .map(line => line.length > 300 ? `${line.slice(0, 300)}…` : line)
+    .join(' ');
+}
+
+/**
+ * Drop a database even while clients hold or reopen connections. `WITH (FORCE)` locks the database
+ * before it ends their sessions, so a client that reconnects at once (a pool) cannot slip in between a
+ * separate terminate and the drop, which failed "is being accessed by other users" (PostgreSQL 13+).
+ */
+async function dropDatabaseForced(container: string, maintenance: string[], database: string): Promise<void> {
+  await checkedExec(container, [
+    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${quotedIdentifier(database, 'Database name')} WITH (FORCE)`,
+  ], 30_000, `Drop PostgreSQL database ${database}`);
 }
 
 export async function dumpPostgresDatabase(options: {
@@ -135,16 +174,9 @@ export async function replacePlatformDatabase(databaseInput: string, dump: Buffe
   const database = checkedIdentifier(databaseInput, 'Database name');
   const databaseIdentifier = quotedIdentifier(database, 'Database name');
   const adminIdentifier = quotedIdentifier(PLATFORM_POSTGRES_ADMIN, 'Database owner');
-  const databaseLiteral = sqlLiteral(database);
   const maintenance = ['psql', '--username', PLATFORM_POSTGRES_ADMIN, '--dbname', 'postgres', '--set', 'ON_ERROR_STOP=1'];
 
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance,
-    '--command', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${databaseLiteral}' AND pid <> pg_backend_pid()`,
-  ], 10_000, `Terminate PostgreSQL clients for ${database}`);
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${databaseIdentifier}`,
-  ], 10_000, `Drop PostgreSQL database ${database}`);
+  await dropDatabaseForced(PLATFORM_POSTGRES_CONTAINER, maintenance, database);
   await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
     ...maintenance, '--command', `CREATE DATABASE ${databaseIdentifier} OWNER ${adminIdentifier}`,
   ], 10_000, `Create PostgreSQL database ${database}`);
@@ -178,15 +210,9 @@ export async function listRestoredAppCredentialIds(): Promise<string[]> {
 export async function dropPlatformAppDatabase(options: { database: string; user: string }): Promise<void> {
   const database = checkedIdentifier(options.database, 'App database name');
   const user = checkedIdentifier(options.user, 'App database user');
-  if (isPlatformDatabase(database) || user === PLATFORM_POSTGRES_ADMIN) throw new Error('Refusing to drop a platform database');
+  if (isReservedDatabase(database) || isPlatformRole(user)) throw new Error('Refusing to drop a platform database');
   const maintenance = ['psql', '--username', PLATFORM_POSTGRES_ADMIN, '--dbname', 'postgres', '--set', 'ON_ERROR_STOP=1'];
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance,
-    '--command', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${sqlLiteral(database)}' AND pid <> pg_backend_pid()`,
-  ], 10_000, `Terminate PostgreSQL clients for ${database}`);
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${quotedIdentifier(database, 'App database name')}`,
-  ], 10_000, `Drop PostgreSQL database ${database}`);
+  await dropDatabaseForced(PLATFORM_POSTGRES_CONTAINER, maintenance, database);
   await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
     ...maintenance, '--command', `DROP ROLE IF EXISTS ${quotedIdentifier(user, 'App database user')}`,
   ], 10_000, `Drop PostgreSQL role ${user}`);
@@ -214,19 +240,15 @@ export async function replacePlatformAppDatabase(options: {
 }): Promise<void> {
   const database = checkedIdentifier(options.database, 'App database name');
   const user = checkedIdentifier(options.user, 'App database user');
+  // An app's backup names its database and role; a corrupt or hostile one must not name the platform's, which this
+  // would FORCE-drop (the Control Panel's own database) and replace.
+  if (isReservedDatabase(database) || isPlatformRole(user)) throw new Error('Refusing to replace a platform database');
   const ownerSessionPolicy = restoredAppOwnerSessionPolicy(user);
   const databaseIdentifier = quotedIdentifier(database, 'App database name');
   const userIdentifier = quotedIdentifier(user, 'App database user');
-  const databaseLiteral = sqlLiteral(database);
   const maintenance = ['psql', '--username', PLATFORM_POSTGRES_ADMIN, '--dbname', 'postgres', '--set', 'ON_ERROR_STOP=1'];
 
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance,
-    '--command', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${databaseLiteral}' AND pid <> pg_backend_pid()`,
-  ], 10_000, `Terminate PostgreSQL clients for ${database}`);
-  await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
-    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${databaseIdentifier}`,
-  ], 10_000, `Drop PostgreSQL database ${database}`);
+  await dropDatabaseForced(PLATFORM_POSTGRES_CONTAINER, maintenance, database);
   await checkedExec(PLATFORM_POSTGRES_CONTAINER, [
     ...maintenance, '--command', `DROP ROLE IF EXISTS ${userIdentifier}`,
   ], 10_000, `Drop PostgreSQL role ${user}`);
@@ -277,7 +299,6 @@ export async function restoreOwnPostgresDatabase(options: {
   if (admin !== user && !options.password) throw new Error('Application database owner credential is unavailable');
   const databaseIdentifier = quotedIdentifier(database, 'App database name');
   const userIdentifier = quotedIdentifier(user, 'App database user');
-  const databaseLiteral = sqlLiteral(database);
   const maintenance = ['psql', '--username', admin, '--dbname', 'postgres', '--set', 'ON_ERROR_STOP=1'];
 
   if (admin !== user) {
@@ -300,13 +321,7 @@ export async function restoreOwnPostgresDatabase(options: {
     }
   }
 
-  await checkedExec(options.container, [
-    ...maintenance,
-    '--command', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${databaseLiteral}' AND pid <> pg_backend_pid()`,
-  ], 10_000, `Terminate PostgreSQL clients for ${database}`);
-  await checkedExec(options.container, [
-    ...maintenance, '--command', `DROP DATABASE IF EXISTS ${databaseIdentifier}`,
-  ], 10_000, `Drop PostgreSQL database ${database}`);
+  await dropDatabaseForced(options.container, maintenance, database);
   await checkedExec(options.container, [
     ...maintenance, '--command', `CREATE DATABASE ${databaseIdentifier} OWNER ${userIdentifier}`,
   ], 10_000, `Create PostgreSQL database ${database}`);

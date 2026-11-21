@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth/rbac';
+import { requireAdmin, requireAdminCsrf } from '@/lib/auth/rbac';
 import { planSystemUpdates, updateSystemContainer } from '@/lib/infrastructure/system-updater';
 import { assertNoCriticalIssues } from '@/lib/health/issues';
+import { withPlatformLifecycle, withUserOperationLockWait } from '@/lib/market/update-admission';
 import type { DeploymentEvent } from '@/lib/infrastructure/types';
 
 export const dynamic = 'force-dynamic';
@@ -23,7 +24,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireAdminCsrf(request);
   if (auth.error) return auth.error;
 
   let body: {
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        const result = await updateSystemContainer(
+        const update = () => updateSystemContainer(
           {
             systemId: body.systemId!,
             hostIP,
@@ -91,6 +92,9 @@ export async function POST(request: NextRequest) {
           },
           sendEvent,
         );
+        // A rebuild stops and recreates a critical container: it holds the platform lifecycle, so a System update and
+        // Spine's Control Panel restart wait for it instead of cutting it off midway. A dry run only plans.
+        const result = body.dryRun ? await update() : await withUserOperationLockWait(() => withPlatformLifecycle(update));
 
         sendEvent({
           step: 0,

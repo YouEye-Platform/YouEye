@@ -57,7 +57,7 @@ export async function configureControlPanelIdentitySSO(params: {
     internal_url: 'http://127.0.0.1:3001',
     identity_internal_url: 'http://127.0.0.1:3001',
     control_url: params.controlExternalUrl,
-  }, false);
+  });
 
   return client;
 }

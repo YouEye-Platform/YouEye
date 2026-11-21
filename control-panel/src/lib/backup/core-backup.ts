@@ -24,6 +24,7 @@ import { appServiceCredentials } from '@/lib/apps/service-credential-store';
 import { getRoutes, getConfig as getCaddyConfig } from '@/lib/caddy/client';
 import type {
   CoreBackupConfig,
+  BackupEncryption,
   BackupEvent,
   BackupEventCallback,
 } from './types';
@@ -105,7 +106,7 @@ async function stageAppNetworkRecoveryState(stagingDir: string): Promise<void> {
 export async function backupCore(
   config: CoreBackupConfig,
   onEvent: BackupEventCallback
-): Promise<void> {
+): Promise<BackupEncryption | undefined> {
   return runWithBackupAdmission(
     () => withPairedPointerBackup(() => backupCoreUnderLifecycle(config, onEvent)),
     // An app with an unfinished update is frozen by its record (every writer refuses it), so its state can't change
@@ -118,7 +119,8 @@ export async function backupCore(
   );
 }
 
-async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: BackupEventCallback): Promise<void> {
+/** Returns how Spine encrypted the archive (undefined from a Spine that does not say: the parameters before 0.6.15). */
+async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: BackupEventCallback): Promise<BackupEncryption | undefined> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const stagingDir = path.join(STAGING_BASE, `core-${timestamp}`);
 
@@ -184,6 +186,8 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
     // ── Step 3: Build installed-apps.json ──────────────────
     emit('installed-apps', 'Building installed apps manifest...');
     try {
+      // Every app, including one skipped for an unfinished update (no archive in this set): the restored databases
+      // still register it, and a restore clears the registrations of the apps it brings back no archive for.
       const installedApps = await listInstalledApps();
       await writeFile(
         path.join(stagingDir, 'installed-apps.json'),
@@ -293,6 +297,7 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
     const backupId = spineResult.backup_id;
     let completed = false;
     let terminalError = '';
+    let encryption: BackupEncryption | undefined;
     const pollInterval = 2000;
     const maxPollTime = 30 * 60 * 1000;
     const startTime = Date.now();
@@ -315,6 +320,7 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
 
         if (status.status === 'completed') {
           completed = true;
+          encryption = status.encryption;
           emit('completed', 'Core platform backup completed successfully', 'completed');
           onEvent({
             step: totalSteps,
@@ -361,6 +367,7 @@ async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: Backu
       });
       throw new Error('Core backup timed out after 30 minutes');
     }
+    return encryption;
   } finally {
     // Clean up staging directory
     try {

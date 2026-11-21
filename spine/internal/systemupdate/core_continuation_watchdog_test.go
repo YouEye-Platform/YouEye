@@ -70,8 +70,10 @@ func lostContinuationFixture(t *testing.T) (CoreManager, CoreJournal, *CoreConti
 }
 
 // The new continuation died right after the hand-over: its continuation is
-// started again, once for that death.
-func TestCoreWatchdogRestartsALostContinuationOnce(t *testing.T) {
+// started again. A continuation that dies again without changing the journal
+// gets coreWatchdogAttempts starts in all, each after another idle time, and
+// is then left for a person.
+func TestCoreWatchdogRestartsALostContinuationAFewTimes(t *testing.T) {
 	m, j, w, starts := lostContinuationFixture(t)
 	before := coreTreeSnapshot(t, m.Root)
 	command, err := w.Check(context.Background())
@@ -85,16 +87,29 @@ func TestCoreWatchdogRestartsALostContinuationOnce(t *testing.T) {
 	if after := coreTreeSnapshot(t, m.Root); !reflect.DeepEqual(before, after) {
 		t.Fatal("the watchdog changed the state directory itself")
 	}
-	// The same death, however often it looks and however long it lasts.
-	watchdogQuiet(t, w, starts, "the same death", 7*time.Minute, time.Hour, 48*time.Hour)
-	// A failed start is not repeated either.
+	// The same death: the next start only after another idle time, with another command ID.
+	seen := map[string]bool{command: true}
+	at := 6 * time.Minute
+	for attempt := 2; attempt <= coreWatchdogAttempts; attempt++ {
+		watchdogQuiet(t, w, starts, "the same death, too early", at+time.Minute, at+5*time.Minute-time.Second)
+		at += 5 * time.Minute
+		watchdogAt(w, at)
+		command, err := w.Check(context.Background())
+		if err != nil || command == "" || seen[command] || !coreRequestPattern.MatchString(command) || len(starts.calls) != attempt {
+			t.Fatalf("attempt %d: %q %v %v", attempt, command, err, starts.calls)
+		}
+		seen[command] = true
+	}
+	// Not for ever.
+	watchdogQuiet(t, w, starts, "the same death after the last attempt", at+5*time.Minute, at+time.Hour, 48*time.Hour)
+	// A failed start counts as an attempt and is not repeated at once.
 	_, _, w, starts = lostContinuationFixture(t)
 	starts.err = fmt.Errorf("continuation acknowledgement unavailable")
 	if command, err := w.Check(context.Background()); command == "" || err == nil {
 		t.Fatalf("failed start: %q %v", command, err)
 	}
 	if again, _ := w.Check(context.Background()); again != "" || len(starts.calls) != 1 {
-		t.Fatalf("a failed start was repeated: %v", starts.calls)
+		t.Fatalf("a failed start was repeated at once: %v", starts.calls)
 	}
 }
 
@@ -132,27 +147,35 @@ func TestCoreWatchdogLaunchesOneContinuationUnitPerJournalState(t *testing.T) {
 	if !reflect.DeepEqual(tail, []string{"/usr/local/bin/youeye", "update", "core", "resume", "--request", j.RequestID}) {
 		t.Fatalf("the unit runs %v", tail)
 	}
-	// A watchdog without that memory over the same journal state (for the sake of the test: a restarted API
-	// service leaves this state alone, below): the same command ID, which the runner's retained receipt refuses
-	// to launch a second time.
-	fresh := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: runner.Start, looked: true}
-	watchdogAt(fresh, 6*time.Minute)
-	if command, err := fresh.Check(context.Background()); command != "" || err != nil {
-		t.Fatalf("acted on a state it saw for the first time: %q %v", command, err)
-	}
-	watchdogAt(fresh, 12*time.Minute)
-	second, err := fresh.Check(context.Background())
-	if err != nil || second != first || len(launches) != 1 {
-		t.Fatalf("a second launch for the same death: %q/%q %v launches=%d", first, second, err, len(launches))
-	}
-	// In fact a restarted API service does not even ask: the journal state was there when it started.
-	restarted := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: runner.Start}
-	for _, d := range []time.Duration{6 * time.Minute, 12 * time.Minute, 48 * time.Hour} {
-		watchdogAt(restarted, d)
-		if command, err := restarted.Check(context.Background()); command != "" || err != nil || len(launches) != 1 {
-			t.Fatalf("a restarted API service acted on the journal state it found: %q %v", command, err)
+	// A restarted API service has no memory of that start, and the journal state was there when it started. It
+	// watches the state for its own idle time and then makes the next attempt: the runner's retained receipts
+	// count the attempts, so no command ID is launched twice and the bound holds across restarts.
+	w.Delivered = runner.Delivered
+	commands := map[string]bool{first: true}
+	for attempt := 2; attempt <= coreWatchdogAttempts+1; attempt++ {
+		restarted := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: runner.Start, Delivered: runner.Delivered}
+		for _, d := range []time.Duration{6 * time.Minute, 11*time.Minute - time.Second} {
+			watchdogAt(restarted, d)
+			if command, err := restarted.Check(context.Background()); command != "" || err != nil {
+				t.Fatalf("a restarted API service acted before it had watched the state for the idle time: %q %v", command, err)
+			}
 		}
+		watchdogAt(restarted, 11*time.Minute)
+		command, err := restarted.Check(context.Background())
+		if attempt > coreWatchdogAttempts {
+			watchdogAt(restarted, 48*time.Hour)
+			late, _ := restarted.Check(context.Background())
+			if command != "" || late != "" || err != nil || len(launches) != coreWatchdogAttempts {
+				t.Fatalf("more than %d continuations for one journal state: %q %q %v launches=%d", coreWatchdogAttempts, command, late, err, len(launches))
+			}
+			break
+		}
+		if err != nil || command == "" || commands[command] || len(launches) != attempt {
+			t.Fatalf("a restarted API service did not pick up the state it found (attempt %d): %q %v launches=%d", attempt, command, err, len(launches))
+		}
+		commands[command] = true
 	}
+	launched := len(launches)
 	// The continuation moved the request on and was lost again later: a new death, one more start.
 	m.Now = func() time.Time { return watchdogChanged.Add(10 * time.Minute) }
 	current, err := m.Read()
@@ -171,19 +194,8 @@ func TestCoreWatchdogLaunchesOneContinuationUnitPerJournalState(t *testing.T) {
 	}
 	watchdogAt(w, 16*time.Minute)
 	third, err := w.Check(context.Background())
-	if err != nil || third == "" || third == first || len(launches) != 2 {
+	if err != nil || third == "" || commands[third] || len(launches) != launched+1 {
 		t.Fatalf("a later death: %q %v launches=%d", third, err, len(launches))
-	}
-	// The restarted API service picks that one up too: it is not the state it found.
-	for _, d := range []time.Duration{50 * time.Hour, 50*time.Hour + 4*time.Minute} {
-		watchdogAt(restarted, d)
-		if command, _ := restarted.Check(context.Background()); command != "" {
-			t.Fatal("acted before the new state had waited long enough")
-		}
-	}
-	watchdogAt(restarted, 50*time.Hour+5*time.Minute)
-	if command, err := restarted.Check(context.Background()); err != nil || command != third || len(launches) != 2 {
-		t.Fatalf("the later death, seen by the restarted service: %q/%q %v launches=%d", third, command, err, len(launches))
 	}
 }
 
@@ -282,12 +294,15 @@ func TestCoreWatchdogLeavesALongRunningStepAlone(t *testing.T) {
 	watchdogQuiet(t, w, starts, "a step is started and no command is seen", 3*time.Hour+time.Minute, 4*time.Hour, 48*time.Hour)
 }
 
-// The journal state that was there when the API service started belongs to the
-// boot path, whatever the clocks say. Here the box booted with its clock
-// behind the journal's last write (no RTC battery) and NTP corrected it a
-// minute later: the boot unit, which waits for Incus, has not started yet, so
-// no `update core` command runs.
-func TestCoreWatchdogLeavesTheStateFoundAtStartToTheBootPath(t *testing.T) {
+// A journal state that was already there when the API service started is
+// watched like any other, from the first look on and whatever the clocks say
+// (here the box booted with its clock behind the journal's last write and NTP
+// corrected it a minute later). After a boot the boot unit continues it first;
+// while that runs the watchdog waits. When the boot unit failed (its release
+// was refused, Incus was still busy) or only the service was restarted, the
+// watchdog is the one that is left: before 0.6.15 it never touched such a
+// state and the box stayed closed.
+func TestCoreWatchdogPicksUpTheStateFoundAtStart(t *testing.T) {
 	behind := time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC).Sub(watchdogChanged)
 	arrange := map[string]func(*testing.T, CoreManager, CoreJournal, *CoreContinuationWatchdog){
 		"a held service update between two steps": func(*testing.T, CoreManager, CoreJournal, *CoreContinuationWatchdog) {},
@@ -299,28 +314,20 @@ func TestCoreWatchdogLeavesTheStateFoundAtStartToTheBootPath(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m, j, w, starts := lostContinuationFixture(t)
 			arrange(t, m, j, w)
-			booted := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: starts.start}
-			watchdogQuiet(t, booted, starts, "a state from before the boot", behind, 10*time.Minute, 16*time.Minute, time.Hour, 48*time.Hour)
+			busy := true
+			booted := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: func() (bool, error) { return busy, nil }, Start: starts.start}
+			watchdogQuiet(t, booted, starts, "a state from before the boot, not watched long enough", behind, behind+time.Minute, behind+5*time.Minute-time.Second)
+			watchdogQuiet(t, booted, starts, "the boot unit is at work", behind+6*time.Minute, behind+20*time.Minute)
+			busy = false
+			watchdogAt(booted, behind+21*time.Minute)
+			if command, err := booted.Check(context.Background()); command == "" || err != nil || len(starts.calls) != 1 || starts.calls[0][0] != j.RequestID {
+				t.Fatalf("a state from before the boot was never picked up: %q %v %v", command, err, starts.calls)
+			}
 		})
-	}
-	// The boot unit continued the request and was lost later: that state is the watchdog's.
-	m, j, w, starts := lostContinuationFixture(t)
-	booted := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: starts.start}
-	watchdogQuiet(t, booted, starts, "a state from before the boot", behind, 10*time.Minute)
-	m.Now = func() time.Time { return watchdogChanged.Add(11 * time.Minute) }
-	j.Steps[3].State, j.Steps[3].Evidence = "succeeded", "fixture apply-cp"
-	if err := m.saveCore(&j); err != nil {
-		t.Fatal(err)
-	}
-	watchdogQuiet(t, booted, starts, "a new state", 12*time.Minute, 16*time.Minute)
-	watchdogAt(booted, 17*time.Minute)
-	if command, err := booted.Check(context.Background()); command == "" || err != nil || len(starts.calls) != 1 {
-		t.Fatalf("a continuation lost after the boot was not started again: %q %v", command, err)
 	}
 }
 
-// What "found at start" means when the first look finds no request, or cannot
-// read the one that is there.
+// The first look finds no request, or cannot read the one that is there.
 func TestCoreWatchdogFirstLook(t *testing.T) {
 	// No request when the API service started: the first request is watched from its first state on.
 	m, _, target := coreJournalFixture(t)
@@ -340,8 +347,7 @@ func TestCoreWatchdogFirstLook(t *testing.T) {
 		t.Fatalf("a request that began under this API service was not picked up: %q %v", command, err)
 	}
 
-	// An unreadable journal at the start says nothing. The first state that can be read is taken as the one
-	// that was there.
+	// An unreadable journal at the start says nothing. The first state that can be read is watched from then on.
 	m, j, lost, starts := lostContinuationFixture(t)
 	raw, err := os.ReadFile(filepath.Join(m.Root, "journal.json"))
 	if err != nil {
@@ -358,7 +364,11 @@ func TestCoreWatchdogFirstLook(t *testing.T) {
 	if current, err := m.Read(); err != nil || current.UpdatedAt != j.UpdatedAt {
 		t.Fatal(err)
 	}
-	watchdogQuiet(t, w, starts, "the first readable state", 2*time.Minute, 8*time.Minute, 48*time.Hour)
+	watchdogQuiet(t, w, starts, "the first readable state", 2*time.Minute, 7*time.Minute-time.Second)
+	watchdogAt(w, 7*time.Minute)
+	if command, err := w.Check(context.Background()); command == "" || err != nil {
+		t.Fatalf("the first readable state was never picked up: %q %v", command, err)
+	}
 }
 
 // The wait is the watchdog's own: the journal's change time is never read as
@@ -382,11 +392,10 @@ func TestCoreWatchdogWaitsByItsOwnLooks(t *testing.T) {
 	}
 }
 
-// Only a held service update that waits between two steps, or a finished
-// request with its holds in place (the tests below). Never a request that
-// needs recovery, is recovering, was only prepared, waits for a restart, has a
-// started or failed step, or has not reached its checkpoint; and never one
-// that has ended and holds nothing.
+// "Between two steps" is a held update with no step started or failed. Never a
+// request that was only prepared, waits for a restart, has not reached its
+// checkpoint, or has ended and holds nothing; and a started step is left alone
+// while nothing proves that its child is gone (this fixture has no ChildGone).
 func TestCoreWatchdogActsOnlyOnAHeldServiceUpdateBetweenSteps(t *testing.T) {
 	m, j, w, starts := lostContinuationFixture(t)
 	if !coreContinuationLost(j) {
@@ -407,6 +416,10 @@ func TestCoreWatchdogActsOnlyOnAHeldServiceUpdateBetweenSteps(t *testing.T) {
 	if !coreContinuationLost(change(succeed)) || !coreContinuationLost(change(func(c *CoreJournal) { c.Steps[3].State, c.Steps[3].Evidence = "succeeded", "fixture" })) {
 		t.Fatal("a later point between two steps is not recognised")
 	}
+	// An image update between two steps is watched too (until 0.6.14 only service updates were).
+	if !coreContinuationLost(change(func(c *CoreJournal) { c.RestartRequired = true })) {
+		t.Fatal("an image update between two steps is not recognised")
+	}
 	refused := map[string]CoreJournal{
 		"prepared":         change(func(c *CoreJournal) { c.Phase = "prepared" }),
 		"needs-recovery":   change(func(c *CoreJournal) { c.Phase, c.Steps[3].State = "needs-recovery", "failed" }),
@@ -419,9 +432,8 @@ func TestCoreWatchdogActsOnlyOnAHeldServiceUpdateBetweenSteps(t *testing.T) {
 		"a recovery graph": change(func(c *CoreJournal) {
 			c.RecoverySteps = []CoreStep{{Name: "recovery-fence", RequestID: c.RequestID + "/recovery-fence", State: "pending"}}
 		}),
-		"an update with a restart": change(func(c *CoreJournal) { c.RestartRequired = true }),
-		"a started step":           change(func(c *CoreJournal) { c.Steps[3].State = "started" }),
-		"a failed step":            change(func(c *CoreJournal) { c.Steps[3].State = "failed" }),
+		"a started step": change(func(c *CoreJournal) { c.Steps[3].State = "started" }),
+		"a failed step":  change(func(c *CoreJournal) { c.Steps[3].State = "failed" }),
 		"the checkpoint is started": change(func(c *CoreJournal) {
 			for i := 1; i < len(c.Steps); i++ {
 				c.Steps[i].State, c.Steps[i].Evidence = "pending", ""
@@ -440,7 +452,8 @@ func TestCoreWatchdogActsOnlyOnAHeldServiceUpdateBetweenSteps(t *testing.T) {
 		}
 	}
 	// From the journal on disk, for the states the journal's own validation accepts.
-	for _, name := range []string{"needs-recovery", "cancelled", "a started step", "a failed step", "before the checkpoint (the Control Panel is up)", "the checkpoint is started", "committed", "prepared"} {
+	// (A request that needs recovery is the watchdog's too: TestCoreWatchdogResumesWhatNobodyIsBehind.)
+	for _, name := range []string{"cancelled", "a started step", "before the checkpoint (the Control Panel is up)", "the checkpoint is started", "committed", "prepared"} {
 		c := refused[name]
 		if err := m.saveCore(&c); err != nil {
 			t.Fatal(name, err)
@@ -538,7 +551,7 @@ func finishHeldFixture(t *testing.T, m CoreManager, j CoreJournal, w *CoreContin
 // The coordinator recorded the end of the request and ended before, or while,
 // it released the holds: the ingress gate and the lifecycle reservation stay,
 // and `update core resume` does the release. Its continuation is started
-// again, once, at every point the release can stop at.
+// again at every point the release can stop at.
 func TestCoreWatchdogStartsTheReleaseOfAFinishedRequestThatStillHolds(t *testing.T) {
 	for _, phase := range []string{"committed", "rolled-back"} {
 		for _, completion := range []string{"", "releasing", "ready"} {
@@ -558,8 +571,74 @@ func TestCoreWatchdogStartsTheReleaseOfAFinishedRequestThatStillHolds(t *testing
 				if after := [2]map[string]string{coreTreeSnapshot(t, m.Root), coreTreeSnapshot(t, w.Lifecycle)}; !reflect.DeepEqual(before, after) {
 					t.Fatal("the watchdog changed the state or lifecycle directory itself")
 				}
-				// A release that fails again leaves the journal as it is: left for a person.
-				watchdogQuiet(t, w, starts, "the same finished state", 16*time.Minute, time.Hour, 48*time.Hour)
+				// A release that fails again leaves the journal as it is: it is started again after
+				// another idle time, coreWatchdogAttempts times in all.
+				watchdogQuiet(t, w, starts, "the same finished state, too early", 16*time.Minute, 20*time.Minute-time.Second)
+				for attempt, at := 2, 20*time.Minute; attempt <= coreWatchdogAttempts; attempt, at = attempt+1, at+5*time.Minute {
+					watchdogAt(w, at)
+					if command, err := w.Check(context.Background()); command == "" || err != nil || len(starts.calls) != attempt {
+						t.Fatalf("attempt %d at the release: %q %v", attempt, command, err)
+					}
+				}
+				// After those the release is tried again every Slow, without end: it changes nothing
+				// when it fails, and until it succeeds the Control Panel stays closed. Until 0.6.15
+				// the box stayed closed until the next reboot.
+				// The slow attempts are one delivery made again and again: before each, what the last
+				// one left (its unit, its receipt) is forgotten, so a box that stays closed for weeks
+				// does not keep one more of each every half hour.
+				last := 25 * time.Minute
+				delivered := map[string]bool{}
+				for _, call := range starts.calls {
+					delivered[call[1]] = true
+				}
+				w.Delivered = func(_, command string) bool { return delivered[command] }
+				forgotten := []string{}
+				w.Forget = func(_ context.Context, request, command string) error {
+					if request != j.RequestID || !delivered[command] {
+						t.Errorf("forgot %q of %q, which was not delivered", command, request)
+					}
+					forgotten = append(forgotten, command)
+					delete(delivered, command)
+					return nil
+				}
+				slow := ""
+				for attempt := coreWatchdogAttempts + 1; attempt <= coreWatchdogAttempts+4; attempt++ {
+					watchdogQuiet(t, w, starts, "a slow release, too early", last+5*time.Minute, last+coreWatchdogSlow-time.Second)
+					last += coreWatchdogSlow
+					watchdogAt(w, last)
+					command, err := w.Check(context.Background())
+					if command == "" || err != nil || delivered[command] || len(starts.calls) != attempt || w.Why() != coreWatchdogNotReleased {
+						t.Fatalf("slow attempt %d at the release: %q %v %v", attempt, command, err, starts.calls)
+					}
+					if slow != "" && command != slow {
+						t.Fatalf("slow attempt %d has its own command ID %q, not %q", attempt, command, slow)
+					}
+					slow = command
+					delivered[command] = true
+				}
+				if len(delivered) != coreWatchdogAttempts+1 || len(forgotten) != 3 {
+					t.Fatalf("receipts kept after four slow attempts: %d, forgotten: %v", len(delivered), forgotten)
+				}
+				// A new API service counts the retained deliveries and keeps the slow pace.
+				next := &CoreContinuationWatchdog{Root: w.Root, Lifecycle: w.Lifecycle, Idle: w.Idle, Coordinating: w.Coordinating, Start: starts.start,
+					Delivered: w.Delivered, Forget: w.Forget}
+				watchdogQuiet(t, next, starts, "a new service, the slow release too early", last+time.Minute, last+7*time.Minute, last+time.Minute+coreWatchdogSlow-time.Second)
+				watchdogAt(next, last+time.Minute+coreWatchdogSlow)
+				if command, err := next.Check(context.Background()); command != slow || err != nil || len(starts.calls) != coreWatchdogAttempts+5 || len(forgotten) != 4 {
+					t.Fatalf("a new service did not go on releasing: %q %v", command, err)
+				}
+				// A unit that cannot be removed: nothing is started, the log says so, and the next look tries again.
+				delivered[slow] = true
+				next.Forget = func(context.Context, string, string) error { return fmt.Errorf("the continuation still runs") }
+				watchdogAt(next, last+time.Minute+2*coreWatchdogSlow)
+				if command, err := next.Check(context.Background()); command != slow || err == nil || len(starts.calls) != coreWatchdogAttempts+5 {
+					t.Fatalf("a slow attempt over a unit that could not be removed: %q %v", command, err)
+				}
+				next.Forget = w.Forget
+				watchdogAt(next, last+2*time.Minute+2*coreWatchdogSlow)
+				if command, err := next.Check(context.Background()); command != slow || err != nil || len(starts.calls) != coreWatchdogAttempts+6 {
+					t.Fatalf("the look after that: %q %v", command, err)
+				}
 			})
 		}
 	}
@@ -787,7 +866,7 @@ func TestCoreWatchdogReleaseOfACommittedRequestEndToEnd(t *testing.T) {
 		}
 	}
 	// Released: the watchdog has nothing to see, also with a new memory; and a second `resume` changes nothing.
-	w.handled = ""
+	w.attempts = nil
 	watchdogQuiet(t, w, starts, "a released request", 16*time.Minute, 21*time.Minute, 48*time.Hour)
 	before := effects
 	if evidence, err := p.ReleaseCompleted(ctx, j.RequestID); err != nil || evidence != "retained exact platform release receipt" || effects != before {
@@ -835,5 +914,249 @@ func TestCoreCommandRunningReadsEveryProcess(t *testing.T) {
 	// The real one, on this machine: readable, and this test is not a System update command.
 	if _, err := CoreCommandRunning("/proc"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// rewriteJournal saves the journal again, as a continuation that fails over a
+// started step or a recovery does: the content is the same, the change time new.
+func rewriteJournal(t *testing.T, m *CoreManager, j CoreJournal, at time.Duration) {
+	t.Helper()
+	m.Now = func() time.Time { return watchdogChanged.Add(at) }
+	if err := m.saveCore(&j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Read(); err != nil {
+		t.Fatalf("the fixture journal is not valid: %v", err)
+	}
+}
+
+// Requests nobody is behind, past their checkpoint, with the Control Panel
+// closed: a started step whose coordinator and action child are both gone, a
+// request that needs recovery, a recovery that stopped half-way. Until 0.6.14
+// the watchdog left all three for a reboot or a person. Their continuations
+// rewrite the journal when they fail, so the attempts are counted per request
+// and step: three in all, however often the journal changes.
+func TestCoreWatchdogResumesWhatNobodyIsBehind(t *testing.T) {
+	recovery := func(c *CoreJournal, states ...string) {
+		c.Phase = "recovering"
+		c.Steps[3].State = "failed"
+		for i, name := range coreRecoveryNames(*c) {
+			step := CoreStep{Name: name, RequestID: c.RequestID + "/" + name, State: states[i]}
+			if step.State == "succeeded" {
+				step.Evidence = "fixture"
+			}
+			c.RecoverySteps = append(c.RecoverySteps, step)
+		}
+	}
+	for _, tc := range []struct {
+		name, why string
+		edit      func(*CoreJournal)
+		started   bool // the state has a started step: the child must be gone first
+	}{
+		{"a started step", coreWatchdogStepLost, func(c *CoreJournal) { c.Steps[3].State = "started" }, true},
+		{"needs recovery after a failed step", coreWatchdogNeedsRecover, func(c *CoreJournal) { c.Phase, c.Steps[3].State = "needs-recovery", "failed" }, false},
+		{"a failed step under applying", coreWatchdogNeedsRecover, func(c *CoreJournal) { c.Steps[3].State = "failed" }, false},
+		{"needs recovery over an uncertain step", coreWatchdogNeedsRecover, func(c *CoreJournal) { c.Phase, c.Steps[3].State = "needs-recovery", "started" }, true},
+		{"a recovery between two steps", coreWatchdogRecoveryLost, func(c *CoreJournal) { recovery(c, "succeeded", "pending", "pending") }, false},
+		{"a recovery with a started step", coreWatchdogRecoveryLost, func(c *CoreJournal) { recovery(c, "succeeded", "started", "pending") }, true},
+		{"a recovery marked uncertain", coreWatchdogRecoveryLost, func(c *CoreJournal) {
+			recovery(c, "succeeded", "started", "pending")
+			c.Phase = "needs-recovery"
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, j, w, starts := lostContinuationFixture(t)
+			j.Steps = append([]CoreStep(nil), j.Steps...)
+			tc.edit(&j)
+			gone := false
+			w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return gone }
+			rewriteJournal(t, &m, j, 10*time.Minute)
+			if tc.started {
+				watchdogQuiet(t, w, starts, "the action child may still run", 10*time.Minute, 16*time.Minute, time.Hour)
+				w.ChildGone = nil
+				watchdogQuiet(t, w, starts, "nothing says whether the child runs", 2*time.Hour)
+				w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return gone }
+			} else {
+				watchdogQuiet(t, w, starts, "not watched long enough", 10*time.Minute, 15*time.Minute-time.Second)
+			}
+			gone = true
+			busy := true
+			w.Coordinating = func() (bool, error) { return busy, nil }
+			watchdogQuiet(t, w, starts, "a command is at work", 3*time.Hour)
+			busy = false
+			at := 4 * time.Hour
+			commands := map[string]bool{}
+			for attempt := 1; attempt <= coreWatchdogAttempts; attempt++ {
+				watchdogAt(w, at)
+				command, err := w.Check(context.Background())
+				if err != nil || command == "" || commands[command] || len(starts.calls) != attempt || w.Why() != tc.why {
+					t.Fatalf("attempt %d: %q %v why=%q calls=%v", attempt, command, err, w.Why(), starts.calls)
+				}
+				commands[command] = true
+				// The continuation failed again and rewrote the journal.
+				rewriteJournal(t, &m, j, at+time.Minute)
+				watchdogQuiet(t, w, starts, "the rewritten state, too early", at+time.Minute, at+6*time.Minute-time.Second)
+				at += 10 * time.Minute
+			}
+			watchdogQuiet(t, w, starts, "after the last attempt", at, at+time.Hour, at+48*time.Hour)
+		})
+	}
+
+	// Never: a recovery with a failed step (it is never run again), a step that reboots the machine, and a
+	// checkpoint whose admission ended early (the Control Panel is open).
+	for name, edit := range map[string]func(*CoreJournal){
+		"a failed recovery step": func(c *CoreJournal) { recovery(c, "succeeded", "failed", "pending"); c.Phase = "needs-recovery" },
+		"the checkpoint is started and has no record": func(c *CoreJournal) {
+			for i := 1; i < len(c.Steps); i++ {
+				c.Steps[i].State, c.Steps[i].Evidence = "pending", ""
+			}
+			c.Steps[1].State = "started"
+		},
+	} {
+		m, j, w, starts := lostContinuationFixture(t)
+		j.Steps = append([]CoreStep(nil), j.Steps...)
+		edit(&j)
+		w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return true }
+		rewriteJournal(t, &m, j, 10*time.Minute)
+		watchdogQuiet(t, w, starts, name, 10*time.Minute, 16*time.Minute, 48*time.Hour)
+	}
+	// A step that restarts the machine is judged like any other: its child is gone once it has asked
+	// for the restart, and a box that is still up after the idle time, with nobody at work, is not
+	// restarting. Until 0.6.15 it was never judged and the box stayed held.
+	_, j, w, _ := lostContinuationFixture(t)
+	gone := false
+	w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return gone }
+	reboot := j
+	reboot.Steps = []CoreStep{{Name: "checkpoint", State: "succeeded"}, {Name: "activate-host", State: "started"}}
+	if why, _ := w.lost(context.Background(), reboot, "state", time.Hour); why != "" {
+		t.Fatalf("an activation that still runs was judged: %s", why)
+	}
+	gone = true
+	if why, key := w.lost(context.Background(), reboot, "state", time.Hour); why != coreWatchdogStepLost || key != j.RequestID+"\x00step\x00activate-host" {
+		t.Fatalf("a restart that did not happen was not judged: %q %q", why, key)
+	}
+	reboot.Phase = "recovering"
+	reboot.Steps = []CoreStep{{Name: "checkpoint", State: "succeeded"}, {Name: "activate-host", State: "failed"}}
+	reboot.RecoverySteps = []CoreStep{{Name: "recovery-fence", State: "succeeded"}, {Name: "recovery-host", State: "started"}}
+	if why, _ := w.lost(context.Background(), reboot, "state", time.Hour); why != coreWatchdogRecoveryLost {
+		t.Fatalf("a recovery restart that did not happen was not judged: %q", why)
+	}
+	// Processes that outlive the main process of a step's child: lost only after Lingering.
+	_, j, w, _ = lostContinuationFixture(t)
+	lingering := j
+	lingering.Steps = []CoreStep{{Name: "checkpoint", State: "succeeded"}, {Name: "apply-cp", State: "started"}}
+	w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return false }
+	if why, _ := w.lost(context.Background(), lingering, "state", 48*time.Hour); why != "" {
+		t.Fatalf("a step was judged without knowing its child: %s", why)
+	}
+	left := true
+	w.ChildLingering = func(context.Context, CoreJournal, CoreStep) bool { return left }
+	if why, _ := w.lost(context.Background(), lingering, "state", 6*w.Idle-time.Second); why != "" {
+		t.Fatalf("lingering processes were given up too early: %s", why)
+	}
+	if why, _ := w.lost(context.Background(), lingering, "state", 6*w.Idle); why != coreWatchdogStepLost {
+		t.Fatalf("lingering processes hold the step for ever: %q", why)
+	}
+	left = false
+	if why, _ := w.lost(context.Background(), lingering, "state", 48*time.Hour); why != "" {
+		t.Fatalf("a running child was judged: %s", why)
+	}
+	// A checkpoint that died after its first effect holds the platform: it is picked up.
+	m, j, w, starts := lostContinuationFixture(t)
+	j.Steps = append([]CoreStep(nil), j.Steps...)
+	for i := 1; i < len(j.Steps); i++ {
+		j.Steps[i].State, j.Steps[i].Evidence = "pending", ""
+	}
+	j.Steps[1].State = "started"
+	w.ChildGone = func(context.Context, CoreJournal, CoreStep) bool { return true }
+	if err := os.MkdirAll(filepath.Dir((NativeCoreCheckpoint{Root: m.Root}).recordPath(j.RequestID)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rewriteJournal(t, &m, j, 10*time.Minute)
+	watchdogQuiet(t, w, starts, "not watched long enough", 10*time.Minute)
+	watchdogAt(w, 16*time.Minute)
+	if command, err := w.Check(context.Background()); command == "" || err != nil || w.Why() != coreWatchdogStepLost {
+		t.Fatalf("a checkpoint that died half-way was not picked up: %q %v", command, err)
+	}
+}
+
+// A host step whose restart is owed is tried without end, like a release. NativeCoreRuntime.RebootAgain counts the
+// restarts it asked for in its own record and gives activate-host up after them; that takes three continuations
+// that each reach the record. Until 0.6.15 the watchdog started exactly three, and one that did not get that far
+// (here: it came within the wait after the last request) left the box held with a restart owed.
+func TestCoreWatchdogGoesOnAskingForAnOwedRestart(t *testing.T) {
+	for _, name := range []string{"activate-host", "recovery-host"} {
+		t.Run(name, func(t *testing.T) {
+			f := newOwedRebootFixture(t, name)
+			if name == "recovery-host" {
+				// What RecoverCoreHost recorded when it asked for the restart into the previous slot.
+				raw, _ := json.Marshal(coreHostRecovery{Schema: "youeye.core-host-recovery.v1", RequestID: f.journal.RequestID, ManifestSHA256: f.journal.ManifestSHA256, PreviousSHA256: f.journal.Previous.ManifestSHA256, ActiveSlot: "A", CandidateSlot: "B", State: "reboot-requested"})
+				path := filepath.Join(f.runtime.Root, "host-recovery", checksum([]byte(f.journal.RequestID))+".json")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := atomicWrite(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				f.runtime.Host.config.Run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+					if name == "systemctl" {
+						f.reboots++
+					}
+					return nil, nil
+				}
+			}
+			delivered := map[string]bool{}
+			var gaveUp error
+			continuations := 0
+			w := &CoreContinuationWatchdog{Root: f.runtime.Root, Lifecycle: filepath.Join(t.TempDir(), "state", "app-updates"), Idle: 5 * time.Minute,
+				Coordinating: func() (bool, error) { return false, nil },
+				ChildGone:    func(context.Context, CoreJournal, CoreStep) bool { return true },
+				Delivered:    func(_, command string) bool { return delivered[command] },
+				Forget:       func(_ context.Context, _, command string) error { delete(delivered, command); return nil },
+			}
+			// The continuation, as far as it matters here: coreHostStepUnknown asks RebootAgain.
+			w.Start = func(_ context.Context, request, command string) (CoreControlObservation, error) {
+				continuations++
+				delivered[command] = true
+				// Every second continuation comes too soon after the last request.
+				if continuations%2 == 0 {
+					f.age(t)
+				}
+				if _, err := f.again(t); err != nil {
+					gaveUp = err
+				}
+				return CoreControlObservation{RequestID: request, CommandID: command, State: "running"}, nil
+			}
+			watchdogAt(w, 0)
+			if command, err := w.Check(context.Background()); command != "" || err != nil {
+				t.Fatalf("the first look: %q %v", command, err)
+			}
+			at := 5 * time.Minute
+			for look := 0; look < 12 && gaveUp == nil; look++ {
+				watchdogAt(w, at)
+				if command, err := w.Check(context.Background()); command == "" || err != nil {
+					t.Fatalf("continuation %d at %s was not started: %q %v", continuations+1, at, command, err)
+				}
+				if continuations < coreWatchdogAttempts {
+					at += 5 * time.Minute
+				} else {
+					at += coreWatchdogSlow
+				}
+			}
+			if len(delivered) > coreWatchdogAttempts+1 {
+				t.Fatalf("%d receipts for %d continuations, want at most %d", len(delivered), continuations, coreWatchdogAttempts+1)
+			}
+			if name == "activate-host" {
+				// Two restarts asked for, then given up: the coordinator restores the previous release.
+				if gaveUp == nil || !strings.Contains(gaveUp.Error(), "did not happen") || f.reboots != coreOwedRebootRequests || continuations <= coreWatchdogAttempts {
+					t.Fatalf("the owed restart was not counted out: %v after %d continuations and %d restarts", gaveUp, continuations, f.reboots)
+				}
+				return
+			}
+			// A recovery has nothing to fall back to: its restart is asked for for as long as it is owed.
+			if gaveUp != nil || continuations != 12 || f.reboots < 5 {
+				t.Fatalf("the recovery's restart: %v after %d continuations and %d restarts", gaveUp, continuations, f.reboots)
+			}
+		})
 	}
 }

@@ -52,13 +52,7 @@ func runStatus() error {
 	// Host system
 	osRelease := getOSRelease()
 	fmt.Printf("Host System:     %s", osRelease)
-	upgrades := 0
-	if runtimeStatus.Capabilities.SystemUpdate {
-		upgrades = countUpgradablePackages()
-	}
-	if upgrades > 0 {
-		fmt.Printf(" - %d updates available", upgrades)
-	} else if !runtimeStatus.Capabilities.SystemUpdate {
+	if !runtimeStatus.Capabilities.SystemUpdate {
 		fmt.Print(" (system image)")
 	}
 	fmt.Println("")
@@ -192,11 +186,6 @@ func runStatus() error {
 		}
 	}
 
-	// Suggestions
-	if upgrades > 0 {
-		fmt.Println("Run 'youeye update system' to update host OS.")
-	}
-
 	return nil
 }
 
@@ -213,11 +202,7 @@ func writeStatusJSON(cfg *config.Config, runtimeStatus appliance.RuntimeStatus, 
 		},
 		"host": map[string]interface{}{
 			"os": getOSRelease(), "api_socket_present": pathExists(cfg.API.SocketPath),
-			"package_updates_supported": runtimeStatus.Capabilities.SystemUpdate,
 		},
-	}
-	if runtimeStatus.Capabilities.SystemUpdate {
-		status["host"].(map[string]interface{})["upgradeable_packages"] = countUpgradablePackages()
 	}
 	if runtimeStatus.Kind == appliance.RuntimeApplianceImage && manifest != nil {
 		persistent, err := appliance.InspectPersistentStatus(*manifest)
@@ -254,19 +239,6 @@ func getOSRelease() string {
 		}
 	}
 	return "Linux"
-}
-
-func countUpgradablePackages() int {
-	exec.Command("apt-get", "update", "-qq").Run()
-	out, err := exec.Command("apt", "list", "--upgradable", "-qq").Output()
-	if err != nil {
-		return 0
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return 0
-	}
-	return len(lines)
 }
 
 func getIncusVersion() string {

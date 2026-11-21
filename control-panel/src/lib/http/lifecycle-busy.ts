@@ -34,3 +34,18 @@ export async function userOperationResponse(label: string, work: () => Promise<N
       ?? NextResponse.json({ error: `${label} failed; the cause is in the Control Panel journal.` }, { status: 500 });
   }
 }
+
+/**
+ * A request refused where it takes the platform lifecycle (`holdPlatformLifecycle`, `withPlatformLifecycle`): busy
+ * after the user wait is 409 `operation_in_progress`; a System update, its recovery or an independent copy that owns
+ * the platform is 409 with its own reason (the admission error's message names no secret). Anything else: null.
+ */
+export function lifecycleRefusalResponse(error: unknown): NextResponse | null {
+  const busy = lifecycleBusyResponse(error);
+  if (busy) return busy;
+  if (error instanceof Error && error.name === 'AppLifecycleAdmissionError') {
+    const code = 'code' in error && typeof error.code === 'string' ? error.code : 'recovery_required';
+    return NextResponse.json({ error: error.message, code }, { status: 409 });
+  }
+  return null;
+}

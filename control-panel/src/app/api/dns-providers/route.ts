@@ -6,9 +6,7 @@ import { providerTokenExists } from '@/lib/dns-providers/secrets';
 
 export async function GET() {
   const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 
   const config = await getByoDnsProviderConfig();
   const hasToken = config ? await providerTokenExists(config.connectionId) : false;

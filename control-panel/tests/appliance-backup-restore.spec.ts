@@ -119,7 +119,7 @@ test('restore applies encrypted core and app volume maps before completion', () 
   assert.match(app, /validateOwnPostgresStorageContract/);
   assert.match(app, /Restored the encrypted database dump/);
   assert.match(app, /containerName !== container/);
-  assert.match(postgres, /DROP DATABASE IF EXISTS \$\{databaseIdentifier\}/);
+  assert.match(postgres, /DROP DATABASE IF EXISTS \$\{quotedIdentifier\(database, .Database name.\)\} WITH \(FORCE\)/);
   assert.match(app, /postInstallOwnDatabaseRestore/);
   assert.match(app, /waitForOperation\(response\.operation, 60\)/);
   assert.match(app, /startContainerAfterRestore/);

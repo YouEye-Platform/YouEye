@@ -73,7 +73,7 @@ func newCoreRunnerFixture(t *testing.T, action ...string) *coreRunnerFixture {
 		if program == "systemd-run" {
 			f.starts++
 			command := strings.Join(args, " ")
-			for _, expected := range []string{"--unit=" + unit, "--service-type=exec", "--remain-after-exit", "--property=KillMode=control-group", "--property=Restart=no", "--manifest-sha256 " + j.ManifestSHA256, "--request " + j.RequestID, "--action " + f.step.Name} {
+			for _, expected := range []string{"--unit=" + unit, "--service-type=exec", "--remain-after-exit", "--property=KillMode=control-group", "--property=Restart=no", "--property=StandardOutput=null", "--property=StandardError=journal", "--manifest-sha256 " + j.ManifestSHA256, "--request " + j.RequestID, "--action " + f.step.Name} {
 				if !strings.Contains(command, expected) {
 					t.Fatal("runner lost scope", expected)
 				}
@@ -445,5 +445,93 @@ func TestCoreRunnerRetainedEvidenceIsTheEffectError(t *testing.T) {
 	}
 	if got := done.runner.RetainedEvidence(done.journal, done.step); got != "" {
 		t.Fatalf("succeeded action reported a reason: %q", got)
+	}
+}
+
+// ChildGone is "yes" only on positive evidence: no unit, a unit without a main
+// process, a last word, or a launch in an earlier boot.
+func TestCoreRunnerChildGone(t *testing.T) {
+	ctx := context.Background()
+	f := newCoreRunnerFixture(t)
+	if !f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a step that was never launched has a child")
+	}
+	if _, err := f.runner.Start(ctx, f.journal, f.step); err != nil || f.starts != 1 {
+		t.Fatal(err, f.starts)
+	}
+	if f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a running child counted as gone")
+	}
+	running := f.runner.Capture
+	f.runner.Capture = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, fmt.Errorf("systemd does not answer")
+	}
+	if f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("an unobservable unit counted as gone")
+	}
+	f.runner.Capture = running
+	f.properties["ActiveState"], f.properties["SubState"], f.properties["MainPID"] = "failed", "failed", "0"
+	if !f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a killed child still counts as running")
+	}
+	// The unit is started with RemainAfterExit=yes: a process the child started
+	// can outlive its main process in the unit's cgroup. Until 0.6.15 ChildGone
+	// looked at MainPID alone, and the watchdog resumed over such a step.
+	f.runner.CgroupRoot = t.TempDir()
+	events := filepath.Join(f.runner.CgroupRoot, "system.slice", f.runner.unit(f.journal, f.step), "cgroup.events")
+	if err := os.MkdirAll(filepath.Dir(events), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, exited := range []string{"failed", "exited"} {
+		f.properties["ActiveState"], f.properties["SubState"] = "failed", exited
+		if exited == "exited" {
+			f.properties["ActiveState"] = "active"
+		}
+		if err := os.WriteFile(events, []byte("populated 1\nfrozen 0\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if f.runner.ChildGone(ctx, f.journal, f.step) || !f.runner.ChildLingering(ctx, f.journal, f.step) || f.runner.ChildState(ctx, f.journal, f.step) != CoreChildLingering {
+			t.Fatalf("%s: a child whose descendants still run counted as gone", exited)
+		}
+		if err := os.WriteFile(events, []byte("populated maybe\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if state := f.runner.ChildState(ctx, f.journal, f.step); state != CoreChildNotKnown {
+			t.Fatalf("%s: an unreadable cgroup is %q", exited, state)
+		}
+		if err := os.WriteFile(events, []byte("populated 0\nfrozen 0\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if !f.runner.ChildGone(ctx, f.journal, f.step) || f.runner.ChildLingering(ctx, f.journal, f.step) {
+			t.Fatalf("%s: an empty cgroup still counts as running", exited)
+		}
+	}
+	// A unit that systemd has collected, with processes left in its cgroup.
+	collected := f.properties
+	f.properties = map[string]string{"Id": f.runner.unit(f.journal, f.step), "LoadState": "not-found"}
+	if err := os.WriteFile(events, []byte("populated 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a collected unit with a populated cgroup counted as gone")
+	}
+	if err := os.RemoveAll(filepath.Dir(events)); err != nil {
+		t.Fatal(err)
+	}
+	if !f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a collected unit without a cgroup still counts as running")
+	}
+	f.properties = collected
+	if err := os.MkdirAll(filepath.Dir(events), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(events, []byte("populated 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A last word, or an earlier boot, needs no cgroup.
+	f.properties["ActiveState"], f.properties["SubState"], f.properties["MainPID"] = "active", "running", strconv.Itoa(os.Getpid())
+	f.boot = "22222222-2222-2222-2222-222222222222"
+	if !f.runner.ChildGone(ctx, f.journal, f.step) {
+		t.Fatal("a child of an earlier boot still counts as running")
 	}
 }

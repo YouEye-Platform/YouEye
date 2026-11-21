@@ -10,7 +10,7 @@ import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getAppInternalIdentityBase } from '@/lib/identity/issuer';
 import { installedRelease } from '@/lib/releases/installed-release';
-import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
+import { getAppBridgeGatewayIP, getAppNetworkLease } from '@/lib/incus/app-network';
 import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
 import type { AppManifest, InstallConfig, VariableContext } from './types';
@@ -123,11 +123,15 @@ export async function buildCanonicalContext(
 
   const identity = await getIdentityProviderConfig();
   let systemProxyHost = '';
+  let networkCidr: string | undefined;
   if (useProxyDevices) {
     systemProxyHost = await getAppBridgeGatewayIP(config.appId) || '';
     if (!systemProxyHost) {
       throw new Error(`Cannot build app network context for ${config.appId}: app bridge gateway not found`);
     }
+    // An installation keeps its lease; only a new installation (reinstall, restore) gets another, rendered afresh.
+    // No lease: ${app.network_cidr} stays unset, and a template that uses it fails to render (never renders '').
+    networkCidr = (await getAppNetworkLease(config.appId))?.cidr || undefined;
   }
   const identityInternalUrl = useProxyDevices && ssoResult
     ? getAppInternalIdentityBase(ssoResult.slug) || `http://${systemProxyHost}:3002`
@@ -156,6 +160,7 @@ export async function buildCanonicalContext(
       fqdn,
       url: appUrl,
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
+      ...(networkCidr ? { network_cidr: networkCidr } : {}),
     },
     sidecar,
     secret: {},

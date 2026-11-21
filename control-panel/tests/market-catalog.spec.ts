@@ -14,6 +14,7 @@ import { OFFICIAL_MARKET_ADDRESSES } from '../src/lib/market/source';
 import { appYAML, nativeFixture } from './fixtures/app-format';
 import { buildFixtureMarket } from './fixtures/market';
 import { marketWorld, root, withMarketState } from './fixtures/market-world';
+import { freeLifecycle } from './fixtures/free-lifecycle';
 
 const OFFICIAL = OFFICIAL_MARKET_ADDRESSES.main;
 const ICON = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>');
@@ -180,7 +181,7 @@ test('the install route refuses an app that needs a newer YouEye, with the reaso
       startTracking: () => new AbortController(), trackEvent() {}, finishTracking() {}, logOperationFailure() {},
       sanitiseInstallEvent: (event: unknown) => event, sensitivitySafeInstallError: () => 'failed',
     },
-    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/update-admission': freeLifecycle,
     '@/lib/health/notification-bridge': { sendNotificationToUI: async () => {} },
     '@/lib/events/emitter': { emitEvent() {} },
     '@/lib/settings': { settingsService: { getRaw: async () => ({ domain: 'box.example.test' }) } },

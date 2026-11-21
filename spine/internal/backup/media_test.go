@@ -1,11 +1,13 @@
 package backup
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseMediaExcludesSystemAndClassifiesBlankAndReady(t *testing.T) {
@@ -61,7 +63,7 @@ func TestRecoveryCatalogIsAtomicAndContainsNoRecoveryKey(t *testing.T) {
 
 func TestResticCommandKeepsRecoveryKeyOutOfArguments(t *testing.T) {
 	const recoveryKey = "test-only-recovery-key"
-	command := resticCommand("/var/lib/youeye/backups/media/test/.youeye/repository", recoveryKey, "check")
+	command := resticCommand(context.Background(), "/var/lib/youeye/backups/media/test/.youeye/repository", recoveryKey, "check")
 	if strings.Contains(strings.Join(command.Args, " "), recoveryKey) {
 		t.Fatal("recovery key was included in restic command arguments")
 	}
@@ -131,6 +133,8 @@ func TestPrepareMediaRereadsPartitionsWithApplianceTooling(t *testing.T) {
 	var rereadArgs []string
 	var resolveArgs []string
 	var inventoryCalls int
+	var afterMkfs []string
+	mkfsFailed := false
 	runMediaCommand = func(name string, args ...string) ([]byte, error) {
 		if name == "lsblk" {
 			if strings.Contains(strings.Join(args, " "), "--bytes") {
@@ -143,6 +147,10 @@ func TestPrepareMediaRereadsPartitionsWithApplianceTooling(t *testing.T) {
 			resolveArgs = append([]string(nil), args...)
 			return partitionTree, nil
 		}
+		if mkfsFailed {
+			afterMkfs = append(afterMkfs, name+" "+strings.Join(args, " "))
+			return nil, nil
+		}
 		if name == "blockdev" {
 			rereadArgs = append([]string(nil), args...)
 			return nil, nil
@@ -154,6 +162,7 @@ func TestPrepareMediaRereadsPartitionsWithApplianceTooling(t *testing.T) {
 			if strings.Join(args, " ") != "-F -L YOUEYE-BACKUP -- /dev/sdb1" {
 				t.Fatalf("unexpected mkfs arguments: %#v", args)
 			}
+			mkfsFailed = true
 			return []byte("expected stop"), errors.New("expected stop")
 		}
 		return nil, nil
@@ -168,6 +177,57 @@ func TestPrepareMediaRereadsPartitionsWithApplianceTooling(t *testing.T) {
 	}
 	if strings.Join(resolveArgs, " ") != "--json --tree --output PATH,TYPE /dev/sdb" {
 		t.Fatalf("partition resolution must request tree output: %#v", resolveArgs)
+	}
+	// A failed mkfs leaves a partition (and perhaps half a filesystem), which lists as a foreign drive and could
+	// never be prepared again: both are wiped, so the drive reads as blank.
+	want := []string{"wipefs --all -- /dev/sdb1", "wipefs --all -- /dev/sdb", "blockdev --rereadpt /dev/sdb", "udevadm settle"}
+	if strings.Join(afterMkfs, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("after a failed mkfs ran %#v, want %#v", afterMkfs, want)
+	}
+	if strings.Contains(err.Error(), "could not be cleared") {
+		t.Fatalf("a drive that was wiped must not be reported as not cleared: %v", err)
+	}
+}
+
+func TestPrepareMediaSaysWhenAFailedFormatCouldNotBeCleared(t *testing.T) {
+	previous := runMediaCommand
+	defer func() { runMediaCommand = previous }()
+	mediaID := stableMediaID(blockDevice{Serial: "test-backup-drive"})
+	blank := []byte(`{"blockdevices":[{"name":"sdb","path":"/dev/sdb","type":"disk","size":53687091200,"fstype":"","label":"","mountpoints":[null],"ro":false,"serial":"test-backup-drive","wwn":"","model":"Test","children":[]}]}`)
+	partitionTree := []byte(`{"blockdevices":[{"path":"/dev/sdb","type":"disk","children":[{"path":"/dev/sdb1","type":"part"}]}]}`)
+	mkfsFailed := false
+	runMediaCommand = func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "lsblk" && strings.Contains(strings.Join(args, " "), "--bytes"):
+			return blank, nil
+		case name == "lsblk":
+			return partitionTree, nil
+		case name == "mkfs.ext4":
+			mkfsFailed = true
+			return nil, errors.New("the drive stopped answering")
+		case name == "wipefs" && mkfsFailed:
+			return []byte("wipefs: error"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+	_, err := PrepareMedia(mediaID, "ERASE "+mediaID)
+	if err == nil || !strings.Contains(err.Error(), "format backup drive") || !strings.Contains(err.Error(), "could not be cleared again") {
+		t.Fatalf("error = %v, want the format error and that the drive was not cleared", err)
+	}
+}
+
+// mkfs and umount take as long as the drive is large or behind; every other drive command is short.
+func TestMediaCommandLimits(t *testing.T) {
+	for name, want := range map[string]time.Duration{
+		"mkfs.ext4": 60 * time.Minute, "umount": 60 * time.Minute,
+		"lsblk": 15 * time.Minute, "mount": 15 * time.Minute, "sync": 15 * time.Minute, "wipefs": 15 * time.Minute,
+	} {
+		if got := mediaLimit(name); got != want {
+			t.Fatalf("limit of %s = %s, want %s", name, got, want)
+		}
+	}
+	if StepCeiling < 4*mediaSlowCommandLimit {
+		t.Fatal("the drive commands of a store must fit well inside the step's ceiling")
 	}
 }
 

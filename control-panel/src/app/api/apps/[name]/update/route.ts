@@ -5,19 +5,19 @@
  *
  * Streams real-time update progress via Server-Sent Events.
  * - Managed Pointer → apps/lxd-updater (its release on the box's channel)
- * - Infrastructure OCI apps (Caddy, Pi-Hole, Postgres) → apps/updater (Incus rebuild)
+ * - System containers (Caddy, Pi-Hole, Postgres) → apps/system-container-update (rebuild on the image this release
+ *   pins, with the body's acknowledgements: confirmMaintenanceWindow, confirmContainerName, allowDatabaseUpdate)
  * - Market-installed/native apps → market/updater (unified: OCI rebuild or LXD tarball + migrations)
- * - Incus and host packages → Spine API proxy (Spine, CP and UI update with the System release)
+ * - Spine, the Control Panel, the UI and the host (Incus, packages) update with the System release (Settings → System)
  */
 
 import { type NextRequest } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
-import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
-import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { updateLXDApp, type UpdateEvent } from '@/lib/apps/lxd-updater';
+import { updateSystemContainerApp } from '@/lib/apps/system-container-update';
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
 import { handleMarketUpdate } from '@/lib/market/update-http';
-import { spineClient } from '@/lib/spine/client';
 
 function sseMessage(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -43,6 +43,11 @@ export async function POST(
     return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
+  // A system container's acknowledgements; the body is read before the stream starts.
+  const body: Record<string, unknown> = appDef.systemImageId
+    ? await req.json().then((value) => (value && typeof value === 'object' ? value : {}), () => ({}))
+    : {};
+
   // SSE stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -58,12 +63,21 @@ export async function POST(
       try {
         if (appDef.updatedBy === 'control-panel' && appDef.type === 'lxd') {
           await withUserOperationLockWait(() => updateLXDApp(appDef, emit));
-        } else if (appDef.updatedBy === 'control-panel') {
-          // Infrastructure OCI apps
-          await updateOCIApp(appDef, emit);
+        } else if (appDef.updatedBy === 'control-panel' && appDef.systemImageId) {
+          // A caller with no way to acknowledge (the `youeye` CLI) is told where the update is, before any work.
+          if (body.confirmMaintenanceWindow !== true) {
+            throw new Error(`${appDef.displayName} is a system container: its update stops and rebuilds it, which has to be acknowledged. Update it in Settings → Apps.`);
+          }
+          emit({ stage: 'starting', message: `Starting update for ${appDef.displayName}`, progress: 0 });
+          const result = await updateSystemContainerApp(appDef, body, (event) => {
+            if (event.status !== 'running') return;
+            const progress = event.totalSteps > 0 ? Math.min(Math.round((event.step / event.totalSteps) * 100), 99) : 0;
+            emit({ stage: 'rebuilding', message: event.message, progress });
+          });
+          if (!result.success) throw new Error(result.error || result.message);
+          emit({ stage: 'completed', message: result.message, progress: 100 });
         } else {
-          // Spine-managed: proxy to Spine API
-          await handleSpineUpdate(name, emit);
+          throw new Error(`${appDef.displayName} updates with the System release (Settings → System)`);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -85,29 +99,4 @@ export async function POST(
       Connection: 'keep-alive',
     },
   });
-}
-
-async function handleSpineUpdate(
-  appId: string,
-  emit: (event: UpdateEvent) => void
-): Promise<void> {
-  emit({ stage: 'starting', message: 'Starting update via Spine', progress: 10 });
-
-  let result;
-  switch (appId) {
-    case 'incus':
-      result = await spineClient.updateIncus();
-      break;
-    case 'host-system':
-      result = await spineClient.updateSystem();
-      break;
-    default:
-      throw new Error(`No Spine update handler for ${appId}`);
-  }
-
-  if (result.status === 'success' || result.status === 'updated' || result.status === 'no_update') {
-    emit({ stage: 'completed', message: result.message || 'Update completed', progress: 100 });
-  } else {
-    throw new Error(result.message || 'Update failed');
-  }
 }

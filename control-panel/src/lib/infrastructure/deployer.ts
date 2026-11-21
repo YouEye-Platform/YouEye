@@ -19,7 +19,8 @@ import {
 import { getOrCreateSecret, generatePassword, readSecret } from './secrets';
 import { reapplySavedUIConfiguration, reapplySavedUIBridgeToken, reconcileUIBridgeFile } from './ui-configuration';
 import { spineClient } from '../spine/client';
-import { deployOCIContainer, containerExists } from './oci-deployer';
+import { deployOCIContainer, containerExists, startOCIContainer } from './oci-deployer';
+import { turnOffPiholeUpdateCheck } from './pihole-update-check';
 import { getSystemStaticIP } from '../incus/static-ips';
 import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer } from './lxd-deployer';
 import { activateBuiltPointerRelease, buildPointerRelease, installPointerRelease, promoteBuiltPointerRelease } from '../pointer/initial-install';
@@ -233,6 +234,16 @@ async function deployPointerContainerFromConfiguredSource(replaceExisting = fals
  * runtime with a matching built or installed record is kept; any other
  * existing runtime (an interrupted build) is replaced.
  */
+/**
+ * Pi-hole is created stopped, its own update check is turned off before its first start, then it starts. The edit
+ * never fails the deploy (it keeps the original script when it cannot edit it safely).
+ */
+async function deployPihole(manifest: ReturnType<typeof piholeManifest>, hostIP: string): Promise<void> {
+  await deployOCIContainer(manifest, hostIP, undefined, { start: false });
+  await turnOffPiholeUpdateCheck(manifest.containerName);
+  await startOCIContainer(manifest.containerName);
+}
+
 export async function buildPointerForSetup(): Promise<'built' | 'kept'> {
   let replaceExisting = false;
   if (await containerExists('youeye-pointer')) {
@@ -423,7 +434,7 @@ async function _deployInfrastructureInner(
   try {
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
     const manifest = piholeManifest(hostIP);
-    await deployOCIContainer(manifest, hostIP);
+    await deployPihole(manifest, hostIP);
     await recordSystemContainerImage('pihole');
     await applyResourcePolicy('youeye-pihole', 'critical');
 
@@ -495,7 +506,7 @@ async function _deployInfrastructureInner(
 
 /**
  * Reconcile infrastructure by deploying only MISSING containers.
- * Called after `spine update control` to ensure infrastructure is intact.
+ * Called by Spine (`youeye deploy --resume`, POST /api/deploy/infrastructure/reconcile) to ensure infrastructure is intact.
  * Unlike deployInfrastructure(), this does NOT destroy existing containers —
  * it only creates containers that don't exist yet.
  *
@@ -649,7 +660,7 @@ export async function reconcileInfrastructure(
     try {
       const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
       const manifest = piholeManifest(hostIP);
-      await deployOCIContainer(manifest, hostIP);
+      await deployPihole(manifest, hostIP);
       await recordSystemContainerImage('pihole');
       await applyResourcePolicy('youeye-pihole', 'critical');
       const healthy = await waitForPiHole();
@@ -672,7 +683,7 @@ export async function reconcileInfrastructure(
         async () => {
           const manifest = piholeManifest(hostIP);
           remit(4, 'running', 'Pi-Hole exists but DNS is unhealthy; recreating its container around persistent data...');
-          await deployOCIContainer(manifest, hostIP);
+          await deployPihole(manifest, hostIP);
           await recordSystemContainerImage('pihole');
           await applyResourcePolicy('youeye-pihole', 'critical');
         },

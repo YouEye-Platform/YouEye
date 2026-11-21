@@ -9,8 +9,9 @@
  * address: an update refuses a source whose address differs (`source-changed`). It is also how an app whose source
  * went away (`source-unavailable`) gets an update source again.
  *
- * The target is resolved first (network); the install record is then read, changed and saved inside the app's
- * lifecycle lock, so an update that commits meanwhile is never overwritten with stale metadata.
+ * The whole switch holds the platform lifecycle (so a Control Panel restart waits for it). The target is resolved
+ * first (network); the install record is then read, changed and saved inside the app's lifecycle lock, so an update
+ * that commits meanwhile is never overwritten with stale metadata.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminCsrf } from '@/lib/auth/rbac';
@@ -19,7 +20,7 @@ import { getDirectMarketApp } from '@/lib/market/direct-apps';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { updateInstalledAppSource, upsertInstalledApp } from '@/lib/market/installed-apps';
 import { directAppRefusal, isMarketSourceConsentError } from '@/lib/market/source';
-import { withAppLifecycle, withUserOperationLockWait } from '@/lib/market/update-admission';
+import { withAppLifecycle, withPlatformLifecycle, withUserOperationLockWait } from '@/lib/market/update-admission';
 import { lifecycleBusyResponse } from '@/lib/http/lifecycle-busy';
 import { logOperationFailure } from '@/lib/market/install-tracker';
 
@@ -49,64 +50,68 @@ export async function PATCH(
     return NextResponse.json({ error: `App "${appId}" is not installed` }, { status: 404 });
   }
 
-  let target: { sourceId: string; sourceName: string; sourceRepoUrl: string; url?: string };
-  if (sourceId.startsWith('direct:')) {
-    const direct = await getDirectMarketApp(sourceId, appId);
-    if (!direct) {
-      return NextResponse.json({ error: `App "${appId}" was not found in Market source "${sourceId}"` }, { status: 404 });
-    }
-    const refusal = directAppRefusal(direct.manifest.setups, body ?? {});
-    if (refusal) return refused(refusal);
-    target = { sourceId, sourceName: 'Added', sourceRepoUrl: direct.manifestUrl, url: direct.manifestUrl };
-  } else {
-    try {
-      const resolved = await resolveCatalogApp(appId, sourceId);
-      target = { sourceId: resolved.source.id, sourceName: resolved.source.name, sourceRepoUrl: resolved.source.url };
-    } catch (error) {
-      if (isMarketSourceConsentError(error)) return refused(error);
-      // The source has the app only in a version this box cannot run: refused with that reason.
-      if (isMarketAppUnavailable(error)) {
-        return NextResponse.json({ error: error.message, code: error.code, ...(error.needsYouEye ? { needsYouEye: error.needsYouEye } : {}) }, { status: 409 });
-      }
-      return NextResponse.json({ error: `App "${appId}" was not found in Market source "${sourceId}"` }, { status: 404 });
-    }
-  }
-
+  // The platform lifecycle is held from the market read to the save, so Spine's Control Panel restart waits for the
+  // whole switch (it waits for that lock) instead of stopping the Control Panel while the target is being read.
   try {
-    return await withUserOperationLockWait(() => withAppLifecycle(appId, async () => {
-      const metadata = await readInstallMetadata(appId);
-      if (!metadata) {
-        return NextResponse.json({ error: `App "${appId}" is not installed` }, { status: 404 });
+    return await withUserOperationLockWait(() => withPlatformLifecycle(async () => {
+      let target: { sourceId: string; sourceName: string; sourceRepoUrl: string; url?: string };
+      if (sourceId.startsWith('direct:')) {
+        const direct = await getDirectMarketApp(sourceId, appId);
+        if (!direct) {
+          return NextResponse.json({ error: `App "${appId}" was not found in Market source "${sourceId}"` }, { status: 404 });
+        }
+        const refusal = directAppRefusal(direct.manifest.setups, body ?? {});
+        if (refusal) return refused(refusal);
+        target = { sourceId, sourceName: 'Added', sourceRepoUrl: direct.manifestUrl, url: direct.manifestUrl };
+      } else {
+        try {
+          const resolved = await resolveCatalogApp(appId, sourceId);
+          target = { sourceId: resolved.source.id, sourceName: resolved.source.name, sourceRepoUrl: resolved.source.url };
+        } catch (error) {
+          if (isMarketSourceConsentError(error)) return refused(error);
+          // The source has the app only in a version this box cannot run: refused with that reason.
+          if (isMarketAppUnavailable(error)) {
+            return NextResponse.json({ error: error.message, code: error.code, ...(error.needsYouEye ? { needsYouEye: error.needsYouEye } : {}) }, { status: 409 });
+          }
+          return NextResponse.json({ error: `App "${appId}" was not found in Market source "${sourceId}"` }, { status: 404 });
+        }
       }
-      metadata.catalogKey = `${target.sourceId}:app:${appId}`;
-      metadata.itemKind = 'app';
-      metadata.sourceId = target.sourceId;
-      metadata.sourceName = target.sourceName;
-      metadata.sourceRepoUrl = target.sourceRepoUrl;
-      metadata.manifestSource = target.sourceRepoUrl || metadata.manifestSource;
 
-      await saveInstallMetadata(metadata);
-      await upsertInstalledApp({
-        appId,
-        type: metadata.integration,
-        installedVersion: metadata.installedVersion ?? '',
-        subdomain: metadata.subdomain,
-        ssoSlug: metadata.ssoSlug,
-        forwardAuthEnabled: metadata.forwardAuthEnabled,
-        catalogKey: metadata.catalogKey,
-        sourceId: metadata.sourceId,
-        sourceName: metadata.sourceName,
-        sourceRepoUrl: metadata.sourceRepoUrl,
-      });
-      await updateInstalledAppSource(appId, target.url ? 'url' : 'catalog', target.url);
+      return await withAppLifecycle(appId, async () => {
+        const metadata = await readInstallMetadata(appId);
+        if (!metadata) {
+          return NextResponse.json({ error: `App "${appId}" is not installed` }, { status: 404 });
+        }
+        metadata.catalogKey = `${target.sourceId}:app:${appId}`;
+        metadata.itemKind = 'app';
+        metadata.sourceId = target.sourceId;
+        metadata.sourceName = target.sourceName;
+        metadata.sourceRepoUrl = target.sourceRepoUrl;
+        metadata.manifestSource = target.sourceRepoUrl || metadata.manifestSource;
 
-      return NextResponse.json({
-        status: 'ok',
-        appId,
-        catalogKey: metadata.catalogKey,
-        sourceId: metadata.sourceId,
-        sourceName: metadata.sourceName,
-        sourceRepoUrl: metadata.sourceRepoUrl,
+        await saveInstallMetadata(metadata);
+        await upsertInstalledApp({
+          appId,
+          type: metadata.integration,
+          installedVersion: metadata.installedVersion ?? '',
+          subdomain: metadata.subdomain,
+          ssoSlug: metadata.ssoSlug,
+          forwardAuthEnabled: metadata.forwardAuthEnabled,
+          catalogKey: metadata.catalogKey,
+          sourceId: metadata.sourceId,
+          sourceName: metadata.sourceName,
+          sourceRepoUrl: metadata.sourceRepoUrl,
+        });
+        await updateInstalledAppSource(appId, target.url ? 'url' : 'catalog', target.url);
+
+        return NextResponse.json({
+          status: 'ok',
+          appId,
+          catalogKey: metadata.catalogKey,
+          sourceId: metadata.sourceId,
+          sourceName: metadata.sourceName,
+          sourceRepoUrl: metadata.sourceRepoUrl,
+        });
       });
     }));
   } catch (error) {

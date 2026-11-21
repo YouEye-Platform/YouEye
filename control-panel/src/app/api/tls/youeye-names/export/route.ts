@@ -2,9 +2,9 @@
  * GET /api/tls/youeye-names/export
  *
  * Downloads the YouEye Names reuse bundle (install identity + TLS key + cert +
- * lease name) so it can be re-imported on a (re)install via the installer's
- * --names-bundle flag — reusing the address + certificate with no new Let's
- * Encrypt issuance.
+ * lease name) so it can be re-imported after a (re)install with
+ * `youeye names import` before setup — reusing the address + certificate with
+ * no new Let's Encrypt issuance.
  *
  * The bundle contains PRIVATE KEYS — it is a credential. Admin only; no-store.
  */

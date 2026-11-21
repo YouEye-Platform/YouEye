@@ -29,21 +29,31 @@ func uiEgressBlockRuleArgs(aclName, cpIP string) []string {
 // to UI, UI never calls CP. Browser-side iframes bypass this entirely since
 // they go through Caddy, not container-to-container networking.
 //
-// Idempotent — safe to call on every deploy/update.
+// It verifies first and changes nothing when the ACL and the UI's network card
+// are already right. Every Spine start and every reboot used to detach the ACL
+// from youeye-ui, delete it and create it again (koshka 360, Plan 17 box tests:
+// two instance-updated events for youeye-ui and network-acl-deleted/created per
+// 'systemctl restart youeye'): between the two the UI had no block at all.
 func EnforceUIEgressBlock() error {
 	cpIP, err := incus.GetSystemContainerIP("youeye-control")
 	if err != nil {
 		return fmt.Errorf("resolve Control Panel IP for egress block: %w", err)
 	}
+	return enforceUIEgressBlock(UIEgressBlockACLName, cpIP, verifyUIEgressBlock, repairUIEgressBlockACL)
+}
 
-	if err := repairUIEgressBlockACL(UIEgressBlockACLName, cpIP); err != nil {
+func enforceUIEgressBlock(aclName, cpIP string, verify, repair func(aclName, cpIP string) error) error {
+	if verify(aclName, cpIP) == nil {
+		return nil
+	}
+	if err := repair(aclName, cpIP); err != nil {
 		return err
 	}
-	if err := verifyUIEgressBlock(UIEgressBlockACLName, cpIP); err != nil {
+	if err := verify(aclName, cpIP); err != nil {
 		return err
 	}
 
-	fmt.Printf("  ✓ UI→Control Panel egress block enforced (ACL: %s, blocked: %s:3000,3001)\n", UIEgressBlockACLName, cpIP)
+	fmt.Printf("  ✓ UI→Control Panel egress block enforced (ACL: %s, blocked: %s:3000,3001)\n", aclName, cpIP)
 	return nil
 }
 

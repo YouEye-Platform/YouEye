@@ -11,6 +11,7 @@
  *   started by their app's reconcile queue (lib/apps/app-reconciler.ts)
  * - Disk space (every 5 minutes via Spine API)
  * - Memory pressure (via Spine API)
+ * - A Control Panel restart that waits for a backup or restore past its longest wait (every 5 minutes, Spine API)
  * - Swap-aware memory throttling — applies soft limits under pressure
  * - TLS certificate expiry (every 6 hours)
  * - App updates available (from version checker)
@@ -28,6 +29,7 @@ import { appReconciler, shouldSuppressAppRecovery, startWatchdogContainer } from
 import { startJitteredLoop } from './jittered-timer';
 import { listReadableInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
+import { syncControlRestartHeldIssue } from './control-restart-held';
 import { syncStartupReconciliationIssue } from '@/lib/incus/startup-reconciliation';
 
 // ─── State Tracking ───────────────────────────────────────────
@@ -813,6 +815,8 @@ async function runHealthChecks(): Promise<void> {
     if (tickCount % DISK_CHECK_INTERVAL_TICKS === 0) {
       await checkDiskSpace();
       await checkMemory();
+      // A restart of this Control Panel that waits for a backup or restore that does not end.
+      await syncControlRestartHeldIssue(() => spineClient.controlRestartStatus());
     }
 
     // Every 360 ticks (6 hours): cert expiry

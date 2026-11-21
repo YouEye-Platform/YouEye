@@ -63,8 +63,6 @@ import type {
 
 export interface UpdateConfig {
   appId: string;
-  /** Force update even if versions match */
-  force?: boolean;
   /** The owner allows changed setup files of an app added by URL (asked again on every such change). */
   allowSetup?: boolean;
 }
@@ -285,17 +283,16 @@ async function updateMarketAppLocked(
   if (productRelease) {
     // Only no-op when the exact release document is what's installed.
     const installedRelease = installMeta.nativeArtifacts?.[0]?.productReleaseSHA256;
-    if (!config.force && installedRelease === productRelease.manifestSHA256) {
+    if (installedRelease === productRelease.manifestSHA256) {
       emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${productRelease.release.version})`);
       return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
     }
-  } else if (!config.force && !isNewer(targetVersion, installedVersion)) {
+  } else if (!isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
   }
 
-  // A forced update reinstalls the payload; adopting a release label would not.
-  if (productRelease && channelManifestReference && !config.force) {
+  if (productRelease && channelManifestReference) {
     const adopted = await updateIdenticalProductRelease(appUpdateJournalStore(), originalInstallMeta,
       installedApp, manifest, productRelease, channelManifestReference);
     if (adopted) {
@@ -482,6 +479,9 @@ async function updateMarketAppLocked(
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Updating version records...');
     installMeta.installedVersion = targetVersion;
+    // What the app offers and asks of other apps is the new release's (the suggestions follow after the commit).
+    installMeta.provides = manifest.provides?.length ? manifest.provides : undefined;
+    installMeta.wants = manifest.wants?.length ? manifest.wants : undefined;
     if (productRelease) installMeta.productReleaseFloors = acceptProductSequence(installMeta.productReleaseFloors,productRelease,
       installedProductRelease(originalInstallMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
     installMeta.catalogKey = `${sourceId}:app:${appId}`;
@@ -563,6 +563,12 @@ async function updateMarketAppLocked(
     await bindInstalledAdmission(installMeta);
     const { reconcileAdmissionProjections } = await import('@/lib/admission/projection');
     await reconcileAdmissionProjections();
+    // Connection suggestions follow the release's `connects`: dropped ones go, new ones appear.
+    if (result.success) {
+      const { refreshSuggestionsForUpdatedApp } = await import('@/lib/bridges/suggestions');
+      await refreshSuggestionsForUpdatedApp(manifest)
+        .catch((error) => logOperationFailure(`Refreshing the connection suggestions of ${appId}`, error));
+    }
     // The Market listing of an Added app now shows what is installed (the copy the owner agreed to).
     if (directUpdate && result.success) {
       await saveDirectMarketApp({ manifestUrl: directUpdate.entry.manifestUrl, manifest })

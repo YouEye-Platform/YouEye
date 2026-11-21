@@ -1,12 +1,14 @@
 /**
- * Every Control Panel route handler is behind an auth check, or is listed here with the reason it isn't.
+ * Every Control Panel route handler is behind an admin check, or is listed here with the reason it isn't.
  *
  * Two layers protect a route: the proxy (`src/proxy.ts`) refuses any request without a valid session or CLI token,
  * except for its public routes; and the handler itself may check more (admin, CSRF, setup session, a secret).
  * - A handler under a public route must check something itself, or be in PUBLIC_HANDLERS with a reason.
- * - Any other handler must check something itself, or be in SIGNED_IN_HANDLERS: any signed-in user may call it.
- * A handler "checks something" when its body, or a function in the same file that it calls, calls an auth helper,
- * or when it calls a delegate in AUTH_DELEGATES. Re-exported handlers are judged by their source.
+ * - Any other handler must check for an admin itself, or be in STANDARD_USER_HANDLERS: any signed-in user, a standard
+ *   user included, may call it. A session check alone is not an admin check (0.6.15: a session-only SQL console let
+ *   any standard user run SQL and a root shell in youeye-postgres).
+ * A handler "checks something" when its body, or a function in the same file that it calls, calls a check (or an
+ * admin check), or when it calls a delegate that does. Re-exported handlers are judged by their source.
  */
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -15,9 +17,12 @@ import test from 'node:test';
 
 const root = path.join(process.env.CONTROL_PANEL_ROOT ?? process.cwd(), 'src');
 const AUTH_CALL = /\b(getSession|requireAdmin|requireAdminCsrf|requireAuth|requireEmbedAdmin|getEmbedSession|validateEmbedSession|requireSetupSession|getIdentitySession|isValidCLIToken)\s*\(/;
-// Imported functions that do the auth check for the handler that calls them (file: where they live).
+// Admin checks: the helpers that refuse a non-admin, and a handler's own `if (!session?.isAdmin) return …` guard.
+const ADMIN_CALL = /\b(requireAdmin|requireAdminCsrf|requireEmbedAdmin|requireSetupSession|isAdminSession)\s*\(|!\s*(?:\w+|\(await getSession\(\)\))\??\.isAdmin\b|return\s+\w+\??\.isAdmin\s*&&/;
+// Imported functions that do the check for the handler that calls them (file: where they live).
 const AUTH_DELEGATES: Record<string, string> = {
   handleMarketUpdate: 'lib/market/update-http.ts',
+  checkUpdateStatusAccess: 'lib/updates/status-access.ts',
 };
 
 const PUBLIC_HANDLERS: Record<string, string> = {
@@ -59,10 +64,23 @@ const PUBLIC_HANDLERS: Record<string, string> = {
   'GET /reset-owner': 'redirect to the owner reset page',
 };
 
-const SIGNED_IN_HANDLERS: Record<string, string> = {
+// Handlers a standard user may call. Reads and the user's own account only: anything that changes the box, or shows
+// what other people do on it, is an admin's.
+const STANDARD_USER_HANDLERS: Record<string, string> = {
   'GET /': 'redirects to the dashboard',
-  'POST /api/apps/check-updates': 'starts a version check',
+  'GET /api/ai/[...path]': 'Pointer management: the call carries the user\'s identity assertion and Pointer checks the role',
+  'POST /api/ai/[...path]': 'Pointer management: the call carries the user\'s identity assertion and Pointer checks the role',
+  'PUT /api/ai/[...path]': 'Pointer management: the call carries the user\'s identity assertion and Pointer checks the role',
+  'PATCH /api/ai/[...path]': 'Pointer management: the call carries the user\'s identity assertion and Pointer checks the role',
+  'DELETE /api/ai/[...path]': 'Pointer management: the call carries the user\'s identity assertion and Pointer checks the role',
+  'POST /api/ai-proxy-test': 'tests the caller\'s own Pointer key against Pointer\'s inference port',
+  'GET /api/apps/unified': 'the Apps page list in Settings, which standard users see',
+  'GET /api/auth/session': 'the caller\'s own session',
   'GET /api/branding/profile-avatar-art/[id]': 'built-in avatar art',
+  'GET /api/domain': 'the box\'s domain, for the Market pages',
+  'GET /api/identity/consents/app/[appId]': 'the caller\'s own consent for an app',
+  'DELETE /api/identity/consents/app/[appId]': 'revokes the caller\'s own consent for an app',
+  'POST /api/identity/sign-out-everywhere': 'signs the caller out of their own sessions',
   'GET /api/market': 'catalog',
   'GET /api/market/app/[appId]': 'catalog entry',
   'GET /api/market/app/[appId]/connections': 'connections an app could make, for the install dialog',
@@ -72,11 +90,20 @@ const SIGNED_IN_HANDLERS: Record<string, string> = {
   'GET /api/market/providers': 'installed providers',
   'GET /api/market/status': 'installed apps\' status',
   'GET /api/market/updates': 'available app updates',
-  'POST /api/market/updates': 'starts a version check',
-  'POST /api/market/validate': 'validates a manifest from a configured source',
   'GET /api/market/validate-subdomain': 'checks that a subdomain is free',
   'GET /api/pointer-ui/[...path]': 'Pointer\'s static UI assets (allowlisted paths)',
+  'GET /api/telemetry/settings': 'whether local usage statistics are on, for the Privacy page',
   'GET /api/ui/branding': 'box branding for the signed-in surfaces',
+  'GET /api/ui-settings/[...path]': 'proxies to the UI\'s settings API with the caller\'s role; the UI checks admin itself',
+  'POST /api/ui-settings/[...path]': 'proxies to the UI\'s settings API with the caller\'s role; the UI checks admin itself',
+  'PUT /api/ui-settings/[...path]': 'proxies to the UI\'s settings API with the caller\'s role; the UI checks admin itself',
+  'PATCH /api/ui-settings/[...path]': 'proxies to the UI\'s settings API with the caller\'s role; the UI checks admin itself',
+  'DELETE /api/ui-settings/[...path]': 'proxies to the UI\'s settings API with the caller\'s role; the UI checks admin itself',
+  'POST /api/user/avatar': 'the caller\'s own avatar',
+  'DELETE /api/user/avatar': 'the caller\'s own avatar',
+  'POST /api/user/password': 'the caller\'s own password',
+  'GET /api/user/profile': 'the caller\'s own profile',
+  'PATCH /api/user/profile': 'the caller\'s own profile',
 };
 
 function publicRoutes(): { prefix: string[]; exact: string[] } {
@@ -122,7 +149,7 @@ function localFunctions(source: string): Map<string, string> {
   return found;
 }
 
-function checksAuth(file: string, handler: string, seen = new Set<string>()): boolean {
+function checksAuth(file: string, handler: string, check: RegExp = AUTH_CALL, seen = new Set<string>()): boolean {
   const key = `${file}#${handler}`;
   if (seen.has(key)) return false;
   seen.add(key);
@@ -130,16 +157,16 @@ function checksAuth(file: string, handler: string, seen = new Set<string>()): bo
   for (const match of source.matchAll(/export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
     for (const item of match[1].split(',').map(part => part.trim()).filter(Boolean)) {
       const [original, alias] = item.split(/\s+as\s+/);
-      if ((alias ?? original) === handler) return checksAuth(resolveImport(match[2], file), original, seen);
+      if ((alias ?? original) === handler) return checksAuth(resolveImport(match[2], file), original, check, seen);
     }
   }
   const functions = localFunctions(source);
   const body = functions.get(handler);
   if (body === undefined) throw new Error(`${path.relative(root, file)}: no ${handler}`);
   const reaches = (text: string, visited: Set<string>): boolean => {
-    if (AUTH_CALL.test(text)) return true;
+    if (check.test(text)) return true;
     for (const [name, delegateFile] of Object.entries(AUTH_DELEGATES)) {
-      if (new RegExp(`\\b${name}\\s*\\(`).test(text) && AUTH_CALL.test(readFileSync(path.join(root, delegateFile), 'utf8'))) return true;
+      if (new RegExp(`\\b${name}\\s*\\(`).test(text) && delegateChecks(delegateFile, check)) return true;
     }
     for (const [name, text2] of functions) {
       if (name === handler || visited.has(name) || !new RegExp(`\\b${name}\\s*\\(`).test(text)) continue;
@@ -149,6 +176,18 @@ function checksAuth(file: string, handler: string, seen = new Set<string>()): bo
     return false;
   };
   return reaches(body, new Set([handler]));
+}
+
+function delegateChecks(file: string, check: RegExp): boolean {
+  return check.test(stripComments(readFileSync(path.join(root, file), 'utf8')));
+}
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap(entry => {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) return sourceFiles(full);
+    return /\.tsx?$/.test(entry) ? [full] : [];
+  });
 }
 
 function stripComments(source: string): string {
@@ -175,7 +214,7 @@ function handlersOf(file: string): string[] {
   return [...names];
 }
 
-test('every route handler checks auth itself or is listed with a reason', () => {
+test('every route handler checks for an admin itself, or is public or a standard user\'s with a reason', () => {
   const { prefix, exact } = publicRoutes();
   const isPublic = (url: string) => exact.includes(url) || prefix.some(route => url === route || url.startsWith(route + '/'));
   const unchecked: string[] = [];
@@ -183,20 +222,41 @@ test('every route handler checks auth itself or is listed with a reason', () => 
   for (const file of routeFiles()) {
     const url = urlOf(file);
     for (const handler of handlersOf(file)) {
-      if (checksAuth(file, handler)) continue;
+      const publicRoute = isPublic(url);
+      if (checksAuth(file, handler, publicRoute ? AUTH_CALL : ADMIN_CALL)) continue;
       // Re-exported handlers (e.g. /settings/api/*) take their source's entry.
       const key = `${handler} ${url}`;
+      const list = publicRoute ? PUBLIC_HANDLERS : STANDARD_USER_HANDLERS;
       const source = readFileSync(file, 'utf8');
       const reexport = source.match(/from\s*['"]@\/app(\/[^'"]*)\/route['"]/);
-      const listedKey = reexport && !(key in PUBLIC_HANDLERS) && !(key in SIGNED_IN_HANDLERS) ? `${handler} ${reexport[1].replace(/\/\([^)]*\)/g, '')}` : key;
-      const list = isPublic(url) ? PUBLIC_HANDLERS : SIGNED_IN_HANDLERS;
+      const listedKey = reexport && !(key in list) ? `${handler} ${reexport[1].replace(/\/\([^)]*\)/g, '')}` : key;
       if (listedKey in list) used.add(listedKey);
-      else unchecked.push(`${isPublic(url) ? 'public' : 'signed-in'} ${key}`);
+      else unchecked.push(`${publicRoute ? 'public' : 'signed-in'} ${key}`);
     }
   }
-  assert.deepEqual(unchecked, [], 'handlers without an auth check: add one, or list them with the reason');
-  const stale = [...Object.keys(PUBLIC_HANDLERS), ...Object.keys(SIGNED_IN_HANDLERS)].filter(key => !used.has(key));
-  assert.deepEqual(stale, [], 'listed handlers that no longer exist, or now check auth themselves');
+  assert.deepEqual(unchecked, [], 'handlers without an (admin) check: add one, or list them with the reason');
+  const stale = [...Object.keys(PUBLIC_HANDLERS), ...Object.keys(STANDARD_USER_HANDLERS)].filter(key => !used.has(key));
+  assert.deepEqual(stale, [], 'listed handlers that no longer exist, or now check for an admin themselves');
+});
+
+test('a session check alone is not an admin check', () => {
+  const sample = (body: string) => ADMIN_CALL.test(body);
+  assert.equal(sample('const session = await getSession();\nif (!session) return NextResponse.json({}, { status: 401 });'), false);
+  assert.equal(sample('const auth = await requireAuth(); if (auth.error) return auth.error;'), false);
+  assert.equal(sample('return NextResponse.json({ isAdmin: session.isAdmin });'), false);
+  assert.equal(sample('if (!session?.isAdmin) return NextResponse.json({}, { status: 403 });'), true);
+  assert.equal(sample('if (!(await getSession())?.isAdmin) return forbidden;'), true);
+  assert.equal(sample('const auth = await requireAdminCsrf(request);'), true);
+});
+
+test('the Control Panel has no SQL console and builds no psql shell string', () => {
+  assert.equal(existsSync(path.join(root, 'app/api/apps/postgres')), false, 'the session-only SQL console is gone');
+  assert.equal(existsSync(path.join(root, 'lib/postgres/client.ts')), false);
+  for (const file of sourceFiles(root)) {
+    const source = readFileSync(file, 'utf8');
+    // psql runs with an argument list (or reads SQL from stdin); a -c '<sql>' inside a shell string is an injection.
+    assert.doesNotMatch(source, /su - postgres -c "psql[^"]*-c/, path.relative(root, file));
+  }
 });
 
 test('the proxy lets an X-CLI-Token request through only with the valid token', () => {
@@ -255,4 +315,11 @@ test('the proxy refuses a bogus X-CLI-Token and fails closed without a JWT secre
     globalThis.fetch = previousFetch;
     if (previousSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = previousSecret;
   }
+});
+
+test('standard users read the Market; every Market change is an admin\'s', () => {
+  // Owner, 2026-11-21: install, update, uninstall, sources (and version checks, which read every market) stay admin-only.
+  const market = Object.keys(STANDARD_USER_HANDLERS).filter(key => / \/api\/(market|apps\/check-updates)\b/.test(key));
+  // POST /api/market/validate is an admin's too: its image check makes the box reach any registry a manifest names.
+  assert.deepEqual(market.filter(key => !key.startsWith('GET ')), []);
 });

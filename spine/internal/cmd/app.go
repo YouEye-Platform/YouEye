@@ -299,7 +299,7 @@ var appRemoveCmd = &cobra.Command{
 		if appRemoveForce {
 			payload["force"] = true
 		}
-		result, err := controlClient.Post("/api/market/uninstall", payload)
+		result, err := controlClient.PostLong("/api/market/uninstall", payload)
 		if err != nil {
 			err = cleanServerError(err)
 			if !appRemoveForce {
@@ -348,7 +348,7 @@ func newAppControlCmd(action string) *cobra.Command {
 			if err := requireCP(); err != nil {
 				return err
 			}
-			result, err := controlClient.Post("/api/apps/"+args[0]+"/control", map[string]interface{}{
+			result, err := controlClient.PostLong("/api/apps/"+args[0]+"/control", map[string]interface{}{
 				"action": action,
 			})
 			if err != nil {
@@ -412,7 +412,7 @@ removed; an uncommitted one is rolled back to the previous version. Prints the c
 			output.Success(appID + "'s latest update is already complete")
 			return nil
 		}
-		if _, err := controlClient.Post("/api/market/update/recovery", map[string]interface{}{
+		if _, err := controlClient.PostLong("/api/market/update/recovery", map[string]interface{}{
 			"appId": appID, "id": operation["id"],
 		}); err != nil {
 			return fmt.Errorf("recovery of %s did not finish: %w", appID, err)

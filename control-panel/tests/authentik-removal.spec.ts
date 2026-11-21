@@ -87,19 +87,13 @@ test('retired Authentik runtime implementation and endpoints are absent', () => 
   assert.doesNotMatch(spine, /\/api\/authentik\/credentials|youeye-authentik/i);
 });
 
-test('generic OAuth helpers are named for their protocol and app subdomains update YouEye ID', () => {
+test('generic OAuth helpers are named for their protocol', () => {
   const controlOAuth = 'src/lib/auth/oauth.ts';
   const uiOAuth = join(youEyeRoot, 'ui/src/lib/auth/oauth.ts');
   assert.equal(existsSync(join(controlPanelRoot, controlOAuth)), true);
   assert.equal(existsSync(uiOAuth), true);
   assert.equal(existsSync(join(controlPanelRoot, 'src/lib/auth/authentik.ts')), false);
   assert.equal(existsSync(join(youEyeRoot, 'ui/src/lib/auth/authentik.ts')), false);
-
-  const subdomain = read('src/app/api/ui-bridge/apps/subdomain/route.ts');
-  assert.match(subdomain, /getClient\(ssoClientId\)/);
-  assert.match(subdomain, /clientSecret: client\.client_secret/);
-  assert.match(subdomain, /redirectUris: client\.redirect_uris/);
-  assert.doesNotMatch(subdomain, /authentik/i);
 });
 
 test('the one historical identity-column migration remains readable', () => {

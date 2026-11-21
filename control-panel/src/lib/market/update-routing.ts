@@ -188,8 +188,9 @@ export function projectUpdateAvailability(input: {
       if (!candidate) {
         updateAvailable = !installedVersion || isNewer(version, installedVersion);
       } else if (!input.installedKey) {
-        // Not installed from a product release (no recorded release): offer the channel's release.
-        updateAvailable = true;
+        // No recorded release (not installed from a product release): offer the channel's release, unless it is
+        // the release the app already shows (one name is one release on a channel).
+        updateAvailable = version !== installedVersion;
       } else if (candidate.key) {
         const order = compareReleases(candidate.key, input.installedKey);
         updateAvailable = order > 0 || order === 0 && version !== installedVersion;

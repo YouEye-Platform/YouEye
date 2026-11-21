@@ -113,6 +113,85 @@ func (r CoreControlRunner) Start(ctx context.Context, request, command string) (
 	return observed, nil
 }
 
+// Delivered reports whether a continuation with this command ID was ever
+// launched for the request: its delivery receipt is retained. It reads one
+// file name; an unusable identity is "no".
+func (r CoreControlRunner) Delivered(request, command string) bool {
+	if !filepath.IsAbs(r.Root) || !coreRequestPattern.MatchString(request) || !coreRequestPattern.MatchString(command) {
+		return false
+	}
+	unit := fmt.Sprintf("youeye-core-control-%x.service", sha256.Sum256([]byte(request+"\x00"+command)))
+	_, err := os.Lstat(filepath.Join(r.Root, "controllers", unit+".json"))
+	return err == nil
+}
+
+// Forget removes what a continuation that has ended left behind: its transient
+// unit (RemainAfterExit keeps it loaded, and a failed one stays failed) and its
+// delivery receipt, so that the same command ID can be delivered again. The
+// watchdog's attempts without end use it: they would otherwise leave a unit
+// and a receipt every half hour for as long as a box stays closed.
+//
+// It refuses while the unit runs, for a unit in any state that is not clearly
+// ended (starting, stopping), and for a unit it cannot observe or that is not
+// this delivery's. The unit goes first and the receipt last: a Forget that
+// was cut short is finished by the next one. No receipt is nothing to forget.
+func (r CoreControlRunner) Forget(ctx context.Context, request, command string) error {
+	if !filepath.IsAbs(r.Root) || !coreRequestPattern.MatchString(request) || !coreRequestPattern.MatchString(command) {
+		return fmt.Errorf("exact native continuation identities required")
+	}
+	unit := fmt.Sprintf("youeye-core-control-%x.service", sha256.Sum256([]byte(request+"\x00"+command)))
+	path := filepath.Join(r.Root, "controllers", unit+".json")
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // no controllers directory: nothing was ever delivered
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return fmt.Errorf("continuation delivery is already being reconciled")
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	raw, err := ReadCoreState(path, 16384)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var receipt CoreControlReceipt
+	if json.Unmarshal(raw, &receipt) != nil || receipt.Schema != "youeye.core-control.v1" || receipt.RequestID != request || receipt.CommandID != command || receipt.Unit != unit {
+		return fmt.Errorf("retained continuation identity changed")
+	}
+	observed, err := r.observe(ctx, receipt)
+	if err != nil {
+		return err
+	}
+	if observed.State == "running" {
+		return fmt.Errorf("the continuation still runs")
+	}
+	// Anything between the states that are told apart (a unit that starts or stops, a main process that is
+	// reported in neither way) may still run or come to run: stopping it would end a coordinator in the middle
+	// of a step. It is left for the next look.
+	if observed.State != "absent" && observed.State != "settled" && observed.State != "failed" {
+		return fmt.Errorf("the continuation unit is neither running nor ended")
+	}
+	if observed.State != "absent" {
+		// An exited unit is unloaded by stop, a failed one by reset-failed; each
+		// may have nothing to do, and the look after them is what counts.
+		_, _ = r.capture(ctx, "systemctl", "stop", unit)
+		_, _ = r.capture(ctx, "systemctl", "reset-failed", unit)
+		if observed, err = r.observe(ctx, receipt); err != nil {
+			return err
+		}
+		if observed.State != "absent" {
+			return fmt.Errorf("the continuation unit could not be removed")
+		}
+	}
+	return os.Remove(path)
+}
+
 // CoreBootContinuationUnit continues a retained request after a reboot.
 const CoreBootContinuationUnit = "youeye-core-update.service"
 
@@ -214,6 +293,11 @@ func (r CoreControlRunner) observe(ctx context.Context, receipt CoreControlRecei
 	}
 	if values["ActiveState"] == "failed" && values["MainPID"] == "0" {
 		out.State = "failed"
+	}
+	// Loaded, inactive and without a main process: it ended and is not unloaded yet. It is ended like an exited
+	// one; told apart from nothing, Forget refused such a unit at every look.
+	if values["ActiveState"] == "inactive" && values["MainPID"] == "0" {
+		out.State = "settled"
 	}
 	return out, nil
 }

@@ -32,6 +32,21 @@ export interface ManifestBackupSection {
   };
 }
 
+/**
+ * How Spine encrypted a backup's archives (OpenSSL `enc`, PBKDF2 key). Spine reports it with each finished archive;
+ * the set records it in backup-set.json, and a restore sends it back. A set without it was made before it was
+ * recorded (YouEye up to 0.6.14), and Spine then uses the parameters of that time.
+ */
+export interface BackupEncryption {
+  cipher: string;
+  kdf: string;
+  digest: string;
+  iterations: number;
+  /** How the key of each archive's .hmac file is made: `hmac-sha256-pbkdf2` (PBKDF2 with the digest and iterations
+   * above, salted with a label and the archive's own salt). Absent in sets made before it: the raw passphrase. */
+  mac?: string;
+}
+
 /** Status returned from Spine's backup status endpoint */
 export interface SpineBackupStatus {
   backup_id: string;
@@ -44,6 +59,8 @@ export interface SpineBackupStatus {
   total_steps: number;
   archive_path?: string;
   archive_size?: number;
+  /** On a completed backup: how its archive is encrypted. */
+  encryption?: BackupEncryption;
   error?: string;
   started_at?: string;
   updated_at: string;
@@ -74,6 +91,8 @@ export interface AppRestoreConfig {
   appId: string;
   archivePath: string;
   passphrase: string;
+  /** The archive's recorded encryption (its set's backup-set.json, or the rollback backup's own). */
+  encryption?: BackupEncryption;
 }
 
 /** Full platform restore configuration */

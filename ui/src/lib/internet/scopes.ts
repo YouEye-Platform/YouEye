@@ -1,8 +1,8 @@
+/** An outside host an app may call through the gateway (`proxy:` in its manifest); each user grants it. */
 export type InternetScope = {
   host: string;
   paths: string[];
   methods: string[];
-  scope: "user" | "service";
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -42,7 +42,6 @@ export function collectInternetScopes(manifest: Record<string, unknown> | null |
       host: normalizeHost(host),
       paths,
       methods: methods.length > 0 ? methods : ["GET"],
-      scope: record.scope === "service" ? "service" : "user",
     });
   }
 
@@ -52,9 +51,7 @@ export function collectInternetScopes(manifest: Record<string, unknown> | null |
 
 export function collectInternetPermissions(manifest: Record<string, unknown> | null | undefined): string[] {
   return [...new Set(
-    collectInternetScopes(manifest)
-      .filter((scope) => scope.scope === "user")
-      .map((scope) => permissionForInternetHost(scope.host))
+    collectInternetScopes(manifest).map((scope) => permissionForInternetHost(scope.host))
   )].sort();
 }
 

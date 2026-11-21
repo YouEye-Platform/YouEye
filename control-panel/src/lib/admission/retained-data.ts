@@ -199,7 +199,8 @@ export async function prepareRetainedAdoption(
   return { skipSecrets: true, skipDatabase: true, skipConfigFiles: true,
     sharedDatabaseCreated: metadata.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true,
     retainedRuntimes: Object.fromEntries(metadata.retainedRoots!.roots.map(root =>
-      [root.sourceName, { name: root.retainedName, ownerId: root.ownerId, pool: root.pool }])) };
+      [root.sourceName, { name: root.retainedName, ownerId: root.ownerId, pool: root.pool }])),
+    recoveredNativeArtifacts: metadata.nativeArtifacts };
 }
 
 async function cleanupAdoptedRoots(metadata: InstallMetadata) {

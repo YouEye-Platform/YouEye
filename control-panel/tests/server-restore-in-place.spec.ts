@@ -105,6 +105,8 @@ async function fixture(t: test.TestContext) {
   let identityClients = new Map<string, SignInClient>();
   const fail = { restoreApp: new Set<string>(), databases: 0, database: new Map<string, number>(), quiesce: new Set<string>(),
     dashboard: false, caddy: 0 };
+  // The encryption each archive was restored with (what the restore sent Spine, or passed to the app restore).
+  const encryptions: Array<{ archive: string; encryption: unknown }> = [];
   // Called from inside the restore: while the core volumes are replaced, and when an app's restore has failed.
   const hooks: { replacingVolumes?: () => Promise<void>; appRestoreFailed?: () => void } = {};
 
@@ -185,8 +187,12 @@ async function fixture(t: test.TestContext) {
 
   let sets = 0;
   /** A backup set of the box as it is now: the core (with its copy of the allocator) and one archive per app. */
-  async function backup(): Promise<{ backupPath: string; apps: string[] }> {
+  async function backup(options: { encryption?: unknown } = {}): Promise<{ backupPath: string; apps: string[] }> {
     const backupPath = path.join(directory, 'sets', `set-${++sets}`);
+    if (options.encryption !== undefined) {
+      await mkdir(backupPath, { recursive: true });
+      await writeFile(path.join(backupPath, 'backup-set.json'), JSON.stringify({ schema: 'youeye.backup.set.v1', encryption: options.encryption }));
+    }
     const core = path.join(backupPath, 'youeye/core/core-2026-11-19.tar.enc');
     await mkdir(path.dirname(core), { recursive: true });
     await writeFile(core, 'encrypted');
@@ -205,7 +211,8 @@ async function fixture(t: test.TestContext) {
     path.join(set.backupPath, 'youeye/apps', appId, `${appId}-2026-11-19.tar.enc`);
 
   const spineClient = {
-    restoreArchive: async ({ archive_path: archivePath, staging_dir: staging }: { archive_path: string; staging_dir: string }) => {
+    restoreArchive: async ({ archive_path: archivePath, staging_dir: staging, encryption }: { archive_path: string; staging_dir: string; encryption?: unknown }) => {
+      encryptions.push({ archive: archivePath, encryption });
       const archive = archives.get(archivePath);
       assert.ok(archive?.kind === 'core');
       const files: Record<string, string> = {
@@ -409,7 +416,8 @@ async function fixture(t: test.TestContext) {
     '@/lib/market/install-tracker': { logOperationFailure: () => {} },
     './app-restore': {
       /** Replaces the app with its archive: a current installation goes first, then the installer runs. */
-      restoreApp: async (config: { appId: string; archivePath: string }, _onEvent: unknown, _protectCurrentState?: boolean) => {
+      restoreApp: async (config: { appId: string; archivePath: string; encryption?: unknown }, _onEvent: unknown, _protectCurrentState?: boolean) => {
+        encryptions.push({ archive: config.archivePath, encryption: config.encryption });
         const archive = archives.get(config.archivePath);
         assert.ok(archive?.kind === 'app' && archive.record.appId === config.appId);
         if (fail.restoreApp.has(config.archivePath)) {
@@ -539,7 +547,7 @@ async function fixture(t: test.TestContext) {
     dashboard: () => dashboard, credentialSides, forgetCredential, record, install: installFromMarket, uninstall,
     remakeSignInClient, signInWorks, hooks, rollBackRestore, startWatchdogContainer, restoreApps: (config: Pick<FullRestoreConfig, 'backupPath' | 'passphrase' | 'appIds'>) =>
       restore.restoreApps(config, () => {}) as Promise<void>, backup, appArchive, leases, assertNetworksMatchApps, heldMaintenance,
-    fullRestore, rollbackRestoreConfig,
+    fullRestore, rollbackRestoreConfig, encryptions,
   };
 }
 
@@ -1043,4 +1051,34 @@ test('the restore route rolls back through rollbackRestoreConfig and only after 
   // Apps without the core: every selected app is tried (restoreApps), not only those before the first failure.
   assert.match(route, /await restoreApps\(\{ backupPath, passphrase, appIds \}, relay\)/);
   assert.doesNotMatch(route, /for \(const appId of appIds\)/);
+});
+
+test('every archive of a set is restored with the encryption the set records, and a set without a record with none', async t => {
+  const f = await fixture(t);
+  await f.install(f.record('memos'));
+  const encryption = { cipher: 'aes-256-cbc', kdf: 'pbkdf2', digest: 'sha256', iterations: 20000, mac: 'hmac-sha256-pbkdf2' };
+  const recorded = await f.backup({ encryption });
+  await f.fullRestore({ backupPath: recorded.backupPath, passphrase, appIds: ['memos'] });
+  assert.deepEqual(f.encryptions.map(item => item.encryption), [encryption, encryption], 'core and app archive');
+  await f.restoreApps({ backupPath: recorded.backupPath, passphrase, appIds: ['memos'] });
+  assert.deepEqual(f.encryptions.at(-1)?.encryption, encryption, 'an app restored on its own');
+
+  // Made before the record (0.6.14): Spine is sent no parameters and uses those of that time.
+  f.encryptions.length = 0;
+  const older = await f.backup();
+  await f.fullRestore({ backupPath: older.backupPath, passphrase, appIds: ['memos'] });
+  assert.deepEqual(f.encryptions.map(item => item.encryption), [undefined, undefined]);
+
+  // Recorded before the .hmac key was derived (a 0.6.15 build without `mac`): sent as recorded, and Spine checks the
+  // .hmac file with the raw passphrase as before.
+  f.encryptions.length = 0;
+  const withoutMac = { cipher: 'aes-256-cbc', kdf: 'pbkdf2', digest: 'sha256', iterations: 10000 };
+  const early = await f.backup({ encryption: withoutMac });
+  await f.fullRestore({ backupPath: early.backupPath, passphrase, appIds: ['memos'] });
+  assert.deepEqual(f.encryptions.map(item => item.encryption), [withoutMac, withoutMac]);
+
+  const unreadable = await f.backup({ encryption: { cipher: 'aes-256-cbc' } });
+  await assert.rejects(f.fullRestore({ backupPath: unreadable.backupPath, passphrase, appIds: ['memos'] }), /encryption in a form/);
+  const badMac = await f.backup({ encryption: { ...withoutMac, mac: 7 } });
+  await assert.rejects(f.fullRestore({ backupPath: badMac.backupPath, passphrase, appIds: ['memos'] }), /encryption in a form/);
 });
