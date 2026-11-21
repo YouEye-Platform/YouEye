@@ -83,6 +83,8 @@ export interface PointerReleaseIO {
   verify(installed: NonNullable<PointerReleaseState['installed']>): Promise<void>;
   publish(installed: NonNullable<PointerReleaseState['installed']>): Promise<void>;
   health(): Promise<void>;
+  /** Whether Pointer runs and answers (a stopped Pointer takes the ordinary update instead). */
+  running?(): Promise<boolean>;
 }
 const runtimeIO: PointerReleaseIO = {
   read:readPointerReleaseState,save:savePointerReleaseState,
@@ -94,6 +96,11 @@ const runtimeIO: PointerReleaseIO = {
   health:async()=>{
     const {healthCheckViaExec} = await import('../incus/snapshot');
     await healthCheckViaExec(CONTAINER,4001,'/readyz',3);
+  },
+  running:async()=>{
+    const {containerState,healthCheckViaExec} = await import('../incus/snapshot');
+    if (await containerState(CONTAINER) !== 'Running') return false;
+    try { await healthCheckViaExec(CONTAINER,4001,'/readyz',1); return true; } catch { return false; }
   },
 };
 
@@ -144,12 +151,15 @@ export class PointerReleaseMetadataProvider implements AppUpdateProvider {
 export async function updateIdenticalPointerRelease(store: AppUpdateJournalStore, selected: VerifiedProductRelease, io = runtimeIO): Promise<boolean> {
   const before = await io.read(), original = pointerRelease(before);
   if (!original || !identicalProductPayloads(original,selected)) return false;
+  // Adopting the label writes into the running runtime and checks its health: a stopped Pointer (a backup that
+  // ended early, a crash) takes the ordinary update, which starts it, instead of failing.
+  if (io.running && !await io.running()) return false;
   const next: PointerReleaseState = {...before,installed:{...before.installed!,receipt:productReceipt(selected),acceptedAt:new Date().toISOString()},floors:acceptProductSequence(before.floors,selected,original)};
   pointerRelease(next);
   const artifacts = original.build.assets.filter(a=>a.name === 'standalone.tar').map(a=>a.sha256);
   await runAppUpdateTransaction(store, {
     appId:'pointer',operationKind:'pointer-release-metadata',metadataBeforeSHA256:updateDigest(JSON.stringify(before)),
-    originalRunning:{[CONTAINER]:true},source:{manifestSHA256:original.manifestSHA256,artifactSHA256:artifacts},
+    originalRunning:{[CONTAINER]:true /* checked above */},source:{manifestSHA256:original.manifestSHA256,artifactSHA256:artifacts},
     target:{manifestSHA256:selected.manifestSHA256,artifactSHA256:artifacts},
     resources:[{kind:'app',scope:'market',name:'pointer',ownerAppId:'pointer',mutable:false},
       {kind:'metadata',scope:'pointer',name:'release',ownerAppId:'pointer',mutable:true},

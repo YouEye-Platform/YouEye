@@ -18,6 +18,7 @@ import { OFFICIAL_MARKET_ADDRESSES } from '../src/lib/market/source';
 import { appFixture } from './fixtures/app-format';
 import { buildFixtureMarket } from './fixtures/market';
 import { load, marketWorld, root, withMarketState } from './fixtures/market-world';
+import { freeLifecycle } from './fixtures/free-lifecycle';
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -216,7 +217,7 @@ function installRoute(catalog: Record<string, any>, sources: Record<string, any>
       startTracking: () => new AbortController(), trackEvent() {}, finishTracking() {}, logOperationFailure() {},
       sanitiseInstallEvent: (event: unknown) => event, sensitivitySafeInstallError: () => 'failed',
     },
-    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/update-admission': freeLifecycle,
     '@/lib/health/notification-bridge': { sendNotificationToUI: async () => {} },
     '@/lib/events/emitter': { emitEvent() {} },
     '@/lib/settings': { settingsService: { getRaw: async () => ({ domain: 'box.example.test' }) } },
@@ -330,7 +331,7 @@ const lifecycleBusy = load('src/lib/http/lifecycle-busy.ts', {
 /** The switch route's lock modules; `lifecycle` stands in for the app lifecycle lock. */
 function switchLocks(lifecycle: (appId: string, work: () => unknown) => unknown = (_appId, work) => work()) {
   return {
-    '@/lib/market/update-admission': { withAppLifecycle: lifecycle, withUserOperationLockWait: (work: () => unknown) => work() },
+    '@/lib/market/update-admission': { ...freeLifecycle, withAppLifecycle: lifecycle },
     '@/lib/http/lifecycle-busy': lifecycleBusy,
     '@/lib/market/install-tracker': { logOperationFailure() {} },
   };

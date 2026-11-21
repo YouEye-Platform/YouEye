@@ -264,7 +264,6 @@ export const AppSchema = xobject({
     host: z.string().regex(/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, 'proxy host must be a DNS name, optionally *.<name>'),
     paths: z.array(z.string().regex(/^\/[A-Za-z0-9._~/*%-]*$/)).min(1),
     methods: Methods.optional(),
-    scope: Scope.optional(),
   })).optional(),
   link_handlers: z.array(xobject({
     type: Text,

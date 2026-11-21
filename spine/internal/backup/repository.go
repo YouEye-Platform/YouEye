@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +15,8 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-const backupSetsRoot = "/var/lib/youeye/backups/sets"
+// backupSetsRoot holds the completed local sets; a test moves it into a temporary tree.
+var backupSetsRoot = "/var/lib/youeye/backups/sets"
 
 var repositoryBackupID = regexp.MustCompile(`^backup-\d{8}T\d{6}Z-[0-9a-f]{8}$`)
 var repositorySourceTree = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -157,8 +159,10 @@ func writeCatalog(mountpoint string, catalog recoveryCatalog) error {
 	return nil
 }
 
-func resticCommand(repository, passphrase string, args ...string) *exec.Cmd {
-	cmd := exec.Command("restic", append([]string{"-r", repository}, args...)...)
+// resticCommand is a restic command that ends with ctx (stepCommand): SIGTERM first, on which restic removes its
+// repository lock.
+func resticCommand(ctx context.Context, repository, passphrase string, args ...string) *exec.Cmd {
+	cmd := stepCommand(ctx, "restic", append([]string{"-r", repository}, args...)...)
 	environment := make([]string, 0, len(os.Environ())+1)
 	for _, variable := range os.Environ() {
 		if !strings.HasPrefix(variable, "RESTIC_PASSWORD=") {
@@ -169,21 +173,30 @@ func resticCommand(repository, passphrase string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-func ensureRepository(repository, passphrase string) error {
+// unlockRepository removes the locks of restic processes that are gone ("restic unlock" removes only those). A
+// restic that was killed (the box lost power, or a store ran into StepCeiling and did not stop on SIGTERM) leaves
+// its lock, and restic refuses to check or prune a repository that has one. Only Spine writes the repository, one
+// step at a time. Best effort: a lock that stays makes the restic command after it say so.
+func unlockRepository(ctx context.Context, repository, passphrase string) {
+	_, _ = stepOutput(ctx, resticCommand(ctx, repository, passphrase, "unlock"), false)
+}
+
+func ensureRepository(ctx context.Context, repository, passphrase string) error {
 	if _, err := os.Stat(filepath.Join(repository, "config")); err == nil {
-		return nil
+		unlockRepository(ctx, repository, passphrase)
+		return stepEnded(ctx)
 	}
 	if err := os.MkdirAll(repository, 0700); err != nil {
 		return err
 	}
-	if output, err := resticCommand(repository, passphrase, "init").CombinedOutput(); err != nil {
+	if output, err := stepOutput(ctx, resticCommand(ctx, repository, passphrase, "init"), false); err != nil {
 		return fmt.Errorf("initialize encrypted repository: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
 
-func repositoryBackupIDs(repository, passphrase string) (map[string]bool, error) {
-	output, err := resticCommand(repository, passphrase, "snapshots", "--json", "--tag", "youeye-v1").Output()
+func repositoryBackupIDs(ctx context.Context, repository, passphrase string) (map[string]bool, error) {
+	output, err := stepOutput(ctx, resticCommand(ctx, repository, passphrase, "snapshots", "--json", "--tag", "youeye-v1"), true)
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted recovery points: %w", err)
 	}
@@ -237,7 +250,11 @@ func validateBackupSource(source BackupSourceIdentity) error {
 	return nil
 }
 
-func StoreBackupSet(request RepositoryStoreRequest) error {
+// StoreBackupSet writes a completed local set to the drive's repository, checks the repository and lists the set
+// in the drive's catalog. restic ends with ctx or at StepCeiling. A restic that is stopped leaves nothing a later
+// run trusts: a snapshot exists only once "backup" has ended well, the catalog lists the set only after "check"
+// (and, for a scheduled set, the retention) passed, and a stopped "forget --prune" is finished by the next one.
+func StoreBackupSet(ctx context.Context, request RepositoryStoreRequest) error {
 	if !validBackupID(request.BackupID) {
 		return fmt.Errorf("invalid backup identifier")
 	}
@@ -254,33 +271,36 @@ func StoreBackupSet(request RepositoryStoreRequest) error {
 	if info, err := os.Stat(source); err != nil || !info.IsDir() {
 		return fmt.Errorf("completed backup set was not found")
 	}
+	// The ceiling starts before the mount, so the drive commands count inside it.
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 	media, err := MountMedia(request.MediaID)
 	if err != nil {
 		return err
 	}
 	repository := filepath.Join(media.Mountpoint, ".youeye", "repository")
-	if err := ensureRepository(repository, request.Passphrase); err != nil {
+	if err := ensureRepository(ctx, repository, request.Passphrase); err != nil {
 		return err
 	}
 	reason := request.Reason
 	if reason != "scheduled" {
 		reason = "manual"
 	}
-	cmd := resticCommand(repository, request.Passphrase, "backup", "--host", "youeye", "--tag", "youeye-v1", "--tag", "backup-id:"+request.BackupID, "--tag", "reason:"+reason, filepath.Base(source))
+	cmd := resticCommand(ctx, repository, request.Passphrase, "backup", "--host", "youeye", "--tag", "youeye-v1", "--tag", "backup-id:"+request.BackupID, "--tag", "reason:"+reason, filepath.Base(source))
 	cmd.Dir = filepath.Dir(source)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if output, err := stepOutput(ctx, cmd, false); err != nil {
 		return fmt.Errorf("write encrypted recovery point: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if output, err := resticCommand(repository, request.Passphrase, "check").CombinedOutput(); err != nil {
+	if output, err := stepOutput(ctx, resticCommand(ctx, repository, request.Passphrase, "check"), false); err != nil {
 		return fmt.Errorf("verify encrypted recovery point: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	if reason == "scheduled" {
-		if output, err := resticCommand(repository, request.Passphrase, "forget", "--tag", "reason:scheduled", "--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6", "--prune").CombinedOutput(); err != nil {
+		if output, err := stepOutput(ctx, resticCommand(ctx, repository, request.Passphrase, "forget", "--tag", "reason:scheduled", "--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6", "--prune"), false); err != nil {
 			return fmt.Errorf("apply recovery-point retention: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
 	catalog := readCatalog(media.Mountpoint)
-	if retained, inventoryErr := repositoryBackupIDs(repository, request.Passphrase); inventoryErr == nil {
+	if retained, inventoryErr := repositoryBackupIDs(ctx, repository, request.Passphrase); inventoryErr == nil {
 		filtered := catalog.Backups[:0]
 		for _, existing := range catalog.Backups {
 			if retained[existing.BackupID] {
@@ -308,22 +328,29 @@ func StoreBackupSet(request RepositoryStoreRequest) error {
 	return writeCatalog(media.Mountpoint, catalog)
 }
 
-func ImportBackupSet(request RepositoryImportRequest) (string, error) {
+// ImportBackupSet reads a set from the drive's repository into the backup directory. restic ends with ctx or at
+// StepCeiling; it restores into a temporary directory that is removed on every way out, and the set gets its
+// name only by the rename of a whole restore.
+func ImportBackupSet(ctx context.Context, request RepositoryImportRequest) (string, error) {
 	if !validBackupID(request.BackupID) || len(request.Passphrase) < 12 {
 		return "", fmt.Errorf("valid backup identifier and passphrase are required")
 	}
+	// The ceiling starts before the mount, so the drive commands count inside it.
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 	media, err := MountMedia(request.MediaID)
 	if err != nil {
 		return "", err
 	}
 	repository := filepath.Join(media.Mountpoint, ".youeye", "repository")
-	parent := "/var/lib/youeye/backups"
+	parent := backupRoot
 	temporary, err := os.MkdirTemp(parent, ".importing-")
 	if err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(temporary)
-	output, err := resticCommand(repository, request.Passphrase, "restore", "latest", "--tag", "backup-id:"+request.BackupID, "--target", temporary).CombinedOutput()
+	unlockRepository(ctx, repository, request.Passphrase)
+	output, err := stepOutput(ctx, resticCommand(ctx, repository, request.Passphrase, "restore", "latest", "--tag", "backup-id:"+request.BackupID, "--target", temporary), false)
 	if err != nil {
 		return "", fmt.Errorf("read encrypted recovery point: %w: %s", err, strings.TrimSpace(string(output)))
 	}

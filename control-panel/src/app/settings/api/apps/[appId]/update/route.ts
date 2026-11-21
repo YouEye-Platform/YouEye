@@ -1,21 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth/session';
-import { spineClient } from '@/lib/spine/client';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { withUserOperationLockWait } from '@/lib/market/update-admission';
-import { updateOCIApp } from '@/lib/apps/updater';
-import { updateSystemContainer } from '@/lib/infrastructure/system-updater';
-import { assertNoCriticalIssues, CriticalIssueBlockedError } from '@/lib/health/issues';
+import { lifecycleRefusalResponse } from '@/lib/http/lifecycle-busy';
+import { updateSystemContainerApp } from '@/lib/apps/system-container-update';
+import { CriticalIssueBlockedError } from '@/lib/health/issues';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { handleMarketUpdate } from '@/lib/market/update-http';
-import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
-
-function statusComponentFor(appId: string): string {
-  if (appId === 'control-panel') return 'control';
-  if (appId === 'host-system') return 'system';
-  return appId;
-}
+import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
 
 async function recordStatus(
   component: string,
@@ -77,12 +70,17 @@ export async function POST(
     return handleMarketUpdate(request, appId, 'json');
   }
 
-  const component = statusComponentFor(appId);
+  const appDef = getAppDefinition(appId);
+  // Spine, the Control Panel, the UI and the host (Incus, packages) update with the System release (Settings →
+  // System): refused before anything is recorded as started.
+  if (appDef?.updatedBy !== 'control-panel') {
+    return NextResponse.json({ error: `No update handler for ${appId}` }, { status: 404 });
+  }
+  const component = appId;
 
   try {
     await markStarted(component);
 
-    const appDef = getAppDefinition(appId);
     if (appDef?.lxdConfig) {
       let lastMessage = '';
       await withUserOperationLockWait(() => updateLXDApp(appDef, (event) => {
@@ -110,34 +108,18 @@ export async function POST(
 
     // Caddy, Pi-Hole and PostgreSQL move to the image pinned by this release
     // (lib/infrastructure/system-images), never a moving tag. Confirmations
-    // come from the client dialog; the guards below are a safety net.
+    // come from the client dialog; the guards in the shared action are a safety net.
     if (appDef?.systemImageId) {
-      // The update may repair the container itself: its own "down" (or crash-loop) issue does not block it.
-      await assertNoCriticalIssues('Pool/system operation', undefined, [
-        `service.${appId}.down`, ...appDef.containers.map((container) => `container.${container.name}.crash-loop`),
-      ]);
       const body = await request.json().catch(() => ({} as Record<string, unknown>));
-      let lastMessage = '';
-      const result = await updateSystemContainer(
-        {
-          systemId: appDef.systemImageId,
-          hostIP: process.env.HOST_IP || '',
-          confirmMaintenanceWindow: body.confirmMaintenanceWindow === true,
-          confirmContainerName:
-            typeof body.confirmContainerName === 'string' ? body.confirmContainerName : undefined,
-          allowDatabaseUpdate: body.allowDatabaseUpdate === true,
-        },
-        (event) => {
-          lastMessage = event.message;
-          const progress = event.totalSteps > 0 ? Math.round((event.step / event.totalSteps) * 100) : 0;
-          recordStatus(
-            component,
-            event.status === 'error' ? 'failed' : event.status === 'success' ? 'completed' : 'installing',
-            progress,
-            event.message,
-          );
-        },
-      );
+      const result = await updateSystemContainerApp(appDef, body, (event) => {
+        const progress = event.totalSteps > 0 ? Math.round((event.step / event.totalSteps) * 100) : 0;
+        recordStatus(
+          component,
+          event.status === 'error' ? 'failed' : event.status === 'success' ? 'completed' : 'installing',
+          progress,
+          event.message,
+        );
+      });
       if (result.success) {
         await markCompleted(component, result.newVersion || '');
       } else {
@@ -149,47 +131,14 @@ export async function POST(
       );
     }
 
-    if (appDef?.updatedBy === 'control-panel') {
-      let lastMessage = '';
-      await updateOCIApp(appDef, (event) => {
-        lastMessage = event.message;
-        recordStatus(
-          component,
-          event.stage === 'failed' ? 'failed' : event.stage === 'completed' ? 'completed' : 'installing',
-          event.progress ?? 0,
-          event.message,
-        );
-      });
-      await markCompleted(component);
-      return NextResponse.json({ status: 'success', message: lastMessage || `${appDef.displayName} updated` });
-    }
-
-    let result;
-    switch (appId) {
-      case 'incus':
-        await recordStatus(component, 'installing', 30, 'Updating Incus...');
-        result = await spineClient.updateIncus();
-        break;
-      case 'host-system':
-        await assertNoCriticalIssues('Platform update');
-        await recordStatus(component, 'installing', 30, 'Updating system packages...');
-        result = await spineClient.updateSystem();
-        break;
-      default:
-        return NextResponse.json({ error: `No update handler for ${appId}` }, { status: 404 });
-    }
-
-    if (['spine', 'control'].includes(component) && result.status === 'up-to-date') {
-      await completeNoOp(component, result.new_version || result.old_version || '');
-    } else if (!['spine', 'control'].includes(component)) {
-      await markCompleted(component, result.new_version || '');
-    }
-    return NextResponse.json(result);
+    return NextResponse.json({ error: `No update handler for ${appId}` }, { status: 404 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markFailed(component, message);
     // Refused for an open critical issue, as the system-updates route answers it.
     if (error instanceof CriticalIssueBlockedError) return NextResponse.json({ error: message, code: error.code }, { status: 423 });
+    const refused = lifecycleRefusalResponse(error);
+    if (refused) return refused;
     console.error(`[settings-app-update] Failed to update ${appId}:`, error);
     return NextResponse.json({ error: `Failed to update ${appId}: ${message}` }, { status: 500 });
   }

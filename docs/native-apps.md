@@ -9,7 +9,7 @@ directly (dashboard widgets, notifications, the UI gateway). Container apps from
 | Notes | `YE-App-Notes` | Markdown notes with folders, pinning, search and public sharing |
 | Wiki | `YE-App-Wiki` | Wikipedia reader; pages are fetched through the UI gateway |
 | Search | `YE-App-Search` | Web search through a connected search engine app (SearXNG or any `search-engine`) |
-| Translate | `YE-App-Translate` | Translation (MyMemory, or a connected LibreTranslate) |
+| Translate | `YE-App-Translate` | Translation (MyMemory) |
 | Weather | `YE-App-Weather` | Forecasts for saved places (Open-Meteo) |
 | Cinema | `YE-App-Cinema` | Movies and TV from TMDB, watchlists, reviews; can connect to Jellyfin |
 
@@ -117,8 +117,8 @@ Gateway routes (`ui/src/app/api/apps/v1/`):
 | `* proxy/<targetAppId>/<path>` | calls a connected app. Needs `X-YouEye-User`, an approved active connection, the user admitted to the target app and the user's `connection:<target>` grant; method and path must match the connection's `proxy:` rule |
 
 The per-user grants (`internet:<host>`, `connection:<app>`) are asked for when the user first opens the app
-(`ui/src/app/api/v1/apps/[appId]/launch-requirements`). Only `proxy:` hosts with the default `scope: user` are
-asked for, so a host declared with `scope: service` is refused today; no shipped app uses it.
+(`ui/src/app/api/v1/apps/[appId]/launch-requirements`); every `proxy:` host is asked for. A `proxy:` entry has no
+`scope` (the server-wide `scope: service` hosts were never asked for nor allowed, and were removed in 0.6.15).
 
 The same token also works on these UI routes under `/api/v1/` (Canvas derives the base from `YOUEYE_GATEWAY`):
 `header/config`, `notifications`, `apps/<id>/user-settings`, `themes/active`, `timeline`, `timeline/collection`,
@@ -208,9 +208,9 @@ From `YouEye-Canvas/README.md`:
 4. Edit `youeye-app.yaml` (`id`, `name`, `listing`, `surfaces`, `capabilities`, `proxy`) and the app code.
 5. `pnpm test && pnpm validate:source && pnpm build`.
 
-Canvas itself is released as source (`source.tar.gz` + `youeye-app.yaml`), not as an installable app. To make a
-fork installable, copy from an existing native app what Canvas does not carry: `output: "standalone"` in
-`next.config.ts`, the `.youeye/build/` directory, the `scripts/` used by its `build` script (including
-`write-release-manifest.mjs`, with the new id; `lib.sh` brings `app_require_source_tree`) and
-`THIRD_PARTY_NOTICES.txt`. Then add the repository and product
-key to the release tooling and the id to the official catalog's `native:` list.
+Canvas itself is released as source (`source.tar.gz` + `youeye-app.yaml`), not as an installable app. It carries the
+same release build as the shipped native apps (`output: "standalone"` in `next.config.ts`, `.youeye/build/`, the
+`scripts/` of its `build` script including `write-release-manifest.mjs`, and `THIRD_PARTY_NOTICES.txt`; Canvas `dev`
+`329afc2`), so a fork builds an installable `standalone.tar` without copying anything from another app. To ship a
+fork, add its repository and product key (the manifest `id`) to the release tooling and the id to the official
+catalog's `native:` list.

@@ -1,14 +1,12 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,6 +126,7 @@ type Server struct {
 	remoteAccess         remoteAccessService
 	consoleAccess        consoleAccessService
 	networkStatus        networkStatusService
+	controlRestart       *controlRestarter
 
 	// Status cache — avoids shelling out on every request
 	statusMu     sync.Mutex
@@ -158,6 +157,7 @@ func NewServer(version string, cfg *config.Config) *Server {
 		consoleAccess: consoleaccess.Default(),
 		networkStatus: networkstatus.NewDefault(),
 	}
+	s.controlRestart = newControlRestarter(cfg.Deployment.Container.Name)
 	s.setupRoutes()
 	return s
 }
@@ -233,8 +233,6 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/version", s.handleVersion)
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/auth/verify", s.handleAuthVerify)
-	s.mux.HandleFunc("/api/update/incus", s.handleUpdateIncus)
-	s.mux.HandleFunc("/api/update/system", s.handleUpdateSystem)
 	s.mux.HandleFunc("/api/postgres/credentials", s.handlePostgresCredentials)
 	s.mux.HandleFunc("/api/pihole/credentials", s.handlePiholeCredentials)
 	s.mux.HandleFunc("/api/control/sso", s.handleControlSSO)
@@ -257,7 +255,6 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/console", s.handleConsoleAccess)
 	s.mux.HandleFunc("/api/console/", s.handleConsoleAccess)
 	s.mux.HandleFunc("/api/appliance/network", s.handleNetworkStatus)
-	s.mux.HandleFunc("/api/registry/digest", s.handleRegistryDigest)
 	s.mux.HandleFunc("/api/backup/run", s.handleBackupRun)
 	s.mux.HandleFunc("/api/backup/status", s.handleBackupStatus)
 	s.mux.HandleFunc("/api/backup/storage-driver", s.handleStorageDriver)
@@ -309,6 +306,7 @@ func (s *Server) ListenAndServe() error {
 	}()
 
 	fmt.Printf("API server listening on %s\n", s.socketPath)
+	s.controlRestart.resume()
 
 	return http.Serve(listener, s.mux)
 }
@@ -519,212 +517,6 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, update.ReadStatus())
-}
-
-func (s *Server) handleUpdateIncus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.runtimeCapabilityGuard(w, appliance.ActionIncusUpdate) {
-		return
-	}
-
-	// Run update
-	cmd := exec.Command("apt-get", "update")
-	cmd.Run()
-	cmd = exec.Command("apt-get", "install", "-y", "--only-upgrade", "incus")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("update failed: %s", string(output)), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResponse(w, map[string]string{
-		"status":  "success",
-		"message": "Incus updated",
-		"output":  string(output),
-	})
-}
-
-func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !s.runtimeCapabilityGuard(w, appliance.ActionSystemUpdate) {
-		return
-	}
-
-	// Run update
-	exec.Command("apt-get", "update").Run()
-	cmd := exec.Command("apt-get", "upgrade", "-y")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("update failed: %s", string(output)), http.StatusInternalServerError)
-		return
-	}
-
-	// Check if reboot required
-	rebootRequired := false
-	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
-		rebootRequired = true
-	}
-
-	jsonResponse(w, map[string]interface{}{
-		"status":          "success",
-		"message":         "System updated",
-		"reboot_required": rebootRequired,
-	})
-}
-
-func (s *Server) ensureControlIdentityService(containerName, appDir string) error {
-	identityServiceScript := fmt.Sprintf(`set -e
-if [ ! -f /etc/systemd/system/youeye-id.service ]; then
-  JWT="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
-  HOST_IP="$(hostname -I | awk '{print $1}')"
-  cat > /etc/systemd/system/youeye-id.service <<EOF
-[Unit]
-Description=Identity Provider
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=%s
-Environment=NODE_ENV=production
-Environment=PORT=3001
-Environment=IDENTITY_SERVICE=true
-Environment=JWT_SECRET=${JWT}
-Environment=HOST_IP=${HOST_IP}
-Environment=SECURE_COOKIES=true
-ExecStart=/usr/bin/node %s/server.js
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-fi
-if [ -f /etc/youeye/incus-client.crt ] && [ -f /etc/youeye/incus-client.key ]; then
-  INCUS_URL="$(systemctl show youeye-control --property=Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^INCUS_HTTPS_URL=//p' | head -n1)"
-  if [ -z "$INCUS_URL" ] && [ -f /etc/systemd/system/youeye-control.service ]; then
-    INCUS_URL="$(sed -n 's/^Environment=INCUS_HTTPS_URL=//p' /etc/systemd/system/youeye-control.service | head -n1)"
-  fi
-  if [ -z "$INCUS_URL" ]; then
-    GW="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
-    if [ -n "$GW" ]; then
-      INCUS_URL="${GW}:8443"
-    fi
-  fi
-  if [ -n "$INCUS_URL" ]; then
-    mkdir -p /etc/systemd/system/youeye-id.service.d
-    cat > /etc/systemd/system/youeye-id.service.d/incus-https.conf <<EOF
-[Service]
-Environment=INCUS_HTTPS_URL=${INCUS_URL}
-Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
-Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
-EOF
-  fi
-fi
-systemctl daemon-reload
-systemctl enable youeye-id
-systemctl restart youeye-id
-`, appDir, appDir)
-	out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", identityServiceScript).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
-	}
-	if err := container.EnsureControlSocketReadiness(containerName); err != nil {
-		return err
-	}
-	return nil
-}
-
-// reconcileInfrastructure calls the CP reconcile endpoint to deploy missing
-// infrastructure containers. This is called asynchronously after a CP update.
-func (s *Server) reconcileInfrastructure() {
-	fmt.Println("[reconcile] Starting infrastructure reconciliation...")
-	hostIP := util.GetPrimaryIP()
-
-	if err := container.RepairControlPanelPortProxy(s.cfg.Deployment.Container.Name, s.cfg.Deployment.ControlPanel.Port); err != nil {
-		fmt.Printf("[reconcile] Control Panel localhost proxy repair failed: %v\n", err)
-	} else {
-		fmt.Println("[reconcile] Control Panel raw proxy verified localhost-only")
-	}
-	if err := container.EnforceUIEgressBlock(); err != nil {
-		fmt.Printf("[reconcile] UI→CP ACL repair failed: %v\n", err)
-	} else {
-		fmt.Println("[reconcile] UI→CP ACL verified")
-	}
-
-	// Read deploy secret
-	secretBytes, err := os.ReadFile("/var/lib/youeye/control/.deploy_secret")
-	if err != nil {
-		fmt.Printf("[reconcile] Cannot read deploy secret: %v\n", err)
-		return
-	}
-	deploySecret := strings.TrimSpace(string(secretBytes))
-
-	body := fmt.Sprintf(`{"host_ip":"%s"}`, hostIP)
-	req, err := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/deploy/infrastructure/reconcile", s.cfg.Deployment.ControlPanel.Port), strings.NewReader(body))
-	if err != nil {
-		fmt.Printf("[reconcile] Failed to create request: %v\n", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Deploy-Secret", deploySecret)
-
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("[reconcile] Failed to connect to Control Panel: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		bodyBytes := make([]byte, 1024)
-		n, _ := resp.Body.Read(bodyBytes)
-		fmt.Printf("[reconcile] Control Panel returned status %d: %s\n", resp.StatusCode, string(bodyBytes[:n]))
-		return
-	}
-
-	// Read and log SSE stream
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		jsonStr := strings.TrimPrefix(line, "data: ")
-		var event struct {
-			Step       int    `json:"step"`
-			TotalSteps int    `json:"totalSteps"`
-			Status     string `json:"status"`
-			Message    string `json:"message"`
-		}
-		if json.Unmarshal([]byte(jsonStr), &event) == nil {
-			icon := "⏳"
-			switch event.Status {
-			case "success":
-				icon = "✓"
-			case "error":
-				icon = "✗"
-			case "skipped":
-				icon = "→"
-			}
-			fmt.Printf("[reconcile]   %s [%d/%d] %s\n", icon, event.Step, event.TotalSteps, event.Message)
-		}
-	}
-
-	if scanner.Err() != nil {
-		fmt.Printf("[reconcile] Error reading stream: %v\n", scanner.Err())
-	} else {
-		fmt.Println("[reconcile] Infrastructure reconciliation complete")
-	}
 }
 
 // handlePostgresCredentials returns PostgreSQL connection credentials.
@@ -1016,10 +808,6 @@ func ensureUIIdentityProxy(uiContainerName string) error {
 //	its own restart after durable completion.
 //
 // DELETE: Remove SSO config, daemon-reload, restart (delayed)
-func controlSSORestartRequested(r *http.Request) bool {
-	return !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("restart")), "false")
-}
-
 func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 	containerName := s.cfg.Deployment.Container.Name
 
@@ -1121,58 +909,33 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 		// Daemon-reload
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "daemon-reload").Run()
 
-		restart := controlSSORestartRequested(r)
-		message := "SSO environment configured"
-		if restart {
-			message += ", restarting Control Panel..."
-		}
+		// The Control Panel reads the file at its next start: the caller asks for that restart
+		// (/api/control/restart), which waits for running app and platform work.
 		jsonResponse(w, map[string]string{
 			"status":  "configured",
-			"message": message,
+			"message": "SSO environment configured",
 		})
-
-		if restart {
-			// Restart CP after a short delay so the response can be sent.
-			go func() {
-				time.Sleep(2 * time.Second)
-				exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
-			}()
-		}
-
-	case "DELETE":
-		// Remove SSO configuration
-		exec.Command("incus", "exec", containerName, "--",
-			"rm", "-f", "/etc/youeye-sso.env").Run()
-		exec.Command("incus", "exec", containerName, "--",
-			"rm", "-f", "/etc/systemd/system/youeye-control.service.d/sso.conf").Run()
-		exec.Command("incus", "exec", containerName, "--",
-			"systemctl", "daemon-reload").Run()
-		os.Remove("/var/lib/youeye/control/.sso_env")
-
-		jsonResponse(w, map[string]string{
-			"status":  "removed",
-			"message": "SSO configuration removed, restarting Control Panel...",
-		})
-
-		go func() {
-			time.Sleep(2 * time.Second)
-			exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
-		}()
 
 	default:
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handleControlRestart restarts the Control Panel container service after a delay.
+// handleControlRestart schedules a restart of the Control Panel service: after the delay, as soon as no app or
+// platform work is running (controlRestarter). It answers at once.
 // POST /api/control/restart?delay=5 (delay in seconds, default 2, max 30)
+// GET answers whether a restart waits, since when, and since when it is known to wait past its longest wait under
+// a platform backup or restore (controlRestartStatus); the Control Panel's health monitor reads it.
 func (s *Server) handleControlRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		jsonResponse(w, s.controlRestart.status())
+		return
+	}
 	if r.Method != "POST" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	containerName := s.cfg.Deployment.Container.Name
 	delay := 2
 	if d := r.URL.Query().Get("delay"); d != "" {
 		var parsed int
@@ -1181,15 +944,11 @@ func (s *Server) handleControlRestart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.controlRestart.schedule(time.Duration(delay) * time.Second)
 	jsonResponse(w, map[string]string{
 		"status":  "scheduled",
-		"message": fmt.Sprintf("Control Panel will restart in %d seconds", delay),
+		"message": fmt.Sprintf("Control Panel will restart in %d seconds, or when the app or platform work running then has finished", delay),
 	})
-
-	go func() {
-		time.Sleep(time.Duration(delay) * time.Second)
-		exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
-	}()
 }
 
 // getUIStatus returns the status of the UI container and service.
@@ -1851,179 +1610,6 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleRegistryDigest fetches the manifest digest for an OCI image tag from
-// Docker Hub or GHCR using anonymous authentication. The Control Panel container
-// has no outbound internet access, so it calls this endpoint on Spine (which
-// runs on the host with full connectivity).
-//
-// GET /api/registry/digest?image=docker.io/library/caddy&tag=latest
-// Returns: { "digest": "sha256:abc...", "image": "docker.io/library/caddy", "tag": "latest" }
-func (s *Server) handleRegistryDigest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	image := r.URL.Query().Get("image")
-	tag := r.URL.Query().Get("tag")
-	if image == "" {
-		errorResponse(w, "image parameter is required", http.StatusBadRequest)
-		return
-	}
-	if tag == "" {
-		tag = "latest"
-	}
-
-	// Strip tag from image if accidentally included (e.g. "docker.io/library/caddy:latest")
-	if idx := strings.LastIndex(image, ":"); idx > strings.LastIndex(image, "/") {
-		tag = image[idx+1:]
-		image = image[:idx]
-	}
-
-	registry, namespace := parseImageRef(image)
-
-	// Get anonymous pull token
-	token, err := getRegistryToken(registry, namespace)
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("failed to get registry token: %v", err), http.StatusBadGateway)
-		return
-	}
-
-	// HEAD the manifest to get digest
-	digest, err := getManifestDigest(registry, namespace, tag, token)
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("failed to get manifest digest: %v", err), http.StatusBadGateway)
-		return
-	}
-
-	jsonResponse(w, map[string]string{
-		"digest": digest,
-		"image":  image,
-		"tag":    tag,
-	})
-}
-
-// parseImageRef splits an image reference into registry host and namespace/name.
-//
-//	"postgres"                      → ("docker.io", "library/postgres")
-//	"pihole/pihole"                 → ("docker.io", "pihole/pihole")
-//	"docker.io/library/caddy"       → ("docker.io", "library/caddy")
-//	"ghcr.io/example/app"           → ("ghcr.io",   "example/app")
-func parseImageRef(image string) (registry, namespace string) {
-	parts := strings.SplitN(image, "/", 2)
-	if len(parts) < 2 {
-		// Single name like "postgres" → Docker Hub official
-		return "docker.io", "library/" + image
-	}
-	// If the first part contains a dot or colon, it's a registry host.
-	// Otherwise it's a Docker Hub namespace (e.g. "pihole/pihole").
-	if strings.ContainsAny(parts[0], ".:") {
-		return parts[0], parts[1]
-	}
-	return "docker.io", image
-}
-
-// getRegistryToken obtains an anonymous bearer token for pulling from the given registry.
-func getRegistryToken(registry, namespace string) (string, error) {
-	var tokenURL string
-
-	switch registry {
-	case "docker.io", "registry-1.docker.io":
-		tokenURL = fmt.Sprintf(
-			"https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull",
-			url.QueryEscape(namespace),
-		)
-	case "ghcr.io":
-		tokenURL = fmt.Sprintf(
-			"https://ghcr.io/token?scope=repository:%s:pull",
-			url.QueryEscape(namespace),
-		)
-	default:
-		tokenURL = fmt.Sprintf(
-			"https://%s/token?scope=repository:%s:pull",
-			registry, url.QueryEscape(namespace),
-		)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("create token request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("decode token response: %w", err)
-	}
-
-	token := tokenResp.Token
-	if token == "" {
-		token = tokenResp.AccessToken
-	}
-	return token, nil
-}
-
-// getManifestDigest sends a HEAD request to the registry manifest endpoint and
-// returns the Docker-Content-Digest header value.
-func getManifestDigest(registry, namespace, tag, token string) (string, error) {
-	registryHost := registry
-	if registry == "docker.io" {
-		registryHost = "registry-1.docker.io"
-	}
-
-	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registryHost, namespace, tag)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("create manifest request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", strings.Join([]string{
-		"application/vnd.docker.distribution.manifest.v2+json",
-		"application/vnd.oci.image.manifest.v1+json",
-		"application/vnd.docker.distribution.manifest.list.v2+json",
-		"application/vnd.oci.image.index.v1+json",
-	}, ", "))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("head manifest: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("manifest HEAD returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	digest := resp.Header.Get("Docker-Content-Digest")
-	if digest == "" {
-		return "", fmt.Errorf("no Docker-Content-Digest header in response")
-	}
-
-	return digest, nil
-}
-
 // handleBackupRun starts a backup operation in the background.
 // POST /api/backup/run
 func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
@@ -2069,7 +1655,7 @@ func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backupID, err := backup.Run(cfg)
+	backupID, err := backup.Run(r.Context(), cfg)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("Failed to start backup: %v", err), http.StatusInternalServerError)
 		return
@@ -2139,6 +1725,15 @@ func (s *Server) handleBackupMediaEject(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, map[string]string{"status": "ejected"})
 }
 
+// stepRequestContext is the context of a long backup or restore step (backup.StepCeiling): it ends when the
+// caller hangs up, which stops the step's commands. Go's server only notices a caller that went away once the
+// request body has been read to its end, and a JSON decoder stops at the end of the value, before the end of
+// the Control Panel's chunked body; so the rest is read here.
+func stepRequestContext(r *http.Request) context.Context {
+	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1024*1024))
+	return r.Context()
+}
+
 func (s *Server) handleBackupRepositoryStore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2159,7 +1754,7 @@ func (s *Server) handleBackupRepositoryStore(w http.ResponseWriter, r *http.Requ
 		}
 		request.Passphrase = stored
 	}
-	if err := backup.StoreBackupSet(request); err != nil {
+	if err := backup.StoreBackupSet(stepRequestContext(r), request); err != nil {
 		errorResponse(w, fmt.Sprintf("Could not store recovery point: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -2186,7 +1781,7 @@ func (s *Server) handleBackupRepositoryImport(w http.ResponseWriter, r *http.Req
 		}
 		request.Passphrase = stored
 	}
-	importPath, err := backup.ImportBackupSet(request)
+	importPath, err := backup.ImportBackupSet(stepRequestContext(r), request)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("Could not import recovery point: %v", err), http.StatusBadRequest)
 		return
@@ -2322,7 +1917,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := backup.RestoreArchive(cfg)
+	result, err := backup.RestoreArchive(stepRequestContext(r), cfg)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("Restore failed: %v", err), http.StatusInternalServerError)
 		return
@@ -2348,7 +1943,7 @@ func (s *Server) handleBackupApplyVolumes(w http.ResponseWriter, r *http.Request
 		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
 		return
 	}
-	restored, err := backup.ApplyVolumes(request.StagingDir)
+	restored, err := backup.ApplyVolumes(stepRequestContext(r), request.StagingDir)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("Volume restore failed: %v", err), http.StatusBadRequest)
 		return
@@ -2368,7 +1963,7 @@ func (s *Server) handleBackupIncusPrepare(w http.ResponseWriter, r *http.Request
 		errorResponse(w, "invalid Incus recovery request", http.StatusBadRequest)
 		return
 	}
-	result, err := backup.PrepareIncusRecovery(request)
+	result, err := backup.PrepareIncusRecovery(stepRequestContext(r), request)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("Incus recovery preparation failed: %v", err), http.StatusBadRequest)
 		return
@@ -2388,7 +1983,7 @@ func (s *Server) handleBackupIncusImportInstance(w http.ResponseWriter, r *http.
 		errorResponse(w, "invalid Incus instance import request", http.StatusBadRequest)
 		return
 	}
-	if err := backup.ImportIncusInstance(request); err != nil {
+	if err := backup.ImportIncusInstance(stepRequestContext(r), request); err != nil {
 		errorResponse(w, fmt.Sprintf("Incus instance import failed: %v", err), http.StatusBadRequest)
 		return
 	}

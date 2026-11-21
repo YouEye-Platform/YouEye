@@ -27,6 +27,7 @@ import {
   type PointerManagedInstallation,
 } from '@/lib/pointer/managed-apps';
 import type { PointerLifecycleActor } from '@/lib/identity/tokens';
+import { getUserById } from '@/lib/identity/store';
 import { withAppLifecycle } from './update-admission';
 
 function managedAIIconUrl(manifest: AppManifest): string | undefined {
@@ -380,4 +381,65 @@ async function takeOverManagedAILocked(
   meta.aiConnection = connectionFromInstallation(actor.id, installation);
   await saveInstallMetadata(meta);
   return meta.aiConnection;
+}
+
+/**
+ * A kept app after a server restore. The restore put the backup's Pointer database back but did not reinstall the
+ * app, so the app still holds the AI key it was given last, and Pointer keeps only key hashes. A connection made
+ * (or made again) after the backup is unknown to the restored Pointer, and the app's AI requests are refused.
+ *
+ * - Pointer still has the app's key: the model group and the enabled state the owner chose after the backup are
+ *   applied again (the group only while it exists with models).
+ * - Otherwise the backup's record (if any) is archived and the app gets a new connection for the same owner, in
+ *   its group (or the owner's default group when that one is gone), in the state it had: a new key is written
+ *   into the app.
+ */
+export async function reconcileKeptManagedAI(appId: string): Promise<'none' | 'kept' | 'reconnected'> {
+  return withAppLifecycle(appId, async () => {
+    const meta = await readInstallMetadata(appId);
+    const saved = meta?.aiConnection;
+    if (!meta || !saved) return 'none';
+    const credential = await readAppSecret(appId, 'pointer_api_key');
+    const current = await readPointerManagedApp(saved.externalInstallationId).catch((error: unknown) => {
+      if (error instanceof Error && error.message.includes('(installation_not_found)')) return null;
+      throw error;
+    });
+    if (current && credential && current.app.id === appId && current.state !== 'archived'
+      && current.pointer.installationId === saved.pointerInstallationId
+      && current.credential && !current.credential.revoked && current.credential.preview === saved.keyPreview) {
+      if (current.selectedGroup?.id !== saved.modelGroupId) {
+        // The model group the owner chose after the backup. Still there with models: chosen again. Gone (or its owner
+        // gone): the restored group stays, which answers the app's requests.
+        const user = await getUserById(saved.ownerUserId);
+        const actor: PointerLifecycleActor | null = user?.is_active
+          ? { id: user.id, name: user.name || user.username, isAdmin: user.is_admin } : null;
+        const group = actor && (await listPointerActorGroups(actor))
+          .find((candidate) => candidate.id === saved.modelGroupId && candidate.enabledModelCount > 0);
+        if (actor && group) {
+          await changePointerManagedAppGroup({ actor, externalInstallationId: saved.externalInstallationId, groupId: group.id });
+        } else {
+          console.warn(`[managed-ai] ${appId}: AI model group ${saved.modelGroupId} is not available; it keeps the restored one`);
+        }
+      }
+      if (saved.state === 'disabled' && current.state === 'active') {
+        await setPointerManagedAppEnabled(saved.externalInstallationId, false);
+      } else if (saved.state === 'active' && current.state === 'disabled') {
+        await setPointerManagedAppEnabled(saved.externalInstallationId, true);
+      }
+      return 'kept';
+    }
+    const user = await getUserById(saved.ownerUserId);
+    if (!user?.is_active) throw new Error(`The owner of ${appId}'s AI connection is not on this server`);
+    const actor: PointerLifecycleActor = { id: user.id, name: user.name || user.username, isAdmin: user.is_admin };
+    const groups = await listPointerActorGroups(actor);
+    const group = groups.find((candidate) => candidate.id === saved.modelGroupId && candidate.enabledModelCount > 0)
+      ?? groups.find((candidate) => candidate.isDefault && candidate.enabledModelCount > 0);
+    if (!group) throw new Error(`No AI model group is available for ${appId}`);
+    if (current && current.state !== 'archived') await archivePointerManagedApp(saved.externalInstallationId);
+    delete meta.aiConnection;
+    await saveInstallMetadata(meta);
+    await enableManagedAILocked(appId, actor, group.id);
+    if (saved.state === 'disabled') await disableManagedAILocked(appId, actor);
+    return 'reconnected';
+  });
 }

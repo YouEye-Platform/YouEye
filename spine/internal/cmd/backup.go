@@ -220,13 +220,13 @@ var backupListCmd = &cobra.Command{
 				continue
 			}
 			name := firstOf(backup, "id")
-			size := firstOf(backup, "sizeBytes")
+			size := backupSizeText(backup["sizeBytes"])
 			created := firstOf(backup, "createdAt")
 			status := firstOf(backup, "status")
 			media := firstOf(backup, "mediaId")
 			rows = append(rows, []string{name, media, size, created, status})
 		}
-		output.Table([]string{"BACKUP", "MEDIA", "BYTES", "CREATED", "STATUS"}, rows)
+		output.Table([]string{"BACKUP", "MEDIA", "SIZE", "CREATED", "STATUS"}, rows)
 		return nil
 	},
 }
@@ -310,4 +310,21 @@ var settingsCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// backupSizeText shows a backup's size. The Control Panel's JSON number arrives as a float64, which printed as
+// "4.77893371e+08" in the BYTES column.
+func backupSizeText(value interface{}) string {
+	bytes, ok := value.(float64)
+	if !ok || bytes < 0 {
+		return ""
+	}
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", bytes/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.0f MiB", bytes/(1<<20))
+	default:
+		return fmt.Sprintf("%.0f KiB", bytes/(1<<10))
+	}
 }

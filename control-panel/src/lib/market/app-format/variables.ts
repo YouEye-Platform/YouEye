@@ -41,6 +41,7 @@ export const APP_VARIABLES: readonly VariableDefinition[] = [
   define('app.fqdn', '<subdomain>.<domain>', 'always'),
   define('app.url', 'https://<subdomain>.<domain>', 'always'),
   define('app.internal_url', "the main container's URL on the app network", 'always'),
+  define('app.network_cidr', 'the app network in CIDR form (its /27); Caddy reaches the app from it', 'always'),
   define('sidecar.<name>.host', "a sidecar's host name on the app network", 'sidecars', /^sidecar\.([a-z0-9-]{1,30})\.host$/),
   define('sidecar.<name>.url', 'http://<host>:<port> of a sidecar', 'sidecars', /^sidecar\.([a-z0-9-]{1,30})\.url$/),
   define('secret.<name>', 'a generated secret', 'always', /^secret\.([a-z0-9_]{1,40})$/),

@@ -26,27 +26,16 @@ type fakeSystemUpdateService struct {
 
 func (f *fakeSystemUpdateService) Status() (systemupdate.Status, error) { return f.status, nil }
 
-func TestApplianceHostUpdateHandlersReturnTypedConflictBeforeMutation(t *testing.T) {
+// The apt routes that updated Incus and the host packages are gone: the System release updates both.
+func TestAptUpdateRoutesAreGone(t *testing.T) {
 	s := NewServer("test", config.Default())
 	s.runtimeDetect = applianceTestRuntime
-	for name, handler := range map[string]http.HandlerFunc{
-		"incus": s.handleUpdateIncus, "system": s.handleUpdateSystem,
-	} {
-		t.Run(name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/update/"+name, nil)
-			rec := httptest.NewRecorder()
-			handler(rec, req)
-			if rec.Code != http.StatusConflict {
-				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-			}
-			var body appliance.CapabilityError
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatal(err)
-			}
-			if body.Code != "capability_not_supported" || body.Runtime != appliance.RuntimeApplianceImage {
-				t.Fatalf("unexpected response: %+v", body)
-			}
-		})
+	for _, path := range []string{"/api/update/incus", "/api/update/system"} {
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

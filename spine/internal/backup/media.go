@@ -1,20 +1,20 @@
 package backup
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-const (
-	backupMediaLabel = "YOUEYE-BACKUP"
-	backupMountRoot  = "/var/lib/youeye/backups/media"
-)
+const backupMediaLabel = "YOUEYE-BACKUP"
+
+// backupMountRoot is where backup drives are mounted; a test moves it into a temporary tree.
+var backupMountRoot = "/var/lib/youeye/backups/media"
 
 // Media describes one non-system disk that can hold a YouEye repository.
 // Device paths are informational only; effectful requests are rebound to ID.
@@ -49,8 +49,13 @@ type blockDevice struct {
 	Children    []blockDevice `json:"children"`
 }
 
+// runMediaCommand runs one drive command. A drive that stops answering must not hold its caller (a store or an
+// import holds the backup operation lock), so it ends after its limit (mediaLimit: 60 minutes for mkfs and
+// umount, 15 for the rest).
 var runMediaCommand = func(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), mediaLimit(name))
+	defer cancel()
+	return runStep(ctx, name, args...)
 }
 
 func stableMediaID(device blockDevice) string {
@@ -286,7 +291,16 @@ func PrepareMedia(id, confirmation string) (Media, error) {
 	}
 	output, err := runMediaCommand("mkfs.ext4", "-F", "-L", backupMediaLabel, "--", partition)
 	if err != nil {
-		return Media{}, fmt.Errorf("format backup drive: %w: %s", err, strings.TrimSpace(string(output)))
+		// The drive now has a partition and perhaps half a filesystem, which reads as "an existing non-YouEye
+		// filesystem" and could not be prepared again. Clear both so it reads as blank.
+		_, _ = runMediaCommand("wipefs", "--all", "--", partition)
+		cleared := ""
+		if wipeOutput, wipeErr := runMediaCommand("wipefs", "--all", "--", media.Device); wipeErr != nil {
+			cleared = fmt.Sprintf("; the drive could not be cleared again: %v: %s", wipeErr, strings.TrimSpace(string(wipeOutput)))
+		}
+		_, _ = runMediaCommand("blockdev", "--rereadpt", media.Device)
+		_, _ = runMediaCommand("udevadm", "settle")
+		return Media{}, fmt.Errorf("format backup drive: %w: %s%s", err, strings.TrimSpace(string(output)), cleared)
 	}
 	_, _ = runMediaCommand("udevadm", "settle")
 	return MountMedia(id)

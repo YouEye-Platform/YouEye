@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -147,11 +148,23 @@ func runHostIPCheck(_ *config.Config) {
 			break
 		}
 		delay := bootRetryDelay(attempt)
-		hostIPLog("ERROR: %v — retrying in %s (attempt %d)", err, delay, attempt)
+		hostIPLog("%s", hostIPRetryLine(err, delay, attempt))
 		time.Sleep(delay)
 	}
 
 	runSteadyStateGuard()
+}
+
+// hostIPRetryLine is the log line for a startup pass that did not finish. A
+// pass refused because a System update, a recovery or an independent copy
+// holds the platform is expected (the API service restarts in the middle of
+// every update that changes Spine) and is not an error: the check waits and
+// runs when the hold is gone. Everything else is an error, as before.
+func hostIPRetryLine(err error, delay time.Duration, attempt int) string {
+	if errors.Is(err, systemupdate.ErrCoreLifecycleHeld) {
+		return fmt.Sprintf("waiting: %v; checking again in %s (attempt %d)", err, delay, attempt)
+	}
+	return fmt.Sprintf("ERROR: %v — retrying in %s (attempt %d)", err, delay, attempt)
 }
 
 // bootRetryDelay implements the boot-convergence backoff: quick retries first

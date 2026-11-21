@@ -122,15 +122,6 @@ export async function readAllStatuses(): Promise<UpdateStatusRecord[]> {
   );
 }
 
-export async function clearStatus(component: string): Promise<void> {
-  validateComponent(component);
-  await mutations.run(async () => {
-    const s = await loadStore();
-    delete s.statuses[component];
-    await saveStore();
-  });
-}
-
 /**
  * Get a unified view of all update statuses — aggregating
  * Spine's status (via API) with CP-managed statuses (from JSON store).

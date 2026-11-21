@@ -12,6 +12,7 @@
  */
 
 import type { ParsedApp } from './parse';
+import { variableReferences } from './variables';
 
 /** The YouEye version that first read `youeye.app.v1`. Fields it knows need no row. */
 export const FIRST_FORMAT_VERSION = '0.6.3';
@@ -37,6 +38,15 @@ export const FIELDS_SINCE: readonly FieldSince[] = [
   { document: 'setup', field: 'steps[].http.form', since: '0.6.9' },
   { document: 'setup', field: 'remove[].http.form', since: '0.6.9' },
   { document: 'app', field: 'sidecars[].data[].from', since: '0.6.9' },
+];
+
+/**
+ * Variables (`${…}`) newer than the first format, like FIELDS_SINCE: an older box refuses an unknown variable, so an
+ * app that uses one must say `requires: { youeye: ">=<version>" }` (and an older box then lists it from the market's
+ * index as "Needs YouEye …" without reading its manifest). Add a row whenever variables.ts gains a name.
+ */
+export const VARIABLES_SINCE: readonly { variable: string; since: string }[] = [
+  { variable: 'app.network_cidr', since: '0.6.15' },
 ];
 
 export interface FieldUse extends FieldSince {
@@ -69,6 +79,14 @@ export function newerFieldsUsed(app: Pick<ParsedApp, 'raw' | 'setups'>): FieldUs
       if (hasField(app.raw, row.field)) uses.push({ ...row, file: 'youeye-app.yaml' });
     } else {
       for (const setup of app.setups) if (hasField(setup.raw, row.field)) uses.push({ ...row, file: setup.name });
+    }
+  }
+  const referenced = (raw: unknown) => new Set(variableReferences(JSON.stringify(raw) ?? ''));
+  for (const row of VARIABLES_SINCE) {
+    const field = `\${${row.variable}}`;
+    if (referenced(app.raw).has(row.variable)) uses.push({ document: 'app', field, since: row.since, file: 'youeye-app.yaml' });
+    for (const setup of app.setups) {
+      if (referenced(setup.raw).has(row.variable)) uses.push({ document: 'setup', field, since: row.since, file: setup.name });
     }
   }
   return uses;

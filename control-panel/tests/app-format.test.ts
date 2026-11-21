@@ -421,7 +421,9 @@ test('proxy hosts may have one leading wildcard label', () => {
   rejects(() => native('en.*.org'), /proxy host/);
   rejects(() => native('*'), /proxy host/);
   const manifest = loadApp({ manifest: stringify(appDocument({ image: undefined, source: { node: '24' }, proxy: [{ host: '*.wikipedia.org', paths: ['/api/*'] }] })) });
-  assert.deepEqual(manifest.internet?.proxy, [{ host: '*.wikipedia.org', paths: ['/api/*'], methods: ['GET'], scope: 'user' }]);
+  assert.deepEqual(manifest.internet?.proxy, [{ host: '*.wikipedia.org', paths: ['/api/*'], methods: ['GET'] }]);
+  // A proxy host has no scope: every one is granted per user (the never-working `scope: service` is gone).
+  rejects(() => parseApp(stringify(appDocument({ image: undefined, source: { node: '24' }, proxy: [{ host: 'api.example.org', paths: ['/x'], scope: 'service' }] }))), /unknown field "scope"/);
 });
 
 test('sso.role_claim marks admins by a claim value and excludes admin_group', () => {

@@ -235,3 +235,27 @@ func TestCoreRecoveryReleasesOnlyVerifiedExactLifecycleHold(t *testing.T) {
 		t.Fatal("recovered hold remains", err)
 	}
 }
+
+// A committed request has nothing to roll back, and its release may still be
+// unfinished (a power cut after the commit). Recover hands it back unchanged
+// and without a recovery graph, so the caller's continuation runs the release.
+// Before 0.6.15 it refused ("completed core request cannot roll back") and the
+// API's recover could not finish such a request.
+func TestCoreRecoverLeavesACommittedRequestToItsRelease(t *testing.T) {
+	m, apply, target := coreJournalFixture(t)
+	e := &recoveryTestExecutor{coreTestExecutor: apply}
+	m.Executor = e
+	j := prepareCoreFixture(t, m, target)
+	j, err := m.Advance(context.Background(), j.RequestID, false)
+	if err != nil || j.Phase != "committed" {
+		t.Fatal(j.Phase, err)
+	}
+	got, err := m.Recover(context.Background(), j.RequestID)
+	if err != nil || got.Phase != "committed" || len(got.RecoverySteps) != 0 || e.starts["recovery-fence"] != 0 {
+		t.Fatal("a committed request was refused or rolled back", got.Phase, got.RecoverySteps, err)
+	}
+	stored, err := m.Read()
+	if err != nil || stored.UpdatedAt != j.UpdatedAt {
+		t.Fatal("recover changed a committed journal", err)
+	}
+}

@@ -61,7 +61,7 @@ type appUpdateStatus struct {
 	// Running: an update of the app is on its way to a result in this Control Panel.
 	Running bool
 	// Market: the app is updated by the Market updater, which records the above. Built-in apps (Pointer, Caddy,
-	// Pi-hole, Postgres, incus, host-system and the core components) have their own updaters and records.
+	// Pi-hole, Postgres and the core components) have their own updaters and records.
 	Market bool
 }
 

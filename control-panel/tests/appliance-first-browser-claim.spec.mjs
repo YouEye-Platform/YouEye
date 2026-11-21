@@ -96,15 +96,13 @@ test('domain handoff is short-lived, hashed, single-use, and posted outside the 
   assert.match(handoff, /isTrustedHandoffBrowserOrigin/);
 });
 
-test('YouEye ID uses one 8-256 password policy across claim, stores, compatibility APIs, bridge, and Settings', () => {
+test('YouEye ID uses one 8-256 password policy across claim, stores, compatibility APIs, and Settings', () => {
   const policy = read('src/lib/identity/password-policy.ts');
   const store = read('src/lib/identity/store.ts');
   const claim = read('src/app/api/appliance/claim/route.ts');
   const compatibilityUsers = read('src/app/api/apps/identity/users/route.ts');
   const compatibilityUser = read('src/app/api/apps/identity/users/[id]/route.ts');
   const compatibilityPassword = read('src/app/api/apps/identity/users/[id]/password/route.ts');
-  const bridgeUsers = read('src/app/api/ui-bridge/users/route.ts');
-  const bridgeUser = read('src/app/api/ui-bridge/users/[id]/route.ts');
   const client = read('src/components/settings-shell/users-client.tsx');
 
   assert.match(policy, /IDENTITY_PASSWORD_MIN_LENGTH = 8/);
@@ -117,8 +115,6 @@ test('YouEye ID uses one 8-256 password policy across claim, stores, compatibili
   assert.match(compatibilityUser, /verifyCSRFToken/);
   assert.match(compatibilityPassword, /session\.isAdmin/);
   assert.match(compatibilityPassword, /verifyCSRFToken/);
-  assert.match(bridgeUsers, /validateIdentityPassword/);
-  assert.match(bridgeUser, /validateIdentityPassword/);
   assert.match(client, /validateIdentityPassword/);
   assert.match(client, /X-CSRF-Token/);
 });

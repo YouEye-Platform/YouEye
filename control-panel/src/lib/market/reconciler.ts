@@ -888,15 +888,10 @@ async function dropAppDatabase(databaseName: string, databaseUser: string): Prom
   }
   const database = `"${databaseName}"`;
   const role = `"${databaseUser}"`;
-  const terminate = await execCommand(
-    POSTGRES_CONTAINER,
-    ['/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres', '-c', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${escapeSqlLiteral(databaseName)}' AND pid <> pg_backend_pid();`],
-    { timeout: 10_000 },
-  );
-  if (terminate.exitCode !== 0) throw new Error('could not terminate database sessions');
+  // FORCE ends open sessions under the drop's lock; no reconnect can slip in between.
   const drop = await execCommand(
     POSTGRES_CONTAINER,
-    ['/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres', '-c', `DROP DATABASE IF EXISTS ${database}`, '-c', `DROP ROLE IF EXISTS ${role}`],
+    ['/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres', '-c', `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`, '-c', `DROP ROLE IF EXISTS ${role}`],
     { timeout: 15_000 },
   );
   if (drop.exitCode !== 0) throw new Error('could not drop app database and role');

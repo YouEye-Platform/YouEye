@@ -10,7 +10,8 @@
  * must be accepted by the owner (403 otherwise); every member installs from that source.
  */
 
-import { withUserOperationLockWait } from '@/lib/market/update-admission';
+import { holdPlatformLifecycle, withUserOperationLockWait, type PlatformLifecycleHold } from '@/lib/market/update-admission';
+import { lifecycleRefusalResponse } from '@/lib/http/lifecycle-busy';
 import { NextRequest } from 'next/server';
 import { fetchBundle } from '@/lib/market/catalog';
 import { installBundle } from '@/lib/market/bundle-installer';
@@ -36,6 +37,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     throw err;
   }
 
+  // Held from here until every member has been installed: the bundle and its members are read from the market
+  // between the members' installs, and Spine's Control Panel restart must wait for those reads as for the installs.
+  let hold: PlatformLifecycleHold;
+  try {
+    hold = await withUserOperationLockWait(() => holdPlatformLifecycle());
+  } catch (err) {
+    logOperationFailure(`Admitting bundle ${id}`, err);
+    return lifecycleRefusalResponse(err)
+      ?? Response.json({ error: 'The bundle install could not start; the cause is in the Control Panel journal.' }, { status: 500 });
+  }
+  let streaming = false;
+  try {
+    return await hold.run(() => admittedBundleInstall(id, sourceId, hold, () => { streaming = true; }));
+  } finally {
+    if (!streaming) hold.release();
+  }
+}
+
+/** The bundle install under its platform lifecycle hold; `streaming` hands the hold to the install's stream. */
+async function admittedBundleInstall(
+  id: string, sourceId: string | undefined, hold: PlatformLifecycleHold, streaming: () => void,
+): Promise<Response> {
   let bundle;
   try {
     bundle = await fetchBundle(id, sourceId);
@@ -67,13 +90,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       };
       try {
         // A user operation: members' lifecycle and network locks wait for a busy holder instead of failing.
-        const result = await withUserOperationLockWait(() => installBundle(theBundle, (e) => send(e), abortController.signal));
+        const result = await hold.run(() => withUserOperationLockWait(() => installBundle(theBundle, (e) => send(e), abortController.signal)));
         const failed = result.members.some((m) => m.status === 'failed') || result.connections.some((c) => c.status === 'failed');
         send({ step: 0, totalSteps: 0, status: failed ? 'error' : 'success', message: failed ? 'done with failures' : 'done', detail: JSON.stringify(result) });
       } catch (err) {
         logOperationFailure(`Bundle ${theBundle.id} install`, err);
         send({ step: 0, totalSteps: 0, status: 'error', message: `Bundle install failed: ${sensitivitySafeInstallError(err)}` });
       } finally {
+        hold.release();
         controller.close();
       }
     },
@@ -81,6 +105,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       abortController.abort();
     },
   });
+  streaming();
 
   return new Response(stream, {
     headers: {

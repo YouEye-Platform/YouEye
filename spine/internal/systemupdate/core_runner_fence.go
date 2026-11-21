@@ -155,6 +155,9 @@ func (r CoreSystemdRunner) settleApplyChild(ctx context.Context, j CoreJournal, 
 	return r.requireEmptyCgroup(launch.Unit, true)
 }
 
+// errCoreCgroupPopulated: the unit's cgroup was read and holds processes.
+var errCoreCgroupPopulated = errors.New("owned native cgroup has unsettled descendants")
+
 func (r CoreSystemdRunner) requireEmptyCgroup(unit string, allowAbsent bool) error {
 	root := r.CgroupRoot
 	if root == "" {
@@ -188,8 +191,11 @@ func (r CoreSystemdRunner) requireEmptyCgroup(unit string, allowAbsent bool) err
 			populated = fields[1]
 		}
 	}
+	if populated == "1" {
+		return errCoreCgroupPopulated
+	}
 	if populated != "0" {
-		return fmt.Errorf("owned native cgroup has unsettled descendants")
+		return fmt.Errorf("invalid native cgroup event")
 	}
 	return nil
 }

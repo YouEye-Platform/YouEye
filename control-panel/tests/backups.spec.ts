@@ -134,7 +134,8 @@ test('authenticated backup metadata binds source identity before live restore mu
   assert.match(core, /databases: backedUpDatabases/);
   assert.match(app, /youeye\.backup\.app-meta\.v1/);
   assert.match(repository, /VerifiedAt[\s\S]*Source.*\*BackupSourceIdentity/);
-	assert.match(platform, /record\.status = 'failed';[\s\S]*await rm\(root, \{ recursive: true, force: true \}\)/);
+	assert.match(platform, /record\.status = 'failed';[\s\S]*await removeLocalCopy\(id\);/);
+	assert.match(platform, /async function removeLocalCopy\(id: string\)[^]*?await rm\(backupSetPath\(id\), \{ recursive: true, force: true \}\)/);
   assert.ok(fullRestore.indexOf('assessBackupCompatibility') < fullRestore.indexOf("emit('remove-current-apps'"));
   assert.ok(appRestore.indexOf('assessBackupCompatibility') < appRestore.indexOf("emit('uninstall'"));
 });

@@ -117,3 +117,68 @@ test('the walker reads only keys of objects, through lists', () => {
   assert.equal(hasField({ sidecars: [{ data: ['/from'] }] }, 'sidecars[].data[].from'), false);
   assert.equal(hasField({ 'x-steps': [{ http: { form: {} } }] }, 'steps[].http.form'), false);
 });
+
+test('a variable newer than the first format needs its YouEye version, like a field', async () => {
+  const { VARIABLES_SINCE } = await import('../src/lib/market/app-format/since');
+  const { findVariable } = await import('../src/lib/market/app-format/variables');
+  assert.deepEqual(VARIABLES_SINCE, [{ variable: 'app.network_cidr', since: '0.6.15' }]);
+  for (const row of VARIABLES_SINCE) assert.ok(findVariable(row.variable), row.variable);
+  const example = { manifest: appDocument({ env: { ND_REVERSEPROXYWHITELIST: '${app.network_cidr}' } }) };
+  assert.deepEqual(requiresProblems(parse(example), OLDEST_MARKET_READER), [
+    'youeye-app.yaml: ${app.network_cidr} needs YouEye 0.6.15, but requires.youeye is missing (write requires: { youeye: ">=0.6.15" })',
+  ]);
+  assert.deepEqual(requiresProblems(parse(example, '>=0.6.14'), OLDEST_MARKET_READER).length, 1);
+  assert.deepEqual(requiresProblems(parse(example, '>=0.6.15'), OLDEST_MARKET_READER), []);
+  assert.equal(youeyeVersionNeeded(parse(example))?.since, '0.6.15');
+  // In a setup file too.
+  const setup = { manifest: appDocument(), setups: { 'setup/install.yaml': installSetup({ steps: [{ http: { method: 'POST', path: '/x', body: { trusted: '${app.network_cidr}' } } }] }) } };
+  assert.equal(newerFieldsUsed(parse(setup)).find(use => use.field === '${app.network_cidr}')?.file, 'setup/install.yaml');
+});
+
+test('the app network variable is the lease of the app; without a lease a template that uses it fails to render', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { createRequire } = await import('node:module');
+  const vm = await import('node:vm');
+  const ts = (await import('typescript')).default;
+  const variables = await import('../src/lib/market/variables');
+  const nodeRequire = createRequire(import.meta.url);
+  const load = (lease: { cidr: string } | null) => {
+    const exports: Record<string, any> = {};
+    const mocks: Record<string, unknown> = {
+      '@/lib/settings': { settingsService: { getAll: async () => ({ domain: 'box.test' }) } },
+      '@/lib/smtp/secrets': { readSmtpPassword: async () => '' },
+      '@/lib/identity/provider': { getIdentityProviderConfig: async () => ({ name: 'YouEye ID', internalUrl: 'http://id' }) },
+      '@/lib/identity/issuer': { getAppInternalIdentityBase: () => '' },
+      '@/lib/releases/installed-release': { installedRelease: async () => ({ version: '0.6.15' }) },
+      '@/lib/incus/app-network': { getAppBridgeGatewayIP: async () => '10.76.0.1', getAppNetworkLease: async () => lease },
+      './constants': { CONTAINER_DOMAIN: 'incus' },
+      './engine-helpers': { getContainerName: (app: string) => `app-${app}` },
+      './update-admission': { withAppLifecycle: async (_app: string, fn: () => unknown) => fn() },
+      './variables': variables,
+      './app-format/requires': { youeyeRequirementProblem: () => null },
+    };
+    vm.runInNewContext(ts.transpileModule(readFileSync('src/lib/market/platform-env.ts', 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    }).outputText, { exports, console: { log() {}, warn() {}, error() {} }, process, require(name: string) {
+      if (name in mocks) return mocks[name];
+      if (name === 'fs' || name.startsWith('node:')) return nodeRequire(name);
+      throw new Error(`Unexpected module ${name}`);
+    } });
+    return exports;
+  };
+  const manifest = { metadata: { id: 'navidrome', name: 'Navidrome' }, containers: [{ name: 'main', primary: true, port: 4533 }] };
+  const config = { appId: 'navidrome', subdomain: 'music', domain: 'box.test' };
+  const leased = await load({ cidr: '10.76.0.32/27' }).buildCanonicalContext(manifest, config, undefined, undefined, undefined, true);
+  assert.equal(variables.resolveVariables('${app.network_cidr}', leased), '10.76.0.32/27');
+  for (const ctx of [
+    await load(null).buildCanonicalContext(manifest, config, undefined, undefined, undefined, true),
+    await load({ cidr: '10.76.0.32/27' }).buildCanonicalContext(manifest, config),
+  ]) {
+    assert.equal(variables.resolveVariables('${app.url}', ctx), 'https://music.box.test', 'other variables still render');
+    assert.throws(() => variables.resolveVariables('trusted: ${app.network_cidr}', ctx),
+      /Unresolved variable: \$\{app\.network_cidr\}: the app network lease was not found/);
+  }
+  const reconfigure = readFileSync('src/lib/reconfigure/index.ts', 'utf8');
+  assert.match(reconfigure, /lease\?\.cidr \|\| undefined, \(\) => undefined\)/);
+  assert.match(reconfigure, /\.\.\.\(networkCidr \? \{ network_cidr: networkCidr \} : \{\}\)/);
+});

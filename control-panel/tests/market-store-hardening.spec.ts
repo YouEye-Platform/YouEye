@@ -107,7 +107,8 @@ test('a source that is removed while its market is being read leaves no store be
   const hosts = fakeMarketHosts({ [ADDRESS]: built.files }, { before: (url) => (url.endsWith(built.bundlePaths.gamma) ? door.held : undefined) });
   const running = refreshMarket(custom, { deps: hosts.deps });
   running.catch(() => {});
-  await pause(30);
+  // Wait for the bundles before the held one (a fixed 30 ms was too short on a loaded machine).
+  for (let waited = 0; waited < 5_000 && !storeFiles(directory).some((file) => file.startsWith('attempt-')); waited += 10) await pause(10);
   assert.ok(storeFiles(directory).some((file) => file.startsWith('attempt-')), 'the bundles fetched so far are in the attempt\'s own directory');
   assert.ok(storeFiles(directory).every((file) => file.startsWith('attempt-')), 'nothing is under h/ before the commit');
 

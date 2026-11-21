@@ -3,8 +3,8 @@
 The native apps (Notes, Wiki, Search, Translate, Weather, Cinema) and Pointer are released from their own
 repositories and promoted like the System (see [releases.md](releases.md)). Nothing is signed; integrity comes from
 HTTPS and SHA-256. The Market is not a product: it is published as static files
-([market-format.md](market-format.md)), and the channel index keeps only its
-[frozen entry](releases.md#the-frozen-market-entry) for boxes up to 0.6.10.
+([market-format.md](market-format.md)), and no channel index carries it since 0.6.13
+([the frozen Market entry](releases.md#the-frozen-market-entry)).
 
 ## Tags and versions
 

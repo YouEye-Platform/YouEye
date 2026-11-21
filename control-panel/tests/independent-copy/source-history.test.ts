@@ -16,12 +16,14 @@ test('source history survives archival and a lost acknowledgement outside live d
   writeFileSync(join(root,'copy-reservation.json'),JSON.stringify({schema:'youeye.copy-lifecycle.v1',role:'destination',request}),{mode:0o600});
   await expect(withIndependentCopyLifecycle(request,async()=>retainIndependentSourceHistory(request))).rejects.toThrow('settle');
   const recovered=store.recover(id);recovered.transition('recovering');recovered.rolledBack();recovered.transition('cleanup');recovered.finishCleanup();recovered.release();
-  const original=readFileSync(join(root,'operations',id+'.json'),'utf8');
+  // The receipt is named <app>_<id>.json (Plan 9).
+  const receipt=readdirSync(join(root,'operations')).find(name=>name.endsWith(`_${id}.json`)||name===`${id}.json`)!;
+  const original=readFileSync(join(root,'operations',receipt),'utf8');
   // Simulate process loss after the durable rename and before mkdir/fsync.
   mkdirSync(join(root,'copy-source-history'),{mode:0o700});renameSync(join(root,'operations'),join(root,'copy-source-history',request.request_id));
   await withIndependentCopyLifecycle(request,async()=>retainIndependentSourceHistory(request));
   expect(store.list()).toEqual([]);
-  expect(readFileSync(join(root,'copy-source-history',request.request_id,id+'.json'),'utf8')).toBe(original);
+  expect(readFileSync(join(root,'copy-source-history',request.request_id,receipt),'utf8')).toBe(original);
   await withIndependentCopyLifecycle(request,async()=>retainIndependentSourceHistory(request));
   expect(readdirSync(join(root,'operations'))).toEqual([]);
   writeFileSync(join(root,'operations','unknown'),'',{mode:0o600});

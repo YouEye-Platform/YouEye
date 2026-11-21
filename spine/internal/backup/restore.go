@@ -2,16 +2,14 @@ package backup
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
-
-	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // RestoreConfig is the request body for POST /api/backup/restore.
@@ -19,6 +17,8 @@ type RestoreConfig struct {
 	ArchivePath string `json:"archive_path"`
 	Passphrase  string `json:"passphrase"`
 	StagingDir  string `json:"staging_dir"`
+	// Encryption is the set's recorded encryption (backup-set.json); none means a backup made before it was recorded.
+	Encryption *ArchiveEncryption `json:"encryption,omitempty"`
 }
 
 // RestoreResult is returned upon completion.
@@ -29,7 +29,7 @@ type RestoreResult struct {
 
 // RestoreArchive decrypts and extracts a backup archive to the staging directory.
 // The actual app/platform restore logic lives in CP.
-func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
+func RestoreArchive(ctx context.Context, cfg RestoreConfig) (*RestoreResult, error) {
 	// Validate inputs
 	if cfg.ArchivePath == "" {
 		return nil, fmt.Errorf("archive_path is required")
@@ -40,11 +40,17 @@ func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
 	if cfg.StagingDir == "" {
 		return nil, fmt.Errorf("staging_dir is required")
 	}
-	release, err := (systemupdate.CoreLifecycleBarrier{Root: filepath.Join(backupDataRoot, "state", "app-updates")}).AdmitOrdinary()
+	encryption, err := restoreEncryption(cfg.Encryption)
+	if err != nil {
+		return nil, err
+	}
+	release, err := admitArchiveStep(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 
 	cfg.ArchivePath = filepath.Clean(cfg.ArchivePath)
 	cfg.StagingDir = filepath.Clean(cfg.StagingDir)
@@ -63,7 +69,7 @@ func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
 	if !archiveInfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("archive must be a regular file")
 	}
-	if err := verifyArchiveMAC(cfg.ArchivePath, cfg.Passphrase); err != nil {
+	if err := verifyArchiveMAC(cfg.ArchivePath, cfg.Passphrase, encryption); err != nil {
 		return nil, err
 	}
 
@@ -77,9 +83,8 @@ func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
 
 	// Decrypt the archive
 	tarPath := cfg.StagingDir + "/backup.tar"
-	decCmd := opensslWithPassphrase(cfg.Passphrase, "enc", "-d", "-aes-256-cbc", "-pbkdf2",
-		"-in", cfg.ArchivePath, "-out", tarPath)
-	if out, err := decCmd.CombinedOutput(); err != nil {
+	decCmd := decryptCommand(ctx, encryption, cfg.Passphrase, cfg.ArchivePath, tarPath)
+	if out, err := stepOutput(ctx, decCmd, false); err != nil {
 		os.Remove(tarPath)
 		return nil, fmt.Errorf("decryption failed: %v\n%s", err, string(out))
 	}
@@ -88,9 +93,9 @@ func RestoreArchive(cfg RestoreConfig) (*RestoreResult, error) {
 		return nil, err
 	}
 
-	// Extract the tar
-	extractCmd := exec.Command("tar", "--numeric-owner", "--same-permissions", "-xf", tarPath, "-C", cfg.StagingDir)
-	if out, err := extractCmd.CombinedOutput(); err != nil {
+	// Extract the tar. A tar that fails or is stopped leaves a partial staging directory; the caller gets the
+	// error and never reads it, and the next restore into it clears it first (above).
+	if out, err := runStep(ctx, "tar", "--numeric-owner", "--same-permissions", "-xf", tarPath, "-C", cfg.StagingDir); err != nil {
 		return nil, fmt.Errorf("extraction failed: %v\n%s", err, string(out))
 	}
 

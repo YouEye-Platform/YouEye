@@ -108,6 +108,18 @@ func (b CoreLifecycleBarrier) lockFile(ctx context.Context, name string, mode in
 	return func() { _ = syscall.Flock(fd, syscall.LOCK_UN); _ = f.Close() }, nil
 }
 
+// ErrCoreLifecycleHeld: ordinary work was refused because a System update, a
+// recovery or an independent copy holds the platform. That is the reservation
+// doing its work, not a fault; callers that retry (the host-IP check) say so
+// instead of reporting an error.
+var ErrCoreLifecycleHeld = errors.New("the platform lifecycle is held")
+
+// coreLifecycleHeld is ErrCoreLifecycleHeld under the refusal's own words.
+type coreLifecycleHeld string
+
+func (e coreLifecycleHeld) Error() string        { return string(e) }
+func (e coreLifecycleHeld) Is(target error) bool { return target == ErrCoreLifecycleHeld }
+
 // AdmitOrdinary is the native counterpart of CP's shared admission. Hold the
 // returned lease through the entire asynchronous operation, including cleanup.
 func (b CoreLifecycleBarrier) AdmitOrdinary() (func(), error) {
@@ -123,14 +135,56 @@ func (b CoreLifecycleBarrier) AdmitOrdinary() (func(), error) {
 	_, copyErr := b.ReadCopy()
 	if !errors.Is(copyErr, os.ErrNotExist) {
 		release()
-		return nil, fmt.Errorf("independent copy owns the platform lifecycle")
+		return nil, coreLifecycleHeld("independent copy owns the platform lifecycle")
 	}
 	_, err = b.Read()
+	if err == nil {
+		release()
+		return nil, coreLifecycleHeld("System update or recovery owns the platform lifecycle")
+	}
 	if !errors.Is(err, os.ErrNotExist) {
+		// An unreadable reservation refuses work in the same words, and is a fault.
 		release()
 		return nil, fmt.Errorf("System update or recovery owns the platform lifecycle")
 	}
 	return release, nil
+}
+
+// OrdinaryAdmissionWait is how long AdmitOrdinaryWait keeps trying. It is longer than the 60 seconds for which a
+// System update's admission (BeginContext) or settle wait (BeginAdmitted) holds the admission gate while it waits
+// for the lifecycle lock.
+const OrdinaryAdmissionWait = 90 * time.Second
+
+// ordinaryAdmissionPoll is the pause between two attempts of AdmitOrdinaryWait.
+var ordinaryAdmissionPoll = time.Second
+
+// AdmitOrdinaryWait is AdmitOrdinary for a step of an operation that is already running (the archive steps of a
+// Control Panel backup or restore). The Control Panel holds the lifecycle lock shared for that operation, so a
+// System update asked for meanwhile holds the admission gate exclusively while it waits for that lock, and gives
+// up after 60 seconds without a reservation. A step refused in that window would fail the whole operation midway.
+// So when the only refusal is a busy lock, this tries again every second, for at most wait or until ctx ends, and
+// holds no lock between attempts. A reservation (System update, recovery, independent copy) refuses as soon as it
+// is read, as does any fault. It is read only once both locks were got, so while its owner still holds the gate or
+// the lifecycle lock exclusively the step sees a busy lock and keeps trying: the refusal can come up to wait
+// later, or, when wait runs out first, as the busy lock's error.
+func (b CoreLifecycleBarrier) AdmitOrdinaryWait(ctx context.Context, wait time.Duration) (func(), error) {
+	deadline := time.Now().Add(wait)
+	for {
+		release, err := b.AdmitOrdinary()
+		if err == nil || (!errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN)) {
+			return release, err
+		}
+		if !time.Now().Add(ordinaryAdmissionPoll).Before(deadline) {
+			return nil, err
+		}
+		timer := time.NewTimer(ordinaryAdmissionPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("%w: %w", err, ctx.Err())
+		case <-timer.C:
+		}
+	}
 }
 
 func (b CoreLifecycleBarrier) Read() (CoreLifecycleReservation, error) {
@@ -330,10 +384,11 @@ func (b CoreLifecycleBarrier) releaseCompleted(m CoreManager, requestID string, 
 	return syncDirectory(b.Root)
 }
 
-// ReleaseRefusedCheckpoint releases the hold of a request whose checkpoint was refused in its read-only preflight.
-// The caller (native cancellation) has verified that refusal and that no checkpoint record exists; this checks the
-// coordinator's published cancel intent, the failed checkpoint and the unchanged installed receipt under the
-// lifecycle lock. Only this request's own reservation is removed; a missing one is already released.
+// ReleaseRefusedCheckpoint releases the hold of a request whose checkpoint had no effect: refused in its read-only
+// preflight (failed), or never launched because its admission did not end in a launch (started). The caller (native
+// cancellation) has verified that and that no checkpoint record exists; this checks the coordinator's published
+// cancel intent, the checkpoint step and the unchanged installed receipt under the lifecycle lock. Only this
+// request's own reservation is removed; a missing one is already released.
 func (b CoreLifecycleBarrier) ReleaseRefusedCheckpoint(ctx context.Context, m CoreManager, requestID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -360,7 +415,7 @@ func (b CoreLifecycleBarrier) ReleaseRefusedCheckpoint(ctx context.Context, m Co
 	}
 	refused := false
 	for _, step := range j.Steps {
-		refused = refused || (step.Name == "checkpoint" && step.State == "failed")
+		refused = refused || (step.Name == "checkpoint" && (step.State == "failed" || step.State == "started"))
 	}
 	if r.RequestID != requestID || j.RequestID != requestID || r.ManifestSHA256 != j.ManifestSHA256 || j.Phase != "cancelling" || !refused || !corePreparationOnly(j) || !reflect.DeepEqual(receipt, j.Previous) {
 		return fmt.Errorf("System lifecycle is not a verified refused checkpoint")

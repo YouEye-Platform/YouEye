@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,7 @@ func TestVolumeMappingAcceptsPersistentData(t *testing.T) {
 }
 
 func TestApplyVolumesRejectsUnprotectedStaging(t *testing.T) {
-	if _, err := ApplyVolumes(t.TempDir()); err == nil {
+	if _, err := ApplyVolumes(context.Background(), t.TempDir()); err == nil {
 		t.Fatal("accepted staging outside the protected YE-DATA backup workspace")
 	}
 }

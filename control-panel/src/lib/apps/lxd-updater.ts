@@ -22,8 +22,10 @@ import { publishProductProjection, verifyProductProjection } from '@/lib/release
 import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease } from '@/lib/pointer/release-metadata';
 import { execShell, incusUploadLocalFile } from '@/lib/incus/server';
 import {
+  containerState,
   createSnapshot,
   restoreSnapshot,
+  startContainer,
   deleteSnapshot,
   waitForContainerExec,
   getServiceWorkingDir,
@@ -32,10 +34,26 @@ import {
 } from '@/lib/incus/snapshot';
 import { type AppDefinition } from './definitions';
 import { markAppUpdated } from './update-cache';
-import type { UpdateEvent } from './updater';
-export type { UpdateEvent };
+export type UpdateStage =
+  | 'starting'
+  | 'snapshot'
+  | 'stopping'
+  | 'rebuilding'
+  | 'starting-container'
+  | 'verifying'
+  | 'rolling-back'
+  | 'completed'
+  | 'failed';
+
+export interface UpdateEvent {
+  stage: UpdateStage;
+  message: string;
+  container?: string;
+  progress?: number; // 0-100
+  error?: string;
+}
 import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
-import { configurePointerService } from '@/lib/pointer/lifecycle';
+import { configurePointerService, waitForPointer } from '@/lib/pointer/lifecycle';
 
 type EventEmitter = (event: UpdateEvent) => void;
 
@@ -70,6 +88,13 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     return;
   }
   acceptProductSequence(before.floors, selected, installed);
+  // The update runs inside the container: a stopped Pointer is started first, and ends running and verified.
+  if (await containerState(containerName) !== 'Running') {
+    emit({ stage: 'starting', message: `Starting the stopped ${containerName} container`, container: containerName, progress: 2 });
+    await startContainer(containerName);
+    await waitForContainerExec(containerName, 60);
+    await waitForPointer(60_000);
+  }
   if (await updateIdenticalPointerRelease(appUpdateJournalStore(), selected)) {
     markAppUpdated(appDef.id);
     emit({ stage: 'completed', message: `${appDef.displayName} release label updated to ${selected.release.version}`, progress: 100 });

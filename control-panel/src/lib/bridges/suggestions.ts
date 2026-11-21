@@ -53,42 +53,62 @@ async function writeStore(suggestions: Suggestion[]): Promise<void> {
   await writeJsonAtomically(STORE_FILE, suggestions);
 }
 
+/**
+ * One writer at a time. Every change of the store reads it, edits the list and writes it back; two of those at
+ * once (an install's suggestions, the cleanup at start, a dismissal) each wrote their own copy and the later one
+ * undid the earlier. The queue is kept on `globalThis`: the instrumentation hook and the routes are separate
+ * bundles of this module in one process.
+ */
+const STORE_QUEUE = Symbol.for('youeye.suggestion-store-queue');
+function withSuggestionStore<T>(work: () => Promise<T>): Promise<T> {
+  const holder = globalThis as unknown as Record<symbol, Promise<unknown> | undefined>;
+  const run = (holder[STORE_QUEUE] ?? Promise.resolve()).then(work, work);
+  holder[STORE_QUEUE] = run.catch(() => undefined);
+  return run;
+}
+
 export async function listSuggestions(includesDismissed = false): Promise<Suggestion[]> {
   const suggestions = await readStore();
   if (includesDismissed) return suggestions;
   return suggestions.filter(s => !s.dismissed);
 }
 
-export async function dismissSuggestion(id: string): Promise<void> {
-  const suggestions = await readStore();
-  const s = suggestions.find(s => s.id === id);
-  if (s) {
-    s.dismissed = true;
-    await writeStore(suggestions);
-  }
+export function dismissSuggestion(id: string): Promise<void> {
+  return withSuggestionStore(async () => {
+    const suggestions = await readStore();
+    const s = suggestions.find(s => s.id === id);
+    if (s) {
+      s.dismissed = true;
+      await writeStore(suggestions);
+    }
+  });
 }
 
-export async function removeSuggestion(id: string): Promise<void> {
-  const suggestions = await readStore();
-  const filtered = suggestions.filter(s => s.id !== id);
-  await writeStore(filtered);
+export function removeSuggestion(id: string): Promise<void> {
+  return withSuggestionStore(async () => {
+    const suggestions = await readStore();
+    const filtered = suggestions.filter(s => s.id !== id);
+    await writeStore(filtered);
+  });
 }
 
 /**
  * Forget an uninstalled app: drop the suggestions it made, and mark suggestions that point at it
  * as waiting for their target again.
  */
-export async function forgetSuggestionsForApp(appId: string): Promise<void> {
-  const suggestions = await readStore();
-  const kept = suggestions.filter((s) => s.fromAppId !== appId);
-  let changed = kept.length !== suggestions.length;
-  for (const s of kept) {
-    if (s.targetAppId === appId && s.targetInstalled !== false) {
-      s.targetInstalled = false;
-      changed = true;
+export function forgetSuggestionsForApp(appId: string): Promise<void> {
+  return withSuggestionStore(async () => {
+    const suggestions = await readStore();
+    const kept = suggestions.filter((s) => s.fromAppId !== appId);
+    let changed = kept.length !== suggestions.length;
+    for (const s of kept) {
+      if (s.targetAppId === appId && s.targetInstalled !== false) {
+        s.targetInstalled = false;
+        changed = true;
+      }
     }
-  }
-  if (changed) await writeStore(kept);
+    if (changed) await writeStore(kept);
+  });
 }
 
 /**
@@ -110,15 +130,112 @@ function wantResolvesToApp(
   return false;
 }
 
-/** Read an installed app's declared `wants`: from install metadata, else its frozen copy. */
+/**
+ * Read an installed app's declared `wants`: from its frozen copy (what is installed now), else from the install
+ * metadata. The metadata of an app updated before 0.6.15 still names what the release it was installed from wanted.
+ */
 async function installedWants(meta: InstallMetadata): Promise<WantSpec[]> {
-  if (meta.wants) return meta.wants;
   try {
     const m = await readInstalledAppManifest(meta.appId);
     return m.wants ?? [];
   } catch {
-    return [];
+    return meta.wants ?? [];
   }
+}
+
+/**
+ * What an installed app provides: from its frozen copy (what is installed now), else from the install metadata,
+ * like `installedWants`. The metadata of an app updated before 0.6.15 still names what the release it was
+ * installed from provided.
+ */
+async function installedProvides(meta: InstallMetadata): Promise<ProvidesSpec[]> {
+  try {
+    const m = await readInstalledAppManifest(meta.appId);
+    return m.provides ?? [];
+  } catch {
+    return meta.provides ?? [];
+  }
+}
+
+/** `installedProvides` of every installed app, by app ID. */
+async function installedProvidesByApp(installed: InstallMetadata[]): Promise<Map<string, ProvidesSpec[]>> {
+  const provides = new Map<string, ProvidesSpec[]>();
+  for (const meta of installed) provides.set(meta.appId, await installedProvides(meta));
+  return provides;
+}
+
+/**
+ * The stored suggestions without those an app no longer asks for: suggestions made by `appId` whose target none
+ * of its current `wants` resolves to. Suggestions of other apps, and approved connections, are not touched.
+ * `providesOf` answers `null` for a target whose `provides` cannot be told: a suggestion made for a wanted
+ * capability then stays (nothing says the target stopped providing it).
+ */
+export function withoutDroppedWants(
+  suggestions: Suggestion[],
+  appId: string,
+  wants: WantSpec[],
+  providesOf: (targetAppId: string) => ProvidesSpec[] | null | undefined,
+): Suggestion[] {
+  return suggestions.filter((s) => {
+    if (s.type !== 'bridge' || s.fromAppId !== appId || !s.targetAppId) return true;
+    const target = s.targetAppId;
+    const provides = providesOf(target);
+    return wants.some((want) => (provides === null && !want.appId && want.type ? true : wantResolvesToApp(want, target, provides ?? undefined)));
+  });
+}
+
+/**
+ * After an app update: its new release may want other apps than the installed one did. Drop the suggestions it
+ * no longer asks for (Translate 0.6.5 dropped LibreTranslate and kept "waiting for libretranslate" for ever), then
+ * add the ones it asks for now.
+ */
+export async function refreshSuggestionsForUpdatedApp(manifest: AppManifest): Promise<void> {
+  const actionable = await withSuggestionStore(async () => {
+    const existing = await readStore();
+    const provides = await installedProvidesByApp(await listReadableInstalledApps());
+    const kept = withoutDroppedWants(existing, manifest.metadata.id, manifest.wants ?? [], (id) => provides.get(id));
+    if (kept.length !== existing.length) await writeStore(kept);
+    return (await generateSuggestionsInStore(manifest)).actionable;
+  });
+  await notifyNewConnections(actionable);
+}
+
+/**
+ * At Control Panel start: drop the suggestions installed apps no longer ask for. An app updated by a Control Panel
+ * before 0.6.15 kept the suggestions of the release it was installed from. An app whose installed copy cannot be
+ * read keeps its suggestions. Returns how many were dropped.
+ *
+ * What a target provides is read from its installed copy too, never from its install metadata: that still names
+ * what the release it was installed from provided, and a suggestion for a capability the target has gained since
+ * was dropped by mistake. A target whose installed copy cannot be read keeps the suggestions made for a capability.
+ */
+export function dropSuggestionsOfDroppedWants(): Promise<number> {
+  return withSuggestionStore(async () => {
+    const existing = await readStore();
+    if (existing.length === 0) return 0;
+    const installed = await listReadableInstalledApps();
+    const provides = new Map<string, ProvidesSpec[] | null>();
+    const providesOf = (id: string) => provides.get(id);
+    let kept = existing;
+    for (const meta of installed) {
+      if (!kept.some((s) => s.fromAppId === meta.appId)) continue;
+      let wants: WantSpec[];
+      try {
+        wants = (await readInstalledAppManifest(meta.appId)).wants ?? [];
+      } catch {
+        continue;
+      }
+      for (const s of kept) {
+        const target = s.targetAppId;
+        if (s.fromAppId !== meta.appId || !target || provides.has(target) || !installed.some((m) => m.appId === target)) continue;
+        provides.set(target, await readInstalledAppManifest(target).then((m) => m.provides ?? [], () => null));
+      }
+      kept = withoutDroppedWants(kept, meta.appId, wants, providesOf);
+    }
+    if (kept.length === existing.length) return 0;
+    await writeStore(kept);
+    return existing.length - kept.length;
+  });
 }
 
 /** Notify the owner/admins that new app connections are available. Per-user discovery
@@ -164,9 +281,22 @@ export async function generateSuggestionsForApp(
   manifest: AppManifest,
   skipTargetIds?: Set<string>,
 ): Promise<Suggestion[]> {
+  const { created, actionable } = await withSuggestionStore(() => generateSuggestionsInStore(manifest, skipTargetIds));
+  // Heads-up notification for connections that can be approved right now (outside the store's queue: it waits
+  // for the dashboard).
+  await notifyNewConnections(actionable);
+  return created;
+}
+
+/** `generateSuggestionsForApp` without the queue and the notification, for callers that hold the queue. */
+async function generateSuggestionsInStore(
+  manifest: AppManifest,
+  skipTargetIds?: Set<string>,
+): Promise<{ created: Suggestion[]; actionable: Suggestion[] }> {
   const existing = await readStore();
   const bridges = await loadBridges();
   const installedMetas = await listReadableInstalledApps();
+  const providesByApp = await installedProvidesByApp(installedMetas);
 
   const newSuggestions: Suggestion[] = [];
   // Bridge suggestions whose target is installed and can therefore be approved right now —
@@ -240,7 +370,7 @@ export async function generateSuggestionsForApp(
       // Type-based: suggest every installed app that provides this capability type.
       for (const provider of installedMetas) {
         if (provider.appId === appId) continue;
-        if (!(provider.provides ?? []).some((p) => p.type === want.type)) continue;
+        if (!(providesByApp.get(provider.appId) ?? []).some((p) => p.type === want.type)) continue;
         if (skipTargetIds?.has(provider.appId)) continue;
         upsertBridgeSuggestion({
           fromAppId: appId,
@@ -276,8 +406,5 @@ export async function generateSuggestionsForApp(
     await writeStore([...existing, ...newSuggestions]);
   }
 
-  // 4. Heads-up notification for connections that can be approved right now.
-  await notifyNewConnections(actionable);
-
-  return newSuggestions;
+  return { created: newSuggestions, actionable };
 }

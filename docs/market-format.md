@@ -214,7 +214,8 @@ skipped; other folders (`drafts/`, `tests/`) are not published. A symbolic link 
   (YouEye 0.6.3), with the YouEye version that first reads it. The generator enforces only rows newer than 0.6.11
   (`OLDEST_MARKET_READER`, the oldest YouEye that reads this format): an app that uses such a field must say
   `requires: { youeye: ">=<that version>" }` or higher, and the error says what to write. Rows at or below 0.6.11
-  (all of today's) are kept as a record. The table and its rules are in
+  (all of today's fields) are kept as a record. Variables newer than the format have the same table
+  (`VARIABLES_SINCE`; `${app.network_cidr}` needs `>=0.6.15`, enforced). The tables and their rules are in
   [app-manifest.md](app-manifest.md#fields-newer-than-the-format).
 - **Provenance**, when the repository has `asset-provenance.json` (the official Market does), and with
   `--require-provenance` also when it has none (then the build is refused): exactly one record per picture under

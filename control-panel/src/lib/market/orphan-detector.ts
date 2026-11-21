@@ -185,8 +185,7 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
         if ((await recordedOwnership()).databases.has(name)) throw new Error('Database belongs to an installed app');
         const { execCommand } = await import('../incus/server');
         for (const sql of [
-          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${name}' AND pid <> pg_backend_pid()`,
-          `DROP DATABASE IF EXISTS "${name}"`,
+          `DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`,
           `DROP ROLE IF EXISTS "${name}"`,
         ]) {
           const result = await execCommand('youeye-postgres', ['psql', '-U', 'youeye', '-v', 'ON_ERROR_STOP=1', '-c', sql], { timeout: 10_000 });

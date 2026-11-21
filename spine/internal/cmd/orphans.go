@@ -67,7 +67,7 @@ var orphansCleanCmd = &cobra.Command{
 		if err := requireCP(); err != nil {
 			return err
 		}
-		result, err := controlClient.Post("/api/admin/orphans", map[string]string{"action": "cleanup-all"})
+		result, err := controlClient.PostLong("/api/admin/orphans", map[string]string{"action": "cleanup-all"})
 		if err != nil {
 			return err
 		}

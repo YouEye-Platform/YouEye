@@ -279,7 +279,6 @@ export function compileApp(parsed: ParsedApp): AppManifest {
         host: item.host,
         paths: item.paths,
         methods: item.methods ?? ['GET'],
-        scope: item.scope ?? 'user',
       })),
     },
     forwardAuth: app.forward_auth === undefined ? 'default' : app.forward_auth ? 'enabled' : 'disabled',

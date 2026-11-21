@@ -21,6 +21,7 @@ The validator refuses an unknown name, and a name the file cannot get (for examp
 | `${app.fqdn}` | `<subdomain>.<domain>` | always |
 | `${app.url}` | `https://<subdomain>.<domain>` | always |
 | `${app.internal_url}` | `http://<main container>.youeye:<port>` | always |
+| `${app.network_cidr}` | the app network in CIDR form, its `/27` (e.g. `10.76.0.32/27`); from YouEye 0.6.15 | always |
 | `${sidecar.<name>.host}` | a sidecar's host name, `app-<id>-<name>.youeye` | sidecars |
 | `${sidecar.<name>.url}` | `http://<host>:<port>` of a sidecar | sidecars with a port |
 | `${secret.<name>}` | a generated secret (see `secrets:`) | always |
@@ -80,6 +81,17 @@ to the system services: `:3001` the UI, `:3002` YouEye ID, `:3003` Pointer infer
   secrets `length` counts random bytes, see [app-manifest.md](app-manifest.md)).
 - `${identity.internal_url}`: `http://id.youeye:3002` for an app with a YouEye ID client, otherwise
   `http://<gateway>:3002`.
+- `${app.network_cidr}`: the app's lease in the CP's address plan (`ipam.json`, inside the pools of
+  `app_network.pools` / `YOUEYE_APP_NETWORK_POOLS`, default `10.76.0.0/14,10.80.0.0/14`). Caddy's NIC on the app's
+  bridge has an address in it, so an app that must trust its reverse proxy (Navidrome's `ND_REVERSEPROXYWHITELIST`,
+  Nextcloud's `trusted_proxies`) can name this network instead of a hard-coded range. An installation keeps its
+  lease; a reinstall or restore gets a new one and renders everything again. When the lease is unknown (an app
+  without its own bridge, or a lookup that failed) it is never rendered empty: the install, update or render fails
+  with `Unresolved variable: ${app.network_cidr}: the app network lease was not found`.
+- **Newer variables.** A box refuses a variable it does not know, so an app that uses one newer than YouEye 0.6.3
+  must say `requires: { youeye: ">=<version>" }` (`VARIABLES_SINCE` in `app-format/since.ts`; the Market generator
+  refuses the app otherwise). An older box then lists the app from the market index as "Needs YouEye …" and never
+  reads its manifest. `${app.network_cidr}` needs `>=0.6.15`.
 
 Old names such as `${secrets.*}`, `${container.ip}`, `${database.dsn}` or camelCase `identity.*`/`ai.*` are not in
 the registry, so the validator refuses them like any unknown name.

@@ -39,7 +39,7 @@ function lifecycleStatus(state: NamesLifecycleState | null) {
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   try {
     const state = await readNamesLifecycleState();
     const certificate = await tlsStorage.getCert();

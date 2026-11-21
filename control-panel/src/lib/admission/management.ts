@@ -1,4 +1,4 @@
-import { withAppLifecycle } from '../market/update-admission';
+import { withAppLifecycle, withAppLifecycles } from '../market/update-admission';
 import { ensureIdentitySchema, identityRows as rows, identitySql as sql, identityStatementRows as statementRows } from '@/lib/identity/store';
 import type { SessionPayload } from '@/lib/auth/session';
 import { isUuid, type ResourceOwnership } from '../../../../shared/admission';
@@ -63,4 +63,79 @@ async function quarantineAdmissionDataUnderLifecycle(input: {
         jsonb_build_object('principalId',${sql(input.principalId)}) FROM changed
     )`, 'SELECT installation_id::text FROM changed');
   if (!result.length) throw new Error('Disposition conflict or no unresolved resources');
+}
+
+/** What keeps a user from being deleted (`assertIdentityDisposition`), by app. */
+export interface UserDataDisposition {
+  /** Apps the user administers (owner of the access policy). */
+  administers: string[];
+  /** Apps whose app-wide data (volumes, containers, database, shares) the user owns: they installed it. */
+  ownsAppData: string[];
+  /** Apps that keep data private to the user only, with their policy revision. */
+  privateData: Array<{ appId: string; revision: number }>;
+}
+
+export async function userDataDisposition(userId: string): Promise<UserDataDisposition> {
+  if (!isUuid(userId)) throw new Error('Invalid user');
+  await ensureIdentitySchema();
+  const [policies, resources] = await Promise.all([
+    rows<{ app_id: string }>(`SELECT app_id FROM admission_policies
+      WHERE owner_id = ${sql(userId)}::uuid AND state <> 'deleted' ORDER BY app_id`),
+    rows<{ app_id: string; revision: number; app_wide: boolean }>(`
+      SELECT p.app_id, p.revision, bool_or(r.declaration->>'scope' IN ('app_global','shared')) AS app_wide
+      FROM admission_resources r JOIN admission_policies p USING (installation_id)
+      WHERE (r.owner_id = ${sql(userId)}::uuid OR r.private_user_id = ${sql(userId)}::uuid)
+        AND r.state IN ('active','retained')
+      GROUP BY p.app_id, p.revision ORDER BY p.app_id`),
+  ]);
+  return {
+    administers: policies.map(policy => policy.app_id),
+    ownsAppData: resources.filter(resource => resource.app_wide).map(resource => resource.app_id),
+    privateData: resources.filter(resource => !resource.app_wide)
+      .map(resource => ({ appId: resource.app_id, revision: Number(resource.revision) })),
+  };
+}
+
+/**
+ * Before a user is deleted: retain (quarantine) the data apps keep private to them, the per-app "retain" choice of
+ * an app's Access settings (`quarantineAdmissionData`), for every app at once, installed or retained. The data stays,
+ * held for no one; the apps go on for everyone else. Refused, with nothing changed, while the user administers an app
+ * or owns an app's app-wide data: retaining that would close the app for everyone, so it stays a per-app decision.
+ *
+ * Retained data cannot be handed back, so a refusal must leave nothing retained: YouEye ID's lifecycle and every
+ * app's are taken first (a busy one refuses here), what the user holds is read again under them, and only then is
+ * anything retained. `thenDelete` (the deletion) runs under the same locks, so nothing new can appear in between.
+ * Returns the apps whose data was retained.
+ */
+export async function retainUserPrivateData(
+  userId: string, actorId: string, thenDelete?: () => Promise<void>,
+): Promise<string[]> {
+  const planned = await userDataDisposition(userId);
+  refuseAppWideOwner(planned);
+  const apps = new Set(planned.privateData.map(entry => entry.appId));
+  return withAppLifecycles(['identity', ...apps], async () => {
+    const disposition = await userDataDisposition(userId);
+    refuseAppWideOwner(disposition);
+    if (disposition.privateData.some(entry => !apps.has(entry.appId))) {
+      throw dispositionError('What apps keep for this user changed meanwhile; nothing was retained. Try again');
+    }
+    for (const { appId, revision } of disposition.privateData) {
+      await quarantineAdmissionDataUnderLifecycle({ appId, actorId, principalId: userId, expectedRevision: revision });
+    }
+    await thenDelete?.();
+    return [...new Set(disposition.privateData.map(entry => entry.appId))];
+  });
+}
+
+function dispositionError(message: string): Error {
+  return Object.assign(new Error(message), { name: 'IdentityDispositionError' });
+}
+
+function refuseAppWideOwner(disposition: UserDataDisposition): void {
+  const blocking = [...new Set([...disposition.administers, ...disposition.ownsAppData])].sort();
+  if (blocking.length) {
+    throw dispositionError(`This user administers or installed ${blocking.join(', ')}. Transfer each app's `
+      + 'administration in its Access settings, and remove an app whose app-wide data they own (or retain that data '
+      + 'there, which closes the app), before deleting this user');
+  }
 }

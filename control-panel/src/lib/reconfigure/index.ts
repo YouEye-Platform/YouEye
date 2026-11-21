@@ -401,6 +401,9 @@ async function buildRenderContext(
     } catch { /* best-effort */ }
   }
 
+  // No lease (or no answer): ${app.network_cidr} stays unset, so a template that uses it fails to render.
+  const networkCidr = await import('@/lib/incus/app-network')
+    .then(({ getAppNetworkLease }) => getAppNetworkLease(meta.appId)).then((lease) => lease?.cidr || undefined, () => undefined);
   return {
     platform: {
       domain: newDomain,
@@ -415,6 +418,7 @@ async function buildRenderContext(
       fqdn,
       url: appUrl,
       internal_url: '',
+      ...(networkCidr ? { network_cidr: networkCidr } : {}),
     },
     sidecar,
     secret: secrets,

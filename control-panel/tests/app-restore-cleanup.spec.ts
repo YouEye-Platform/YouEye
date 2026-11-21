@@ -95,7 +95,7 @@ for (const databaseMode of ['none', 'own', 'shared']) test(`restore teardown res
   assert.equal(result.success, true);
   assert.equal(result.verification.databaseDropped, databaseMode === 'shared' ? true : null);
   assert.equal(sql.length, databaseMode === 'shared' ? 4 : 0);
-  if (databaseMode === 'shared') assert.ok(sql.some(args => args.includes('DROP DATABASE IF EXISTS "fixture_db"')));
+  if (databaseMode === 'shared') assert.ok(sql.some(args => args.includes('DROP DATABASE IF EXISTS "fixture_db" WITH (FORCE)')));
 });
 
 for (const currentMode of ['none', 'own', 'shared']) test(`historical restore removes only current ${currentMode} database resources`, async () => {

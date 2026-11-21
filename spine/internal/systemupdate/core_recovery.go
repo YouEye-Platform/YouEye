@@ -97,8 +97,16 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 	if j.RequestID != requestID {
 		return j, fmt.Errorf("exact core recovery request required")
 	}
-	if j.Phase == "committed" || j.Phase == "cancelled" || j.Phase == "cancelling" {
-		return j, fmt.Errorf("completed core request cannot roll back")
+	if j.Phase == "committed" {
+		// Nothing to roll back and nothing to refuse: like a rolled-back request
+		// below, a committed one has only its release left (ReleaseCompleted),
+		// which the caller's continuation runs. Refusing here left "Restore
+		// previous release" and the API's recover without any way to finish a
+		// committed request whose release was cut short.
+		return j, nil
+	}
+	if j.Phase == "cancelled" || j.Phase == "cancelling" {
+		return j, fmt.Errorf("cancelled core request cannot roll back")
 	}
 	current, err := m.ReadReceipt()
 	if err != nil {
@@ -140,6 +148,10 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 				continue
 			}
 			observation, err := m.Executor.Observe(ctx, j, *s)
+			if err == nil && observation.State == "retryable" && s.State == "started" && m.verifyCheckpointRefusal(ctx, j) == nil {
+				// The admission never ended in a launch: nothing to restore either.
+				return m.cancelLocked(ctx, j)
+			}
 			if err != nil || observation.State != "failed" || observation.Code != coreCheckpointPreflightRefused {
 				break
 			}

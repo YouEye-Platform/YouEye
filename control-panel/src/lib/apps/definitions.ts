@@ -64,16 +64,6 @@ export interface AppContainer {
 export const APP_DEFINITIONS: AppDefinition[] = [
   // ─── System Components ──────────────────────────────────────
   {
-    id: 'host-system',
-    displayName: 'Host System',
-    description: 'Host operating system and packages',
-    icon: 'Server',
-    category: 'system',
-    type: 'system',
-    containers: [],
-    updatedBy: 'spine',
-  },
-  {
     id: 'incus',
     displayName: 'Incus',
     description: 'Container and VM management engine',

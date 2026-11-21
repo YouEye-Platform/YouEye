@@ -282,13 +282,18 @@ capacity (about 7 GiB at the minimum size).
 ## Platform Management
 
 ```bash
-youeye status          # Full platform health check
-youeye deploy          # Deploy the entire stack
-youeye update self     # Update Spine
-youeye update control  # Update Control Panel
-youeye cleanup         # Clean uninstall
-youeye branch set dev  # Switch release channel
+youeye status              # Full platform health check
+youeye deploy              # Deploy the entire stack
+youeye update core check   # What the channel offers: one System release (image, Spine, Control Panel, UI)
+youeye update core status  # The installed System release and the current update request
+youeye channel get         # The release channel this box follows
+youeye channel set dev     # Switch release channel (dev, alpha, beta, stable)
+youeye cleanup             # Clean uninstall
 ```
+
+Spine, the Control Panel and the UI are not updated one by one: a System update installs one release that binds
+all of them (Settings → System, or `youeye update core stage` and `activate`; see
+[docs/core-release-contract.md](docs/core-release-contract.md)).
 
 ## Development
 

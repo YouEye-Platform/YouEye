@@ -197,9 +197,9 @@ export interface WantSpec {
   setup?: string;
 }
 
+/** An outside host the app may call through the UI gateway; each user grants it. */
 export interface InternetProxyScopeSpec extends ProxyScopeSpec {
   host: string;
-  scope: 'user' | 'service';
 }
 
 /**
@@ -722,6 +722,11 @@ export interface VariableContext {
     fqdn: string;
     url: string;
     internal_url: string;
+    /**
+     * The app network (its IPAM lease, a /27 in CIDR form); Caddy's NIC on the app bridge is in it. Absent when the
+     * lease is unknown, so a template that uses it fails to render instead of rendering an empty value.
+     */
+    network_cidr?: string;
   };
   sidecar: Record<string, { host: string; url?: string }>;
   secret: Record<string, string>;
@@ -870,6 +875,8 @@ export interface RestoreOptions {
   runtimeInstances?: Record<string, { archivePath: string; pool: string }>;
   /** Verified offline root copies; never accepted from an HTTP request body. */
   retainedRuntimes?: Record<string, { name: string; ownerId: string; pool: string }>;
+  /** The earlier install record's native releases, kept for the runtimes recovered above (verified again). */
+  recoveredNativeArtifacts?: unknown;
   /** Imported recovery volumes owned by this transaction and removed on rollback. */
   recoveryCreatedStorage?: string[];
   /** The shared database and role (skipped by `skipDatabase`) were created for this app. */

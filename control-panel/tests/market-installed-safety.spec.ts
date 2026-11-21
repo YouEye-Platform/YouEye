@@ -18,6 +18,7 @@ import { marketIconPicture, resolveAppIcon } from '../src/lib/market/app-icon';
 import type { InstallMetadata } from '../src/lib/market/types';
 import { routeServers } from '../src/lib/caddy/servers';
 import * as marketSource from '../src/lib/market/source';
+import { freeLifecycle } from './fixtures/free-lifecycle';
 
 const require = createRequire(import.meta.url);
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
@@ -233,7 +234,7 @@ test('uninstalling foo never touches foo-bar and removes its database, secrets a
   assert.ok(f.calls.includes('ca:foo'));
   assert.ok(f.calls.includes('secrets:foo'));
   assert.ok(f.calls.includes('remove-metadata'));
-  assert.ok(f.sql.some((args) => args.includes('DROP DATABASE IF EXISTS "foo"')));
+  assert.ok(f.sql.some((args) => args.includes('DROP DATABASE IF EXISTS "foo" WITH (FORCE)')));
   assert.ok(f.sql.some((args) => args.includes('DROP ROLE IF EXISTS "foo"')));
   assert.equal(f.metadata(), null);
 });
@@ -430,7 +431,7 @@ function routeModule(file: string, setups: Array<{ name: string; for: string }>)
     '@/lib/market/install-tracker': { startTracking: () => { started.push('tracking'); return new AbortController(); },
       trackEvent: () => {}, finishTracking: () => {}, logOperationFailure: () => {},
       sanitiseInstallEvent: (event: unknown) => event, sensitivitySafeInstallError: () => 'failed' },
-    '@/lib/market/update-admission': { withUserOperationLockWait: (work: () => unknown) => Promise.resolve().then(work) },
+    '@/lib/market/update-admission': freeLifecycle,
     '@/lib/market/installed-apps': { updateInstalledAppSource: async () => {} },
     '@/lib/health/notification-bridge': { sendNotificationToUI: async () => {} },
     '@/lib/settings': { settingsService: { getRaw: async () => ({ domain: 'example.test' }) } },

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -45,11 +46,11 @@ func generateBackupID() string {
 
 // Run executes the backup pipeline in the background.
 // CP orchestrates the sequence; Spine handles host-level operations.
-func Run(cfg BackupConfig) (string, error) {
+func Run(ctx context.Context, cfg BackupConfig) (string, error) {
 	if err := validateIncusPlan(cfg.IncusRuntimes, cfg.IncusVolumes); err != nil {
 		return "", err
 	}
-	release, err := (systemupdate.CoreLifecycleBarrier{Root: filepath.Join(backupDataRoot, "state", "app-updates")}).AdmitOrdinary()
+	release, err := admitArchiveStep(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -312,8 +313,8 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 	nextStep(StatusEncrypting, "encrypt", "Encrypting archive...", 65)
 	encPath := tarPath + ".enc"
 	defer os.Remove(encPath)
-	encCmd := opensslWithPassphrase(cfg.Passphrase, "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
-		"-in", tarPath, "-out", encPath)
+	encryption := currentArchiveEncryption
+	encCmd := encryptCommand(encryption, cfg.Passphrase, tarPath, encPath)
 	if out, err := encCmd.CombinedOutput(); err != nil {
 		Fail(backupID, fmt.Sprintf("Encryption failed: %v\n%s", err, string(out)))
 		return
@@ -343,7 +344,7 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		Fail(backupID, fmt.Sprintf("Failed to write archive to target: %v", err))
 		return
 	}
-	if err := writeArchiveMAC(finalEncPath, cfg.Passphrase); err != nil {
+	if err := writeArchiveMAC(finalEncPath, cfg.Passphrase, encryption); err != nil {
 		os.Remove(finalEncPath)
 		Fail(backupID, fmt.Sprintf("Failed to authenticate archive: %v", err))
 		return
@@ -355,7 +356,7 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		archiveSize = info.Size()
 	}
 
-	Complete(backupID, finalEncPath, archiveSize)
+	Complete(backupID, finalEncPath, archiveSize, encryption)
 }
 
 type zfsDataSnapshot struct {
@@ -523,4 +524,15 @@ func moveOrCopy(src, dst string) error {
 
 	os.Remove(src)
 	return nil
+}
+
+// admitArchiveStep admits one archive step of a Control Panel backup or restore. The step arrives in the middle
+// of an operation that already holds the lifecycle lock, so a busy admission gate (a System update or a Control
+// Panel restart trying to get in) is waited out instead of failing the operation; a System update, recovery or
+// copy that owns the platform still refuses as soon as its reservation can be read (AdmitOrdinaryWait). Nothing is
+// locked while it waits. ctx is the request's: the
+// wait ends when the Control Panel goes away.
+func admitArchiveStep(ctx context.Context) (func(), error) {
+	barrier := systemupdate.CoreLifecycleBarrier{Root: filepath.Join(backupDataRoot, "state", "app-updates")}
+	return barrier.AdmitOrdinaryWait(ctx, systemupdate.OrdinaryAdmissionWait)
 }

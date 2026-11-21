@@ -78,3 +78,31 @@ test('a Pointer state from 0.6.11 (floor with a build name only) is read, and th
     assert.deepEqual(Object.keys(acceptProductSequence(state.floors,newer,installed).pointer),['line','sequence','build','buildSHA256','manifestSHA256']);
   } finally { await rm(root,{recursive:true,force:true}); }
 });
+
+test('a stopped Pointer takes the ordinary update on a same-build promotion; the updater starts it first', async () => {
+  const root = await mkdtemp(join(tmpdir(),'youeye-pointer-stopped-'));
+  try {
+    const repository = 'https://github.com/YouEye-Platform/Pointer';
+    const base = productFixture('pointer','1.2.3-dev.1',repository,{'standalone.tar':Buffer.from('standalone.tar'),'pointer-build-contract.json':Buffer.from('contract')});
+    const release = (version: string) => {
+      const r = {...base.release,version,tag:productTag(version)};
+      return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'pointer',repository,tag:r.tag});
+    };
+    const original = release('1.2.3-dev.1'), next = release('1.2.3-alpha.1');
+    const file = join(root,'installed.json'), store = new AppUpdateJournalStore(join(root,'journal'));
+    await savePointerReleaseState({schema:'youeye.installed-pointer.v1',installed:{receipt:productReceipt(original),runtimeUUID:'12345678-1234-1234-1234-123456789abc'},floors:acceptProductSequence(undefined,original)},file);
+    const effects: string[] = [];
+    const io: PointerReleaseIO = {
+      read:()=>readPointerReleaseState(file),
+      save:async()=>{effects.push('save');}, publish:async()=>{effects.push('publish');},
+      verify:async()=>{throw new Error('Instance is not running');}, health:async()=>{throw new Error('Instance is not running');},
+      running:async()=>false,
+    };
+    assert.equal(await withAppLifecycle('pointer',()=>updateIdenticalPointerRelease(store,next,io),{store}),false);
+    assert.deepEqual(effects,[]);
+    assert.equal(store.list().length,0);
+    assert.equal(pointerRelease(await io.read())?.release.version,'1.2.3-dev.1');
+    const updater = (await import('node:fs')).readFileSync(join(process.cwd(),'src/lib/apps/lxd-updater.ts'),'utf8');
+    assert.match(updater,/containerState\(containerName\) !== 'Running'[\s\S]{0,300}startContainer\(containerName\)[\s\S]{0,200}updateIdenticalPointerRelease/);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});

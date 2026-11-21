@@ -748,6 +748,7 @@ export async function POST(request: NextRequest) {
         }
 
         await markApplianceSetupComplete(leaseOwnerId, leaseSessionId);
+        // Loads the SSO environment. Spine restarts once this run and any app work have ended, never under them.
         await spineClient.restartControl(5);
         settle();
 

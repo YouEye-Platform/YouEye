@@ -91,18 +91,7 @@ async function updateAppLanguage(
   value: string
 ): Promise<boolean> {
   try {
-    const { execShell } = await import('../incus/server');
-
-    // Set the env var in the container's config
-    // Incus stores container config as key-value pairs
-    const setResult = await execShell(
-      containerName,
-      `export ${envVar}="${value}" && echo "OK"`,
-      { timeout: 10_000 }
-    );
-
-    // For a persistent change, we need to update the container's
-    // environment config via Incus API. Use the incus client.
+    // Set the env var in the container's Incus config (environment.<var>), then restart it.
     const http = await import('http');
     await new Promise<void>((resolve) => {
       // Get current config

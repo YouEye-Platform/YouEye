@@ -10,9 +10,9 @@ import {
   channelProductEntry, downloadProductAsset, downloadProductAssetTo, readChannelIndex, resolveChannelEntry, resolveChannelProduct,
   verifyChannelEntryDocument, type BoxChannelIndex, type ChannelEntry,
 } from '@/lib/releases/channel-index';
-import { productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
+import { productReceipt, verifyInstalledProductReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
 import { marketStateDir } from './source';
-import type { AppManifest, InstallConfig } from './types';
+import type { AppManifest, InstallConfig, InstallMetadata } from './types';
 
 const execFileAsync = promisify(execFile);
 /** Largest native app package (standalone.tar). It is streamed to disk and to
@@ -336,6 +336,45 @@ export async function stageMarketNativeArtifacts(
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * The release records of the native runtimes a restore (or a retained-data adoption) brings back instead of
+ * installing them, taken from the earlier install record: the app keeps the release it runs, so it is not offered
+ * that same release as an update, and keeps its sequence floor. A record that does not verify for this app, its
+ * manifest version and a recovered container is dropped (the app then has no recorded release). `runtimeUUID` is
+ * left out: the recovered instance is a new runtime, and its projection is published again once it exists.
+ */
+export function recoveredNativeArtifacts(
+  appId: string,
+  version: string | undefined,
+  recorded: unknown,
+  recoveredContainerNames: string[],
+): NonNullable<InstallMetadata['nativeArtifacts']> {
+  if (!Array.isArray(recorded) || !version) return [];
+  const artifacts: NonNullable<InstallMetadata['nativeArtifacts']> = [];
+  for (const entry of recorded as Array<Partial<NonNullable<InstallMetadata['nativeArtifacts']>[number]>>) {
+    if (!entry || typeof entry !== 'object' || !entry.productRelease || typeof entry.containerName !== 'string'
+      || !recoveredContainerNames.includes(entry.containerName)
+      || artifacts.some((artifact) => artifact.containerName === entry.containerName)) continue;
+    let selected: VerifiedProductRelease;
+    try { selected = verifyInstalledProductReceipt(entry.productRelease, { product: appId }); } catch { continue; }
+    const primary = selected.build.kind === 'native' ? selected.build.assets.find((asset) => asset.name === 'standalone.tar') : undefined;
+    if (!primary || selected.release.version !== version) continue;
+    artifacts.push({
+      productRelease: productReceipt(selected),
+      containerName: entry.containerName,
+      sourceRepo: selected.repository,
+      releaseTag: selected.release.tag,
+      version: selected.release.version,
+      artifactName: 'standalone.tar',
+      sha256: primary.sha256,
+      bytes: primary.size_bytes,
+      verification: 'product-release',
+      productReleaseSHA256: selected.manifestSHA256,
+    });
+  }
+  return artifacts;
 }
 
 /** Re-check a staged archive's size and digest (streamed) right before it is deployed. */

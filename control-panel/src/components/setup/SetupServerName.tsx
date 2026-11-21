@@ -209,7 +209,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   const enrollment = useRef<AbortController | null>(null);
   useEffect(() => () => {enrollment.current?.abort();previewRequest.current?.abort();}, []);
   useEffect(() => { if (tlsChoice !== 'youeye-names') {enrollment.current?.abort();previewRequest.current?.abort();setYenLoading(false);} }, [tlsChoice]);
-  // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
+  // Reuse: a bundle staged before setup (youeye names import) locks the address.
   const [reusing, setReusing] = useState(false);
   // A name already claimed during this setup: continue with it, or release it.
   const [lease, setLease] = useState<{ name: string; fqdn: string } | null>(null);
@@ -341,7 +341,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
     return () => { active = false; };
   }, [setYenTermsVersion]);
 
-  // Check once for a staged reuse bundle (installer --names-bundle).
+  // Check once for a staged reuse bundle (youeye names import).
   useEffect(() => {
     let active = true;
     fetch('/api/tls/youeye-names/reuse')

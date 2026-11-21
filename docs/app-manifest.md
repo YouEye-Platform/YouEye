@@ -331,6 +331,12 @@ that reads it:
 
 (`public_access` is 0.6.4: stable 0.6.3 is build 0.6.3-dev.20, made before the field.)
 
+Variables work the same way (`VARIABLES_SINCE`): an older box refuses an unknown `${…}` name.
+
+| Variable | Since |
+|---|---|
+| `${app.network_cidr}` | 0.6.15 |
+
 - **Only fields newer than 0.6.11 need `requires`.** A market is read only by YouEye 0.6.11 or later
   (`OLDEST_MARKET_READER` in `since.ts`), and every such box knows the fields above, so these rows are kept as a
   record and the generator does not enforce them. For a row above 0.6.11, an app author who uses the field writes

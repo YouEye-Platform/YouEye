@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
@@ -25,6 +26,13 @@ func TestHostIPMigrationRespectsRetainedSystemMaintenance(t *testing.T) {
 				result, err := runHostIPMigrationWithLifecycle(opts, barrier)
 				if err == nil || !strings.Contains(err.Error(), "owns the platform lifecycle") || result != (hostIPMigrationResult{}) {
 					t.Fatalf("maintenance did not prevent host/container work: result=%+v err=%v", result, err)
+				}
+				// A held platform is expected while an update runs: the startup check says it waits. Before
+				// 0.6.15 it logged "ERROR: System update or recovery owns the platform lifecycle" at every
+				// retry (18 times in one update). An unreadable reservation is still an error.
+				line := hostIPRetryLine(err, 5*time.Second, 1)
+				if corrupt != strings.HasPrefix(line, "ERROR: ") || (!corrupt && !strings.HasPrefix(line, "waiting: System update or recovery owns the platform lifecycle; checking again in 5s")) {
+					t.Fatalf("retry line for corrupt=%v: %q", corrupt, line)
 				}
 			}
 		})

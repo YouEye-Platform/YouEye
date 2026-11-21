@@ -203,19 +203,42 @@ func TestCoreAdmissionCancellationReauthorizesAndPreservesUnfinishedWork(t *test
 	}
 }
 
-func TestCoreAdmissionLostProcessEvidenceNeverAuthorizesRetry(t *testing.T) {
-	f, _, e, _ := admissionRunnerFixture(t)
-	// A crash may happen after admission intent or reservation, but before
-	// launch acknowledgement. Neither an absent child nor this receipt proves
-	// a safely completed pre-effect timeout.
-	a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: f.step.RequestID, Name: f.step.Name, ManifestSHA256: f.journal.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: "different-process", Active: true,
-		Result: CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started"}}
-	if err := e.save(f.step, a); err != nil {
-		t.Fatal(err)
-	}
-	out, err := e.Start(context.Background(), f.journal, f.step)
-	if err != nil || out.State != "unknown" || f.starts != 0 {
-		t.Fatal(out, err, f.starts)
+// A coordinator lost while it waited at admission (a power cut, a kill) leaves
+// its "waiting" record behind. For the checkpoint that record proves that no
+// child was launched (the launch record replaces it first), so the request is
+// admitted again, or cancelled; the reservation the lost admission may have
+// taken is this request's own. Before 0.6.15 it stayed unknown and only
+// `recover` ended it. A lost recovery-fence admission stays unknown.
+func TestCoreAdmissionLostProcessEvidence(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		f, b, e, m := admissionRunnerFixture(t, recovery)
+		a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: f.step.RequestID, Name: f.step.Name, ManifestSHA256: f.journal.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: "different-process", Active: true,
+			Result: CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started"}}
+		if err := e.save(f.step, a); err != nil {
+			t.Fatal(err)
+		}
+		// The lost admission had taken the reservation.
+		if err := b.Begin(f.journal); err != nil {
+			t.Fatal(err)
+		}
+		out, err := e.Start(context.Background(), f.journal, f.step)
+		if recovery {
+			if err != nil || out.State != "unknown" || f.starts != 0 {
+				t.Fatal(out, err, f.starts)
+			}
+			continue
+		}
+		if err != nil || out.State != "retryable" || out.Code != "admission_cancelled" || out.EffectState != "not-started" || f.starts != 0 {
+			t.Fatal(out, err, f.starts)
+		}
+		// Resume admits the same request again and launches its one child.
+		j, err := m.Advance(context.Background(), f.journal.RequestID, false)
+		if err != nil || j.Phase != "applying" || f.starts != 1 {
+			t.Fatal(j.Phase, err, f.starts)
+		}
+		if r, err := b.Read(); err != nil || r.RequestID != j.RequestID {
+			t.Fatal("the reservation of the admitted request is gone", err)
+		}
 	}
 	for _, forged := range []CoreActionObservation{
 		{State: "retryable", Stage: "execute", Code: "admission_timeout", EffectState: "not-started", Evidence: "forged"},

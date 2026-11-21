@@ -64,6 +64,14 @@ export async function register() {
     const { startSetupHttpServerConvergence } = await import("@/lib/caddy/setup-http-startup");
     void startSetupHttpServerConvergence();
 
+    // Pi-hole's own update check stays off on a container created before it was turned off at deploy.
+    void (async () => {
+      const { containerExists } = await import("@/lib/infrastructure/oci-deployer");
+      if (!await containerExists("youeye-pihole")) return;
+      const { turnOffPiholeUpdateCheck } = await import("@/lib/infrastructure/pihole-update-check");
+      if (await turnOffPiholeUpdateCheck() === 'changed') console.log("[instrumentation] Pi-hole's own update check turned off");
+    })().catch((error) => console.error("[instrumentation] Pi-hole's update check could not be turned off:", error));
+
     // Durable update recovery must precede watchdog, queue and install reconciliation.
     try {
       const { reconcileAppUpdateOperations } = await import("@/lib/market/update-operations");
@@ -73,6 +81,14 @@ export async function register() {
       return;
     }
   
+    // Connection suggestions an installed app no longer asks for (an update before 0.6.15 kept them). Checked once
+    // per start, in the background: nothing waits for it, and an app whose installed copy cannot be read is skipped.
+    void (async () => {
+      const { dropSuggestionsOfDroppedWants } = await import("@/lib/bridges/suggestions");
+      const dropped = await dropSuggestionsOfDroppedWants();
+      if (dropped > 0) console.log(`[instrumentation] dropped ${dropped} connection suggestion(s) their apps no longer ask for`);
+    })().catch((error) => console.error("[instrumentation] connection suggestions could not be checked:", error));
+
     const { startDnsProviderMaintenanceLoop } = await import("@/lib/dns-providers/maintenance");
     startDnsProviderMaintenanceLoop();
     const { startNamesMaintenanceLoop } = await import("@/lib/youeye-names/maintenance");

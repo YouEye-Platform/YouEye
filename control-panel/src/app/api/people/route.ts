@@ -14,9 +14,7 @@ import { validateIdentityUsername } from '@/lib/identity/username-policy';
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 
     const search = request.nextUrl.searchParams.get('search') || undefined;
 

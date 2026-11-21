@@ -10,12 +10,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
-import { requireAuth } from '@/lib/auth/rbac';
+import { requireAdmin } from '@/lib/auth/rbac';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAdmin();
   if (auth.error) return auth.error;
 
   const appId = request.nextUrl.searchParams.get('appId');

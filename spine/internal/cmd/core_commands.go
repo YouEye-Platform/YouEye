@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,15 @@ func installCoreCommands(parent *cobra.Command) {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode((coreAPIOperations{}).ObserveInstalled(cmd.Context(), receipt))
 	}})
 	parent.AddCommand(coreStatusCommand())
+	parent.AddCommand(&cobra.Command{Use: "prune", Args: cobra.NoArgs, Short: "Remove what finished System updates left behind, except the last good checkpoint", RunE: func(cmd *cobra.Command, _ []string) error {
+		runtime, err := installedCoreRuntime()
+		if err != nil {
+			return err
+		}
+		// The same pruning every finished update runs by itself; it does nothing
+		// while a request is unfinished. The answer says what was removed and kept.
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(runtime.PruneFinished(cmd.Context()))
+	}})
 	parent.AddCommand(&cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Resolve the current complete System selection", RunE: func(cmd *cobra.Command, _ []string) error {
 		if _, err := installedCoreRuntime(); err != nil {
 			return err
@@ -189,6 +199,19 @@ type coreContinuation struct {
 	// handOver replaces this process with the selected Spine's continuation of
 	// the same request. It returns only when it did not: the caller continues.
 	handOver func(context.Context, systemupdate.CoreJournal) error
+	// childState is CoreSystemdRunner.ChildState: where the action child of a
+	// started step is. Nil (tests) is "gone": every outcome that cannot be
+	// learned is then final at once.
+	childState func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) string
+	// childSucceeded is CoreSystemdRunner.ChildSucceeded: the child left
+	// "succeeded" as its last word. Nil: never.
+	childSucceeded func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) bool
+	// rebootAgain is NativeCoreRuntime.RebootAgain: it judges a started host
+	// step whose restart did not happen. Nil leaves such a step alone.
+	rebootAgain func(context.Context, systemupdate.CoreJournal, systemupdate.CoreStep) (bool, error)
+	// lingeringWaited: the patience for a step (coreLingeringPatience,
+	// coreSucceededPatience) has been spent on this request.
+	lingeringWaited bool
 }
 
 // coreContinuationManager is the coordinator of `update core activate|resume|
@@ -199,23 +222,206 @@ func coreContinuationManager(r systemupdate.NativeCoreRuntime) systemupdate.Core
 }
 
 func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, request string, activate, recover, once bool) (systemupdate.CoreJournal, error) {
-	return runCoreContinuation(ctx, coreContinuation{
+	return runCoreContinuationToAnEnd(ctx, coreContinuation{
 		manager: coreContinuationManager(r),
 		finished: func(ctx context.Context, j systemupdate.CoreJournal) error {
 			var err error
 			if j.Phase != "cancelled" {
-				_, err = r.Checkpoint.ReleaseCompleted(ctx, j.RequestID)
+				var evidence string
+				evidence, err = r.Checkpoint.ReleaseCompleted(ctx, j.RequestID)
+				// A release that had to start containers (after a reboot or power cut) says so.
+				if err == nil && (strings.Contains(evidence, "started after a restart") || strings.Contains(evidence, "could not be started")) {
+					coreNotice("release of request " + j.RequestID + ": " + evidence)
+				}
 			}
 			r.Runner.ResetFailedUnits(ctx, j)
 			if err == nil {
 				// The platform is open again: remove the old service trees that this and
 				// earlier finished requests left under their stage names. Best effort.
 				r.Services.RemoveFinishedStageTrees(ctx)
+				// And what earlier finished requests left on the disks, except the
+				// last good checkpoint (NativeCoreRuntime.PruneFinished). Best effort.
+				if pruned := r.PruneFinished(ctx); pruned.Changed() {
+					coreNotice(pruned.String())
+				}
 			}
 			return err
 		},
-		handOver: coreHandOverToSelectedSpine,
+		handOver:       coreHandOverToSelectedSpine,
+		childState:     r.Runner.ChildState,
+		childSucceeded: r.Runner.ChildSucceeded,
+		rebootAgain:    r.RebootAgain,
 	}, request, activate, recover, once)
+}
+
+// runCoreContinuationToAnEnd is the continuation loop plus the one thing a
+// person would otherwise have to do on the console: when an update that is
+// past its checkpoint cannot go on (a step failed, or its outcome cannot be
+// learned, for example after a power cut in the middle of a step), the
+// previous release is restored, by the same recovery `update core recover`
+// runs. "Cannot be learned" is decided by coreUncertainStep, from the step's
+// child and never from a look that failed; a host step whose restart did not
+// happen is judged by coreHostStepUnknown.
+//
+// Past its checkpoint an update holds the platform: the Control Panel and the
+// dashboard are closed, so nobody can press "Restore previous release", and a
+// request left in needs-recovery kept the box closed until someone ran
+// `recover` over SSH or on the console. The recovery is started at most once
+// per request, here: a request that already has a recovery graph is continued
+// by `resume` as before, and a recovery that fails stays for a person. A
+// single pass (--once) never starts one.
+func runCoreContinuationToAnEnd(ctx context.Context, c coreContinuation, request string, activate, recover, once bool) (systemupdate.CoreJournal, error) {
+	j, err := runCoreContinuation(ctx, c, request, activate, recover, once)
+	if err == nil || recover || once || !coreUpdateNeedsRecovery(c.manager, request) {
+		return j, err
+	}
+	if !coreUpdateStepFailed(c.manager, request) {
+		// No step failed: an outcome could not be learned (a lost acknowledgement,
+		// a provider that did not answer). Look once more after a moment before
+		// giving the update up: a child that runs after all is followed to its end.
+		timer := time.NewTimer(coreRecoveryGrace)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return j, err
+		case <-timer.C:
+		}
+		// The first look has waited for what a child left running; this one does not.
+		c.lingeringWaited = true
+		j, err = runCoreContinuation(ctx, c, request, false, false, false)
+		if err == nil || !coreUpdateNeedsRecovery(c.manager, request) {
+			return j, err
+		}
+	}
+	coreNotice(fmt.Sprintf("the update of request %s cannot continue (%v); restoring the previous release", request, err))
+	return runCoreContinuation(ctx, c, request, false, true, false)
+}
+
+// coreRecoveryGrace: the pause before the second look at an uncertain step.
+var coreRecoveryGrace = 15 * time.Second
+
+func coreUpdateStepFailed(m systemupdate.CoreManager, request string) bool {
+	j, err := m.Read()
+	if err != nil || j.RequestID != request {
+		return false
+	}
+	for _, step := range j.Steps {
+		if step.State == "failed" {
+			return true
+		}
+	}
+	return false
+}
+
+// coreUpdateNeedsRecovery: the request stopped past its checkpoint with no
+// recovery graph yet. Read from the journal, not from what the loop returned.
+// Before the checkpoint nothing is held and the panel offers Cancel; a
+// checkpoint whose admission ended early leaves the request `applying` with no
+// failed step (Retry or Cancel); a refused checkpoint preflight was cancelled
+// by the coordinator.
+func coreUpdateNeedsRecovery(m systemupdate.CoreManager, request string) bool {
+	j, err := m.Read()
+	return err == nil && j.RequestID == request && systemupdate.CoreStoppedPastCheckpoint(j)
+}
+
+// coreUncertainPause is the pause before the next look at a started step whose
+// outcome could not be learned while its child may still run.
+// coreLingeringPatience is how long processes that outlive their action's main
+// process are waited for before the step is given up (the recovery fence then
+// stops them).
+// coreSucceededPatience is how long a step whose child left "succeeded" is
+// looked at again while every look fails, before it is given up.
+var (
+	coreUncertainPause    = 5 * time.Second
+	coreLingeringPatience = 10 * time.Minute
+	coreSucceededPatience = 30 * time.Minute
+)
+
+// coreUncertainWaits is when each bounded wait for the current step began. Each has its own beginning: looks can
+// fail for hours while a child runs (which is waited for without a limit), and until 0.6.15 the one shared
+// beginning made the child's end, succeeded or with processes left, count as waited for already.
+type coreUncertainWaits struct {
+	// step: the step the waits are for. Another step's waits begin anew: failing passes can go from one step to
+	// the next without a look that succeeds in between.
+	step string
+	// succeeded: the first failed look that found the child gone with "succeeded" as its last word.
+	succeeded time.Time
+	// lingering: the first failed look that found only processes the child left.
+	lingering time.Time
+}
+
+// coreStartedStep returns the started step of the graph that is in use.
+func coreStartedStep(j systemupdate.CoreJournal) (systemupdate.CoreStep, bool) {
+	graph := j.Steps
+	if len(j.RecoverySteps) > 0 {
+		graph = j.RecoverySteps
+	}
+	for _, step := range graph {
+		if step.State == "started" {
+			return step, true
+		}
+	}
+	return systemupdate.CoreStep{}, false
+}
+
+// coreUncertainStep decides what a started step whose outcome could not be
+// learned (cause: an error from the coordinator or the executor, or an unknown
+// outcome) means for the request. Giving the step up marks the request
+// needs-recovery, and the coordinator then restores the previous release: that
+// must follow from the step, never from a look that failed.
+//
+//   - Another executor holds the action's lock at this moment (a second
+//     coordinator, which the boot unit, "Resume" and the console can each
+//     start): nothing was learned about the step. Look again.
+//   - The step's child runs, or systemd cannot say (`systemctl show` failed):
+//     look again. A child ends by itself (RuntimeMaxSec), and a recovery could
+//     not fence a child that cannot be observed either.
+//   - Only processes the child started are left in its cgroup: look again for
+//     coreLingeringPatience (from the first such look), then give the step up.
+//   - The child is positively gone and left "succeeded" as its last word: the
+//     step succeeded and only the look failed (the executor could not read or
+//     accept it just then). Look again, for coreSucceededPatience (from the
+//     first such look); the next look that works records the step and the update goes on. A step
+//     whose success no look can record for that long is given up after all:
+//     the box must not stay held for ever over it.
+//   - The child is positively gone with any other last word, or none: give the
+//     step up.
+//
+// Until 0.6.15 every such error gave the step up, and two of them 15 seconds
+// apart (the action lock briefly held by a second coordinator, `systemctl
+// show` failing twice) made the coordinator fence a live child and restore the
+// previous release over a healthy update. And "gone" covered a child that had
+// succeeded, so a look that failed after the child's end still rolled back an
+// update whose step had done its work.
+func (c coreContinuation) coreUncertainStep(ctx context.Context, j systemupdate.CoreJournal, step systemupdate.CoreStep, cause error, waits *coreUncertainWaits) (lookAgain bool) {
+	if waits.step != step.Name {
+		*waits = coreUncertainWaits{step: step.Name}
+	}
+	if errors.Is(cause, systemupdate.ErrCoreActionOwned) {
+		return true
+	}
+	if c.childState == nil {
+		return false
+	}
+	switch c.childState(ctx, j, step) {
+	case systemupdate.CoreChildGone:
+		if c.childSucceeded == nil || c.lingeringWaited || !c.childSucceeded(ctx, j, step) {
+			return false
+		}
+		if waits.succeeded.IsZero() {
+			waits.succeeded = time.Now()
+		}
+		return time.Since(waits.succeeded) < coreSucceededPatience
+	case systemupdate.CoreChildLingering:
+		if c.lingeringWaited {
+			return false
+		}
+		if waits.lingering.IsZero() {
+			waits.lingering = time.Now()
+		}
+		return time.Since(waits.lingering) < coreLingeringPatience
+	}
+	return true
 }
 
 // A caller can detach without canceling the separately owned native action.
@@ -226,6 +432,31 @@ func runCoreContinuation(ctx context.Context, c coreContinuation, request string
 	defer cancel()
 	m := c.manager
 	var j systemupdate.CoreJournal
+	// waits: the bounded waits for the current step, from when each began.
+	var waits coreUncertainWaits
+	// uncertain handles a started step whose outcome could not be learned. It
+	// returns true when the loop looks again (after a pause), and otherwise the
+	// journal and error the continuation ends with.
+	uncertain := func(step systemupdate.CoreStep, cause error) (bool, systemupdate.CoreJournal, error) {
+		if c.coreUncertainStep(ctx, j, step, cause, &waits) {
+			if once {
+				// A single pass reports what it met and gives nothing up.
+				return false, j, cause
+			}
+			timer := time.NewTimer(coreUncertainPause)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return false, j, cause
+			case <-timer.C:
+			}
+			return true, j, nil
+		}
+		if marked, markErr := m.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
+			j = marked
+		}
+		return false, j, cause
+	}
 	for {
 		current, err := m.Read()
 		if err != nil {
@@ -245,22 +476,17 @@ func runCoreContinuation(ctx context.Context, c coreContinuation, request string
 		} else {
 			j, err = m.Advance(ctx, request, activate)
 		}
-		activate = false
 		if err != nil {
-			graph := j.Steps
-			if len(j.RecoverySteps) > 0 {
-				graph = j.RecoverySteps
-			}
-			for _, step := range graph {
-				if step.State == "started" {
-					if marked, markErr := m.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
-						j = marked
-					}
-					break
+			if step, started := coreStartedStep(j); started {
+				if again, out, outErr := uncertain(step, err); !again {
+					return out, outErr
 				}
+				// activate is kept: this pass may not have recorded it.
+				continue
 			}
 			return j, err
 		}
+		activate = false
 		if j.Phase == "committed" || j.Phase == "rolled-back" {
 			return j, c.finished(ctx, j)
 		}
@@ -282,36 +508,27 @@ func runCoreContinuation(ctx context.Context, c coreContinuation, request string
 			}
 			continue
 		}
-		steps := j.Steps
-		if recover {
-			steps = j.RecoverySteps
-		}
-		for _, step := range steps {
-			if step.State == "started" {
-				observed, err := m.Executor.Observe(ctx, j, step)
-				if err != nil {
-					if marked, markErr := m.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
-						j = marked
-					}
-					return j, err
+		if step, started := coreStartedStep(j); started {
+			observed, err := m.Executor.Observe(ctx, j, step)
+			if err == nil && observed.State == "retryable" {
+				// Admission is bounded per explicit continuation. A timeout
+				// does not launch a child or spin another automatic attempt.
+				return j, nil
+			}
+			if err == nil && observed.State == "unknown" {
+				if step.Name == "activate-host" || step.Name == "recovery-host" {
+					return c.coreHostStepUnknown(ctx, j, step)
 				}
-				if observed.State == "retryable" {
-					// Admission is bounded per explicit continuation. A timeout
-					// does not launch a child or spin another automatic attempt.
-					return j, nil
+				err = fmt.Errorf("native action acknowledgement uncertain; reconcile the same request")
+			}
+			if err != nil {
+				if again, out, outErr := uncertain(step, err); !again {
+					return out, outErr
 				}
-				if observed.State == "unknown" {
-					if step.Name == "activate-host" || step.Name == "recovery-host" {
-						return j, nil
-					}
-					if marked, markErr := m.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
-						j = marked
-					}
-					return j, fmt.Errorf("native action acknowledgement uncertain; reconcile the same request")
-				}
-				break
+				continue
 			}
 		}
+		waits = coreUncertainWaits{}
 		timer := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
@@ -320,4 +537,30 @@ func runCoreContinuation(ctx context.Context, c coreContinuation, request string
 		case <-timer.C:
 		}
 	}
+}
+
+// coreHostStepUnknown ends a continuation over a started activate-host or
+// recovery-host whose outcome is unknown. Such a step ends in a restart and
+// the next boot is its outcome, so the continuation ends here without an
+// error. RebootAgain judges the one case where that would leave the box held
+// for ever: the restart did not happen. For activate-host its error gives the
+// step up (the coordinator restores the previous release); a recovery has
+// nothing to fall back to and stays as it is.
+func (c coreContinuation) coreHostStepUnknown(ctx context.Context, j systemupdate.CoreJournal, step systemupdate.CoreStep) (systemupdate.CoreJournal, error) {
+	if c.rebootAgain == nil {
+		return j, nil
+	}
+	asked, err := c.rebootAgain(ctx, j, step)
+	if asked {
+		coreNotice(fmt.Sprintf("the restart that %s of request %s asked for did not happen; asked for it again", step.Name, j.RequestID))
+	}
+	if err == nil {
+		return j, nil
+	}
+	if step.Name == "activate-host" {
+		if marked, markErr := c.manager.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
+			j = marked
+		}
+	}
+	return j, err
 }

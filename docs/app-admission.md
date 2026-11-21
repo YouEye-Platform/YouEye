@@ -177,6 +177,23 @@ Deleting a user requires separate app administration transfer and explicit
 private-data disposition. The current safe disposition retains/quarantines the
 original data owner. Quarantining app-global/shared data also quarantines the
 application. Appliance-owner and recovery access cannot be deleted or disabled.
+The choices are per app in its Access settings (`PUT /api/market/apps/<id>/access`:
+a new `ownerId` in the policy transfers administration; `{ action:
+"retain_quarantined", principalId }` retains). There is no dispose choice for
+one user's data, and none for retained data either: once anything of an app is
+quarantined, the app can be removed only keeping its data (a delete-data
+uninstall is refused with "Quarantined data requires a separate explicit
+disposition"). Since 0.6.15 `youeye user delete
+<user> --retain-data` (`DELETE /api/people/<id>?retainData=true`) retains the
+user's per-user data in every app at once, installed or retained, then deletes
+the user. Retained data cannot be handed back, so it first takes YouEye ID's
+lifecycle and every such app's, reads what the user holds again under them, and
+retains and deletes under them: a busy app answers 409 `operation_in_progress`
+with nothing retained. It refuses, with nothing changed, a user who administers an app or owns
+an app's app-global/shared data (who installed it from the browser): transfer
+does not move that data, and retaining it would close the app for everyone, so
+that stays a per-app decision. A refused delete answers 409
+`disposition_required` with the reason (it was a 500).
 Quarantining a per-user namespace denies that principal's admission to this app
 in both CP and its UI projection, without disabling unrelated applications.
 Reusing a deleted user's name creates a separate UUID and namespace.

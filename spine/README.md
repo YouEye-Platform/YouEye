@@ -33,8 +33,7 @@ youeye install control     # Deploy Control Panel only
 
 # Updates
 youeye update core check   # System release (Spine, Control Panel, UI, image); see docs/core-release-contract.md
-youeye update incus        # Update Incus package
-youeye update system       # Update host OS packages
+youeye update system       # Appliance image slot state (the image changes only with a System release)
 
 # Status
 youeye status              # Platform health overview
@@ -61,8 +60,6 @@ Spine runs a Unix socket server at `/var/run/youeye/youeye.sock`. The Control Pa
 | `/api/status` | GET | Full system status |
 | `/api/auth/verify` | POST | PAM authentication |
 | `/api/appliance/core-update/*` | GET/POST | System release: status, check, stage, activate, resume, recover, cancel |
-| `/api/update/incus` | POST | Update Incus |
-| `/api/update/system` | POST | Update host OS |
 
 The full list of route groups is in [docs/spine.md](../docs/spine.md#the-api). Spine has no route that updates a
 container image by tag; the Control Panel rebuilds the core containers on the images it pins.

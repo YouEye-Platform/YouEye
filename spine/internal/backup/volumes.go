@@ -1,18 +1,20 @@
 package backup
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-const (
+// The roots of the data a backup holds and of the backup workspace; a test moves them into a temporary tree.
+var (
 	backupDataRoot    = "/var/lib/youeye"
+	backupRoot        = "/var/lib/youeye/backups"
 	backupStagingRoot = "/var/lib/youeye/backups/.staging"
 )
 
@@ -34,7 +36,7 @@ func pathWithin(root, candidate string) bool {
 
 func validateVolumeMapping(mapping VolumeMapping) (VolumeMapping, error) {
 	mapping.Source = filepath.Clean(mapping.Source)
-	if !filepath.IsAbs(mapping.Source) || !pathWithin(backupDataRoot, mapping.Source) || pathWithin(filepath.Join(backupDataRoot, "backups"), mapping.Source) {
+	if !filepath.IsAbs(mapping.Source) || !pathWithin(backupDataRoot, mapping.Source) || pathWithin(backupRoot, mapping.Source) {
 		return VolumeMapping{}, fmt.Errorf("source must be persistent YouEye data outside the backup directory")
 	}
 	archive := filepath.ToSlash(filepath.Clean(filepath.FromSlash(mapping.ArchivePath)))
@@ -128,12 +130,15 @@ func readVolumeMap(stagingDir string) ([]VolumeMapping, error) {
 
 // ApplyVolumes restores only paths declared by the encrypted archive's volume
 // map. Each replacement is staged beside its destination and rolled back if the
-// atomic rename cannot complete.
-func ApplyVolumes(stagingDir string) (int, error) {
+// atomic rename cannot complete. The copies end with ctx or at StepCeiling; nothing live has changed by then, and
+// once the renames start they are finished whatever ctx says.
+func ApplyVolumes(ctx context.Context, stagingDir string) (int, error) {
 	mappings, err := readVolumeMap(stagingDir)
 	if err != nil {
 		return 0, err
 	}
+	ctx, cancel := stepContext(ctx)
+	defer cancel()
 	type replacement struct {
 		mapping     VolumeMapping
 		staged      string
@@ -171,11 +176,14 @@ func ApplyVolumes(stagingDir string) (int, error) {
 		suffix := hex.EncodeToString(random)
 		staged := mapping.Source + ".youeye-restore-new-" + suffix
 		previous := mapping.Source + ".youeye-restore-old-" + suffix
-		cmd := exec.Command("cp", "-a", "--", source, staged)
-		if output, err := cmd.CombinedOutput(); err != nil {
+		// Listed before the copy, so a copy that fails or is stopped midway is removed too.
+		replacements = append(replacements, replacement{mapping: mapping, staged: staged, previous: previous})
+		if output, err := runStep(ctx, "cp", "-a", "--", source, staged); err != nil {
 			return 0, fmt.Errorf("stage volume restore: %w: %s", err, strings.TrimSpace(string(output)))
 		}
-		replacements = append(replacements, replacement{mapping: mapping, staged: staged, previous: previous})
+	}
+	if err := stepEnded(ctx); err != nil {
+		return 0, err
 	}
 
 	rollback := func() {

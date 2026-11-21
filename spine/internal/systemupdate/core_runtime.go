@@ -325,7 +325,7 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 	case "activate-host":
 		status, err := r.Host.Activate(ctx, false)
 		if err != nil || status.State != PhasePending {
-			return CoreActionObservation{}, fmt.Errorf("host activation has no exact pending receipt")
+			return CoreActionObservation{}, errors.New(coreHostActivationFailed)
 		}
 		// The runner's child intent is already durable. A reboot may prevent a
 		// terminal acknowledgement; Observe accepts only actual selected boot.

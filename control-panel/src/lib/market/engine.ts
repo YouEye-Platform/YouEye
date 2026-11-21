@@ -106,9 +106,11 @@ import { describeErrorChainForLog, logOperationFailure } from './install-tracker
 import { getUserById } from '@/lib/identity/store';
 import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import {
+  recoveredNativeArtifacts,
   stageMarketNativeArtifacts,
   type StagedMarketNativeArtifacts,
 } from './native-artifact';
+import { publishProductProjection } from '../releases/product-projection';
 import {
   acknowledgePointerCredential,
   archivePointerManagedApp,
@@ -260,10 +262,7 @@ async function rollbackInstall(
         throw new Error('Invalid shared database identifier in rollback context');
       }
       const commands = [
-        ...(ctx.databaseCreated ? [
-          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${ctx.dbName}' AND pid <> pg_backend_pid()`,
-          `DROP DATABASE IF EXISTS "${ctx.dbName}"`,
-        ] : []),
+        ...(ctx.databaseCreated ? [`DROP DATABASE IF EXISTS "${ctx.dbName}" WITH (FORCE)`] : []),
         ...(ctx.databaseUserCreated ? [`DROP ROLE IF EXISTS "${ctx.dbUser}"`] : []),
       ];
       for (const sql of commands) {
@@ -709,8 +708,22 @@ function describeContainers(manifest: AppManifest): ContainerMeta[] {
   }));
 }
 
-function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMetadata['nativeArtifacts'] {
-  const artifacts = [...staged.byContainerName.values()].map((artifact) => ({
+/** A recovered runtime is a new instance: record its release again under its own runtime identity. */
+async function publishRecoveredProjection(
+  recovered: NonNullable<InstallMetadata['nativeArtifacts']>,
+  specName: string,
+  containerName: string,
+): Promise<void> {
+  const artifact = recovered.find((item) => item.containerName === specName);
+  if (artifact?.productRelease) artifact.runtimeUUID = await publishProductProjection(containerName, artifact.productRelease);
+}
+
+/** The install record's native releases: the staged ones, then those recovered runtimes still run. */
+function describeNativeArtifacts(
+  staged: StagedMarketNativeArtifacts,
+  recovered: NonNullable<InstallMetadata['nativeArtifacts']> = [],
+): InstallMetadata['nativeArtifacts'] {
+  const artifacts = [...[...staged.byContainerName.values()].map((artifact) => ({
     productRelease: artifact.productRelease,
     runtimeUUID: artifact.runtimeUUID,
     containerName: artifact.containerName,
@@ -722,7 +735,7 @@ function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMe
     bytes: artifact.artifactBytes,
     verification: artifact.verification.status,
     productReleaseSHA256: artifact.verification.releaseSHA256,
-  }));
+  })), ...recovered.map((artifact) => ({ ...artifact }))];
   return artifacts.length > 0 ? artifacts : undefined;
 }
 
@@ -1292,6 +1305,9 @@ export async function installApp(
     const stagedNativeArtifacts = await stageMarketNativeArtifacts(manifest, config, {
       skipContainerNames: recoveredNativeContainers,
     });
+    // The recorded release a recovered runtime still runs (without it a restored app is offered its own release).
+    const recoveredArtifacts = recoveredNativeArtifacts(
+      appId, manifest.version, restoreOptions?.recoveredNativeArtifacts, recoveredNativeContainers);
 
     try {
       const products = [...stagedNativeArtifacts.byContainerName.values()];
@@ -1338,7 +1354,7 @@ export async function installApp(
             ...(restoreOptions?.recoveryCreatedStorage ?? []),
           ],
         );
-        recoveryMetadata.nativeArtifacts = describeNativeArtifacts(stagedNativeArtifacts);
+        recoveryMetadata.nativeArtifacts = describeNativeArtifacts(stagedNativeArtifacts, recoveredArtifacts);
         await saveInstallMetadata(recoveryMetadata);
         onEvent({
           step: 0,
@@ -1356,6 +1372,7 @@ export async function installApp(
           network.bridgeName,
           recoveryMetadata.storageVolumes,
           stagedNativeArtifacts,
+          recoveredArtifacts,
         );
       } catch (error) {
         if (error instanceof AppServiceIntegrationPending) throw error;
@@ -1390,6 +1407,7 @@ async function installAppLocked(
   appBridgeName: string,
   storageVolumes: StorageVolumeMeta[],
   stagedNativeArtifacts: StagedMarketNativeArtifacts,
+  recoveredArtifacts: NonNullable<InstallMetadata['nativeArtifacts']>,
 ): Promise<void> {
   const appId = manifest.metadata.id;
 
@@ -1666,6 +1684,7 @@ async function installAppLocked(
               ownerId: retainedRuntime.ownerId, sourceName: containerName,
               retainedName: retainedRuntime.name, pool: retainedRuntime.pool });
             await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
+            await publishRecoveredProjection(recoveredArtifacts, containerSpec.name, containerName);
           } else if (recoveredRuntime) {
             const recoveryNetwork = appNIC?.eth0?.network;
             if (!recoveryNetwork) throw new Error('Recovered native runtime has no target app network');
@@ -1676,6 +1695,7 @@ async function installAppLocked(
               network: recoveryNetwork,
             });
             await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
+            await publishRecoveredProjection(recoveredArtifacts, containerSpec.name, containerName);
           } else {
             if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${containerSpec.name}`);
             await deployMarketLXDContainer(lxdSpec, {}, stagedArtifact, appNIC, owner);
@@ -1992,7 +2012,7 @@ async function installAppLocked(
     manifestRepo: config.manifestRepo,
     manifestBranch: config.manifestBranch,
     manifestDigest: manifest.frozen?.digest ?? config.manifestDigest,
-    nativeArtifacts: describeNativeArtifacts(stagedNativeArtifacts),
+    nativeArtifacts: describeNativeArtifacts(stagedNativeArtifacts, recoveredArtifacts),
     integration: manifest.integration,
     perUserData: manifest.data_ownership?.per_user,
     subdomain: config.subdomain,

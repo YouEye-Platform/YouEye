@@ -283,6 +283,43 @@ export function withPlatformLifecycle<T>(work: () => T | Promise<T>, directory =
   return withCoreLifecycle(directory, work);
 }
 
+/** A platform lifecycle admission held past one callback (see `holdPlatformLifecycle`). */
+export interface PlatformLifecycleHold {
+  /** Runs `work` inside the held admission: the lifecycle locks it takes reuse it instead of passing the gate again. */
+  run<T>(work: () => T | Promise<T>): Promise<T>;
+  /** Lets go of the admission. Safe to call more than once. */
+  release(): void;
+}
+
+/**
+ * Take the platform lifecycle (shared, through the admission gate, like `withPlatformLifecycle`) for a request whose
+ * work outlives its handler: an install answers with a stream and installs while it streams. A route that starts
+ * lifecycle work takes it first, before it reads a market, a manifest or a release over the network, and lets go
+ * when the work has ended; until then Spine's Control Panel restarter (`/api/control/restart`, which waits for the
+ * lifecycle lock to be free) sees the request as lifecycle work and waits, instead of restarting the Control Panel
+ * under a request that is still loading the catalog. A System update's admission waits for it as for any operation.
+ * Inside `withUserOperationLockWait` a busy gate is waited for (30 s) like every user operation's.
+ */
+export function holdPlatformLifecycle(directory = appUpdateJournalStore().directory): Promise<PlatformLifecycleHold> {
+  return new Promise<PlatformLifecycleHold>((resolve, reject) => {
+    let release!: () => void;
+    const released = new Promise<void>((done) => { release = done; });
+    let admitted = false;
+    withCoreLifecycle(directory, () => {
+      admitted = true;
+      const scope = coreContext.getStore();
+      resolve({
+        run: (work) => scope ? coreContext.run(scope, async () => await work()) : Promise.resolve().then(work),
+        release,
+      });
+      return released;
+    }).catch((error) => {
+      if (!admitted) reject(error);
+      else console.error('[app-lifecycle] releasing a held platform lifecycle failed:', error);
+    });
+  });
+}
+
 export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore {
   return new AppUpdateJournalStore(directory ?? process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR);
 }

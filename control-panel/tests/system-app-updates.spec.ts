@@ -31,20 +31,24 @@ test('unified route detects via planSystemUpdates, flags systemManaged, skips OC
   assert.match(c, /systemPlan\.trackingStatus === 'tracked'/);
 });
 
-test('settings update route reroutes systemImageId apps to updateSystemContainer', () => {
+test('both update routes send systemImageId apps to updateSystemContainer through one shared action', () => {
   const r = read('src/app/settings/api/apps/[appId]/update/route.ts');
-  assert.match(r, /import \{ updateSystemContainer \}/);
+  const canonical = read('src/app/api/apps/[name]/update/route.ts');
+  const action = read('src/lib/apps/system-container-update.ts');
   assert.match(r, /if \(appDef\?\.systemImageId\)/);
-  assert.match(r, /assertNoCriticalIssues\('Pool\/system operation', undefined, \[/);
-  assert.match(r, /confirmMaintenanceWindow: body\.confirmMaintenanceWindow === true/);
-  assert.match(r, /confirmContainerName:/);
-  assert.match(r, /allowDatabaseUpdate: body\.allowDatabaseUpdate === true/);
-  assert.match(r, /process\.env\.HOST_IP/);
-  // reroute branch happens BEFORE the control-panel/updateOCIApp branch
-  assert.ok(
-    r.indexOf('if (appDef?.systemImageId)') < r.indexOf("if (appDef?.updatedBy === 'control-panel')"),
-    'system reroute branch must precede the OCI branch',
-  );
+  assert.match(r, /updateSystemContainerApp\(appDef, body,/);
+  assert.match(canonical, /appDef\.systemImageId\) \{/);
+  assert.match(canonical, /updateSystemContainerApp\(appDef, body,/);
+  assert.match(action, /import \{ updateSystemContainer, /);
+  assert.match(action, /assertNoCriticalIssues\('Pool\/system operation', undefined, \[/);
+  assert.match(action, /withUserOperationLockWait\(\(\) => withPlatformLifecycle\(\(\) => updateSystemContainer\(/);
+  assert.match(action, /confirmMaintenanceWindow: body\.confirmMaintenanceWindow === true/);
+  assert.match(action, /confirmContainerName:/);
+  assert.match(action, /allowDatabaseUpdate: body\.allowDatabaseUpdate === true/);
+  assert.match(action, /process\.env\.HOST_IP/);
+  // The moving-tag rebuild (updateOCIApp, which needed an imageRef no built-in app has) is gone.
+  assert.equal(has('src/lib/apps/updater.ts'), false);
+  assert.doesNotMatch(r + canonical, /updateOCIApp|apps\/updater'/);
 });
 
 test('apps-client gates system updates behind a confirm dialog with the right body', () => {

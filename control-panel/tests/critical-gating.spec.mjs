@@ -5,7 +5,8 @@ import test from 'node:test';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.resolve(import.meta.dirname, '..');
 const guardedRoutes = [
-  'src/app/settings/api/apps/[appId]/update/route.ts',
+  // The system container update of /settings/api/apps/<id>/update and /api/apps/<id>/update.
+  'src/lib/apps/system-container-update.ts',
   'src/app/api/deploy/infrastructure/system-updates/route.ts',
   'src/app/api/market/install/route.ts',
 ];
@@ -52,14 +53,25 @@ function updateRoute(open) {
   });
   const updates = [];
   const statuses = [];
+  const held = [];
+  const admission = {
+    withUserOperationLockWait: (work) => Promise.resolve().then(work),
+    withPlatformLifecycle: (work) => { held.push('platform'); return Promise.resolve().then(work); },
+  };
   const route = load('src/app/settings/api/apps/[appId]/update/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
     '@/lib/auth/session': { getSession: async () => ({ isAdmin: true }), verifyCSRFToken: async () => true },
     '@/lib/apps/definitions': load('src/lib/apps/definitions.ts', {}),
-    '@/lib/infrastructure/system-updater': {
-      updateSystemContainer: async (options) => { updates.push(options.systemId); return { success: true, message: 'updated', newVersion: '2' }; },
-    },
+    '@/lib/apps/system-container-update': load('src/lib/apps/system-container-update.ts', {
+      '@/lib/infrastructure/system-updater': {
+        updateSystemContainer: async (options) => { updates.push(options.systemId); return { success: true, message: 'updated', newVersion: '2' }; },
+      },
+      '@/lib/health/issues': issues,
+      '@/lib/market/update-admission': admission,
+    }),
     '@/lib/health/issues': issues,
+    '@/lib/market/update-admission': admission,
+    '@/lib/http/lifecycle-busy': { lifecycleRefusalResponse: () => null },
     '@/lib/market/installed-apps': { getInstalledApp: async () => null },
     '@/lib/updates/state': {
       startUpdate: async () => {}, writeStatus: async () => {}, completeUpdate: async () => {}, completeNoOp: async () => {},
@@ -68,7 +80,7 @@ function updateRoute(open) {
   });
   const post = (appId) => route.POST(new Request('https://cp.example.test/settings/api/apps/x/update', {
     method: 'POST', headers: { 'X-CSRF-Token': 'token' }, body: '{}' }), { params: Promise.resolve({ appId }) });
-  return { post, updates, statuses };
+  return { post, updates, statuses, held };
 }
 
 test('a core container update is not refused for that container being down; other critical issues answer 423', async () => {
@@ -76,6 +88,7 @@ test('a core container update is not refused for that container being down; othe
   const repaired = await caddyDown.post('caddy');
   assert.equal(repaired.status, 200, 'the update that repairs Caddy runs');
   assert.deepEqual(caddyDown.updates, ['caddy']);
+  assert.deepEqual(caddyDown.held, ['platform'], 'the rebuild holds the platform lifecycle');
 
   const postgres = await caddyDown.post('postgres');
   assert.equal(postgres.status, 423, 'Caddy being down still blocks a PostgreSQL update');
@@ -90,4 +103,15 @@ test('a core container update is not refused for that container being down; othe
   assert.equal(blocked.status, 423);
   assert.match((await blocked.json()).error, /Disk usage is critical/);
   assert.deepEqual(disk.updates, []);
+});
+
+test('the System release parts and Incus have no app update: refused before any status is written', async () => {
+  const route = updateRoute([]);
+  for (const appId of ['spine', 'control-panel', 'incus', 'host-system']) {
+    const response = await route.post(appId);
+    assert.equal(response.status, 404, appId);
+    assert.match((await response.json()).error, new RegExp(`No update handler for ${appId}`));
+  }
+  assert.deepEqual(route.updates, []);
+  assert.deepEqual(route.statuses, []);
 });

@@ -98,7 +98,6 @@ const SELF_DESTRUCTIVE = new Set(["control-panel", "youeye-ui"]);
 const COMPONENT_MAP: Record<string, string> = {
   "control-panel": "control",
   "youeye-ui": "ui",
-  "host-system": "system",
   spine: "spine",
 };
 
@@ -121,7 +120,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [setupChangedId, setSetupChangedId] = useState<string | null>(null);
   const [restartOverlay, setRestartOverlay] = useState<string | null>(null);
-  const [editingApp, setEditingApp] = useState<AppInfo | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchApps = useCallback(async (refresh = false) => {
@@ -272,12 +270,9 @@ const CATEGORY_LABELS: Record<string, string> = {
         {restartOverlay && <RestartOverlay name={restartOverlay} />}
         {appsWithUpdates.map(app => (
           <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-            onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+            onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)}
             setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
         ))}
-        {editingApp && (
-          <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
-        )}
       </div>
     );
   }
@@ -300,15 +295,12 @@ const CATEGORY_LABELS: Record<string, string> = {
               </div>
               {catApps.map(app => (
                 <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-                  onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+                  onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)}
             setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
               ))}
             </div>
           );
         })}
-        {editingApp && (
-          <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
-        )}
       </div>
     );
   }
@@ -340,7 +332,7 @@ const CATEGORY_LABELS: Record<string, string> = {
           </div>
           {appsWithUpdates.map(app => (
             <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-              onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+              onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)}
             setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
           ))}
         </div>
@@ -357,17 +349,12 @@ const CATEGORY_LABELS: Record<string, string> = {
             </div>
             {catApps.map(app => (
               <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
-                onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp}
+                onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)}
             setupChanged={setupChangedId === app.id} onCancelSetup={() => setSetupChangedId(null)} />
             ))}
           </div>
         );
       })}
-
-      {/* Edit Dialog */}
-      {editingApp && (
-        <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
-      )}
     </div>
   );
 }
@@ -419,13 +406,12 @@ function AppIconBox({ app, isUserApp, onClick }: { app: AppInfo; isUserApp: bool
   );
 }
 
-function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit, setupChanged, onCancelSetup }: {
+function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, setupChanged, onCancelSetup }: {
   app: AppInfo;
   statuses: Map<string, UpdateStatus>;
   confirmId: string | null;
   onUpdate: (id: string, confirm?: UpdateConfirmation) => void;
   onCancelConfirm: () => void;
-  onEdit: (app: AppInfo) => void;
   setupChanged: boolean;
   onCancelSetup: () => void;
 }) {
@@ -482,10 +468,6 @@ const STATUS_LABELS: Record<string, string> = {
 
         {/* Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          {app.category === "user" && (
-            <button className="embed-btn" style={{ padding: "3px 8px", fontSize: 12 }}
-              onClick={() => onEdit(app)}>{translateInterface("m464c4ffd019e")}</button>
-          )}
           {app.updateAvailable && !isUpdating && (
             <span style={{ fontSize: 12, color: "var(--embed-warning)", display: "flex", alignItems: "center", gap: 4 }}>
               {app.updateInfo || translateInterface("mff8b555d818f")}
@@ -623,102 +605,6 @@ function InlineProgress({ status }: { status: UpdateStatus }) {
       {isFailed && status.error && (
         <div style={{ fontSize: 12, color: "var(--embed-danger)", marginTop: 2 }}>{status.error}</div>
       )}
-    </div>
-  );
-}
-
-function EditAppDialog({ app, onSaved, onClose }: {
-  app: AppInfo; onSaved: () => void; onClose: () => void;
-}) {
-  const translateInterface = useInterfaceTranslations("interface");
-
-  const [name, setName] = useState(app.displayName);
-  const [subdomain, setSubdomain] = useState("");
-  const [showSubdomain, setShowSubdomain] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const body: Record<string, unknown> = {};
-      if (name.trim() && name.trim() !== app.displayName) body.name = name.trim();
-      if (showSubdomain && subdomain.trim()) body.subdomain = subdomain.trim().toLowerCase();
-      if (Object.keys(body).length === 0) { onClose(); return; }
-
-      const res = await authenticatedFetch(`/api/ui-bridge/apps/${app.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Failed" }));
-        setError(data.error || translateInterface("m2c07997249ab"));
-        return;
-      }
-      onSaved();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div style={{
-      position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(0,0,0,0.5)", zIndex: 100,
-    }} onClick={onClose}>
-      <div className="embed-card" style={{ maxWidth: 400, width: "90%" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>{translateInterface("m464c4ffd019e")}{" "}{app.displayName}</div>
-
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>{translateInterface("m18d67c992b71")}</div>
-          <input type="text" value={name} onChange={e => setName(e.target.value)}
-            placeholder={app.displayName}
-            style={{
-              width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-              border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-              color: "var(--embed-text)", outline: "none",
-            }} />
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <button type="button" onClick={() => setShowSubdomain(!showSubdomain)}
-            style={{ fontSize: 13, color: "var(--embed-primary)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-            {showSubdomain ? translateInterface("mdf434c7e2c0c") : translateInterface("md6c9523b993a")}
-          </button>
-          {showSubdomain && (
-            <div style={{ marginTop: 8 }}>
-              <input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value)}
-                placeholder={translateInterface("m60db1aed98bb")}
-                style={{
-                  width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                  border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                  color: "var(--embed-text)", outline: "none", marginBottom: 6,
-                }} />
-              <div style={{
-                padding: "6px 10px", borderRadius: 6, fontSize: 11,
-                background: "color-mix(in srgb, var(--embed-warning) 10%, transparent)",
-                border: "1px solid color-mix(in srgb, var(--embed-warning) 20%, transparent)",
-                color: "var(--embed-warning)",
-              }}>
-                {translateInterface("m0a52078ee0f3")}</div>
-            </div>
-          )}
-        </div>
-
-        {error && <div style={{ fontSize: 13, color: "var(--embed-danger)", marginBottom: 8 }}>{error}</div>}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button className="embed-btn" onClick={onClose}>{translateInterface("m19766ed6ccb2")}</button>
-          <button className="embed-btn" style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}
-            onClick={handleSave} disabled={saving}>
-            {saving ? translateInterface("mdc85af8f2b1d") : translateInterface("m1509f561f241")}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -50,11 +51,21 @@ type SSEEvent struct {
 	OperationID string `json:"operationId,omitempty"`
 }
 
+// RequestTimeout bounds an ordinary Control Panel request, which the Control Panel answers at once.
+// LongRequestTimeout bounds a request the Control Panel answers only when its work is done (Post with long set:
+// orphan cleanup, uninstall, start and stop, update recovery). Both are variables so tests can shorten them.
+var (
+	RequestTimeout     = 2 * time.Minute
+	LongRequestTimeout = 30 * time.Minute
+)
+
 // Client talks to the Control Panel HTTP API using a CLI token.
 type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	// longClient shares httpClient's transport, with LongRequestTimeout.
+	longClient *http.Client
 }
 
 // HTTPError is a Control Panel answer that is not a success. Error keeps the raw form; Field reads a text field of
@@ -88,15 +99,12 @@ func NewClient() *Client {
 
 // NewClientAt is a client for the Control Panel at baseURL with this CLI token (tests use a local server).
 func NewClientAt(baseURL, token string) *Client {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		httpClient: &http.Client{
-			Timeout: 2 * time.Minute,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-		},
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		token:      token,
+		httpClient: &http.Client{Timeout: RequestTimeout, Transport: transport},
+		longClient: &http.Client{Timeout: LongRequestTimeout, Transport: transport},
 	}
 }
 
@@ -116,6 +124,10 @@ func (c *Client) HasToken() bool {
 }
 
 func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWith(c.httpClient, method, path, body)
+}
+
+func (c *Client) doRequestWith(client *http.Client, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequest(method, c.baseURL+path, body)
 	if err != nil {
 		return nil, err
@@ -128,14 +140,39 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.httpClient.Do(req)
+	resp, err := client.Do(req)
+	var netErr net.Error
+	if err != nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return nil, &TimeoutError{Limit: client.Timeout, Err: err}
+	}
+	return resp, err
+}
+
+// TimeoutError: the Control Panel took the request but did not answer within Limit. The work may still be running.
+type TimeoutError struct {
+	Limit time.Duration
+	Err   error
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("the Control Panel did not answer within %s; the operation may still be running", e.Limit)
+}
+func (e *TimeoutError) Unwrap() error { return e.Err }
+
+// unreachable wraps a failed request; a timeout keeps its own message (the Control Panel was reached).
+func unreachable(err error) error {
+	var timeout *TimeoutError
+	if errors.As(err, &timeout) {
+		return err
+	}
+	return fmt.Errorf("control panel unreachable: %w", err)
 }
 
 // Get returns parsed JSON from a Control Panel API GET endpoint.
 func (c *Client) Get(path string) (map[string]interface{}, error) {
 	resp, err := c.doRequest("GET", path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("control panel unreachable: %w", err)
+		return nil, unreachable(err)
 	}
 	defer resp.Body.Close()
 
@@ -161,7 +198,7 @@ func (c *Client) Get(path string) (map[string]interface{}, error) {
 func (c *Client) GetArray(path string) ([]interface{}, error) {
 	resp, err := c.doRequest("GET", path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("control panel unreachable: %w", err)
+		return nil, unreachable(err)
 	}
 	defer resp.Body.Close()
 
@@ -196,6 +233,16 @@ func (c *Client) GetArray(path string) ([]interface{}, error) {
 
 // Post sends a POST to the Control Panel API.
 func (c *Client) Post(path string, payload interface{}) (map[string]interface{}, error) {
+	return c.post(c.httpClient, path, payload)
+}
+
+// PostLong is Post for a route that answers only when its work is done, bounded by LongRequestTimeout instead of
+// RequestTimeout.
+func (c *Client) PostLong(path string, payload interface{}) (map[string]interface{}, error) {
+	return c.post(c.longClient, path, payload)
+}
+
+func (c *Client) post(client *http.Client, path string, payload interface{}) (map[string]interface{}, error) {
 	var bodyReader io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -205,9 +252,9 @@ func (c *Client) Post(path string, payload interface{}) (map[string]interface{},
 		bodyReader = strings.NewReader(string(data))
 	}
 
-	resp, err := c.doRequest("POST", path, bodyReader)
+	resp, err := c.doRequestWith(client, "POST", path, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("control panel unreachable: %w", err)
+		return nil, unreachable(err)
 	}
 	defer resp.Body.Close()
 
@@ -242,7 +289,7 @@ func (c *Client) Patch(path string, payload interface{}) (map[string]interface{}
 
 	resp, err := c.doRequest("PATCH", path, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("control panel unreachable: %w", err)
+		return nil, unreachable(err)
 	}
 	defer resp.Body.Close()
 
@@ -265,7 +312,7 @@ func (c *Client) Patch(path string, payload interface{}) (map[string]interface{}
 func (c *Client) Delete(path string) (map[string]interface{}, error) {
 	resp, err := c.doRequest("DELETE", path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("control panel unreachable: %w", err)
+		return nil, unreachable(err)
 	}
 	defer resp.Body.Close()
 

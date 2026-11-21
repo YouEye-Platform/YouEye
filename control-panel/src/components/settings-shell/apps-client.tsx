@@ -215,7 +215,6 @@ function identityConsentApi(appId: string): string {
 
 function updateStatusComponent(appId: string): string {
   if (appId === "control-panel") return "control";
-  if (appId === "host-system") return "system";
   return appId;
 }
 

@@ -11,9 +11,7 @@ import { getQueryLog } from '@/lib/apps/pihole-api';
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '100');
     const safeLimit = Math.min(Math.max(limit, 10), 500);

@@ -185,6 +185,8 @@ test('native channel candidates are ordered by line and sequence, never by relea
   assert.equal(project('0.6.1-beta.1', 300, '0.6.1-beta.1', 300).updateAvailable, false);
   // No recorded release (not installed from a product release): the channel release is offered.
   assert.equal(project('0.6.1-dev.9', null, '0.6.1-dev.1', 100).updateAvailable, true);
+  // ... but never the release it already shows (a restored app before 0.6.15 had no recorded release).
+  assert.equal(project('0.6.4-dev.2', null, '0.6.4-dev.2', 100).updateAvailable, false);
 });
 
 test('successful catalog updates clear synthetic native provenance for the next update', () => {

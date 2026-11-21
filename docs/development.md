@@ -175,8 +175,9 @@ audit, Plan 7):
 - **Markets** ([market-format.md](market-format.md)): `market.json` and the index may only grow; readers ignore
   unknown fields, and an entry of an unknown `kind` is listed as needing a newer YouEye. Manifests change behind
   `requires.youeye` and the field-since table. A box never accepts a lower `sequence` from the same address, so a
-  market is undone with a new commit, never by publishing an older one. The frozen `market` entry of the channel
-  indexes (for boxes up to 0.6.10) goes with 0.6.13 ([releases.md](releases.md#the-frozen-market-entry)).
+  market is undone with a new commit, never by publishing an older one. The channel indexes carry no `market`
+  entry since 0.6.13, so boxes up to 0.6.10 have no Market until they update
+  ([releases.md](releases.md#the-frozen-market-entry)).
 - **Image inputs** (`appliance/`, `installer/`, `releasecache/`, `.youeye/build/{appliance,installer,lib.sh}`; see
   Building) never change in a release that is meant to update boxes without a reboot. Collect such changes for the
   next image release.

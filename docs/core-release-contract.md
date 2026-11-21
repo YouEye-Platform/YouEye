@@ -230,7 +230,73 @@ document digest (`--manifest-sha256`). Repeating a command with the same ID obse
 starts a second one. API calls also carry a delivery ID, so a lost HTTP response can be retried safely.
 
 A failed step is never run again: resuming a request with a failed step keeps it in `needs-recovery`. Cancel it (see
-Cancel) or recover it. When a request is committed, cancelled or rolled back, Spine runs `systemctl reset-failed` on
+Cancel) or recover it.
+
+**An update that cannot go on restores the previous release by itself** (since 0.6.15). Past its checkpoint an update
+holds the platform: the Control Panel and the dashboard are closed, so nobody can press "Restore previous release".
+When the coordinator (`activate`, `resume`, the boot unit, the watchdog's `resume`) ends with the request past its
+checkpoint and stopped (a step failed, or the request is in `needs-recovery` because a step left no word, for
+example after a power cut in the middle of a step), it runs the same recovery as `youeye update core recover`
+(`runCoreContinuationToAnEnd`, `spine/internal/cmd/core_commands.go`):
+
+- once per request: a request that already has a recovery graph is only continued, and a recovery that itself
+  fails stays in `needs-recovery` for a person;
+- after one more look, 15 s later, when no step failed and an outcome was only uncertain: a child that runs after
+  all is followed to its end and the update commits;
+- only for a step whose child is positively gone (`coreUncertainStep`). A look that failed says nothing about the
+  step, and never marks the request `needs-recovery`: when another coordinator holds the action's lock at that
+  moment ("native action is owned by another executor"; the boot unit, "Resume" and the console can each start a
+  coordinator), when the step's child still runs, or when systemd cannot say (`systemctl show` failed), the
+  coordinator looks again every 5 s until the step has an outcome or its child is gone
+  (`CoreSystemdRunner.ChildState`). Processes that outlive the child's main process are waited for 10 minutes;
+  then the step is given up and the recovery's fence stops them. A child that is gone and left `succeeded` as
+  its last word (`ChildSucceeded`) did its work, and only the look failed: the coordinator looks again every
+  5 s, and the first look that works records the step and the update goes on. So a failed look never rolls an
+  update back. One bound keeps the box from staying held for ever: a step whose success no look at all can
+  record for 30 minutes is given up. Each of the two bounds counts from the first look that met its own reason
+  (the child gone with `succeeded`; only processes left): looks that failed for longer while the child still ran
+  use up neither (the first cut counted both from the first failed look, so a long-running child that then
+  succeeded was given up at once). Earlier Spines gave a step up on any error, and two such errors 15 s apart
+  fenced a live child and restored the previous release over a healthy update; and until this fix "gone" covered
+  a child that had succeeded, so a failed look after its end still restored the previous release;
+- never before the checkpoint (nothing is held; the panel offers Cancel), never for an admission that ended early
+  (the panel offers Retry and Cancel) and never in a single pass (`--once`).
+
+It writes "the update of request <id> cannot continue (<reason>); restoring the previous release" to standard
+error. Earlier Spines left such a request in `needs-recovery` with the box closed until someone ran `recover` over
+SSH or on the console.
+
+**A restart that did not happen** (since 0.6.15; `NativeCoreRuntime.RebootAgain`, `core_owed_reboot.go`).
+`activate-host` and `recovery-host` end by asking for a restart, and only the next boot says how they went, so a
+coordinator that finds one of them `started` with an unknown outcome ends without an error. That left the box
+held, with the Control Panel closed, when the restart never came: `systemctl reboot` failed, the shutdown was
+called off, the child was killed, or the activation failed before it asked for anything. Now the coordinator
+judges such a step when its child is positively gone and was launched in this boot (the machine has not restarted
+since), and not within 2 minutes of the child's end or of the last request (a shutdown stops every System update
+command within seconds). A child whose main process ended without a last word and left processes in its unit is
+waited for 30 minutes from its launch and then judged the same way (the restart, or the recovery's fence, ends
+what is left); before, such a step was never judged and the box stayed held. Those 30 minutes count from what the
+child left (its launch record) and never from a request made since, so the requests below follow each other after
+2 minutes here too (the first cut started the 30 minutes again with every request). Once a request was made, the
+2 minutes count from that request alone. A time in the future (the clock was set back) says nothing about how long
+ago: the wait it belongs to begins anew from now, so it neither ends at once nor lasts as long as the clock was
+set back:
+
+- `activate-host`, the host update is pending in this boot (the new slot is selected for its counted trial boot):
+  it asks for the restart again ("the restart that activate-host of request <id> asked for did not happen; asked
+  for it again"). Asking again repeats nothing: the next boot decides as before, and a new slot that does not
+  come up falls back by itself. After two such requests (the count is kept beside the step's launch record) it
+  restores the previous release instead, which needs no restart (the old slot runs) and opens the box again;
+- `activate-host`, the host update is not pending (the activation failed or never ran): a restart would boot the
+  old slot and prove nothing, so the previous release is restored at once;
+- `recovery-host`, its record says `reboot-requested`: the boot selection of the previous slot and the request are
+  repeated (both repeat safely). A recovery has nothing to fall back to, so this is not counted out; a record in
+  another state is left for a person.
+
+The watchdog (below) starts the `resume` that does this: it judges these two steps like any other, and goes on
+starting it (every 30 minutes after the first three) for as long as the restart is owed.
+
+When a request is committed, cancelled or rolled back, Spine runs `systemctl reset-failed` on
 its own transient units (`youeye-core-<hash>.service` and `youeye-core-control-<hash>.service`;
 `CoreSystemdRunner.ResetFailedUnits`), so they don't stay in `systemctl --failed`. A request in `needs-recovery`
 keeps its failed units until it ends.
@@ -388,9 +454,47 @@ It acts only while no System request is unfinished (none `prepared`, `applying`,
 `needs-recovery`, `recovering` or `cancelling`, no System or copy reservation, no independent copy in progress),
 takes the names only from retained stage receipts (never from a listing), holds the shared lifecycle admission while
 it removes, and skips a container that is not running. It is best effort and never changes a request. The disk space
-returns only when the checkpoint's container snapshot that still references the tree is gone; checkpoint snapshots
-(two Incus root snapshots, ZFS snapshots and SQL dumps under `state/core-checkpoints/` per update) are not pruned
-yet.
+returns only when the checkpoint's container snapshot that still references the tree is gone (see below).
+
+**Old checkpoints** (since 0.6.15; `PruneFinished`, `core_prune.go`). Every update leaves two Incus root snapshots
+(`youeye-control`, `youeye-ui`), a held ZFS snapshot of each platform dataset, SQL dumps under
+`state/core-checkpoints/<sha256(request)>/` on Data, its downloaded release files
+(`/var/lib/youeye/cache/core-update/blobs/`) and, on State, its checkpoint record, action and runner receipts,
+continuation receipts and payload indexes. Earlier Spines never removed any of it. Now:
+
+- **Kept:** everything of the current request (the journal), whatever its phase; the last good checkpoint, which
+  is the complete (`captured`) checkpoint of the committed request that installed the newest release (ordered by
+  line and sequence, never by a clock; after an ordinary update that is the current request, after a promotion, a
+  cancelled or a rolled-back request it is an earlier one); every request's journal (`requests/`) and release
+  document (`targets/`), which keep a repeated request ID from becoming a new update; the cached files and payload
+  indexes of the installed release and of the current request's target and previous release.
+- **Removed:** for every other finished request, its Incus snapshots, its ZFS snapshots (hold released, then
+  destroyed), its SQL dumps, its checkpoint record and its receipts; cached release files and payload indexes of
+  other releases.
+- **When:** after a request ends and is released (the coordinator logs one line, "pruned N finished request(s):
+  … ; kept the checkpoint of <request>"), from Spine's host maintenance 15 minutes after the API service starts and
+  then daily (which cleans a box that earlier Spines updated), and by hand with `youeye update core prune`, which
+  prints what was removed, kept and left as JSON.
+- **Never** while a request is unfinished (`prepared`, `applying`, `awaiting-restart`, `needs-recovery`,
+  `recovering`, `cancelling`), while a System or copy reservation exists, or while a coordinator holds the lock:
+  only the current request can be unfinished or rolled back, and then nothing on the box is pruned.
+- **The lock.** Pruning holds the coordinator lock for one finished request at a time (deleting its snapshots
+  can take a minute) and lets go of it in between; every hold decides again what stays, from what is on the box.
+  A stage or cancel that arrives during a hold answers "core update cannot start yet: old checkpoints of finished
+  System updates are being removed; try again in a minute" on the CLI (the lock file holds `pruning` for that
+  time), and leaves a request to yield beside the lock (`lock.wanted` in the core state directory). The pruning
+  looks for it after every request and ends its run there ("left: the rest (a System update or cancel is waiting
+  for the coordinator)"); what is left goes in the next run, whose first hold forgets a request nobody came back
+  for. So the wait is one old request at most. Through the API (the panel's Update and Cancel) the same action
+  waits for that, up to 90 s, trying every half second; only after that it is refused. The Control Panel waits
+  150 s for Spine's answer to a System update action (`CORE_UPDATE_ACTION_TIMEOUT_MS`), so it never reports an
+  error for a request that Spine stages a moment later. A lock that is held while its file is still empty (the
+  pruning writes its mark right after it has taken the lock) is looked at again for 50 ms before it counts as a
+  coordinator's ("core update is already running"). Until 0.6.15 one hold covered the whole run, up to 30 minutes
+  on a box with many old checkpoints, and the answer was "core update is already running".
+- A snapshot is deleted only when it carries the request's own mark (`user.youeye.core-request` on the Incus
+  snapshot, `org.youeye:core-request` on the ZFS snapshot). One that does not, or that cannot be deleted, is left
+  with its record and tried again the next time (`left` in the answer).
 
 Rules that hold throughout:
 
@@ -430,47 +534,106 @@ nothing. The hand-over takes effect from the update after the release that ships
 Spine). The commands and fields it relies on are a contract with the next release
 ([development.md](development.md#compatibility-rules-for-later-changes)).
 
+**The release after a reboot.** When a request is committed (or rolled back), its release restores each
+container's autostart setting, removes the power holds, opens the ingress gate and removes the lifecycle
+reservation (`ReleaseCompleted`, `core_checkpoint_complete.go`). Until then every held container has
+`boot.autostart=false`. A reboot or power cut between the commit and the release therefore leaves them all stopped,
+the Control Panel included. The boot unit runs the release, and since 0.6.15 the release starts every container
+that ran at the checkpoint and is stopped now (the Control Panel and the dashboard first, PostgreSQL before the
+identity check), then finishes as usual and writes "core update: release of request <id>: … started after a restart: <names>" to
+standard error (`journalctl -u youeye-core-update.service`). A container that cannot be started, or one that runs although it was stopped at the checkpoint, does not
+keep the box closed: the Control Panel's monitor looks after it. Earlier Spines refused such a release with
+"original container power intent has not been restored" and the box stayed closed until a console repair.
+`recover` on a committed request (CLI and API) runs this release too; earlier it answered "completed core request
+cannot roll back".
+
 **A lost continuation.** While a service update is past its checkpoint, the Control Panel and the dashboard are
 held, so nothing on screen can continue a request whose coordinator was lost; only a reboot (the boot unit resumes
 it) or `youeye update core resume` on the console would. The same holds for a request that reached `committed` or
 `rolled-back` but whose release of the holds failed or was cut short. The API service (`api serve`, in the selected
-Spine) therefore looks once when it starts, before it serves, and then once a minute (`CoreContinuationWatchdog`,
+Spine) therefore looks once when it starts and then once a minute (`CoreContinuationWatchdog`,
 `core_continuation_watchdog.go`), and starts `youeye update core resume --request <id>` again, through the runner
 the Control Panel's resume uses, only when all of these hold:
 
-- the request is one of two kinds:
-  - **between two steps:** a service update (no restart) in `applying` with no recovery graph, whose checkpoint
-    succeeded and with no step `started` or `failed` (a started step is settled by observing it, never by this);
+- the request is lost in one of these ways (the last three and image updates since 0.6.15):
+  - **between two steps:** phase `applying` with no recovery graph, the checkpoint succeeded and no step is
+    `started` or `failed`. Service and image updates alike (a request that waits for the owner's restart is
+    `awaiting-restart`, and the reboot itself is the started step `activate-host`);
   - **finished and not released:** phase `committed` or `rolled-back` (not a no-op or metadata-only request), the
     lifecycle reservation still names this request and manifest, and its checkpoint record's `completion_state`
     is empty, `releasing` or `ready`. The release removes the reservation last, so a reservation that names the
     request proves holds remain; `resume` on such a journal only runs the release, and a second run changes
     nothing;
-- the journal state (request and change time, compared as text) is not the one found at the first look: that
-  state belongs to the boot unit after a boot, or to a person after a restart of the service alone;
-- the watchdog itself has seen this same journal state for at least 5 minutes (a monotonic clock; no wall-clock
-  time is compared, so a clock that is corrected after boot changes nothing; a live coordinator moves on within
-  seconds);
-- no process on the host runs an `update core` command.
+  - **a started step with nobody behind it:** phase `applying`, a step after the checkpoint is `started` (or the
+    checkpoint itself, once it has a checkpoint record), and its action child positively does not run
+    (`CoreSystemdRunner.ChildGone`: the child left its last word, or was launched in an earlier boot, or systemd
+    has no such unit or the unit has no main process and its cgroup is absent or empty; a unit or cgroup that
+    cannot be observed counts as running). The unit keeps `RemainAfterExit=yes`, so a process the child started
+    can outlive its main process in the cgroup: such a step counts as lost only after 30 minutes without a change
+    (`ChildLingering`), and the continuation then gives it up so that the recovery's fence stops what is left.
+    `resume` reads the step's result and continues, or finds none and restores the previous release. A step that
+    restarts the machine (`activate-host`, `recovery-host`) is judged the same way since 0.6.15: its child is gone
+    once it has asked for the restart, and a box that is still up 5 minutes later, with no System update command
+    at work, is not restarting (see "A restart that did not happen");
+  - **needs recovery:** the request stopped past its checkpoint (`needs-recovery`, or a failed step) and has no
+    recovery graph; `resume` restores the previous release;
+  - **a recovery that stopped:** a recovery graph with no failed step, in `recovering` or `needs-recovery`, with
+    no action child running; `resume` continues it. A failed recovery step is never run again and stays for a
+    person;
+- the watchdog itself has seen this same journal state (request and change time, compared as text) for at least
+  5 minutes (a monotonic clock; no wall-clock time is compared, so a clock that is corrected after boot changes
+  nothing; a live coordinator moves on within seconds). Since 0.6.15 a state that was already there when the API
+  service started is watched like any other, from that start on: after a boot the boot unit continues it first
+  (it counts as a running command), and when that failed, or only the service was restarted, nobody else would.
+  Earlier Spines never touched such a state;
+- no process on the host runs an `update core` command;
+- fewer than three continuations were started for this situation, the last one at least 5 minutes ago. Between
+  two steps and for a release the situation is the journal state (a continuation that fails there leaves the
+  journal as it is). A continuation that fails over a started step or a recovery rewrites the journal, so those
+  are counted per request and step: three in all, however often the journal changes. Two situations are the
+  exception (since 0.6.15): after the three they are started again every 30 minutes, without end.
+  - The release of a finished request: it changes nothing when it fails, and until it succeeds the box is closed.
+  - A started `activate-host` or `recovery-host` whose restart did not happen. Such a continuation starts and
+    repeats no action; it asks `RebootAgain`, which counts the restarts it asked for in its own record. Counting
+    an activation out takes three continuations that each get that far, and one that does not (it came within
+    the 2 minutes after the last request, or the boot ID could not be read just then) used to use up one of
+    exactly three: the box then stayed held with a restart owed. Now it ends in a restart or, for
+    `activate-host`, in the restore of the previous release.
 
-It acts at most once per journal state (the runner's retained delivery receipt refuses a second start even after
-the API service restarted), so a continuation that is lost again, or a release that fails again, without changing
-the journal is left for a person. It never acts on `cancelled`, `prepared`, `awaiting-restart`, `needs-recovery`,
-`recovering` or `cancelling`, or on a request whose checkpoint has not succeeded: a request whose first admission
+  The slow attempts are one delivery made again: they share one command ID, and before each the previous one's
+  transient unit and delivery receipt are removed (`CoreControlRunner.Forget`; never while the unit runs, and
+  never for a unit that is neither running nor ended, such as one that is starting or stopping: that is left for
+  the next look). A box
+  that stays closed for weeks therefore keeps four continuation units and receipts per situation, not one more
+  every half hour. The first three keep their own, which is what counts them across restarts of the API service.
+
+It starts at most three continuations per situation (one was too few: the release of a finished request does
+not change the journal, so one transient failure, such as Incus still busy after a boot, left the box closed).
+The attempts are counted by the runner's retained delivery receipts, so a restart of the API service neither
+repeats an attempt nor resets the count; a continuation of an unfinished request that is lost a third time is
+left for a person, because every further one would start or observe actions again. A finished request is
+different: its release changes nothing about what is installed, a release that fails leaves everything as it was
+and the next one continues it, and until it succeeds the Control Panel stays closed. So it is tried every 30
+minutes for as long as the request holds the platform (earlier, an Incus or a database that was not ready for a
+quarter of an hour left the box closed until the next reboot). It never acts on `cancelled`, `prepared`, `awaiting-restart` or `cancelling`, or on a request
+whose checkpoint has not begun: a request whose first admission
 timed out (the lifecycle lock was busy for 60 s before the checkpoint started) holds nothing, the Control Panel
-is open, and the update panel offers "Retry update".
+is open, and the update panel offers "Retry update" and Cancel (see Cancel).
 
 A coordinator started by the API writes its standard error to the system journal (unit
 `youeye-core-control-<hash>.service`): the hand-over decision ("handing request <id> over to Spine of YouEye
 <version> (sha256 <prefix>)" or
 "this Spine keeps coordinating the request: <reason>") and a fatal error can be read there afterwards with
-`journalctl -u 'youeye-core-control-*'`. Progress is not written there.
+`journalctl -u 'youeye-core-control-*'`. Progress is not written there. Since 0.6.15 the action units
+(`youeye-core-<hash>.service`, one per step) write standard error to the journal as well (it was discarded): the
+error an action ended with, the same text its result keeps as evidence, also when it could not write that result.
 
 ### Cancel
 
-`youeye update core cancel --request <id>` works while only `verify-members` and `stage-host` ran, or when the
-checkpoint's read-only preflight refused (then nothing was stopped or captured). It removes only the inactive-slot
-boot entries and candidate data it created. Once the checkpoint started, use `recover`. A failed preparation step
+`youeye update core cancel --request <id>` works while only `verify-members` and `stage-host` ran, when the
+checkpoint's read-only preflight refused (then nothing was stopped or captured), or when the checkpoint's admission
+never ended in a launch (below). It removes only the inactive-slot boot entries and candidate data it created. Once
+the checkpoint ran, use `recover`. A failed preparation step
 can be cancelled even when activation was already requested; the update panel then shows the failed step, its
 reason and Cancel, and no "Resume checks".
 
@@ -480,6 +643,20 @@ refusal) is cancelled by the coordinator itself: it proves that the preflight re
 a request (the panel's notice for it is below, under Commands and API). Only when that cancellation does not
 finish does the request stay `cancelling`; the panel offers Cancel in that state, and Cancel finishes it. Without
 the proof, and anywhere else, a failed checkpoint needs `recover`.
+
+**A first admission that timed out** (since 0.6.15). Before the checkpoint's child is launched, the coordinator
+takes the lifecycle reservation, waiting up to 60 s for the lifecycle locks. When ordinary work (a long app
+operation, Names maintenance) keeps them for the whole wait, the checkpoint step is recorded `started`, its action
+says `action_state: retryable`, `stage: admission`, `code: admission_timeout`, `effect_state: not-started`, and
+the request waits in `applying` for "Retry update" (`resume`). Nothing was launched and nothing is held. Such a
+request can also be cancelled: `cancel` (the panel's Cancel, offered beside "Retry update", also when activation
+was requested) and `recover` both end it `cancelled`, on the executor's proof that its own admission receipt says
+"ended before launch" and that no checkpoint record exists, and remove the reservation if it is this request's
+own. A coordinator that was lost while it waited at this admission (a power cut during the wait) is treated the
+same way: its "waiting" record proves that no child was launched, so `resume` (the boot unit) admits the request
+again and `cancel` ends it. Earlier Spines refused Cancel ("core update requires lifecycle recovery before
+cancellation"), the panel hid it, and only a console `recover` ended the request, by a full recovery of a request
+that had changed nothing. A checkpoint that was launched is never cancellable.
 
 ## Commands and API
 
@@ -492,6 +669,7 @@ the proof, and anywhere else, a failed checkpoint needs `recover`.
 | `youeye update core resume --request <id>` | `POST …/resume` |
 | `youeye update core recover --request <id>` | `POST …/recover` |
 | `youeye update core cancel --request <id>` | `POST …/cancel` |
+| `youeye update core prune` | (none; runs by itself, see Old checkpoints) |
 | `youeye update core observe` | `GET …/status?observe=1` |
 
 After a reboot `youeye-core-update.service` runs `youeye update core resume --boot`, which continues only the

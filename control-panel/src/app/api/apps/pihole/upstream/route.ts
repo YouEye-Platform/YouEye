@@ -15,9 +15,7 @@ import { getUpstreamDNS, setUpstreamDNS } from '@/lib/apps/pihole-api';
 export async function GET() {
   try {
     const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!session?.isAdmin) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 
     const upstreams = await getUpstreamDNS();
 

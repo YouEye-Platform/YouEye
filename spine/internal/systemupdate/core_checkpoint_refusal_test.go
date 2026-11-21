@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // refusalRuntimeFixture is a complete native runtime whose checkpoint child is simulated: its result comes from
@@ -224,4 +225,142 @@ func TestCoreLifecycleRefusedReleaseRequiresCancelIntent(t *testing.T) {
 	if _, err := barrier.Read(); err != nil {
 		t.Fatal("reservation removed", err)
 	}
+}
+
+// timedOutAdmissionFixture: a service update whose first lifecycle admission timed out because ordinary work held
+// the lifecycle lock for the whole wait. The checkpoint step is recorded "started", nothing was launched and no
+// reservation was taken; the panel shows "Waiting to retry".
+func timedOutAdmissionFixture(t *testing.T) (CoreManager, CoreJournal, CoreLifecycleBarrier, map[string]int) {
+	t.Helper()
+	m, j, _, barrier, starts := refusalRuntimeFixture(t, func(s CoreStep) CoreActionObservation {
+		return CoreActionObservation{State: "succeeded", Evidence: "fixture " + s.Name}
+	})
+	busy, err := barrier.AdmitOrdinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	got, err := m.Advance(ctx, j.RequestID, false)
+	busy()
+	if err != nil || got.Phase != "applying" || starts["checkpoint"] != 0 {
+		t.Fatalf("fixture: %s %v %v", got.Phase, err, starts)
+	}
+	for _, step := range got.Steps {
+		if step.Name == "checkpoint" && step.State != "started" {
+			t.Fatalf("fixture: checkpoint is %s", step.State)
+		}
+	}
+	observed, err := m.Executor.Observe(context.Background(), got, got.Steps[1])
+	if err != nil || observed.State != "retryable" || observed.Code != "admission_timeout" {
+		t.Fatalf("fixture: %+v %v", observed, err)
+	}
+	return m, got, barrier, starts
+}
+
+// A first admission that timed out can be cancelled, by Cancel and by recover (the panel offers one of them), and
+// another release can be staged afterwards. Before 0.6.15 Cancel answered "core update requires lifecycle
+// recovery before cancellation" and recover built a recovery graph for a request that had touched nothing.
+func TestCoreTimedOutFirstAdmissionCanBeCancelled(t *testing.T) {
+	for _, action := range []string{"cancel", "recover"} {
+		t.Run(action, func(t *testing.T) {
+			m, j, barrier, starts := timedOutAdmissionFixture(t)
+			var got CoreJournal
+			var err error
+			if action == "cancel" {
+				got, err = m.Cancel(context.Background(), j.RequestID)
+			} else {
+				got, err = m.Recover(context.Background(), j.RequestID)
+			}
+			if err != nil || got.Phase != "cancelled" || len(got.RecoverySteps) != 0 || starts["checkpoint"] != 0 || starts["recovery-fence"] != 0 {
+				t.Fatalf("%s of a timed-out admission: phase=%s recovery=%v starts=%v err=%v", action, got.Phase, got.RecoverySteps, starts, err)
+			}
+			if _, err := barrier.Read(); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a reservation is left: %v", err)
+			}
+			release, err := barrier.AdmitOrdinary()
+			if err != nil {
+				t.Fatalf("app operations are refused after the cancellation: %v", err)
+			}
+			release()
+			if receipt, err := m.ReadReceipt(); err != nil || receipt.ManifestSHA256 != j.Previous.ManifestSHA256 {
+				t.Fatal("installed release changed", err)
+			}
+			// Another release stages: the cancelled request no longer owns the lifecycle.
+			raw, err := ReadCoreState(filepath.Join(m.Root, "targets", j.ManifestSHA256+".json"), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, err := m.Prepare(context.Background(), "after-cancel", raw, j.ManifestSHA256)
+			if err != nil || next.RequestID != "after-cancel" || next.Phase != "prepared" {
+				t.Fatalf("another request did not stage after the cancellation: %s %v", next.Phase, err)
+			}
+		})
+	}
+}
+
+// The same for a coordinator that was lost while it waited at admission (a power cut during the wait): its
+// admission may have taken the reservation. Cancel removes this request's own reservation; resume admits again.
+func TestCoreLostFirstAdmissionCanBeCancelledOrResumed(t *testing.T) {
+	lost := func(t *testing.T) (CoreManager, CoreJournal, CoreLifecycleBarrier, map[string]int) {
+		m, j, barrier, starts := timedOutAdmissionFixture(t)
+		e := m.Executor.(NativeCoreExecutor)
+		step := j.Steps[1]
+		a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: step.RequestID, Name: step.Name, ManifestSHA256: j.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: "a-process-of-an-earlier-boot", Active: true,
+			Result: CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started", Evidence: "waiting"}}
+		if err := e.save(step, a); err != nil {
+			t.Fatal(err)
+		}
+		if err := barrier.Begin(j); err != nil {
+			t.Fatal(err)
+		}
+		return m, j, barrier, starts
+	}
+	m, j, barrier, starts := lost(t)
+	got, err := m.Cancel(context.Background(), j.RequestID)
+	if err != nil || got.Phase != "cancelled" || starts["checkpoint"] != 0 {
+		t.Fatalf("cancel of a lost admission: %s %v", got.Phase, err)
+	}
+	if _, err := barrier.Read(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the lost admission's reservation is left: %v", err)
+	}
+	m, j, barrier, starts = lost(t)
+	got, err = m.Advance(context.Background(), j.RequestID, false)
+	if err != nil || got.Phase != "committed" || starts["checkpoint"] != 1 {
+		t.Fatalf("resume of a lost admission: %s %v %v", got.Phase, err, starts)
+	}
+}
+
+// A checkpoint that was launched is never cancellable, whatever its step says.
+func TestCoreStartedCheckpointWithALaunchIsNotCancellable(t *testing.T) {
+	m, j, barrier, _ := timedOutAdmissionFixture(t)
+	e := m.Executor.(NativeCoreExecutor)
+	step := j.Steps[1]
+	for _, result := range []CoreActionObservation{
+		{State: "running", Stage: "launch"},
+		{State: "unknown", Evidence: "native operation acknowledgement unavailable"},
+		{State: "succeeded", Evidence: "fixture"},
+	} {
+		a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: step.RequestID, Name: step.Name, ManifestSHA256: j.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: "another", Active: false, Result: result}
+		if err := e.save(step, a); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := m.Cancel(context.Background(), j.RequestID); err == nil || got.Phase != "applying" {
+			t.Fatalf("a launched checkpoint (%s) was cancelled: %s %v", result.State, got.Phase, err)
+		}
+	}
+	// And one with a checkpoint record is not, even with a retryable receipt.
+	a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: step.RequestID, Name: step.Name, ManifestSHA256: j.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: "another",
+		Result: CoreActionObservation{State: "retryable", Stage: "admission", Code: "admission_timeout", EffectState: "not-started", Evidence: "fixture"}}
+	if err := e.save(step, a); err != nil {
+		t.Fatal(err)
+	}
+	p := NativeCoreCheckpoint{Root: m.Root}
+	if err := os.MkdirAll(filepath.Dir(p.recordPath(j.RequestID)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.Cancel(context.Background(), j.RequestID); err == nil || got.Phase != "applying" {
+		t.Fatalf("a request with a checkpoint directory was cancelled: %s %v", got.Phase, err)
+	}
+	_ = barrier
 }

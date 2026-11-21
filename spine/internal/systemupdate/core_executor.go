@@ -56,10 +56,12 @@ func (e NativeCoreExecutor) CancelPreparation(ctx context.Context, j CoreJournal
 	return e.CancelPreparationAction(ctx, j)
 }
 
-// VerifyCheckpointRefusal proves that the checkpoint action ended in its read-only preflight: this executor's own
-// terminal receipt carries the refusal code (written only before Quiesce), and the runtime finds no checkpoint
-// record (Quiesce saves it before its first effect). Anything else, including a missing or unknown receipt, keeps
-// the request on paired recovery.
+// VerifyCheckpointRefusal proves that the checkpoint action had no effect. For a failed step: this executor's own
+// terminal receipt carries the preflight refusal code (written only before Quiesce). For a started step: the
+// receipt says that the admission ended before any launch (retryable; see observe for a coordinator lost while it
+// waited), which this executor writes only when it has not asked the runner for a child. In both cases the runtime
+// finds no checkpoint record (Quiesce saves it before its first effect). Anything else, including a missing or
+// unknown receipt, keeps the request on paired recovery.
 func (e NativeCoreExecutor) VerifyCheckpointRefusal(ctx context.Context, j CoreJournal) error {
 	if e.VerifyCheckpointRefusalAction == nil {
 		return fmt.Errorf("checkpoint refusal verification is not configured")
@@ -69,7 +71,13 @@ func (e NativeCoreExecutor) VerifyCheckpointRefusal(ctx context.Context, j CoreJ
 			continue
 		}
 		a, err := e.read(j, s)
-		if err != nil || a.Result.State != "failed" || a.Result.Code != coreCheckpointPreflightRefused || a.Result.EffectState != "not-started" {
+		if err != nil {
+			return fmt.Errorf("checkpoint has no retained preflight refusal")
+		}
+		refused := s.State == "failed" && a.Result.State == "failed" && a.Result.Code == coreCheckpointPreflightRefused && a.Result.EffectState == "not-started"
+		// validateNativeResult admits "retryable" only with stage admission and effect not-started.
+		unadmitted := s.State == "started" && a.Result.State == "retryable"
+		if !refused && !unadmitted {
 			return fmt.Errorf("checkpoint has no retained preflight refusal")
 		}
 		return e.VerifyCheckpointRefusalAction(ctx, j)
@@ -198,6 +206,11 @@ func (e NativeCoreExecutor) save(s CoreStep, a nativeCoreAction) error {
 	return atomicWrite(e.actionPath(s), raw, 0600)
 }
 
+// ErrCoreActionOwned: another executor holds the action's lock at this moment
+// (a second coordinator that observes or starts the same step). It says
+// nothing about the action: the caller looks again.
+var ErrCoreActionOwned = errors.New("native action is owned by another executor")
+
 func (e NativeCoreExecutor) lockAction(s CoreStep) (func(), error) {
 	if !filepath.IsAbs(e.Root) || s.RequestID == "" {
 		return nil, fmt.Errorf("protected native action root and exact request required")
@@ -212,7 +225,7 @@ func (e NativeCoreExecutor) lockAction(s CoreStep) (func(), error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("native action is owned by another executor: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCoreActionOwned, err)
 	}
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
 }
@@ -370,14 +383,17 @@ func (e NativeCoreExecutor) observe(ctx context.Context, j CoreJournal, s CoreSt
 		if err == nil && identity == a.ProcessIdentity {
 			return a.Result, nil
 		}
-		if s.Name == "verify-members" && a.Result.Stage == "admission" && a.Result.EffectState == "not-started" {
-			// The coordinator that waited for the core containers is gone (a reboot,
-			// a killed console command). Its wait only read, and it replaces this
-			// record with the launch record before it asks the runner for a child,
-			// under the action lock this caller now holds: no child was launched and
-			// nothing was changed. The request is admitted again, as after a wait
-			// that timed out. Checkpoint and recovery-fence admission may have taken
-			// the lifecycle reservation, so their lost wait stays unknown.
+		if (s.Name == "verify-members" || s.Name == "checkpoint") && a.Result.Stage == "admission" && a.Result.EffectState == "not-started" {
+			// The coordinator that waited (for the core containers, or for the
+			// lifecycle locks) is gone: a reboot, a power cut, a killed command. It
+			// replaces this record with the launch record before it asks the runner
+			// for a child, under the action lock this caller now holds: no child was
+			// launched. The wait for the containers only read. The checkpoint's
+			// admission may have taken the lifecycle reservation for this request as
+			// its last act; admitting the same request again confirms that
+			// reservation, and cancelling it removes it (ReleaseRefusedCheckpoint).
+			// The request is therefore admitted again, as after a wait that timed
+			// out. A lost recovery-fence admission stays unknown.
 			a.Active = false
 			a.Result = CoreActionObservation{State: "retryable", Stage: "admission", Code: "admission_cancelled", EffectState: "not-started", Evidence: coreAdmissionWords(s.Name).ended}
 			if err := e.save(s, a); err != nil {

@@ -27,6 +27,12 @@ archive is checked like a native app's (`stageVerifiedProductArtifact` in `src/l
 deployed, configured and started; only a healthy service gets an installed receipt. An older build than the
 installed one is refused (no downgrade).
 
+**Updates** (`updateLXDApp` in `src/lib/apps/lxd-updater.ts`). A stopped Pointer container is started first. The same
+build under a promoted name only adopts the new release label (`updateIdenticalPointerRelease` in
+`pointer/release-metadata.ts`), when Pointer runs and answers `/readyz`; otherwise, and for another build, the
+update replaces `/opt/pointer` in the container, configures it, starts the service and checks its health, and
+restores the `pre-update` snapshot on failure.
+
 **Configure** (`configurePointerService` in `lifecycle.ts`), at install, after a Pointer update, after a full
 restore and when the box's domain changes (`src/lib/reconfigure/`):
 1. Install the box's Caddy root CA and point the public YouEye ID host name at Caddy with one managed line in

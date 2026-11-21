@@ -35,9 +35,11 @@ type StatusFile struct {
 	TotalSteps  int      `json:"total_steps"`
 	ArchivePath string   `json:"archive_path,omitempty"`
 	ArchiveSize int64    `json:"archive_size,omitempty"`
-	Error       string   `json:"error,omitempty"`
-	StartedAt   string   `json:"started_at,omitempty"`
-	UpdatedAt   string   `json:"updated_at"`
+	// Encryption is how the finished archive is encrypted; the Control Panel records it in backup-set.json.
+	Encryption *ArchiveEncryption `json:"encryption,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	StartedAt  string             `json:"started_at,omitempty"`
+	UpdatedAt  string             `json:"updated_at"`
 }
 
 var (
@@ -122,7 +124,7 @@ func Start(backupID string, stages []string) {
 }
 
 // Complete marks the backup as completed.
-func Complete(backupID, archivePath string, archiveSize int64) {
+func Complete(backupID, archivePath string, archiveSize int64, encryption ArchiveEncryption) {
 	existing := ReadStatus()
 	WriteStatus(StatusFile{
 		BackupID:    backupID,
@@ -134,6 +136,7 @@ func Complete(backupID, archivePath string, archiveSize int64) {
 		TotalSteps:  existing.TotalSteps,
 		ArchivePath: archivePath,
 		ArchiveSize: archiveSize,
+		Encryption:  &encryption,
 		StartedAt:   existing.StartedAt,
 	})
 }

@@ -114,11 +114,18 @@ async function headers() {
   const failedStep = unfinished ? transaction.steps.find(step => step.state === "failed") : undefined;
   // Spine cancels a request while only its preparation steps ran. A requested activation hides Cancel because the
   // next step may start at any moment; after a failed step nothing starts, and Cancel is the only way on. Spine
-  // publishes "cancelling" over a failed checkpoint only after proving its preflight refused before any effect, and
-  // its Cancel finishes that cancellation; anywhere else a failed checkpoint needs recovery.
-  const canCancel = unfinished && (!transaction.activation_requested || !!failedStep) && transaction.steps.every(step => step.state === "pending"
+  // publishes "cancelling" over a checkpoint only after proving that it had no effect (its preflight refused, or its
+  // admission never ended in a launch), and its Cancel finishes that cancellation; anywhere else a failed checkpoint
+  // needs recovery.
+  // A checkpoint whose first admission ended before anything was launched (the lifecycle lock stayed busy for the
+  // whole wait, "Waiting to retry") has changed nothing either: Spine cancels it on the same proof, so Cancel is
+  // offered beside "Retry update", also when activation was requested.
+  const admissionEnded = (step: NonNullable<typeof transaction>["steps"][number]) => step.name === "checkpoint" && step.state === "started"
+    && step.action_state === "retryable" && step.stage === "admission" && step.effect_state === "not-started";
+  const canCancel = unfinished && (!transaction.activation_requested || !!failedStep || transaction.steps.some(admissionEnded)) && transaction.steps.every(step => step.state === "pending"
     || ["verify-members", "stage-host"].includes(step.name)
-    || (transaction.phase === "cancelling" && step.name === "checkpoint" && step.state === "failed"));
+    || admissionEnded(step)
+    || (transaction.phase === "cancelling" && step.name === "checkpoint" && (step.state === "failed" || step.state === "started")));
   // A started step whose outcome is uncertain carries the error its action recorded, when there is one.
   const uncertainStep = unfinished && transaction.phase === "needs-recovery" ? transaction.steps.find(step => step.state === "started" && step.evidence) : undefined;
   // A finished request that did not install its release says so, with the step that stopped it and why.
