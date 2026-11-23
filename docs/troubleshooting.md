@@ -297,6 +297,47 @@ Nothing is wrong and nothing needs doing. The box takes the next release of its 
 runs (here the next stable line, 0.6.14). Switching back to the channel it came from (`youeye channel set dev`)
 offers that channel's later builds again. To get onto the channel's exact release now, reinstall.
 
+## Following another repository
+
+A box updates from the repository it was installed from (`youeye channel get` names it). To follow another YouEye
+repository, for example a development forge or back to the official one:
+
+```
+youeye channel set alpha --repository https://forge.example.org/owner/YouEye
+youeye channel set stable --repository https://github.com/YouEye-Platform/YouEye
+```
+
+or, as an admin, Settings → System → Change… → Repository. Both read the target's channel index first, and leave
+everything as it was when they refuse ([releases.md](releases.md#the-boxs-channel)):
+
+| Message | Meaning |
+|---|---|
+| `the repository can change only after the first deploy finished` | the box is still in setup; finish it first |
+| `repository must be an HTTPS URL …` / `… identify an owner and repository` | the address is not `https://host/owner/repository` |
+| `could not read the <channel> channel index of …` | the host did not answer (network, DNS, rate limit); try again |
+| `… has no <channel> channel index` / `… is not valid` | that repository publishes no (readable) index for the channel |
+| `… has no YouEye release` / `… names another repository` | the index is not a YouEye index for this address |
+
+After a switch:
+
+- The box never downgrades. If the new channel is behind the installed version, `core-update/check` says it waits
+  ([above](#waiting-for-the-channel-to-catch-up)); pick a channel that is ahead, or wait.
+- Updates and the console's network repair need the new host; booting does not. The network check
+  (`spine/internal/boot/scripts/network.sh`) runs at the first deploy (`youeye-first-deploy.service`, before a
+  switch is allowed) and when network settings are changed from the console (`sudo youeye-installer network`,
+  [install.md](install.md)). It reads the repository the box follows, so after a switch to a host that cannot be
+  reached that repair fails and keeps the previous network profile until the host answers or the repository is
+  switched back.
+- The installed release's files (a Control Panel redeploy, a Spine repair) and those of an update already under
+  way still come from the repository they were published in: the switch records that address for their tags in
+  `/var/lib/youeye-state/core-update/download-bases.json`. Everything newer comes from the new repository.
+- Native apps and Pointer follow the new repository too: the Control Panel reads them from the box's channel index.
+
+Before 0.6.16 there is no command. Edit `/var/lib/youeye-state/bootstrap/release-policy.json` as root with an
+atomic write (write a copy, `mv` it over; keep every other field), set `repository` to the canonical URL, then
+`youeye channel set <channel>`, which validates the file. A typo stops updates and the console's network repair
+until it is fixed.
+
 ## The box does not boot the new image
 
 An image update writes the inactive slot and arms it as a counted trial: three boot attempts
@@ -504,7 +545,7 @@ Market → Sources shows the same ("Last refreshed …", the error, Refresh now)
 the app was installed from a market that was removed or turned off, or from a git source, which 0.6.11 removes
 (the sources page and `youeye market list` name the removed ones). The app keeps running; it just gets no updates.
 To take updates again: turn the market back on, or add a market that has the app (`youeye market add <address>
---i-trust-this-market`) and choose **Change** on the app's page ("Updates from"), or run
+--i-trust-this-market`) and choose **Change** on the app's page in Settings → Apps (Updates, "Updates from"), or run
 `youeye app source <app> <market id>`. Either records the new market; the installed version stays until the next
 update. A market that was removed and added again has a new id, so its apps must be pointed at it this way.
 `youeye app check-updates` names every app in this state.
@@ -537,7 +578,7 @@ files inside its containers, and nothing was changed. Read them (the update pane
 `source-changed` on an update: the app's source id now points at another market address than the app was installed
 from, for example after the market's address was edited or a removed market's id was taken again. The message names
 both. Nothing was changed, and the update check offers this app nothing. If you want its updates from the new
-address, choose Change on the app's page.
+address, choose Change in Settings → Apps → the app → Updates.
 
 ## A box with stopped apps still works hard
 
@@ -550,6 +591,24 @@ Spine (files older than a day), the ZFS ARC has a ceiling (when no one set one),
 every 10 minutes instead of every pass, and connections with a stopped side are not refreshed (starting an app
 refreshes its connections). To measure: `timeout 60 incus monitor --type=logging | grep -c "Matched trusted
 cert"` (Control Panel API requests per minute), `ls /var/lib/incus/containers/youeye-postgres/exec-output | wc -l`.
+
+Since 0.6.16 the app prober reads a container's status from its instance record instead of `/state` (each `/state`
+call makes Incus run `zfs get` for the disk usage) and execs `systemctl is-active` into a native app only when its
+HTTP check fails or it has none. To count: `timeout 60 incus monitor --type=logging --pretty --loglevel=debug | grep -c
+GetInstanceUsage`. Incus's `Failed to unmount instance … In use` warnings come from every `incus exec` that records
+its output (the Control Panel's execs); they are harmless.
+
+## System Health: "App state is out of sync" for the app a connection points to
+
+Before 0.6.16, on a box with a `proxy:` connection (for example Search connected to SearXNG), the Control Panel log
+showed `[reconcile] ui-drawer:<provider> failed: Current UI connection projection could not be verified` every 30
+seconds, and System Health kept "App state is out of sync" and "Startup reconciliation needs repair", whose Repair
+failed too. The reconcile projected the connection onto the provider's dashboard row as well and compared the
+connection's address with the wrong app. Nothing was broken (the consumer's row was right); the update to 0.6.16
+clears both issues on its first pass. Since 0.6.16 a real failure there is logged with its cause (`… <cause> …`),
+for example `[reconcile] ui-drawer:<app> failed: Current UI connection projection could not be verified <cause>
+Scoped proxy hostname of connection <from>-to-<to> differs from the installed target <to>` when an app's address
+changed under an existing connection. A connection whose stored row only differs (drift) is repaired quietly.
 
 
 ## A restore failed

@@ -8,5 +8,5 @@ export default async function PrivacySettingsPage() {
   if (session?.authMethod === "pam" || session?.authMethod === "cli") {
     redirect("/settings/system");
   }
-  return <PrivacyClient isAdmin={session?.isAdmin ?? false} />;
+  return <PrivacyClient />;
 }

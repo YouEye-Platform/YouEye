@@ -306,7 +306,7 @@ remove:                          # optional: undo steps, run when the feature is
   `sso` or `url-change`, or in the manifest. `sso` does run then (every install makes a new YouEye ID client and
   secret), and there a failure does not undo the restore: it is logged and reported, the app keeps its data, and
   sign-in is applied again by turning it off and on (`installSetupPlan` in `setup-runner.ts`).
-- The sign-in setting can change after install (Settings → Apps → the app → Overview, "YouEye ID sign-in"; or
+- The sign-in setting can change after install (Settings → Apps → the app → Who can use it, "YouEye ID sign-in"; or
   `GET`/`PUT /api/market/app/<id>/sign-in` with `{"enabled": …}`): on creates the OAuth client and runs `steps:`, off
   runs `remove:` and then deletes the client. It is offered for apps with `sso:` and a `setup/sso.yaml`.
 - A `connect:<app>` file runs each time the connection is activated (approved from a suggestion, by a bundle,

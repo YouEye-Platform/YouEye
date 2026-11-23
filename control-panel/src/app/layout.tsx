@@ -7,10 +7,17 @@ import "./globals.css";
 import { getSiteConfig } from "@/lib/site-config";
 import { BrandingLocaleProvider } from "@youeye/branding/locale";
 
+// Phone: draw to the screen edges (pages pad with env(safe-area-inset-*)), let the keyboard resize the page rather
+// than cover it, and colour the status bar for each scheme (mobile-native, Emil Kowalski's skills).
 export const viewport: Viewport = {
-  themeColor: "#2563eb",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#11171b" },
+  ],
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export async function generateMetadata(): Promise<Metadata> {

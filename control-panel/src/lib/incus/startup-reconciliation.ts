@@ -24,9 +24,16 @@ export function runStartupReconciliation(
     routes: async () => {
       // Every CP start (updates included) keeps Caddy's admin API on its static address only.
       await (await import('@/lib/caddy/client')).ensureAdminListenerPinned();
+      // Then the PROXY protocol wrappers, and the proxy devices in line with them (YE-134). Its failure is thrown
+      // only after the managed routes are repaired.
+      let clientAddressFailure: unknown;
+      await (await import('@/lib/caddy/client-address')).ensureClientAddresses()
+        .catch((error: unknown) => { clientAddressFailure = error; });
       const raw = await (await import('@/lib/settings')).settingsService.getRaw();
-      if (!raw.setup_completed || !raw.domain) return;
-      await (await import('@/lib/caddy/client')).reconcileManagedRoutes(raw.domain);
+      if (raw.setup_completed && raw.domain) {
+        await (await import('@/lib/caddy/client')).reconcileManagedRoutes(raw.domain);
+      }
+      if (clientAddressFailure) throw clientAddressFailure;
     },
     ...overrides,
   };

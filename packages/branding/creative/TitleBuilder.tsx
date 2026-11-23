@@ -32,7 +32,7 @@ const parts: Part[] = ["identity", "colour", "finish"];
 const fontPreviewText = "Aa";
 export default function TitleBuilder(props: CreativeProps) {
   const t = useBrandingTranslations();
-  const { d, theme, onChange, onTheme, onNext } = props;
+  const { d, theme, onChange, onTheme, onNext, subject = "setup" } = props;
   const [localLocks, setLocalLocks] = useState<Locks>({
     identity: false,
     colour: false,
@@ -112,11 +112,11 @@ export default function TitleBuilder(props: CreativeProps) {
   return (
     <div className="t-builder w-builder" data-builder="title-remix">
       <header className="t-heading">
-        <span className="w-kicker">{t("title.kicker")}</span>
-        <h2>{t("title.heading")}</h2>
+        {subject === "setup" && <span className="w-kicker">{t("title.kicker")}</span>}
+        <h2>{subject === "setup" ? t("title.heading") : t(`title.${subject}.heading`)}</h2>
       </header>
       <div className="t-name-row">
-        <NameField {...props} label={t("title.nameLabel")} />
+        <NameField {...props} label={subject === "setup" ? t("title.nameLabel") : t(`title.${subject}.nameLabel`)} />
         <button
           className="t-icon"
           aria-label={t("title.suggest")}
@@ -126,9 +126,11 @@ export default function TitleBuilder(props: CreativeProps) {
           <Shuffle size={19} />
         </button>
       </div>
-      <p className="t-reassurance">
-        {t("title.reassurance")}
-      </p>
+      {subject === "setup" && (
+        <p className="t-reassurance">
+          {t("title.reassurance")}
+        </p>
+      )}
       <div className="t-screen" style={{ background: d[theme].surface }}>
         <button
           className="t-theme"

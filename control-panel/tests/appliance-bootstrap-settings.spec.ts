@@ -36,8 +36,10 @@ test('console access settings are administrator-only and CSRF-protected', () => 
 
 test('the console access card explains box sign-in and keeps root and password SSH advanced', () => {
   const card = source('src/components/settings-shell/console-access-card.tsx');
+  // Console access lives on System → This machine, which the overview lists on appliances only.
   const system = source('src/components/settings-shell/system-client.tsx');
-  assert.match(system, /isAppliance && <ConsoleAccessCard \/>/);
+  assert.match(system, /isAppliance \? \[\{ href: "\/settings\/system\/machine"/);
+  assert.match(source('src/app/settings/(shell)/system/machine/page.tsx'), /<ConsoleAccessCard \/>/);
   assert.match(card, /Admins can sign in on the box's screen \(Ctrl\+Alt\+F2\) with their YouEye ID password, even when the Control Panel is down\./);
   assert.match(card, /\/settings\/api\/appliance\/console-access/);
   assert.match(card, /X-CSRF-Token/);

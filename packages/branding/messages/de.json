@@ -1789,5 +1789,11 @@
   "sticker.colour.lock": "Farben fixieren",
   "sticker.colour.unlock": "Farben freigeben",
   "sticker.colour.keep": "Farben beibehalten",
-  "sticker.colour.keeping": "Farben bleiben erhalten"
+  "sticker.colour.keeping": "Farben bleiben erhalten",
+  "title.server.heading": "Der Titel deines Servers",
+  "title.server.nameLabel": "Wie heißt dein Server?",
+  "title.you.heading": "Dein eigener Titel",
+  "title.you.nameLabel": "Was soll dein Titel sagen?",
+  "title.app.heading": "Der Titel dieser App",
+  "title.app.nameLabel": "Wie heißt diese App?"
 }

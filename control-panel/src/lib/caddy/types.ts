@@ -126,8 +126,16 @@ export interface LoadPemEntry {
 /**
  * HTTP server configuration
  */
+/** A Caddy listener wrapper (`apps.http.servers.*.listener_wrappers[]`), e.g. `proxy_protocol` or `tls`. */
+export interface ListenerWrapper {
+  wrapper: string;
+  allow?: string[];
+  [key: string]: unknown;
+}
+
 export interface HTTPServer {
   listen: string[];
+  listener_wrappers?: ListenerWrapper[];
   routes: CaddyRoute[];
   tls_connection_policies?: TLSConnectionPolicy[];
   automatic_https?: {

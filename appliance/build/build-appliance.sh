@@ -217,12 +217,19 @@ cat > "$work_dir/youeye-dkms.conf" <<'EOF'
 # the development image is reproducible; production signing has its own trust design.
 sign_file="/usr/lib/youeye/no-module-signing"
 EOF
+# CPU microcode and device firmware (trixie non-free-firmware): early microcode
+# updates for AMD and Intel CPUs, and the blobs ordinary mini PCs need (AMD and
+# Intel GPUs, Realtek network cards and Bluetooth, Broadcom server NICs, the
+# Wi-Fi regulatory database). NVIDIA GPU and Wi-Fi-only blobs are left out:
+# large, and no box needs them to boot or reach its network. mmdebstrap does
+# not install Recommends, so firmware-misc-nonfree does not pull them in.
+hardware_packages="amd64-microcode,intel-microcode,firmware-amd-graphics,firmware-intel-graphics,firmware-misc-nonfree,firmware-realtek,firmware-bnx2,firmware-bnx2x,wireless-regdb"
 base_packages="systemd-sysv,systemd-boot,systemd-resolved,systemd-timesyncd,systemd-zram-generator,dbus,linux-image-amd64,linux-headers-amd64,initramfs-tools,zfsutils-linux,zfs-initramfs,openssh-server,login,sudo,ca-certificates,curl,jq,openssl,pamtester,apparmor,apparmor-utils,uidmap,nftables,iptables,dnsmasq-base,bridge-utils,iproute2,iputils-ping,ethtool,util-linux,gdisk,dosfstools,e2fsprogs,restic,zstd,bash,coreutils,findutils,grep,sed,gawk,tar,xz-utils,rsync,qemu-guest-agent,avahi-daemon"
 mmdebstrap \
     --variant=apt \
     --architectures=amd64 \
     --components=main,contrib,non-free-firmware \
-    --include="$base_packages" \
+    --include="$base_packages,$hardware_packages" \
     --aptopt='Acquire::Check-Valid-Until "false"' \
     --aptopt='Acquire::Retries "5"' \
     "${mmdebstrap_proxy_options[@]}" \
@@ -283,6 +290,24 @@ rm -f "$rootfs/etc/ssh/ssh_host_"*
 : > "$rootfs/etc/hostid"
 cat > "$rootfs/etc/hostname" <<'EOF'
 youeye
+EOF
+# pam_env reads /etc/default/locale on every login; trixie ships it as a link
+# to ../locale.conf with no locale.conf behind it. Write locale.conf and set
+# the relative link ourselves: never write through a link into the build host.
+# C.UTF-8 is built into glibc: no locales package.
+cat > "$rootfs/etc/locale.conf" <<'EOF'
+LANG=C.UTF-8
+EOF
+ln -sfn ../locale.conf "$rootfs/etc/default/locale"
+# The microcode hooks' "auto" mode looks at the build host's CPU; a box runs
+# on either vendor, so the initrd carries early microcode for every AMD and
+# Intel CPU.
+cat > "$rootfs/etc/default/amd64-microcode" <<'EOF'
+AMD64UCODE_INITRAMFS=early
+EOF
+cat > "$rootfs/etc/default/intel-microcode" <<'EOF'
+IUCODE_TOOL_INITRAMFS=early
+IUCODE_TOOL_SCANCPUS=no
 EOF
 cat > "$rootfs/etc/systemd/network/20-youeye.network" <<'EOF'
 [Match]
@@ -401,6 +426,26 @@ if grep -Eq 'ordering cycle|deleted to break ordering cycle' "$unit_graph_log"; 
     exit 1
 fi
 chroot "$rootfs" update-initramfs -u -k all
+# Every initrd starts with early microcode for both vendors. GPU drivers are
+# not in the initrd (MODULES=most adds no x86 DRM driver): they load from the
+# System root, where their firmware is.
+initrd_contents="$work_dir/initrd-contents.txt"
+for initrd_image in "$rootfs"/boot/initrd.img-*; do
+    chroot "$rootfs" lsinitramfs "/boot/${initrd_image##*/}" > "$initrd_contents"
+    for microcode in kernel/x86/microcode/AuthenticAMD.bin kernel/x86/microcode/GenuineIntel.bin; do
+        if ! grep -Eqx -- "(\./)?$microcode" "$initrd_contents"; then
+            printf 'Refusing appliance image: %s lacks early microcode %s.\n' "${initrd_image##*/}" "$microcode" >&2
+            exit 1
+        fi
+    done
+done
+# Resolved inside the image: regulatory.db is an alternatives symlink.
+for firmware in amdgpu i915 rtl_nic regulatory.db; do
+    if ! chroot "$rootfs" test -e "/usr/lib/firmware/$firmware"; then
+        printf 'Refusing appliance image without firmware %s.\n' "$firmware" >&2
+        exit 1
+    fi
+done
 
 find "$rootfs" -xdev -print0 | xargs -0 touch --no-dereference --date="@$source_date_epoch"
 

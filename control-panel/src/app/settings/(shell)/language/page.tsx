@@ -8,5 +8,5 @@ export default async function LanguageSettingsPage() {
     redirect("/settings/system");
   }
 
-  return <LanguageClient isAdmin={session?.isAdmin ?? false} />;
+  return <LanguageClient />;
 }

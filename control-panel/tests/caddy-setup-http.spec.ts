@@ -27,6 +27,7 @@ import { controlPanelCaddyfile } from '../src/lib/caddy/caddyfile';
 import {
   applySetupHttpServer,
   canonicalJSON,
+  hasClientAddressListenerWrappers,
   INTERNAL_CERT_LIFETIME_NS,
   IPV4_HOST_PATTERN,
   MDNS_HOST_PATTERN,
@@ -52,6 +53,8 @@ function adaptedCaddyfile(): CaddyConfig {
         servers: {
           srv0: {
             listen: [':443'],
+            // YE-134: checked with `caddy adapt` on a box (Caddy 2.11.4).
+            listener_wrappers: [{ wrapper: 'proxy_protocol', allow: ['127.0.0.1/32'] }, { wrapper: 'tls' }],
             routes: [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: CONTROL_DIAL }] }] }],
             tls_connection_policies: [{}],
             automatic_https: { disable_redirects: true },
@@ -136,6 +139,8 @@ function assertLayout(config: CaddyConfig, step: string): void {
   assert.deepEqual(servers[SETUP_HTTP_SERVER], setupHttpServer(CONTROL_DIAL), `${step}: :80 setup server is canonical`);
   assert.deepEqual(servers.srv0.listen, [':443'], `${step}: main server stays on :443`);
   assert.equal(servers.srv0.automatic_https?.disable_redirects, true, `${step}: Caddy adds no redirects of its own`);
+  assert.ok(hasClientAddressListenerWrappers(servers.srv0), `${step}: :443 reads a PROXY header first (YE-134)`);
+  assert.ok(hasClientAddressListenerWrappers(servers[SETUP_HTTP_SERVER]), `${step}: :80 reads a PROXY header first`);
   for (const policy of config.apps?.tls?.automation?.policies ?? []) {
     for (const issuer of policy.issuers ?? []) {
       if (issuer.module === 'internal') assert.equal(issuer.lifetime, INTERNAL_CERT_LIFETIME_NS, `${step}: 7-day leaves`);
@@ -273,6 +278,7 @@ test('without the setup server, route writers keep Caddy\'s own HTTP->HTTPS redi
       assert.deepEqual(Object.keys(servers), ['srv0'], 'no :80 server yet');
       assert.notEqual(servers.srv0.automatic_https?.disable_redirects, true, `redirects stay on (was ${disableRedirects})`);
       assert.deepEqual(servers.srv0.listen, [':443']);
+      assert.ok(hasClientAddressListenerWrappers(servers.srv0), 'every write puts the wrappers on :443');
 
       // The Control Panel start (or reconcile) adds the setup server; only then are Caddy's redirects off.
       await ensureSetupHttpServer();

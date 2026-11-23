@@ -188,12 +188,10 @@ async function configureCaddyUIRoute(
   uiSubdomain: string,
   uiContainerIP: string
 ): Promise<void> {
-  const caddyAdminURL = `http://${caddyIP}:2019`;
-
-  // Get current config
-  const configRes = await fetch(`${caddyAdminURL}/config/`);
-  if (!configRes.ok) throw new Error('Failed to get Caddy config');
-  const config = await configRes.json();
+  // Through the Caddy client: If-Match, the pinned admin listener and the listener wrappers on every write.
+  const caddy = await import('@/lib/caddy/client');
+  const { mainServer } = await import('@/lib/caddy/servers');
+  const config = await caddy.getConfig();
 
   // Build the UI route
   const uiRoute = {
@@ -209,18 +207,9 @@ async function configureCaddyUIRoute(
     }],
   };
 
-  // Ensure apps.http.servers.srv0 structure exists
-  if (!config.apps) config.apps = {};
-  if (!config.apps.http) config.apps.http = {};
-  if (!config.apps.http.servers) config.apps.http.servers = {};
-  if (!config.apps.http.servers.srv0) {
-    config.apps.http.servers.srv0 = {
-      listen: [':443', ':80'],
-      routes: [],
-    };
-  }
-
-  const routes = config.apps.http.servers.srv0.routes || [];
+  // The main (:443) server, never a new one on :80 (the setup server owns it).
+  const server = mainServer(config);
+  const routes = server.routes || [];
 
   // Remove existing UI route if any
   const filteredRoutes = routes.filter((r: { match?: Array<{ host?: string[] }> }) => {
@@ -230,53 +219,34 @@ async function configureCaddyUIRoute(
 
   // Add the new route at the beginning
   filteredRoutes.unshift(uiRoute);
-  config.apps.http.servers.srv0.routes = filteredRoutes;
+  server.routes = filteredRoutes;
 
   // Ensure the UI domain is in the TLS automation subjects
-  if (!config.apps.tls) config.apps.tls = {};
-  if (!config.apps.tls.automation) config.apps.tls.automation = {};
-  if (!config.apps.tls.automation.policies) config.apps.tls.automation.policies = [];
+  const tls = ((config.apps ??= {}).tls ??= {});
+  const policies = ((tls.automation ??= {}).policies ??= []);
 
   // Check if there's an existing ACME policy and add the UI domain to it
-  const existingPolicy = config.apps.tls.automation.policies.find(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (p: any) => p.subjects && p.issuers
-  );
-  if (existingPolicy) {
-    if (!existingPolicy.subjects.includes(uiSubdomain)) {
-      existingPolicy.subjects.push(uiSubdomain);
-    }
+  const existingPolicy = policies.find((p) => p.subjects && p.issuers);
+  if (existingPolicy?.subjects && !existingPolicy.subjects.includes(uiSubdomain)) {
+    existingPolicy.subjects.push(uiSubdomain);
   }
 
-  // Apply config
-  const loadRes = await fetch(`${caddyAdminURL}/load`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-
-  if (!loadRes.ok) {
-    const text = await loadRes.text();
-    throw new Error(`Failed to apply Caddy config: ${text}`);
-  }
+  await caddy.setConfig(config);
 }
 
 /**
  * Remove the UI route from Caddy
  */
 async function removeCaddyUIRoute(caddyIP: string, uiIP: string | null): Promise<void> {
-  const caddyAdminURL = `http://${caddyIP}:2019`;
-
-  const configRes = await fetch(`${caddyAdminURL}/config/`);
-  if (!configRes.ok) return;
-  const config = await configRes.json();
-
-  const routes = config?.apps?.http?.servers?.srv0?.routes;
-  if (!routes) return;
+  const caddy = await import('@/lib/caddy/client');
+  const { mainServerName } = await import('@/lib/caddy/servers');
+  const config = await caddy.getConfig().catch(() => null);
+  const server = config?.apps?.http?.servers?.[mainServerName(config ?? {})];
+  if (!config || !server?.routes) return;
 
   // Remove routes that proxy to the UI container IP
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  config.apps.http.servers.srv0.routes = routes.filter((r: any) => {
+  server.routes = server.routes.filter((r: any) => {
     const handlers = r.handle || [];
     for (const h of handlers) {
       if (h.handler === 'subroute' && h.routes) {
@@ -301,9 +271,5 @@ async function removeCaddyUIRoute(caddyIP: string, uiIP: string | null): Promise
     return true;
   });
 
-  await fetch(`${caddyAdminURL}/load`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
+  await caddy.setConfig(config);
 }

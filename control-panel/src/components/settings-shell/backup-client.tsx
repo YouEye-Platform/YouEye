@@ -50,6 +50,7 @@ interface BackupConfig {
   enabled?: boolean;
   mediaId?: string;
   selectedApps?: string[];
+  recoveryKeyStored?: boolean;
   lastError?: string;
 	schedule?: { core?: { frequency?: "daily" | "weekly"; time?: string; last_run?: string }; overrides?: Record<string, { frequency?: "daily" | "weekly"; last_run?: string }> };
 }
@@ -84,6 +85,7 @@ export function BackupClient() {
   const locale = useLocale();
 
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsServer.backups");
 async function csrfToken() {
   const response = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
   const body = await response.json().catch(() => ({}));
@@ -168,7 +170,12 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
   const [progressMessage, setProgressMessage] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [recoveryKeyStored, setRecoveryKeyStored] = useState(false);
+  // Once backups are set up, the recovery key is asked for only when an action needs it.
+  const [keyPrompt, setKeyPrompt] = useState<null | "backup" | "schedule">(null);
 	const configurationInitialized = useRef(false);
+  // A background poll waits for the one before it (a slow Spine answer must not stack requests).
+  const pollInFlight = useRef(false);
 
   const load = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
@@ -195,6 +202,7 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
 		})));
 		configurationInitialized.current = true;
 	  }
+      setRecoveryKeyStored(config.recoveryKeyStored === true);
       if (config.lastError) setMediaError(config.lastError);
     } catch (loadError) {
       setError(translateInterface("m1e30d919bf9e"));
@@ -205,7 +213,11 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
 
   useEffect(() => {
     void load(true);
-    const poll = setInterval(() => { if (!busy) void load(false); }, 5000);
+    const poll = setInterval(() => {
+      if (busy || pollInFlight.current) return;
+      pollInFlight.current = true;
+      void load(false).finally(() => { pollInFlight.current = false; });
+    }, 5000);
     return () => clearInterval(poll);
   }, [busy, load]);
 
@@ -242,7 +254,7 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
       const response = await protectedPost("/settings/api/backup/core", { passphrase, mediaId: selectedMedia, appIds: selectedApps });
       await readStream(response, event => { if (event.message) setProgressMessage(event.message); if (typeof event.progress === "number") setProgress(event.progress); });
       setMessage(translateInterface("m823b46a25b1a"));
-      setPassphrase(""); setConfirmPassphrase("");
+      setPassphrase(""); setConfirmPassphrase(""); setKeyPrompt(null);
       await load(false);
     } catch (createError) { setError(translateInterface("me4063f6e6091")); }
     finally { setBusy(false); setProgress(0); setProgressMessage(""); }
@@ -262,10 +274,12 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
     setBusy(true); setError(""); setMessage("");
     try {
 	  if (automatic && !passwordsMatch) throw new Error(translateInterface("m6dc7db435fb5"));
-	  const scheduledAppIds = apps.map(app => app.id).filter(appId => appFrequencies[appId] === "daily" || appFrequencies[appId] === "weekly");
-	  await protectedPost("/settings/api/backup/media", { action: "schedule", enabled: automatic, mediaId: selectedMedia, appIds: scheduledAppIds, appFrequencies, passphrase, frequency, time: scheduleTime });
+	  // An app left out of backups is not scheduled either; its chosen frequency comes back when it is included again.
+	  const effectiveFrequencies = Object.fromEntries(apps.map(app => [app.id, selectedApps.includes(app.id) ? appFrequencies[app.id] || "never" : "never"]));
+	  const scheduledAppIds = apps.map(app => app.id).filter(appId => effectiveFrequencies[appId] === "daily" || effectiveFrequencies[appId] === "weekly");
+	  await protectedPost("/settings/api/backup/media", { action: "schedule", enabled: automatic, mediaId: selectedMedia, appIds: scheduledAppIds, appFrequencies: effectiveFrequencies, passphrase, frequency, time: scheduleTime });
       setMessage(automatic ? translateInterface("mdfe2a0860b1e") : translateInterface("m17e778d6846b"));
-      setPassphrase(""); setConfirmPassphrase("");
+      setPassphrase(""); setConfirmPassphrase(""); setKeyPrompt(null);
       await load(false);
     } catch (scheduleError) { setError(translateInterface("m0b2a7b811220")); }
     finally { setBusy(false); }
@@ -294,73 +308,184 @@ async function waitForRestore(operationId: string, onMessage: (message: string) 
     finally { setBusy(false); setProgress(0); setProgressMessage(""); }
   }
 
+  // ── What the page shows ───────────────────────────────────────────────
+  // Backups are "set up" once a usable drive is chosen and a recovery key has
+  // been chosen before: either it is stored for automatic backups, or a
+  // recovery point made with it is on the drive.
+  const keyKnown = recoveryKeyStored || backups.length > 0;
+  const ready = driveReady && keyKnown;
+  const includedCount = selectedApps.length;
+  const scheduleLine = frequency === "daily" ? translateInterface("mb342dd0e1eef", {time: scheduleTime}) : translateInterface("m92c7537dcd7f", {time: scheduleTime});
+  const driveStateLabel = (drive: BackupMedia) => drive.state === "blank" ? translateInterface("m25688445db07") : drive.state === "ready" ? translateInterface("m5fa7aac5375c") : drive.state === "available" ? translateInterface("m00139f1afa9a") : drive.reason || translateInterface("mca1844969742");
+
+  function closeKeyPrompt() { setKeyPrompt(null); setPassphrase(""); setConfirmPassphrase(""); }
+  function openKeyPrompt(purpose: "backup" | "schedule") { setPassphrase(""); setConfirmPassphrase(""); setKeyPrompt(purpose); }
+
+  const keyFields = <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2">
+    <div className="min-w-0 space-y-2"><Label htmlFor="backup-passphrase">{translateInterface("m69b9692f78a4")}</Label><Input id="backup-passphrase" type="password" value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" spellCheck={false} disabled={busy} aria-describedby="backup-passphrase-hint" /></div>
+    <div className="min-w-0 space-y-2"><Label htmlFor="backup-confirm">{translateInterface("m5a2348ad34d3")}</Label><Input id="backup-confirm" type="password" value={confirmPassphrase} onChange={event => setConfirmPassphrase(event.target.value)} autoComplete="new-password" spellCheck={false} disabled={busy} /></div>
+    <p id="backup-passphrase-hint" className="text-xs text-muted-foreground sm:col-span-2">{confirmPassphrase.length > 0 && passphrase !== confirmPassphrase ? t("key.mismatch") : t("key.length")}</p>
+  </div>;
+
+  const driveList = <>
+    {mediaError && <Alert className="mt-3"><TriangleAlert className="size-4" /><AlertDescription>{mediaError}</AlertDescription></Alert>}
+    {loading ? <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{translateInterface("mcd6434a45213")}</div> : media.length === 0 ? <div className="mt-3 rounded-[.875rem] border border-dashed px-4 py-4 text-sm text-muted-foreground">{translateInterface("mdf1b1e7b62f1")}</div> : <ul className="settings-group mt-3">{media.map(drive => {
+      const selected = selectedMedia === drive.id;
+      return <li key={drive.id} className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+        <Button type="button" variant="ghost" aria-pressed={selected} onClick={() => setSelectedMedia(drive.id)} disabled={drive.state === "unsupported" || busy} className="h-auto min-h-11 min-w-0 flex-1 justify-start gap-3 whitespace-normal px-2 py-2 text-left font-normal">
+          {selected ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : <Circle className="size-5 shrink-0 text-muted-foreground" />}
+          <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{drive.model || drive.device}</span><span className="block text-xs text-muted-foreground"><span className="tabular-nums">{formatSize(drive.size_bytes)}</span> · {driveStateLabel(drive)}</span></span>
+        </Button>
+        {drive.state === "blank" && <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setPrepareTarget(drive)} disabled={busy}>{t("drive.prepare")}</Button>}
+        {drive.state === "ready" && <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => void ejectDrive(drive.id)} disabled={busy}>{translateInterface("m4496452440f3")}</Button>}
+      </li>;
+    })}</ul>}
+  </>;
+
+  const refreshDrives = <Button variant="ghost" size="icon" className="shrink-0" onClick={() => void load(false)} disabled={busy} title={translateInterface("m5b2606b078b9")}><RefreshCw className="size-4" /><span className="sr-only">{translateInterface("m5b2606b078b9")}</span></Button>;
+
+  // One list: what is included, and how often each app is backed up automatically.
+  const appList = <>
+    <ul className="settings-group mt-3">
+      <li className="flex min-h-[3.75rem] min-w-0 items-center gap-3 px-4 py-2.5">
+        <Check className="size-5 shrink-0 text-primary" aria-hidden="true" />
+        <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{translateInterface("madd8ec6e3557")}</span><span className="block text-xs text-muted-foreground">{translateInterface("mee0d1a4ba3f9")}</span></span>
+        {automatic && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{scheduleLine}</span>}
+      </li>
+      {apps.map(app => {
+        const checked = selectedApps.includes(app.id);
+        return <li key={app.id} className="flex min-w-0 items-center gap-3 px-4 py-1.5">
+          <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3">
+            <input type="checkbox" className="size-5 shrink-0 rounded border-input accent-primary" checked={checked} disabled={busy} onChange={() => setSelectedApps(checked ? selectedApps.filter(id => id !== app.id) : [...selectedApps, app.id])} />
+            <span className="min-w-0 truncate text-sm">{app.name}</span>
+          </label>
+          <Select value={checked ? appFrequencies[app.id] || "never" : "never"} onValueChange={value => setAppFrequencies(current => ({ ...current, [app.id]: value as "never" | "daily" | "weekly" }))} disabled={!automatic || !checked || busy}>
+            <SelectTrigger aria-label={translateInterface("m721c759deb60", { value0: String(app.name) })} className="w-32 shrink-0 sm:w-40"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="never">{checked ? t("apps.manualOnly") : translateInterface("mb665bfc292d9")}</SelectItem><SelectItem value="daily">{translateInterface("mb36c2611dcdf")}</SelectItem><SelectItem value="weekly">{translateInterface("m2975132481a7")}</SelectItem></SelectContent>
+          </Select>
+        </li>;
+      })}
+    </ul>
+    {apps.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{translateInterface("me0180e8b1565")}</p>}
+    {apps.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{automatic ? t("apps.scheduleHint") : t("apps.scheduleOff")}</p>}
+  </>;
+
+  type StepState = "done" | "current" | "pending";
+  const stepMarker = (number: number, state: StepState) => <span aria-hidden="true" className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold tabular-nums ${state === "done" ? "bg-primary text-primary-foreground" : state === "current" ? "border-2 border-primary text-primary" : "border border-border text-muted-foreground"}`}>{state === "done" ? <Check className="size-4" /> : number}</span>;
+  const stepState = (state: StepState) => state === "done" ? <span className="text-xs font-medium text-primary">{t("setup.done")}</span> : state === "current" ? <span className="text-xs font-medium text-muted-foreground">{t("setup.current")}</span> : null;
+  const driveStep: StepState = driveReady ? "done" : "current";
+  const keyStep: StepState = keyKnown || passwordsMatch ? "done" : driveReady ? "current" : "pending";
+  const appsStep: StepState = driveStep === "done" && keyStep === "done" ? "current" : "pending";
+
   return <div>
     <PageHeader title={translateInterface("m3334fee2c77f")} description={translateInterface("m4e24401192f6")} />
 
-    {(error || message) && <Alert variant={error ? "destructive" : "default"} className="mb-5"><AlertDescription>{error || message}</AlertDescription></Alert>}
-    {busy && progressMessage && <div className="mb-6 space-y-2 rounded-lg border bg-card p-4"><div className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" />{progressMessage}</div><Progress value={progress} /></div>}
+    {(error || message) && <Alert variant={error ? "destructive" : "default"} className="mb-5" role={error ? "alert" : "status"}><AlertDescription>{error || message}</AlertDescription></Alert>}
+    {busy && progressMessage && <div className="mb-6 space-y-2 rounded-[.875rem] border bg-card p-4" role="status"><div className="flex items-center gap-2 text-sm"><Loader2 className="size-4 shrink-0 animate-spin" /><span className="min-w-0">{progressMessage}</span></div><Progress value={progress} /></div>}
 
-    <div className="mb-6 grid gap-3 md:grid-cols-3">
-      <div className="rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-medium"><HardDrive className="size-4 text-primary" />{translateInterface("me06956e5d7e6")}</div><div className="mt-3 flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${readyDrive ? "bg-primary" : "bg-destructive"}`} /><span>{readyDrive ? translateInterface("m5fa7aac5375c") : translateInterface("m45bf454e495a")}</span></div><p className="mt-1 text-xs text-muted-foreground">{readyDrive ? `${readyDrive.model || readyDrive.device} · ${formatSize(readyDrive.size_bytes)}` : translateInterface("me98c2fe1c0c9")}</p></div>
-      <div className="rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-medium"><ShieldCheck className="size-4 text-primary" />{translateInterface("m53aa06db2a02")}</div><div className="mt-3 flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${latestBackup ? "bg-primary" : "bg-muted-foreground"}`} /><span>{latestBackup ? translateInterface("m4f7838402f37") : translateInterface("m1d1827745b69")}</span></div><p className="mt-1 text-xs text-muted-foreground">{latestBackup ? new Date(latestBackup.createdAt).toLocaleString(locale) : translateInterface("mff3157013b50")}</p></div>
-      <div className="rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-medium"><CalendarClock className="size-4 text-primary" />{translateInterface("mcb8603c8ce91")}</div><div className="mt-3 flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${automatic ? "bg-primary" : "bg-muted-foreground"}`} /><span>{automatic ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</span></div><p className="mt-1 text-xs text-muted-foreground">{automatic ? frequency === "daily" ? translateInterface("mb342dd0e1eef", {time: scheduleTime}) : translateInterface("m92c7537dcd7f", {time: scheduleTime}) : translateInterface("mff7bd7fb8704")}</p></div>
+    {/* Status at a glance: one group, three facts. */}
+    <div className="grid grid-cols-[minmax(0,1fr)] divide-y overflow-hidden rounded-[.875rem] border bg-card md:grid-cols-3 md:divide-x md:divide-y-0">
+      <div className="flex min-w-0 items-start gap-3 px-4 py-3">
+        <HardDrive className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0"><div className="text-xs text-muted-foreground">{translateInterface("me06956e5d7e6")}</div><div className="text-sm font-medium">{readyDrive ? translateInterface("m5fa7aac5375c") : translateInterface("m45bf454e495a")}</div><div className="truncate text-xs text-muted-foreground">{readyDrive ? <>{readyDrive.model || readyDrive.device} · <span className="tabular-nums">{formatSize(readyDrive.size_bytes)}</span></> : translateInterface("me98c2fe1c0c9")}</div></div>
+      </div>
+      <div className="flex min-w-0 items-start gap-3 px-4 py-3">
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0"><div className="text-xs text-muted-foreground">{translateInterface("m53aa06db2a02")}</div><div className="text-sm font-medium tabular-nums">{latestBackup ? new Date(latestBackup.createdAt).toLocaleString(locale) : translateInterface("m1d1827745b69")}</div><div className="truncate text-xs text-muted-foreground">{latestBackup ? (latestBackup.compatibility?.compatible ? translateInterface("m4f7838402f37") : latestBackup.compatibility?.summary || translateInterface("m2396a6b97407")) : translateInterface("mff3157013b50")}</div></div>
+      </div>
+      <div className="flex min-w-0 items-start gap-3 px-4 py-3">
+        <CalendarClock className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0"><div className="text-xs text-muted-foreground">{translateInterface("mcb8603c8ce91")}</div><div className="text-sm font-medium">{automatic ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</div><div className="truncate text-xs tabular-nums text-muted-foreground">{automatic ? scheduleLine : translateInterface("mff7bd7fb8704")}</div></div>
+      </div>
     </div>
 
-    <section className="border-b pb-6">
-      <div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 size-5 text-primary" /><div><h2 className="text-[15px] font-semibold">{translateInterface("m69b9692f78a4")}</h2><p className="mt-1 text-sm text-muted-foreground">{translateInterface("mf4b6e40668b4")}</p></div></div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2"><Label htmlFor="backup-passphrase">{translateInterface("m69b9692f78a4")}</Label><Input id="backup-passphrase" type="password" value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" disabled={busy} /></div>
-        <div className="space-y-2"><Label htmlFor="backup-confirm">{translateInterface("m5a2348ad34d3")}</Label><Input id="backup-confirm" type="password" value={confirmPassphrase} onChange={event => setConfirmPassphrase(event.target.value)} autoComplete="new-password" disabled={busy} /></div>
-      </div>
+    {!ready ? <section className="mt-8" aria-labelledby="backup-setup-heading">
+      <h2 id="backup-setup-heading" className="text-[15px] font-semibold">{t("setup.title")}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{t("setup.intro")}</p>
+      <ol className="mt-5 space-y-8">
+        <li className="flex min-w-0 gap-3" aria-current={driveStep === "current" ? "step" : undefined}>
+          {stepMarker(1, driveStep)}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-h-7 items-center justify-between gap-3"><h3 className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm font-semibold">{translateInterface("me06956e5d7e6")}{stepState(driveStep)}</h3>{refreshDrives}</div>
+            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m766dfcb78abf")} {t("drive.prepareHint")}</p>
+            {driveList}
+          </div>
+        </li>
+        <li className="flex min-w-0 gap-3" aria-current={keyStep === "current" ? "step" : undefined}>
+          {stepMarker(2, keyStep)}
+          <div className="min-w-0 flex-1">
+            <h3 className="flex min-h-7 flex-wrap items-baseline gap-x-2 pt-1 text-sm font-semibold">{translateInterface("m69b9692f78a4")}{stepState(keyStep)}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("mf4b6e40668b4")}</p>
+            {keyKnown ? <p className="mt-2 text-sm">{t("key.alreadyChosen")}</p> : <div className="mt-3">{keyFields}</div>}
+          </div>
+        </li>
+        <li className="flex min-w-0 gap-3" aria-current={appsStep === "current" ? "step" : undefined}>
+          {stepMarker(3, appsStep)}
+          <div className="min-w-0 flex-1">
+            <h3 className="flex min-h-7 flex-wrap items-baseline gap-x-2 pt-1 text-sm font-semibold">{translateInterface("m6b4fc314ae7d")}{stepState(appsStep)}</h3>
+            {appList}
+            <Button className="mt-4" onClick={() => void createBackup()} disabled={busy || !driveReady || !passwordsMatch}><HardDriveDownload className="size-4" />{t("setup.firstBackup")}</Button>
+            {(!driveReady || !passwordsMatch) && <p className="mt-2 text-xs text-muted-foreground">{!driveReady ? t("setup.needsDrive") : t("setup.needsKey")}</p>}
+          </div>
+        </li>
+      </ol>
+    </section> : <>
+      <section className="mt-6" aria-label={translateInterface("m02a2840b598b")}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0 text-sm text-muted-foreground">{t("now.summary", {count: includedCount})}</p>
+          {keyPrompt !== "backup" && <Button className="shrink-0" onClick={() => openKeyPrompt("backup")} disabled={busy}><HardDriveDownload className="size-4" />{t("now.open")}</Button>}
+        </div>
+        {keyPrompt === "backup" && <div className="mt-3 rounded-[.875rem] border bg-card p-4">
+          <p className="mb-3 text-sm">{t("now.keyPrompt")}</p>
+          {keyFields}
+          <div className="mt-4 flex flex-wrap gap-2"><Button onClick={() => void createBackup()} disabled={busy || !driveReady || !passwordsMatch}><HardDriveDownload className="size-4" />{translateInterface("m02a2840b598b")}</Button><Button variant="ghost" onClick={closeKeyPrompt} disabled={busy}>{translateInterface("m19766ed6ccb2")}</Button></div>
+        </div>}
+      </section>
+
+      <section className="mt-8" aria-labelledby="backup-apps-heading">
+        <h2 id="backup-apps-heading" className="text-[15px] font-semibold">{translateInterface("m6b4fc314ae7d")}</h2>
+        {appList}
+      </section>
+    </>}
+
+    <section className="mt-8" aria-labelledby="backup-auto-heading">
+      <div className="flex items-center justify-between gap-4"><div className="min-w-0"><h2 id="backup-auto-heading" className="text-[15px] font-semibold">{translateInterface("mcb8603c8ce91")}</h2><p className="mt-1 text-sm text-muted-foreground">{translateInterface("m5d4f4a50f5c6")}</p></div><Switch className="shrink-0" checked={automatic} onCheckedChange={setAutomatic} disabled={busy} aria-label={translateInterface("mcb8603c8ce91")} /></div>
+      {automatic && <div className="mt-4 grid grid-cols-2 gap-4 sm:max-w-md">
+        <div className="min-w-0 space-y-2"><Label htmlFor="backup-frequency">{translateInterface("mdaae8bd431fa")}</Label><Select value={frequency} onValueChange={value => setFrequency(value === "weekly" ? "weekly" : "daily")} disabled={busy}><SelectTrigger id="backup-frequency" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="daily">{translateInterface("mb36c2611dcdf")}</SelectItem><SelectItem value="weekly">{translateInterface("m2975132481a7")}</SelectItem></SelectContent></Select></div>
+        <div className="min-w-0 space-y-2"><Label htmlFor="backup-time">{translateInterface("m33b93476cf59")}</Label><Input id="backup-time" type="time" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} disabled={busy} /></div>
+      </div>}
+      {keyPrompt === "schedule" && automatic && ready ? <div className="mt-4 rounded-[.875rem] border bg-card p-4">
+        <p className="mb-3 text-sm">{recoveryKeyStored ? t("auto.keyPromptStored") : t("auto.keyPrompt")}</p>
+        {keyFields}
+        <div className="mt-4 flex flex-wrap gap-2"><Button onClick={() => void saveAutomatic()} disabled={busy || !driveReady || !passwordsMatch}><Clock3 className="size-4" />{translateInterface("m94c4fb6c1714")}</Button><Button variant="ghost" onClick={closeKeyPrompt} disabled={busy}>{translateInterface("m19766ed6ccb2")}</Button></div>
+      </div> : <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* Turning automatic backups off needs nothing else. Turning them on, or changing them, stores the recovery key again. */}
+        {!automatic ? <Button variant="outline" onClick={() => void saveAutomatic()} disabled={busy}><Clock3 className="size-4" />{translateInterface("m94c4fb6c1714")}</Button>
+          : ready ? <Button variant="outline" onClick={() => openKeyPrompt("schedule")} disabled={busy}><Clock3 className="size-4" />{t("auto.saveOpen")}</Button>
+          : <Button variant="outline" onClick={() => void saveAutomatic()} disabled={busy || !driveReady || !passwordsMatch}><Clock3 className="size-4" />{translateInterface("m94c4fb6c1714")}</Button>}
+        {automatic && ready && recoveryKeyStored && <Button variant="link" className="h-auto px-0" onClick={() => openKeyPrompt("schedule")} disabled={busy}>{t("key.change")}</Button>}
+        {automatic && !ready && <p className="text-xs text-muted-foreground">{t("auto.needsSetup")}</p>}
+      </div>}
     </section>
 
-    <section className="border-b py-6">
-      <div className="flex items-center justify-between gap-3"><div><h2 className="text-[15px] font-semibold">{translateInterface("me06956e5d7e6")}</h2><p className="mt-1 text-sm text-muted-foreground">{translateInterface("m766dfcb78abf")}</p></div><Button variant="ghost" size="icon" onClick={() => void load(false)} disabled={busy} title={translateInterface("m5b2606b078b9")}><RefreshCw className="size-4" /><span className="sr-only">{translateInterface("m5b2606b078b9")}</span></Button></div>
-      {mediaError && <Alert className="mt-4"><TriangleAlert className="size-4" /><AlertDescription>{mediaError}</AlertDescription></Alert>}
-      {loading ? <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{translateInterface("mcd6434a45213")}</div> : media.length === 0 ? <div className="mt-4 rounded-md border border-dashed p-4 text-sm text-muted-foreground">{translateInterface("mdf1b1e7b62f1")}</div> : <div className="mt-4 grid gap-3">{media.map(drive => {
-        const selected = selectedMedia === drive.id;
-        return <div key={drive.id} className={`flex items-center gap-2 rounded-xl border p-2 ${selected ? "border-primary bg-primary/5" : ""}`}>
-          <Button type="button" variant="ghost" aria-pressed={selected} onClick={() => setSelectedMedia(drive.id)} disabled={drive.state === "unsupported" || busy} className="h-auto min-w-0 flex-1 justify-start gap-3 px-2 py-2 text-left font-normal">
-            {selected ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : <Circle className="size-5 shrink-0 text-muted-foreground" />}
-            <HardDrive className="size-5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{drive.model || drive.device}</span><span className="block text-xs text-foreground/70">{formatSize(drive.size_bytes)} · {drive.state === "blank" ? translateInterface("m25688445db07") : drive.state === "ready" ? translateInterface("m5fa7aac5375c") : drive.state === "available" ? translateInterface("m00139f1afa9a") : drive.reason || translateInterface("mca1844969742")}</span></span>
-          </Button>
-          {drive.state === "blank" && <Button type="button" variant="outline" size="sm" onClick={() => setPrepareTarget(drive)} disabled={busy}>{translateInterface("mee820467e916")}</Button>}
-		  {drive.state === "ready" && <Button type="button" variant="ghost" size="sm" onClick={() => void ejectDrive(drive.id)} disabled={busy}>{translateInterface("m4496452440f3")}</Button>}
-        </div>;
-      })}</div>}
-    </section>
-
-    <section className="border-b py-6">
-      <h2 className="text-[15px] font-semibold">{translateInterface("m6b4fc314ae7d")}</h2>
-      <div className="mt-4 flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2.5 text-sm"><CheckCircle2 className="size-4 text-primary" /><span><span className="font-medium">{translateInterface("madd8ec6e3557")}</span><span className="ml-2 text-muted-foreground">{translateInterface("mee0d1a4ba3f9")}</span></span></div>
-      <div className="mt-3"><AppChecklist apps={apps} selected={selectedApps} onChange={setSelectedApps} disabled={busy} /></div>
-      <Button className="mt-4" onClick={() => void createBackup()} disabled={busy || !driveReady || !passwordsMatch}><HardDriveDownload className="size-4" />{translateInterface("m02a2840b598b")}</Button>
-    </section>
-
-    <section className="border-b py-6">
-      <div className="flex items-center justify-between gap-4"><div><h2 className="text-[15px] font-semibold">{translateInterface("mcb8603c8ce91")}</h2><p className="mt-1 text-sm text-muted-foreground">{translateInterface("m5d4f4a50f5c6")}</p></div><Switch checked={automatic} onCheckedChange={setAutomatic} disabled={busy} aria-label={translateInterface("mcb8603c8ce91")} /></div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2"><Label htmlFor="backup-frequency">{translateInterface("mdaae8bd431fa")}</Label><Select value={frequency} onValueChange={value => setFrequency(value === "weekly" ? "weekly" : "daily")} disabled={!automatic || busy}><SelectTrigger id="backup-frequency"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="daily">{translateInterface("mb36c2611dcdf")}</SelectItem><SelectItem value="weekly">{translateInterface("m2975132481a7")}</SelectItem></SelectContent></Select></div>
-        <div className="space-y-2"><Label htmlFor="backup-time">{translateInterface("m33b93476cf59")}</Label><Input id="backup-time" type="time" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} disabled={!automatic || busy} /></div>
-      </div>
-      {apps.length > 0 && <div className="mt-4 space-y-2"><Label>{translateInterface("m3fc1d79f5b10")}</Label><div className="divide-y rounded-xl border">{apps.map(app => <div key={app.id} className="flex items-center justify-between gap-4 px-3 py-2.5"><span className="text-sm">{app.name}</span><Select value={appFrequencies[app.id] || "never"} onValueChange={value => setAppFrequencies(current => ({ ...current, [app.id]: value as "never" | "daily" | "weekly" }))} disabled={!automatic || busy}><SelectTrigger aria-label={translateInterface("m721c759deb60", { value0: String(app.name) })} className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="never">{translateInterface("mb665bfc292d9")}</SelectItem><SelectItem value="daily">{translateInterface("mb36c2611dcdf")}</SelectItem><SelectItem value="weekly">{translateInterface("m2975132481a7")}</SelectItem></SelectContent></Select></div>)}</div></div>}
-      <Button variant="outline" className="mt-4" onClick={() => void saveAutomatic()} disabled={busy || (automatic && (!driveReady || !passwordsMatch))}><Clock3 className="size-4" />{translateInterface("m94c4fb6c1714")}</Button>
-    </section>
-
-    <section className="py-6">
-      <div className="flex items-center justify-between"><h2 className="text-[15px] font-semibold">{translateInterface("m7e90851df722")}</h2><Button variant="ghost" size="icon" onClick={() => void load(false)} disabled={busy}><RefreshCw className="size-4" /><span className="sr-only">{translateInterface("m36d72acb85cf")}</span></Button></div>
-      {!loading && backups.length === 0 ? <div className="mt-4 flex items-center gap-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground"><ArchiveRestore className="size-4" />{translateInterface("ma8d8eac8a447")}</div> : <div className="mt-4 divide-y rounded-xl border">{backups.map(backup => {
+    <section className="mt-8" aria-labelledby="backup-points-heading">
+      <h2 id="backup-points-heading" className="text-[15px] font-semibold">{translateInterface("m7e90851df722")}</h2>
+      {!loading && backups.length === 0 ? <div className="mt-3 flex items-center gap-3 rounded-[.875rem] border border-dashed px-4 py-4 text-sm text-muted-foreground"><ArchiveRestore className="size-4 shrink-0" />{translateInterface("ma8d8eac8a447")}</div> : backups.length > 0 && <ul className="settings-group mt-3">{backups.map(backup => {
         const compatible = backup.compatibility?.compatible === true;
-        return <div key={backup.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${compatible ? "bg-primary" : "bg-destructive"}`} /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{new Date(backup.createdAt).toLocaleString(locale)}</div><div className="mt-1 text-xs text-muted-foreground">{translateInterface("mb0e3669b18e7", {size: formatSize(backup.sizeBytes), count: backup.appCount})}{backup.reason === "scheduled" ? translateInterface("m336659c84a0f") : ""}{backup.source?.release?.version ? ` · YouEye ${backup.source.release.version}` : ""}</div><div className="mt-1 text-xs text-muted-foreground">{compatible ? translateInterface("m87672f62ea3f", {date: backup.verifiedAt ? new Date(backup.verifiedAt).toLocaleString(locale) : ""}) : backup.compatibility?.summary || translateInterface("m2396a6b97407")}</div></div><Button variant="outline" onClick={() => { setRestoreTarget(backup); setRestoreApps(backup.apps ?? []); setRestoreCore(false); setRestorePassphrase(""); }} disabled={busy || backup.status !== "completed" || !compatible}><ArchiveRestore className="size-4" />{translateInterface("ma76e13b98392")}</Button></div>;
-      })}</div>}
+        return <li key={backup.id} className="flex min-w-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="text-sm font-medium tabular-nums">{new Date(backup.createdAt).toLocaleString(locale)}</div><div className="mt-0.5 text-xs text-muted-foreground">{translateInterface("mb0e3669b18e7", {size: formatSize(backup.sizeBytes), count: backup.appCount})}{backup.reason === "scheduled" ? translateInterface("m336659c84a0f") : ""}{backup.source?.release?.version ? ` · YouEye ${backup.source.release.version}` : ""}</div><div className={`mt-0.5 flex items-start gap-1.5 text-xs ${compatible ? "text-muted-foreground" : "text-destructive"}`}>{!compatible && <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />}<span className="min-w-0">{compatible ? translateInterface("m87672f62ea3f", {date: backup.verifiedAt ? new Date(backup.verifiedAt).toLocaleString(locale) : ""}) : backup.compatibility?.summary || translateInterface("m2396a6b97407")}</span></div></div><Button variant="outline" className="shrink-0 self-start sm:self-center" onClick={() => { setRestoreTarget(backup); setRestoreApps(backup.apps ?? []); setRestoreCore(false); setRestorePassphrase(""); }} disabled={busy || backup.status !== "completed" || !compatible}><ArchiveRestore className="size-4" />{t("points.restoreOpen")}</Button></li>;
+      })}</ul>}
 
-      {restoreTarget && <div className="mt-5 space-y-4 border-t pt-5"><div><h3 className="text-sm font-semibold">{translateInterface("ma76e13b98392")}{new Date(restoreTarget.createdAt).toLocaleString(locale)}</h3><p className="mt-1 text-sm text-muted-foreground">{translateInterface("md925758daf9c")}</p></div>
-        <Button type="button" variant="outline" aria-pressed={restoreCore} onClick={() => setRestoreCore(value => !value)} className={`h-auto w-full justify-start gap-3 p-3 text-left font-normal ${restoreCore ? "border-primary bg-primary/5" : ""}`}><span className={`flex size-5 shrink-0 items-center justify-center rounded border ${restoreCore ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{restoreCore && <Check className="size-3.5" />}</span><span><span className="block font-medium">{translateInterface("m00d9be7ada83")}</span><span className="mt-1 block text-muted-foreground">{translateInterface("md45726019011")}</span></span></Button>
-        <AppChecklist apps={(restoreTarget.apps ?? []).map(id => ({ id, name: id }))} selected={restoreApps} onChange={setRestoreApps} disabled={busy} />
+      {restoreTarget && <div className="mt-5 space-y-4 border-t pt-5"><div><h3 className="text-sm font-semibold">{t("points.restoreFrom", {date: new Date(restoreTarget.createdAt).toLocaleString(locale)})}</h3><p className="mt-1 text-sm text-muted-foreground">{translateInterface("md925758daf9c")}</p></div>
+        <Button type="button" variant="outline" aria-pressed={restoreCore} onClick={() => setRestoreCore(value => !value)} className={`h-auto w-full justify-start gap-3 whitespace-normal p-3 text-left font-normal ${restoreCore ? "border-primary bg-primary/5" : ""}`}><span className={`flex size-5 shrink-0 items-center justify-center rounded border ${restoreCore ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{restoreCore && <Check className="size-3.5" />}</span><span className="min-w-0"><span className="block font-medium">{translateInterface("m00d9be7ada83")}</span><span className="mt-1 block text-muted-foreground">{translateInterface("md45726019011")}</span></span></Button>
+        <AppChecklist apps={(restoreTarget.apps ?? []).map(id => ({ id, name: apps.find(app => app.id === id)?.name ?? id }))} selected={restoreApps} onChange={setRestoreApps} disabled={busy} />
         <div className="flex flex-col gap-2 sm:flex-row"><Input type="password" value={restorePassphrase} onChange={event => setRestorePassphrase(event.target.value)} placeholder={translateInterface("m69b9692f78a4")} aria-label={translateInterface("m8bcf3d74ea4c")} autoComplete="current-password" disabled={busy} /><Button variant="destructive" onClick={() => setConfirmRestore(true)} disabled={busy || restorePassphrase.length < 12 || (!restoreCore && restoreApps.length === 0)}>{translateInterface("m967bd624c2d5")}</Button><Button variant="ghost" onClick={() => setRestoreTarget(null)} disabled={busy}>{translateInterface("m19766ed6ccb2")}</Button></div>
       </div>}
     </section>
+
+    {ready && <section className="mt-8" aria-labelledby="backup-drive-heading">
+      <div className="flex items-center justify-between gap-3"><h2 id="backup-drive-heading" className="min-w-0 text-[15px] font-semibold">{translateInterface("me06956e5d7e6")}</h2>{refreshDrives}</div>
+      {driveList}
+    </section>}
 
     <ConfirmDialog open={Boolean(prepareTarget)} title={translateInterface("ma77f574e36ce")} description={translateInterface("m044b984a0b61")} confirmLabel={translateInterface("m4a5b5e783667")} destructive onConfirm={() => void prepareDrive()} onCancel={() => setPrepareTarget(null)} />
     <ConfirmDialog open={confirmRestore} title={restoreCore ? translateInterface("mac9c444f8575") : translateInterface("m408579f8979d")} description={restoreCore ? translateInterface("me36abae6dc93") : translateInterface("m073362764359")} confirmLabel={translateInterface("ma76e13b98392")} destructive onConfirm={() => void restoreBackup()} onCancel={() => setConfirmRestore(false)} />

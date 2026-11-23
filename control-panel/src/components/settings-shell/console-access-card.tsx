@@ -101,7 +101,7 @@ export function ConsoleAccessCard() {
   return (
     <Card className="gap-0 py-0">
       <div className="flex items-start justify-between gap-4 border-b p-4">
-        <div>
+        <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-[15px] font-semibold"><Monitor className="size-4" />{translateInterface("mcb5c7e85cbe1")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m066597c0a716")}</p>
         </div>
@@ -111,8 +111,8 @@ export function ConsoleAccessCard() {
       <div className="divide-y px-4">
         {view && view.accounts.length === 0 && <p className="py-3 text-sm text-muted-foreground">{translateInterface("ma2f9c9d61339")}</p>}
         {view?.accounts.map((account) => (
-          <div key={account.userId} className="flex items-center justify-between gap-4 py-2">
-            <div>
+          <div key={account.userId} className="flex min-h-12 items-center justify-between gap-4 py-2">
+            <div className="min-w-0">
               <p className="text-sm font-medium">{account.name}{account.you && <span className="ml-2 text-xs text-muted-foreground">{translateInterface("md1eb47c77576")}</span>}</p>
               <p className="text-xs text-muted-foreground">{translateInterface("maa16cb16895e", { username: account.hostUsername })}</p>
             </div>
@@ -140,20 +140,20 @@ export function ConsoleAccessCard() {
       )}
 
       <div className="border-t p-4">
-        <button type="button" className="flex items-center gap-1 text-sm font-medium" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
+        <button type="button" className="-ml-1 flex min-h-9 items-center gap-1 rounded-md px-1 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-11" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
           {advanced ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}{translateInterface("m9f088dbebd6c")}</button>
         {advanced && view && (
           <div className="mt-3 space-y-4">
             <form onSubmit={setRoot} className="space-y-2">
               <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium">{translateInterface("m756e295ae505")}</p>
                   <p className="text-xs text-muted-foreground">{translateInterface("m809f3dde17a8")}</p>
                 </div>
                 <span className="shrink-0 text-sm text-muted-foreground">{view.rootPasswordSet ? translateInterface("mb6f6f3ad07b3") : translateInterface("m4895f73177ab")}</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Input className="max-w-xs" type="password" autoComplete="new-password" value={rootPassword} onChange={(event) => setRootPassword(event.target.value)} aria-label={translateInterface("m99e8d76a5c3a")} placeholder={translateInterface("m99e8d76a5c3a")} />
+                <Input className="min-w-0 max-w-xs" type="password" autoComplete="new-password" value={rootPassword} onChange={(event) => setRootPassword(event.target.value)} aria-label={translateInterface("m99e8d76a5c3a")} placeholder={translateInterface("m99e8d76a5c3a")} />
                 <Button type="submit" size="sm" variant="outline" disabled={Boolean(busy) || !rootPassword}>
                   {busy === "root" && <Loader2 className="size-4 animate-spin" />}{translateInterface("m8cd8c220870b")}</Button>
                 {view.rootPasswordSet && (
@@ -164,7 +164,7 @@ export function ConsoleAccessCard() {
               </div>
             </form>
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-medium">{translateInterface("ma732acf5d120")}</p>
                 <p className="text-xs text-muted-foreground">
                   {!view.passwordSSH ? translateInterface("m5f88f8c2492d")
@@ -181,8 +181,8 @@ export function ConsoleAccessCard() {
 
       {(error || notice) && (
         <div className="border-t p-4">
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {notice && <p className="text-sm text-muted-foreground">{notice}</p>}
+          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+          {notice && <p className="text-sm text-muted-foreground" role="status">{notice}</p>}
         </div>
       )}
     </Card>

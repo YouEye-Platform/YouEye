@@ -13,7 +13,7 @@ test('system settings consumes Spine runtime capabilities and persistent state',
   assert.match(route, /spineClient\.status\(\)/);
   assert.match(route, /persistent_state:/);
   assert.match(client, /data\.runtime\.kind === "appliance-image"/);
-  assert.match(client, /name: "System image"/);
-  assert.match(client, /Image-managed/);
+  assert.match(client, /t\("services\.host\.descImage"\)/);
+  assert.match(client, /"repair-required" : "image-managed"/);
   assert.match(client, /isAppliance &&/);
 });

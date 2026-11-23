@@ -1,0 +1,103 @@
+/**
+ * YouEye ID sign-in limits (YE-134): per username from any address, per client address across usernames, and no
+ * limit on loopback (every client is 127.0.0.1 until Caddy's proxy devices send the real one).
+ */
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, mock, test } from 'node:test';
+
+import { resetAllRateLimits } from '../src/lib/auth/rate-limit';
+import {
+  beginSignInAttempt,
+  SIGN_IN_ADDRESS_ATTEMPTS,
+  SIGN_IN_USERNAME_ATTEMPTS,
+  SIGN_IN_WINDOW_SECONDS,
+  signInClientAddress,
+  signInSucceeded,
+} from '../src/lib/identity/sign-in-limit';
+
+/** One sign-in as the route does it: `correct` stands for the password check. */
+function signIn(username: string, address: string | null, correct = false): 'refused' | 'failed' | 'signed-in' {
+  const attempt = beginSignInAttempt(username, address);
+  if (!attempt.allowed) return 'refused';
+  if (!correct) return 'failed';
+  signInSucceeded(attempt);
+  return 'signed-in';
+}
+
+beforeEach(() => {
+  resetAllRateLimits();
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-23T10:00:00Z') });
+});
+afterEach(() => mock.timers.reset());
+
+test('the limits', () => {
+  assert.equal(SIGN_IN_USERNAME_ATTEMPTS, 10);
+  assert.equal(SIGN_IN_ADDRESS_ATTEMPTS, 30);
+  assert.equal(SIGN_IN_WINDOW_SECONDS, 15 * 60);
+});
+
+test('10 failures from many addresses lock only that username for the window; the right password works after it', () => {
+  for (let i = 0; i < 10; i++) assert.equal(signIn('owner', `192.168.1.${10 + i}`), 'failed');
+  assert.equal(signIn('owner', '192.168.1.99', true), 'refused', 'a new address does not get around it');
+  assert.equal(signIn('Owner', '192.168.1.99', true), 'refused', 'nor does the case of the username');
+  assert.equal(signIn('owner', null, true), 'refused', 'nor loopback');
+  assert.equal(signIn('alice', '192.168.1.10', true), 'signed-in', 'other users are not affected');
+
+  mock.timers.tick(SIGN_IN_WINDOW_SECONDS * 1000 - 1);
+  assert.equal(signIn('owner', '192.168.1.99', true), 'refused', 'until the window ends');
+  mock.timers.tick(2);
+  assert.equal(signIn('owner', '192.168.1.99', true), 'signed-in');
+});
+
+test('a success clears the username, and refused attempts count against nothing', () => {
+  for (let i = 0; i < 9; i++) signIn('owner', '192.168.1.10');
+  assert.equal(signIn('owner', '192.168.1.10', true), 'signed-in');
+  for (let i = 0; i < 9; i++) assert.equal(signIn('owner', '192.168.1.11'), 'failed', 'the count started over');
+
+  for (let i = 0; i < 10; i++) signIn('bob', '192.168.1.12');
+  for (let i = 0; i < 50; i++) assert.equal(signIn('bob', '192.168.1.13'), 'refused');
+  // .13's 50 refused tries left it its whole address budget.
+  for (let i = 0; i < SIGN_IN_ADDRESS_ATTEMPTS; i++) assert.equal(signIn(`user${i}`, '192.168.1.13'), 'failed');
+});
+
+test('one address is stopped after 30 failures across usernames; other addresses are not', () => {
+  for (let i = 0; i < SIGN_IN_ADDRESS_ATTEMPTS; i++) assert.equal(signIn(`user${i}`, '203.0.113.7'), 'failed');
+  assert.equal(signIn('someone-new', '203.0.113.7', true), 'refused');
+  assert.equal(signIn('someone-new', '192.168.1.20', true), 'signed-in');
+  // Successes give the address its attempt back: an attacker's own account cannot reset its count.
+  resetAllRateLimits();
+  for (let i = 0; i < 29; i++) signIn(`user${i}`, '203.0.113.8');
+  assert.equal(signIn('mine', '203.0.113.8', true), 'signed-in');
+  assert.equal(signIn('user99', '203.0.113.8'), 'failed', 'the 30th failure');
+  assert.equal(signIn('user98', '203.0.113.8'), 'refused');
+});
+
+test('loopback and unknown are not client addresses, so no address limit locks everyone out', () => {
+  const headers = (values: Record<string, string>) => new Headers(values);
+  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '192.168.1.50' })), '192.168.1.50');
+  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '192.168.1.50, 10.45.18.13' })), '192.168.1.50');
+  assert.equal(signInClientAddress(headers({ 'x-real-ip': '192.168.1.51' })), '192.168.1.51');
+  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '::ffff:192.168.1.52' })), '192.168.1.52');
+  for (const loopback of ['127.0.0.1', '127.0.0.53', '::1', '::ffff:127.0.0.1', 'unknown']) {
+    assert.equal(signInClientAddress(headers({ 'x-forwarded-for': loopback })), null, loopback);
+  }
+  assert.equal(signInClientAddress(headers({})), null);
+
+  for (let i = 0; i < 100; i++) assert.equal(signIn(`user${i}`, null), 'failed');
+  assert.equal(signIn('owner', null, true), 'signed-in');
+});
+
+test('unknown and real usernames are limited the same way, with the same message', () => {
+  for (let i = 0; i < 10; i++) signIn('no-such-user', '192.168.1.30');
+  assert.equal(signIn('no-such-user', '192.168.1.31'), 'refused');
+  const root = process.env.CONTROL_PANEL_ROOT ?? process.cwd();
+  const route = readFileSync(join(root, 'src/app/identity/login/route.ts'), 'utf8');
+  assert.match(route, /beginSignInAttempt\(username, signInClientAddress\(request\.headers\)\)/);
+  assert.match(route, /if \(!attempt\.allowed\) \{\n\s+return html\(returnTo, 'Too many sign-in attempts\. Try again later\.'\);/);
+  assert.match(route, /if \(!user\) \{\n\s+return html\(returnTo, 'Invalid username or password\.'\);\n\s+\}\n\s+signInSucceeded\(attempt\);/);
+  assert.doesNotMatch(route, /id-login:/, 'the old per-address-and-username key is gone');
+  const store = readFileSync(join(root, 'src/lib/identity/store.ts'), 'utf8');
+  assert.match(store, /if \(!user\) \{\n\s+verifyPassword\(password, UNKNOWN_USER_HASH\);/, 'an unknown user costs the same scrypt');
+});

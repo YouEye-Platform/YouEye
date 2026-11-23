@@ -810,6 +810,8 @@ async function runHealthChecks(): Promise<void> {
     // Every tick: service health + container watchdog
     await checkServiceHealth();
     await checkContainerWatchdog();
+    // Caddy's proxy devices never send PROXY headers to a server without the wrappers (YE-134).
+    await (await import('@/lib/caddy/client-address')).checkClientAddressDevices();
 
     // Every 5 ticks: disk + memory
     if (tickCount % DISK_CHECK_INTERVAL_TICKS === 0) {

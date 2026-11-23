@@ -27,7 +27,8 @@ test('direct manifests become instance-local Market entries and open the normal 
   assert.match(await source('src/components/market/install-dialog.tsx'), /I trust this source and want to install it/);
   assert.match(catalog, /listDirectMarketAppViews/);
   assert.match(detail, /getDirectMarketApp/);
-  assert.match(marketPage, /section === 'added'/);
+  assert.match(marketPage, /const added = apps\.filter\(\(app\) => app\.sourceId\?\.startsWith\('direct:'\)\)/);
+  assert.match(marketPage, /\(category === 'added' \? added : unique\)/);
 });
 
 test('direct entries install through the normal engine and remain removable only when uninstalled', async () => {

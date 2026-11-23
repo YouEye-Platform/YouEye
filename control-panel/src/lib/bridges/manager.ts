@@ -220,6 +220,28 @@ async function computeInternetProxyScopes(appId: string): Promise<Array<Record<s
   }
 }
 
+/**
+ * The stored UI projection differs from the desired one: a read-only audit cannot repair it, the caller repairs it
+ * under the app's lifecycle admission. Expected drift, not a failure.
+ */
+export class UIProjectionDriftError extends Error {
+  constructor(appId: string) {
+    super(`UI connection projection for ${appId} requires an admitted repair`);
+    this.name = 'UIProjectionDriftError';
+  }
+}
+
+/**
+ * The connections an app's UI row lists: the ones it consumes (it is `from`), plus both-ways network connections
+ * where it is the provider (`to`), which let it reach the consumer back. A one-way connection, and any scoped-proxy
+ * connection, gives the provider nothing to call. The activate, deactivate and delete paths push the `to` side only
+ * for both-ways connections, so this is the same rule.
+ */
+export function projectedBridgesFor(appId: string, bridges: Bridge[]): Bridge[] {
+  return bridges.filter((bridge) => bridge.active && (bridge.from === appId
+    || (bridge.to === appId && bridge.direction === 'both-ways' && isNetworkConnection(bridge))));
+}
+
 export async function pushConnectionsToUI(appId: string, options: { required?: boolean; observed?: unknown; auditOnly?: boolean } = {}): Promise<void> {
   try {
     if (!_bridgeToken) {
@@ -230,13 +252,17 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
     }
     if (!_uiIP || !_bridgeToken) throw new Error('UI connection projection authority unavailable');
 
-    const bridges = await getBridgesForApp(appId);
-    const activeBridges = bridges.filter(b => b.active);
+    const activeBridges = projectedBridgesFor(appId, await getBridgesForApp(appId));
 
     // Resolve IPs for active bridges
     const resolved = await Promise.all(
       activeBridges.map(async (b) => {
-        const targetId = b.from === appId ? b.to : b.from;
+        if (b.from !== appId) {
+          // The provider's side of a both-ways network connection: the consumer's address, nothing to proxy.
+          return { ...(await peerAddress(b.from)), appId: b.from, name: b.from, accessMode: 'network',
+            direction: b.direction, active: b.active };
+        }
+        const targetId = b.to;
         const meta = await readInstallMetadata(targetId);
         // For multi-container apps, find the primary container (named "main" or "server"),
         // not just the first one (which may be a sidecar like Redis).
@@ -247,7 +273,9 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
         let transport;
         if (b.url && (b.accessMode === 'proxy' || b.accessMode === 'caddy')) {
           const hostname = meta?.subdomain && meta.domain ? `${meta.subdomain}.${meta.domain}` : '';
-          if (!hostname || b.url !== `https://${hostname}`) throw new Error('Scoped proxy hostname differs from installed target');
+          if (!hostname || b.url !== `https://${hostname}`) {
+            throw new Error(`Scoped proxy hostname of connection ${b.id} differs from the installed target ${targetId}`);
+          }
           const [address, ca] = await Promise.all([
             getIncusContainerIP('youeye-caddy'),
             incusDownloadFile('youeye-caddy', '/data/caddy/pki/authorities/local/root.crt'),
@@ -295,7 +323,7 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
     // cross-pass remembered success can hide a UI restart or external change.
     if (sameConnectionProjection(options.observed, { bridges: resolved, internet: payload.internet, available })) return;
 
-    if (options.auditOnly) throw new Error('UI projection requires an admitted repair');
+    if (options.auditOnly) throw new UIProjectionDriftError(appId);
 
     const response = await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
       method: 'POST',
@@ -306,11 +334,22 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error('UI connection projection was not accepted');
-  } catch {
-    if (options.required || options.auditOnly) throw new Error('Current UI connection projection could not be verified');
+  } catch (error) {
+    if (error instanceof UIProjectionDriftError) throw error;
+    if (options.required || options.auditOnly) {
+      throw new Error('Current UI connection projection could not be verified', { cause: error });
+    }
     // Non-fatal — UI might not have the endpoint yet during upgrades
-    console.warn(`[bridges] Failed to push connections to UI for ${appId}`);
+    console.warn(`[bridges] Failed to push connections to UI for ${appId}: ${describeErrorChainForLog(error)}`);
   }
+}
+
+/** An app's primary container address and port, as a connection entry lists it. */
+async function peerAddress(appId: string): Promise<{ host: string; port: number }> {
+  const primary = primaryContainer(await readInstallMetadata(appId));
+  const containerName = primary?.containerName || `app-${appId}`;
+  const ip = await getIncusContainerIP(containerName);
+  return { host: ip || containerName, port: primary?.port || 8080 };
 }
 
 /**
@@ -634,6 +673,59 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
 }
 
 /**
+ * Change a connection's direction. On an active network connection the provider's grant to reach the consumer back
+ * is added (both-ways) or revoked (one-way) first, then the record changes, then both sides' UI rows are pushed (the
+ * provider's row gains or loses its entry). A scoped-proxy connection has no reverse grant; only its record changes.
+ * Runs under the same admission as activate and deactivate.
+ */
+export async function setBridgeDirection(bridgeId: string, direction: Bridge['direction']): Promise<Bridge | null> {
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-direction', null, async () => {
+    const bridge = await getBridge(bridgeId);
+    if (!bridge) return null;
+    if (bridge.direction === direction) return bridge;
+    // The provider's grant to reach the consumer is one NIC and ACL per (container, target app): another active
+    // connection the other way may hold the same one, and then it is neither added nor taken away here.
+    const reverseGrant = bridge.active && isNetworkConnection(bridge)
+      && !(await networkGrantNeededElsewhere(bridge.to, bridge.from, bridgeId));
+    const fromContainer = reverseGrant ? await resolveContainerName(bridge.from) : '';
+    const toContainer = reverseGrant ? await resolveContainerName(bridge.to) : '';
+    const grant = () => grantBridgeAccess(toContainer, bridge.from, fromContainer);
+    const revoke = () => revokeBridgeAccess(toContainer, bridge.from);
+    try {
+      if (reverseGrant) await (direction === 'both-ways' ? grant() : revoke());
+      const updated = await updateBridge(bridgeId, { direction });
+      if (updated?.direction !== direction) throw new Error('Bridge record did not take the new direction');
+      if (updated.active) {
+        pushConnectionsToUI(updated.from).catch(() => {});
+        pushConnectionsToUI(updated.to).catch(() => {});
+      }
+      return updated;
+    } catch (error) {
+      // Put the grant back as the unchanged record describes it (a revoke can fail halfway, a grant cleans up
+      // after itself but is undone here too).
+      if (reverseGrant) {
+        try {
+          await (direction === 'both-ways' ? revoke() : grant());
+        } catch (rollback) {
+          console.error(`[bridges] Restoring the reverse grant of ${bridgeId} failed: ${describeErrorChainForLog(rollback)}`);
+        }
+      }
+      throw new Error(`Changing the direction of ${bridgeId} failed`, { cause: error });
+    }
+  });
+}
+
+/**
+ * Whether another active network connection than `exceptBridgeId` needs app `appId` to reach app `targetAppId`:
+ * one from `appId` to `targetAppId`, or a both-ways one from `targetAppId` to `appId`. Both use the same NIC and ACL.
+ */
+async function networkGrantNeededElsewhere(appId: string, targetAppId: string, exceptBridgeId: string): Promise<boolean> {
+  return (await loadBridges()).some((other) => other.id !== exceptBridgeId && other.active && isNetworkConnection(other)
+    && ((other.from === appId && other.to === targetAppId)
+      || (other.direction === 'both-ways' && other.from === targetAppId && other.to === appId)));
+}
+
+/**
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
@@ -655,8 +747,11 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
   if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
     await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
   } else {
-    await revokeBridgeAccess(fromContainer, bridge.to);
-    if (bridge.direction === 'both-ways') {
+    // A grant another active connection still uses (a connection the other way) stays.
+    if (!(await networkGrantNeededElsewhere(bridge.from, bridge.to, bridgeId))) {
+      await revokeBridgeAccess(fromContainer, bridge.to);
+    }
+    if (bridge.direction === 'both-ways' && !(await networkGrantNeededElsewhere(bridge.to, bridge.from, bridgeId))) {
       await revokeBridgeAccess(toContainer, bridge.from);
     }
   }

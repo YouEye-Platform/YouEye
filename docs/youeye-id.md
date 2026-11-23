@@ -32,7 +32,15 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
   [app-admission.md](app-admission.md)). A refusal answers 409 `disposition_required` with its reason. Every user
   has a reserved data namespace in each app that declares per-user data (the six bundled apps do), so deleting one
   needs `youeye user delete <user> --retain-data` (`?retainData=true`), which retains that data first.
-- The sign-in page is `/identity/login`. It allows 10 attempts per IP and username per 15 minutes.
+- The sign-in page is `/identity/login`. Failed sign-ins are limited (`lib/identity/sign-in-limit.ts`, in memory, a
+  Control Panel restart clears them): 10 per username in 15 minutes from any address, which locks that username
+  until the window ends, and 30 per client address in 15 minutes across usernames. Loopback is not a client address:
+  until Caddy's proxy devices send the real client ([architecture.md](architecture.md#networks)), every client is
+  `127.0.0.1`, and a limit on it would lock everyone out. A success clears the username's count and gives the
+  address its attempt back; a refused attempt counts against nothing. The address is the first `X-Forwarded-For`
+  entry: through Caddy that is the client, but an app calling YouEye ID through its doorway can send any value, so
+  only the per-username limit holds against an app. Unknown usernames are limited and answered
+  exactly like real ones, and cost the same password hash.
 
 ## Clients
 
@@ -147,7 +155,7 @@ Each installed app has one admission policy (`shared/admission.ts`, `lib/admissi
   shows it pre-selected and applies it once the app is healthy (audited as `public_access_at_install`). Apps from
   added sources or URLs, and bundle members, install without it.
 - Inactive or deleted users are always refused. Pending, quarantined, malformed or missing policies refuse.
-- Change it in the app's Market settings or with `GET`/`PUT /api/market/apps/<id>/access` (admin, CSRF, current
+- Change it in Settings → Apps → the app → Who can use it, or with `GET`/`PUT /api/market/apps/<id>/access` (admin, CSRF, current
   revision). The old forward-auth toggle `POST /api/market/forward-auth` is refused (`409`).
 - The core clients only need an active user. A client with no admission mapping is refused.
 

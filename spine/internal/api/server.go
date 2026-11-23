@@ -116,17 +116,19 @@ type Server struct {
 	coreStatePath        string
 	sourceTree           string
 	coreBootstrapPath    string
-	version              string
-	socketPath           string
-	mux                  *http.ServeMux
-	cfg                  *config.Config
-	authLimiter          *authRateLimiter
-	runtimeDetect        func() (appliance.RuntimeStatus, *appliance.Manifest, error)
-	systemUpdate         systemUpdateService
-	remoteAccess         remoteAccessService
-	consoleAccess        consoleAccessService
-	networkStatus        networkStatusService
-	controlRestart       *controlRestarter
+	// firstDeployCompletePath replaces systemupdate.FirstDeployCompletePath in tests.
+	firstDeployCompletePath string
+	version                 string
+	socketPath              string
+	mux                     *http.ServeMux
+	cfg                     *config.Config
+	authLimiter             *authRateLimiter
+	runtimeDetect           func() (appliance.RuntimeStatus, *appliance.Manifest, error)
+	systemUpdate            systemUpdateService
+	remoteAccess            remoteAccessService
+	consoleAccess           consoleAccessService
+	networkStatus           networkStatusService
+	controlRestart          *controlRestarter
 
 	// Status cache — avoids shelling out on every request
 	statusMu     sync.Mutex

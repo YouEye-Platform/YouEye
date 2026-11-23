@@ -20,12 +20,10 @@ test('Switch primitive exists, dependency-free, shadcn-compatible API', () => {
   assert.doesNotMatch(sw, /from ["']@radix-ui\/react-switch["']/);
 });
 
-test('Network page has three tabs: DNS / Routes / Domain & HTTPS', () => {
+test('Network page has three tabs, the address first: Address & HTTPS / DNS & ad blocking / Routes', () => {
   const c = read('src/components/settings-shell/network-client.tsx');
-  assert.match(c, /"dns"\s*\|\s*"routes"\s*\|\s*"domain"/);
-  assert.match(c, /label:\s*"DNS"/);
-  assert.match(c, /label:\s*"Routes"/);
-  assert.match(c, /label:\s*"Domain & HTTPS"/);
+  assert.match(read('src/components/settings-shell/network-tabs.ts'), /"address"\s*\|\s*"dns"\s*\|\s*"routes"/);
+  assert.match(c, /\{ id: "address", label: t\("tabs\.address"\) \},\s*\{ id: "dns", label: t\("tabs\.dns"\) \},\s*\{ id: "routes"/);
   // tab initial state derived synchronously (no flash — pitfall #21)
   assert.match(c, /useState<NetworkTab>\(\(\)\s*=>/);
 });

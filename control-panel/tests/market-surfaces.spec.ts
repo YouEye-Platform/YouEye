@@ -33,7 +33,8 @@ test('Market app manifests support unified app surfaces', () => {
 test('installed app manifests are re-synced into UI from their frozen copy', () => {
   const sync = read('src/lib/market/ui-manifest-sync.ts');
   const route = read('src/app/api/market/app/[appId]/manifest-sync/route.ts');
-  const detailPage = read('src/app/market/[appId]/page.tsx');
+  // Reading the manifest again is managing an installed app: Settings → Apps (the Market is a store).
+  const manage = read('src/components/market/app-management.tsx');
 
   // Installed apps are read from their frozen copy, never the live catalog.
   assert.match(sync, /readInstalledAppManifest\(appId\)/);
@@ -48,9 +49,10 @@ test('installed app manifests are re-synced into UI from their frozen copy', () 
   assert.match(route, /session\?\.isAdmin/);
   assert.match(route, /syncInstalledAppManifestToUI\(appId\)/);
 
-  assert.match(detailPage, /handleSyncManifest/);
-  assert.match(detailPage, /\/api\/market\/app\/\$\{encodeURIComponent\(app\.id\)\}\/manifest-sync/);
-  assert.match(detailPage, /Sync manifest/);
+  assert.match(manage, /const syncManifest = async/);
+  assert.match(manage, /\/api\/market\/app\/\$\{encodeURIComponent\(appId\)\}\/manifest-sync/);
+  assert.match(manage, /onClick=\{syncManifest\}/);
+  assert.match(manage, /Sync manifest/);
 });
 
 test('app surfaces compile into the dashboard surface model', () => {

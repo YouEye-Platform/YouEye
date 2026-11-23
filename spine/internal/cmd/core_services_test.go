@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -325,7 +326,7 @@ func TestCoreSelectionFollowsProtectedPolicy(t *testing.T) {
 	if err != nil || selection != want {
 		t.Fatalf("selection = %+v, %v; want %+v", selection, err, want)
 	}
-	if _, err := setReleaseChannel(deploymentPolicyPath, "beta"); err != nil {
+	if _, err := systemupdate.SetReleaseSource(context.Background(), systemupdate.ReleaseSourceChange{PolicyPath: deploymentPolicyPath, Channel: "beta"}); err != nil {
 		t.Fatal(err)
 	}
 	want.Channel = "beta"

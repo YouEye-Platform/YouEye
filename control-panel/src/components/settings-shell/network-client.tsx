@@ -1,13 +1,14 @@
 "use client";
 
 import { PageHeader } from "./page-header";
+import { networkTabFromParam, type NetworkTab } from "./network-tabs";
 
 import { useLocale } from "next-intl";
 import { useTranslations as useInterfaceTranslations } from "next-intl";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Shield, ShieldOff, Globe, Route as RouteIcon, Plus, Trash2, Loader2, RefreshCw,
-  Check, X, AlertTriangle, ChevronRight, Cloud, Info, KeyRound,
+  Shield, ShieldOff, Plus, Trash2, Loader2, RefreshCw,
+  Check, X, AlertTriangle, ChevronRight, Cloud, KeyRound,
   Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-type NetworkTab = "dns" | "routes" | "domain";
 
 interface DnsStats { status: string; domainsBlocked: number; queriesToday: number; adsBlockedToday: number; adsPercentage: number; }
 interface Adlist { address: string; comment: string; enabled: boolean; type: string; number?: number; }
@@ -76,6 +76,9 @@ interface NamesStatus {
 }
 
 // FTL puts its status string in `reply`; treat gravity/deny/black/regex/block as blocked.
+/** Recent queries shown before "View all". */
+const RECENT_QUERIES = 8;
+const ALL_QUERIES = 100;
 const isBlockedReply = (reply: string) => /gravity|deny|black|regex|block/i.test(reply || "");
 const looksLikeIp = (v: string) => /^(\d{1,3}\.){3}\d{1,3}$/.test(v.trim()) || (v.includes(":") && /^[0-9a-fA-F:]+$/.test(v.trim()));
 const hostOnly = (value: string) => {
@@ -94,21 +97,20 @@ async function csrfHeaders(): Promise<Record<string, string>> {
 
 function tabClass(active: boolean) {
   return cn(
-    "-mb-px flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors",
+    "-mb-px flex min-h-11 shrink-0 items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4",
+    "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
     active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground",
   );
 }
 
 function tabFromSearch(): NetworkTab {
-  if (typeof window === "undefined") return "dns";
-  const tab = new URLSearchParams(window.location.search).get("tab");
-  if (tab === "routes" || tab === "domain") return tab;
-  if (tab === "tls") return "domain";
-  return "dns";
+  if (typeof window === "undefined") return "address";
+  return networkTabFromParam(new URLSearchParams(window.location.search).get("tab"));
 }
 
 export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsServer.network");
 
   // Initial tab derived synchronously (server passes it from searchParams) —
   // no default-then-sync flash (pitfall #21).
@@ -118,32 +120,35 @@ export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) 
     setActive(tab);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (tab === "dns") url.searchParams.delete("tab");
+    if (tab === "address") url.searchParams.delete("tab");
     else url.searchParams.set("tab", tab);
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
-  const tabs: { id: NetworkTab; label: string; icon: typeof Shield }[] = [
-    { id: "dns", label: "DNS", icon: Shield },
-    { id: "routes", label: translateInterface("m2c5b669bcdeb"), icon: RouteIcon },
-    { id: "domain", label: translateInterface("mf54c56a2bb3a"), icon: Globe },
+  // In order of importance: how the server is reached, then name lookups, then the advanced view.
+  const tabs: { id: NetworkTab; label: string }[] = [
+    { id: "address", label: t("tabs.address") },
+    { id: "dns", label: t("tabs.dns") },
+    { id: "routes", label: translateInterface("m2c5b669bcdeb") },
   ];
 
   return (
     <div>
-      <PageHeader title={translateInterface("m1744b96470b5")} description={translateInterface("m064ef230fb7a")} />
+      <PageHeader title={translateInterface("m1744b96470b5")} description={t("description")} />
 
-      <div className="mb-6 mt-6 flex items-center gap-1 overflow-x-auto border-b">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => selectTab(id)} className={tabClass(active === id)}>
-            <Icon className="h-4 w-4" />{label}
+      <div role="tablist" aria-label={translateInterface("m1744b96470b5")} className="mb-6 flex items-center gap-1 overflow-x-auto border-b">
+        {tabs.map(({ id, label }) => (
+          <button key={id} type="button" role="tab" id={`network-tab-${id}`} aria-selected={active === id} aria-controls="network-tabpanel" onClick={() => selectTab(id)} className={tabClass(active === id)}>
+            {label}
           </button>
         ))}
       </div>
 
-      {active === "dns" && <DnsPanel />}
-      {active === "routes" && <RoutesPanel />}
-      {active === "domain" && <DomainPanel />}
+      <div role="tabpanel" id="network-tabpanel" aria-labelledby={`network-tab-${active}`}>
+        {active === "address" && <DomainPanel />}
+        {active === "dns" && <DnsPanel />}
+        {active === "routes" && <RoutesPanel />}
+      </div>
     </div>
   );
 }
@@ -154,13 +159,14 @@ function DnsPanel() {
   const locale = useLocale();
 
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsServer.network");
 
   const [stats, setStats] = useState<DnsStats | null>(null);
   const [lists, setLists] = useState<Adlist[]>([]);
   const [aRecords, setARecords] = useState<ARecord[]>([]);
   const [cnames, setCnames] = useState<CnameRecord[]>([]);
   const [queries, setQueries] = useState<QueryRow[]>([]);
-  const [queryLimit, setQueryLimit] = useState(12);
+  const [queryLimit, setQueryLimit] = useState(RECENT_QUERIES);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -230,19 +236,19 @@ function DnsPanel() {
     <div className="space-y-6">
       {error && <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
 
-      {/* Stat row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* The switch and the day's figures: one group, 2×2 on a phone. */}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[.875rem] border bg-border lg:grid-cols-4">
+        <div className="min-w-0 bg-card p-4">
+          <div className="text-xs text-muted-foreground">{t("dns.adBlocking")}</div>
+          <div className="mt-1 flex items-center justify-between gap-3">
+            <span className="text-2xl font-bold tracking-tight">{blocking ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</span>
+            <Switch checked={!!blocking} disabled={busy === "blocking"} onCheckedChange={toggleBlocking} aria-label={translateInterface("mb7c8e60164f1")} />
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{blocking ? t("dns.blockingOn") : t("dns.blockingOff")}</div>
+        </div>
         <StatCard k={translateInterface("mbafd50b65999")} v={(stats?.queriesToday ?? 0).toLocaleString(locale)} d={translateInterface("mdfbd3085a1d4")} />
         <StatCard k={translateInterface("m18f2a0947f9d")} v={`${Number(stats?.adsPercentage ?? 0).toLocaleString(locale, {maximumFractionDigits: 0})}%`} d={translateInterface("mfaee534bf5d9", {count: stats?.adsBlockedToday ?? 0})} />
         <StatCard k={translateInterface("mdec55eff52c6")} v={(stats?.domainsBlocked ?? 0).toLocaleString(locale)} d={translateInterface("m25946dbb077a", {count: lists.length})} />
-        <div className="rounded-xl border bg-card p-4">
-          <div className="text-xs text-muted-foreground">{translateInterface("mf778a33133e5")}</div>
-          <div className="mt-1 flex items-center gap-3">
-            <span className="text-xl font-bold">{blocking ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</span>
-            <Switch checked={!!blocking} disabled={busy === "blocking"} onCheckedChange={toggleBlocking} aria-label={translateInterface("mb7c8e60164f1")} />
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">{translateInterface("m621200920682")}</div>
-        </div>
       </div>
 
       {/* Local names */}
@@ -257,17 +263,17 @@ function DnsPanel() {
         {lists.length === 0 ? (
           <Empty>{translateInterface("mcb13f911b67e")}</Empty>
         ) : lists.map((list) => (
-          <div key={list.address} className="flex items-center gap-3 border-t px-[18px] py-3 first:border-t-0">
+          <div key={list.address} className="flex min-w-0 items-center gap-3 border-t px-[18px] py-3">
             <div className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-muted text-muted-foreground">
               {list.enabled ? <Shield className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
             </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">{list.comment || list.address}</div>
-              <div className="truncate text-xs text-muted-foreground">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{list.comment || list.address}</div>
+              <div className="truncate text-xs tabular-nums text-muted-foreground">
                 {(list.number ?? 0).toLocaleString(locale)} {translateInterface("m1b0ec1954eec")}{list.enabled ? "" : translateInterface("m62a5b50f644f")}
               </div>
             </div>
-            <div className="ml-auto">
+            <div className="shrink-0">
               <Switch checked={list.enabled} disabled={busy === list.address} onCheckedChange={() => toggleList(list)} aria-label={translateInterface("ma388de157cab", { value0: String(list.comment || list.address) })} />
             </div>
           </div>
@@ -276,17 +282,17 @@ function DnsPanel() {
 
       {/* Recent queries */}
       <ListCard title={translateInterface("m164ca8d051af")} headerRight={
-        <button className="text-sm text-primary hover:underline" onClick={() => { const n = queryLimit >= 100 ? 12 : 100; setQueryLimit(n); loadQueries(n); }}>
-          {queryLimit >= 100 ? translateInterface("m94ea9b1d33a0") : translateInterface("m30a64216eaea")}
-        </button>
+        <Button variant="ghost" size="sm" className="-mr-2 text-primary hover:text-primary" aria-expanded={queryLimit >= ALL_QUERIES} onClick={() => setQueryLimit(queryLimit >= ALL_QUERIES ? RECENT_QUERIES : ALL_QUERIES)}>
+          {queryLimit >= ALL_QUERIES ? translateInterface("m94ea9b1d33a0") : translateInterface("m30a64216eaea")}
+        </Button>
       }>
         {queries.length === 0 ? <Empty>{translateInterface("m74924c38d7e4")}</Empty> : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m79fa33618d8e")}</th>
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6ba0bdeccb42")}</th>
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6e7d50e84f47")}</th>
+              <tr className="text-left text-xs text-muted-foreground">
+                <th className="px-[18px] py-2.5 font-medium">{translateInterface("m79fa33618d8e")}</th>
+                <th className="hidden px-[18px] py-2.5 font-semibold sm:table-cell">{translateInterface("m6ba0bdeccb42")}</th>
+                <th className="px-[18px] py-2.5 font-medium">{translateInterface("m6e7d50e84f47")}</th>
               </tr>
             </thead>
             <tbody>
@@ -294,11 +300,14 @@ function DnsPanel() {
                 const blocked = isBlockedReply(q.reply);
                 return (
                   <tr key={`${q.domain}-${q.timestamp}-${i}`} className="border-t">
-                    <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{q.domain}</td>
-                    <td className="px-[18px] py-2.5 text-muted-foreground">{q.client}</td>
-                    <td className="px-[18px] py-2.5">
+                    <td className="max-w-0 px-[18px] py-2.5">
+                      <span className="block truncate font-mono text-[12.5px] [overflow-wrap:normal]" title={q.domain}>{q.domain}</span>
+                      <span className="block text-xs text-muted-foreground sm:hidden">{q.client}</span>
+                    </td>
+                    <td className="hidden px-[18px] py-2.5 text-muted-foreground sm:table-cell">{q.client}</td>
+                    <td className="whitespace-nowrap px-[18px] py-2.5">
                       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                        <span className={cn("h-2 w-2 rounded-full", blocked ? "bg-destructive" : "bg-green-500")} />
+                        <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", blocked ? "bg-destructive" : "bg-green-500")} />
                         {blocked ? translateInterface("m18f2a0947f9d") : translateInterface("m1bb201d18835")}
                       </span>
                     </td>
@@ -363,30 +372,30 @@ function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: A
     }>
       {adding && (
         <div className="flex flex-wrap items-center gap-2 border-t bg-muted/30 px-[18px] py-3">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={translateInterface("m2bc675e44996")} className="h-9 w-48" />
-          <span className="text-muted-foreground">→</span>
-          <Input value={points} onChange={(e) => setPoints(e.target.value)} placeholder={translateInterface("mf4b4164b1c1b")} className="h-9 w-56" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={translateInterface("m2bc675e44996")} className="h-9 w-full min-w-0 sm:w-48" />
+          <span aria-hidden="true" className="hidden text-muted-foreground sm:inline">→</span>
+          <Input value={points} onChange={(e) => setPoints(e.target.value)} placeholder={translateInterface("mf4b4164b1c1b")} className="h-9 w-full min-w-0 sm:w-56" />
           <Button size="sm" className="h-9" disabled={busy || !name.trim() || !points.trim()} onClick={add}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{translateInterface("m9fd728c66c9a")}</Button>
-          <Button size="sm" variant="ghost" className="h-9" onClick={() => { setAdding(false); setName(""); setPoints(""); }}><X className="h-4 w-4" /></Button>
+          <Button size="sm" variant="ghost" className="h-9" aria-label={translateInterface("m19766ed6ccb2")} onClick={() => { setAdding(false); setName(""); setPoints(""); }}><X className="h-4 w-4" /></Button>
         </div>
       )}
       {rows.length === 0 && !adding ? <Empty>{translateInterface("maa576e18e487")}</Empty> : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <th className="px-[18px] py-2.5 font-semibold">{translateInterface("mdcd1d5223f73")}</th>
-              <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m6dca1c151c38")}</th>
+            <tr className="text-left text-xs text-muted-foreground">
+              <th className="px-[18px] py-2.5 font-medium">{translateInterface("mdcd1d5223f73")}</th>
+              <th className="px-[18px] py-2.5 font-medium">{translateInterface("m6dca1c151c38")}</th>
               <th className="px-[18px] py-2.5"></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={`${row.kind}-${row.name}-${row.points}`} className="border-t">
-                <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{row.name} {row.kind === "CNAME" && <Badge variant="secondary" className="ml-1 text-[10px]">{translateInterface("m1a0a6a36ca0a")}</Badge>}</td>
-                <td className="px-[18px] py-2.5 font-mono text-[12.5px] text-muted-foreground">{row.points}</td>
+                <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{dotBreaks(row.name)} {row.kind === "CNAME" && <Badge variant="secondary" className="ml-1 text-[10px]">{translateInterface("m1a0a6a36ca0a")}</Badge>}</td>
+                <td className="whitespace-nowrap px-[18px] py-2.5 font-mono text-[12.5px] text-muted-foreground [overflow-wrap:normal]">{row.points}</td>
                 <td className="px-[18px] py-2.5 text-right">
-                  <button className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => remove(row)} aria-label={translateInterface("mc3812fc4acb8")}><Trash2 className="h-4 w-4" /></button>
+                  <button className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring" disabled={busy} onClick={() => remove(row)} aria-label={translateInterface("mc3812fc4acb8")}><Trash2 className="h-4 w-4" /></button>
                 </td>
               </tr>
             ))}
@@ -401,6 +410,7 @@ function LocalNamesCard({ aRecords, cnames, onChanged, setError }: { aRecords: A
 
 function RoutesPanel() {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsServer.network");
 
   const [routes, setRoutes] = useState<ProxyRoute[]>([]);
   const [config, setConfig] = useState<unknown>(null);
@@ -422,17 +432,18 @@ function RoutesPanel() {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">{translateInterface("md345018f60c7")}</p>
+      <p className="max-w-[65ch] text-sm text-muted-foreground">{t("routes.intro")}</p>
       {error && <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
 
       <ListCard title={translateInterface("m0a1321f8d829")} headerRight={<Button variant="outline" size="sm" className="h-[30px]" onClick={load}><RefreshCw className="h-3.5 w-3.5" />{translateInterface("m0e9161011702")}</Button>}>
         {routes.length === 0 ? <Empty>{translateInterface("mdc16ccc1d689")}</Empty> : (
+          <div className="overflow-x-auto border-t">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("me301820ac839")}</th>
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m34780568209b")}</th>
-                <th className="px-[18px] py-2.5 font-semibold">{translateInterface("m920e413c7d41")}</th>
+              <tr className="text-left text-xs text-muted-foreground">
+                <th className="px-[18px] py-2.5 font-medium">{translateInterface("me301820ac839")}</th>
+                <th className="px-[18px] py-2.5 font-medium">{translateInterface("m34780568209b")}</th>
+                <th className="px-[18px] py-2.5 font-medium">{translateInterface("m920e413c7d41")}</th>
               </tr>
             </thead>
             <tbody>
@@ -440,9 +451,9 @@ function RoutesPanel() {
                 <tr key={r.id} className="border-t">
                   <td className="px-[18px] py-2.5 font-mono text-[12.5px]">{r.hostname ? r.hostname : ""}{r.path}</td>
                   <td className="px-[18px] py-2.5 font-mono text-[12.5px] text-muted-foreground">{r.upstream}:{r.port}</td>
-                  <td className="px-[18px] py-2.5">
+                  <td className="whitespace-nowrap px-[18px] py-2.5">
                     <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                      <span className={cn("h-2 w-2 rounded-full", r.enabled ? "bg-green-500" : "bg-muted-foreground")} />
+                      <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", r.enabled ? "bg-green-500" : "bg-muted-foreground")} />
                       {r.enabled ? translateInterface("m92340695899b") : translateInterface("m75081b593d15")}
                     </span>
                   </td>
@@ -450,13 +461,14 @@ function RoutesPanel() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </ListCard>
 
       {config != null && (
-        <details className="rounded-xl border bg-card">
-          <summary className="flex cursor-pointer items-center gap-2 px-[18px] py-3 text-sm font-medium text-muted-foreground">
-            <ChevronRight className="h-4 w-4" />{translateInterface("m7c25236d700d")}</summary>
+        <details className="group overflow-hidden rounded-[.875rem] border bg-card">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-[18px] py-3 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />{t("routes.rawConfig")}</summary>
           <pre className="max-h-96 overflow-auto border-t bg-muted/40 p-4 text-[11.5px] leading-relaxed">{JSON.stringify(config, null, 2)}</pre>
         </details>
       )}
@@ -468,6 +480,8 @@ function RoutesPanel() {
 
 function DomainPanel() {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsServer.network");
+  const importInput = useRef<HTMLInputElement>(null);
 function stepLabel(step: string): string {
   const labels: Record<string, string> = {
     config: translateInterface("m3acf25773311"),
@@ -777,13 +791,14 @@ function stepLabel(step: string): string {
   const connection = provider?.connection || null;
 
   return (
-    <div className="space-y-6">
-      {error && <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
+    <div>
+      {error && <div role="alert" className="mb-6 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
 
+      <div className="divide-y">
       {/* Server URL */}
-      <div className="rounded-xl border bg-card p-[22px]">
-        <h2 className="text-[15px] font-semibold">{translateInterface("m22f5ebc3ad3f")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{translateInterface("mffd4ce83bfb4")}</p>
+      <section className="py-7 first:pt-0 last:pb-0">
+        <h2 className="text-[15px] font-semibold">{t("address.title")}</h2>
+        <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">{translateInterface("mffd4ce83bfb4")}</p>
         {!caddyRunning && <p className="mt-3 text-sm text-destructive">{translateInterface("m62d3ab221aa0")}</p>}
 
         {(changeRunning || changeDone || progress.length > 0) ? (
@@ -824,7 +839,7 @@ function stepLabel(step: string): string {
           <div className="mt-4 space-y-4">
             <div className="space-y-1.5">
               <LabelText>{translateInterface("me84a0a9b3def")}</LabelText>
-              <Input value={edit} onChange={(e) => setEdit(e.target.value)} placeholder="my-server.example.com" className="h-9 w-72 font-mono" />
+              <Input value={edit} onChange={(e) => setEdit(e.target.value)} placeholder="my-server.example.com" className="h-9 w-full max-w-sm font-mono" spellCheck={false} autoCapitalize="none" autoCorrect="off" />
             </div>
             <div className="space-y-2">
               <LabelText>{translateInterface("mfa7d2d5339ae")}</LabelText>
@@ -860,44 +875,84 @@ function stepLabel(step: string): string {
             )}
           </div>
         ) : (
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm">{domain || <span className="text-muted-foreground">{translateInterface("m4895f73177ab")}</span>}</span>
-            {caddyRunning && <Button size="sm" variant="outline" className="h-8" onClick={() => { setEditing(true); setConfirming(false); }}>{translateInterface("mc0bf75bd78bf")}</Button>}
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="min-w-0 font-mono text-base font-medium">{domain ? dotBreaks(domain) : <span className="font-sans text-sm font-normal text-muted-foreground">{translateInterface("m4895f73177ab")}</span>}</span>
             {caddyRunning && (
-              <label className="inline-flex">
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setEditing(true); setConfirming(false); }}>{t("address.change")}</Button>
                 <input
+                  ref={importInput}
                   type="file"
                   accept=".json,application/json"
                   className="hidden"
+                  tabIndex={-1}
+                  aria-hidden="true"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     e.target.value = "";
                     if (f) importBundleFile(f);
                   }}
                 />
-                <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground">
-                  <Download className="h-3.5 w-3.5" />{translateInterface("m70c53e39ff16")}</span>
-              </label>
+                <Button size="sm" variant="outline" onClick={() => importInput.current?.click()}>
+                  <Download className="h-3.5 w-3.5" />{t("address.import")}</Button>
+              </div>
             )}
           </div>
         )}
-        {saved && <p className="mt-2 text-sm text-green-600 dark:text-green-500">{saved}</p>}
-      </div>
+        {saved && <p role="status" className="mt-3 flex items-center gap-1.5 text-sm text-green-700 dark:text-green-500"><Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{saved}</p>}
+      </section>
+
+      {/* HTTPS / certificate */}
+      <section className="py-7 first:pt-0 last:pb-0">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="min-w-0 text-[15px] font-semibold">{translateInterface("m46743144dbd6")}</h2>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={load}><RefreshCw className="h-3.5 w-3.5" />{translateInterface("m0e9161011702")}</Button>
+        </div>
+        {tls?.expiryWarning && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600 dark:text-amber-500">
+            <AlertTriangle className="h-4 w-4" />{translateInterface("mf13ecb7b4f12")}</div>
+        )}
+        {internalCert ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{translateInterface("md5859dc61619")}</span> {translateInterface("m30c4faa696f0")}</p>
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 text-sm lg:grid-cols-3">
+            <Field label={translateInterface("m5e23ec6a300d")} value={tls?.mode} />
+            <Field label={translateInterface("m39e02c46a083")} value={tls?.cert?.issuer || "—"} />
+            <Field label={translateInterface("m0221e4875188")} value={fmtDate(tls?.cert?.issuedAt)} />
+            <Field label={translateInterface("mf6725f3af08a")} value={fmtDate(tls?.cert?.expiresAt)} />
+            <Field label={translateInterface("mc9b6b4f84e1b")} value={fmtDateTime(connection?.nextCertRenewalDueAt)} />
+          </div>
+        )}
+        {connection && !internalCert && (
+          <div className="mt-4">
+            <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={renewProvider}>
+              {providerBusy === "renew" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{translateInterface("m905758c33c19")}</Button>
+          </div>
+        )}
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium">{translateInterface("mf5ead1dc7b5e")}</p>
+          <div className="flex flex-wrap gap-2">
+            {(tls?.subjects?.length ?? 0) > 0 ? tls!.subjects.map((s) => <Badge key={s} variant="secondary" className="font-mono text-[11px]">{s}</Badge>)
+              : <span className="text-sm text-muted-foreground">{domain ? translateInterface("me540c1d7d757", { value0: String(domain) }) : translateInterface("m09102598e995")}</span>}
+          </div>
+        </div>
+      </section>
 
       {/* YouEye Names lifecycle */}
       {names?.state && (
-        <div className="rounded-xl border bg-card p-[22px]">
+        <section className="py-7 first:pt-0 last:pb-0">
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <h2 className="text-[15px] font-semibold">YouEye Names</h2>
               <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m62c7b29e5345")}</p>
             </div>
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium capitalize">
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium capitalize">
               <span className={cn("h-2 w-2 rounded-full", names.state.status === "healthy" ? "bg-green-500" : names.state.status === "renewing" ? "bg-blue-500" : names.state.status === "released" ? "bg-muted-foreground" : "bg-amber-500")} />
               {names.state.status}
             </span>
           </div>
-          <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
             <Field label={translateInterface("me072e717efb8")} value={names.state.fqdn} />
             <Field label={translateInterface("m1e73119d93c5")} value={names.state.certificate ? fmtDate(names.state.certificate.expiresAt) : "Provisioning"} />
             <Field label={translateInterface("m13df778140fb")} value={fmtDateTime(names.state.lastBrokerContactAt)} />
@@ -964,27 +1019,26 @@ function stepLabel(step: string): string {
               <summary className="cursor-pointer text-sm font-medium text-destructive">{translateInterface("me1b42a6ea639")}</summary>
               <p className="mt-2 text-xs text-muted-foreground">{translateInterface("m149948b72bd2")}</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Input value={releaseConfirmation} onChange={(event) => setReleaseConfirmation(event.target.value)} placeholder={translateInterface("m22cb95ffdcc8", { value0: String(names.state.fqdn) })} className="h-8 max-w-xs font-mono text-xs" />
+                <Input value={releaseConfirmation} onChange={(event) => setReleaseConfirmation(event.target.value)} placeholder={translateInterface("m22cb95ffdcc8", { value0: String(names.state.fqdn) })} className="h-8 w-full min-w-0 max-w-xs font-mono text-xs" spellCheck={false} autoCapitalize="none" autoCorrect="off" />
                 <Button size="sm" variant="destructive" className="h-8" disabled={!!namesBusy || releaseConfirmation !== names.state.fqdn} onClick={releaseNamesAddress}>
                   {namesBusy === "release" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{translateInterface("m85f01282f316")}</Button>
               </div>
             </details>
           )}
-        </div>
+        </section>
       )}
 
       {/* DNS provider */}
-      <div className="rounded-xl border bg-card p-[22px]">
+      <section className="py-7 first:pt-0 last:pb-0">
         <div className="flex items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <h2 className="text-[15px] font-semibold">{translateInterface("mc36f66f44922")}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{translateInterface("meae33134a906")}</p>
           </div>
-          <Cloud className="h-5 w-5 text-muted-foreground" />
         </div>
         {connection ? (
           <div className="mt-4 space-y-4">
-            <div className="grid gap-4 text-sm sm:grid-cols-2">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
               <Field label={translateInterface("m472590ae974d")} value={connection.provider === "cloudflare" ? "Cloudflare" : connection.provider} />
               <Field label={translateInterface("ma8a06e4a5695")} value={connection.zoneName} />
               <Field label={translateInterface("md35e1d8c6c2b")} value={connection.targetIp || "—"} />
@@ -1035,65 +1089,24 @@ function stepLabel(step: string): string {
           </div>
         ) : (
           <div className="mt-4 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2">
+              <div className="min-w-0 space-y-1.5">
                 <LabelText>{translateInterface("m79fa33618d8e")}</LabelText>
-                <Input value={providerDomain} onChange={(e) => setProviderDomain(e.target.value)} placeholder="home.example.com" className="h-9 font-mono" />
+                <Input value={providerDomain} onChange={(e) => setProviderDomain(e.target.value)} placeholder="home.example.com" className="h-9 font-mono" spellCheck={false} autoCapitalize="none" autoCorrect="off" />
               </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <LabelText>{translateInterface("m79644cb9aff4")}</LabelText>
-                  <span className="group relative inline-flex">
-                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="pointer-events-none absolute right-0 z-10 mt-5 hidden w-72 rounded-xl border bg-popover p-3 text-xs text-popover-foreground shadow-lg group-hover:block">
-                      {translateInterface("m7b3d43e16861")}</span>
-                  </span>
-                </div>
-                <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder={translateInterface("m67fa416afa64")} className="h-9" />
+              <div className="min-w-0 space-y-1.5">
+                <LabelText>{translateInterface("m79644cb9aff4")}</LabelText>
+                <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder={translateInterface("m67fa416afa64")} className="h-9" autoComplete="off" spellCheck={false} />
               </div>
             </div>
+            <p className="max-w-[65ch] text-xs text-muted-foreground">{translateInterface("m7b3d43e16861")}</p>
             <Button size="sm" className="h-9" disabled={!providerDomain.trim() || !providerToken.trim() || !!providerBusy} onClick={connectProvider}>
               {providerBusy === "connect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
               {translateInterface("mdb69a1caf8b4")}</Button>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* HTTPS / certificate */}
-      <div className="rounded-xl border bg-card p-[22px]">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold">{translateInterface("m46743144dbd6")}</h2>
-          <Button variant="outline" size="sm" className="h-8" onClick={load}><RefreshCw className="h-3.5 w-3.5" />{translateInterface("m0e9161011702")}</Button>
-        </div>
-        {tls?.expiryWarning && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600 dark:text-amber-500">
-            <AlertTriangle className="h-4 w-4" />{translateInterface("mf13ecb7b4f12")}</div>
-        )}
-        {internalCert ? (
-          <p className="mt-3 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">{translateInterface("md5859dc61619")}</span> {translateInterface("m30c4faa696f0")}</p>
-        ) : (
-          <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-            <Field label={translateInterface("m5e23ec6a300d")} value={tls?.mode} />
-            <Field label={translateInterface("m39e02c46a083")} value={tls?.cert?.issuer || "—"} />
-            <Field label={translateInterface("m0221e4875188")} value={fmtDate(tls?.cert?.issuedAt)} />
-            <Field label={translateInterface("mf6725f3af08a")} value={fmtDate(tls?.cert?.expiresAt)} />
-            <Field label={translateInterface("mc9b6b4f84e1b")} value={fmtDateTime(connection?.nextCertRenewalDueAt)} />
-          </div>
-        )}
-        {connection && !internalCert && (
-          <div className="mt-4">
-            <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={renewProvider}>
-              {providerBusy === "renew" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{translateInterface("m905758c33c19")}</Button>
-          </div>
-        )}
-        <div className="mt-4">
-          <p className="mb-2 text-sm font-medium">{translateInterface("mf5ead1dc7b5e")}</p>
-          <div className="flex flex-wrap gap-2">
-            {(tls?.subjects?.length ?? 0) > 0 ? tls!.subjects.map((s) => <Badge key={s} variant="secondary" className="font-mono text-[11px]">{s}</Badge>)
-              : <span className="text-sm text-muted-foreground">{domain ? translateInterface("me540c1d7d757", { value0: String(domain) }) : translateInterface("m09102598e995")}</span>}
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -1104,11 +1117,16 @@ function stepLabel(step: string): string {
 /** Friendly labels for reconfigure SSE step keys (app_* → "App: <id>"). */
 
 
+/** A host name that wraps after its dots, never inside a label. */
+function dotBreaks(name: string) {
+  return name.split(".").map((part, i) => <Fragment key={i}>{i > 0 && <>.<wbr /></>}{part}</Fragment>);
+}
+
 function StatCard({ k, v, d }: { k: string; v: string; d: string }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="min-w-0 bg-card p-4">
       <div className="text-xs text-muted-foreground">{k}</div>
-      <div className="mt-1 text-2xl font-bold tracking-tight">{v}</div>
+      <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">{v}</div>
       <div className="mt-1 text-xs text-muted-foreground">{d}</div>
     </div>
   );
@@ -1116,9 +1134,9 @@ function StatCard({ k, v, d }: { k: string; v: string; d: string }) {
 
 function ListCard({ title, headerRight, children }: { title: string; headerRight?: ReactNode; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center justify-between px-[18px] py-3">
-        <h2 className="text-[15px] font-semibold">{title}</h2>
+    <section className="overflow-hidden rounded-[.875rem] border bg-card">
+      <div className="flex min-h-[52px] items-center justify-between gap-3 px-[18px] py-2">
+        <h2 className="min-w-0 text-[15px] font-semibold">{title}</h2>
         {headerRight}
       </div>
       {children}
@@ -1127,7 +1145,7 @@ function ListCard({ title, headerRight, children }: { title: string; headerRight
 }
 
 function Field({ label, value }: { label: string; value?: string }) {
-  return (<div><span className="text-muted-foreground">{label}</span><p className="font-medium">{value || "—"}</p></div>);
+  return (<div className="min-w-0"><span className="text-muted-foreground">{label}</span><p className="font-medium tabular-nums [overflow-wrap:anywhere]">{value || "—"}</p></div>);
 }
 
 function LabelText({ children }: { children: ReactNode }) {

@@ -1789,5 +1789,11 @@
   "sticker.colour.lock": "Lock colours",
   "sticker.colour.unlock": "Unlock colours",
   "sticker.colour.keep": "Keep colours",
-  "sticker.colour.keeping": "Keeping colours"
+  "sticker.colour.keeping": "Keeping colours",
+  "title.server.heading": "Your server's title",
+  "title.server.nameLabel": "What is your server called?",
+  "title.you.heading": "Your own title",
+  "title.you.nameLabel": "What should your title say?",
+  "title.app.heading": "This app's title",
+  "title.app.nameLabel": "What is this app called?"
 }

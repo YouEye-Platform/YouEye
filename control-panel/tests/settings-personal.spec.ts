@@ -12,17 +12,22 @@ function read(path: string): string {
   return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(repoRoot, path), "utf8")) : readFileSync(join(repoRoot, path), "utf8");
 }
 
-test('C2: settings nav has Personal + Administration section labels (Admin renamed)', () => {
+test('settings nav has the groups You and This server, in the redesign order', () => {
   const shell = read('src/components/settings-shell/settings-shell.tsx');
-  assert.match(shell, />\s*Personal\s*</);
-  assert.match(shell, />\s*Administration\s*</);
-  // The old "Admin" section header is gone (Administration does not match this).
-  assert.doesNotMatch(shell, />\s*Admin\s*</);
+  assert.equal(navigation.you, 'You');
+  assert.equal(navigation.thisServer, 'This server');
+  assert.match(shell, /group\("you", userSections\)/);
+  assert.match(shell, /group\("thisServer", adminSections\)/);
+  const ids = [...shell.matchAll(/\{ id: "([a-z]+)", icon: /g)].map((match) => match[1]);
+  assert.deepEqual(ids, ['profile', 'appearance', 'language', 'privacy', 'apps', 'ai', 'general', 'users', 'network', 'backup', 'system']);
+  for (const id of ids) assert.equal(typeof navigation.hint[id], 'string', `hint for ${id}`);
+  assert.equal(navigation.language, 'Language & region');
 });
 
-test('C2: active nav item uses the soft-blue accent, not shadcn gray bg-accent', () => {
+test('active nav item is a quiet filled row with the current-page mark, not shadcn gray bg-accent', () => {
   const shell = read('src/components/settings-shell/settings-shell.tsx');
-  assert.match(shell, /bg-primary\/5 text-primary/);
+  assert.match(shell, /"bg-muted text-foreground font-medium"/);
+  assert.match(shell, /aria-current=\{active/);
   assert.doesNotMatch(shell, /bg-accent text-accent-foreground/);
 });
 
@@ -35,28 +40,32 @@ test('C2: nav uses People (not Users) and Market is not in Settings (D9)', () =>
   assert.doesNotMatch(shell, /href:\s*"\/settings\/market"/);
 });
 
-test('C2: narrow Settings uses one compact role-gated navigation menu', () => {
+test('phone: /settings is the list of sections; a section leads back to it, a sub-page to its section', () => {
   const shell = read('src/components/settings-shell/settings-shell.tsx');
-  assert.match(shell, /className="md:hidden"/);
+  assert.match(shell, /className="space-y-6 md:hidden"/);
   assert.match(shell, /className="hidden w-full shrink-0 md:block md:w-52"/);
-  assert.match(shell, /aria-label="Open Settings navigation"/);
-  assert.match(shell, /DropdownMenuContent/);
-  assert.match(shell, /hasUserContext && \(/);
-  assert.match(shell, /isAdmin && \(/);
+  assert.match(shell, /<Link href="\/settings" className="settings-back">/);
+  assert.match(shell, /<Link href=\{parent\.href\} className="settings-back mb-2">/);
+  // Role-gated: personal sections need a user context, server sections an admin.
+  assert.match(shell, /hasUserContext \? \[\.\.\.USER_SECTIONS\] : \[\]/);
+  assert.match(shell, /isAdmin \? \[\.\.\.ADMIN_SECTIONS\] : \[\]/);
 });
 
-test('C2: Profile is built on shadcn primitives and matches the mockup copy', () => {
+test('Profile: photo and name, details, security rows; the time zone and the raw user ID are not in the form', () => {
   const profile = read('src/components/settings-shell/profile-client.tsx');
-  assert.match(profile, /from "@\/components\/ui\/card"/);
   assert.match(profile, /from "@\/components\/ui\/input"/);
   assert.match(profile, /from "@\/components\/ui\/button"/);
   assert.match(profile, /from "@\/components\/ui\/avatar"/);
   assert.match(profile, /Your account on this server/);
   assert.match(profile, />Details</);
-  assert.match(profile, /Choose icon/);
-  assert.match(profile, /Upload photo/);
+  assert.match(profile, /ProfileIconPicker/);
   assert.match(profile, /Save changes/);
-  assert.match(profile, /flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto/);
+  assert.match(profile, /Sign out everywhere/);
+  // The time zone is on Language & region; the profile PATCH no longer sends it.
+  assert.doesNotMatch(profile, /timezone/);
+  assert.match(profile, /body: JSON\.stringify\(\{ bio: local\.bio \}\)/);
+  // The user ID is only inside the folded account details.
+  assert.match(profile, /<details className="settings-details">[\s\S]*shownUserId[\s\S]*<\/details>/);
 });
 
 test('C2: Profile exposes real password management and no fabricated join date (pitfall #28)', () => {
@@ -67,27 +76,33 @@ test('C2: Profile exposes real password management and no fabricated join date (
   assert.doesNotMatch(profile, /joined|Joined/);
 });
 
-test('C2: Appearance header is the page H1 with the mockup subtitle; WordArt picker kept (D7)', () => {
+test('Appearance: mode first, then colour theme, then your title with the studio on its own page; no tabs', () => {
   const appearance = read('src/components/settings-shell/appearance-client.tsx');
-  assert.match(appearance, /<PageHeader title="Appearance" description="Make this server yours — wordmark, themes, and wallpaper" \/>/);
+  assert.match(appearance, /<PageHeader title="Appearance"/);
   assert.match(read('src/components/settings-shell/page-header.tsx'), /<h1[^>]*>\{title\}<\/h1>/);
-  assert.match(appearance, /Make this server yours/);
-  // D7: the WordArt picker remains (BrandingTabs renders it).
-  assert.match(appearance, /BrandingTabs/);
+  assert.ok(appearance.indexOf('id="appearance-mode"') < appearance.indexOf('id="appearance-theme"'));
+  assert.match(appearance, /<ModeAndTheme \/>\s*<YourTitle \/>/);
+  assert.match(appearance, /href="\/settings\/appearance\/title"/);
+  assert.doesNotMatch(appearance, /TitleStudio|tabClass|setTab\(|isAdmin/);
+  // The studio keeps both modes, each on its own page.
+  const studio = read('src/components/settings-shell/title-studio-client.tsx');
+  assert.match(studio, /uiSettingsApi\("wordart"\)/);
+  assert.match(studio, /fetch\("\/api\/ui\/branding", \{\s*method: "PUT"/);
+  assert.match(read('src/app/settings/(shell)/appearance/title/page.tsx'), /<TitleStudioClient mode="personal" \/>/);
 });
 
-test('C2: Language rebuilt to the two-card layout (Your language + Server default), not tabs', () => {
+test('Language & region: one list of languages, the time zone and derived formats; the server default left', () => {
   const lang = read('src/components/settings-shell/language-client.tsx');
-  assert.match(lang, /<PageHeader title="Language"/);
   assert.match(lang, /Your language/);
-  assert.match(lang, /Server default/);
-  assert.match(lang, /from "@\/components\/ui\/card"/);
+  assert.match(lang, /role="radiogroup"/);
+  // The time zone saves through the profile PATCH that Profile used.
+  assert.match(lang, /fetch\(uiSettingsApi\("profile"\), \{\s*method: "PATCH"/);
+  assert.match(lang, /body: JSON\.stringify\(\{ timezone: next \}\)/);
+  assert.match(lang, /<optgroup/);
   // Formats are derived from the locale (honest), not stored as fake editable fields.
   assert.match(lang, /Intl\.DateTimeFormat/);
   assert.match(lang, /formats follow your language/);
-  // The old tab UI is gone.
-  assert.doesNotMatch(lang, /setTab\(/);
-  assert.doesNotMatch(lang, /function tabClass/);
+  assert.doesNotMatch(lang, /\/api\/user\/language|isAdmin|setTab\(|function tabClass/);
 });
 
 test('C2: People page — complete user list + explicit person form + real Manage flow', () => {
@@ -101,7 +116,8 @@ test('C2: People page — complete user list + explicit person form + real Manag
   assert.doesNotMatch(people, />Sign-in</);
   assert.doesNotMatch(people, /Emergency local access/);
   assert.doesNotMatch(people, /showSystem|isSystemUser/);
-  assert.match(people, /from "@\/components\/ui\/card"/);
+  // One grouped list of people (soft Settings rows), not a card.
+  assert.match(people, /<ul className="settings-group">/);
   // Manage is a real backend flow (PATCH update, password reset, DELETE remove).
   assert.match(people, /userId\(manage\)/);
   assert.match(people, /method: "PATCH"/);
@@ -114,7 +130,9 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
   const sys = read('src/components/settings-shell/system-client.tsx');
   assert.match(sys, /<PageHeader title="System"/);
   assert.match(sys, /Your server at a glance/);
-  assert.match(sys, /from "@\/components\/ui\/card"/);
+  // One grouped list of services (soft Settings rows), not a card per view of them.
+  assert.match(sys, /<ul className="settings-group">/);
+  assert.doesNotMatch(sys, /SystemComponents/);
   // Human service names (D4 / skill copy rule — never raw component names as titles).
   assert.match(sys, /System core/);
   assert.match(sys, /Server interface/);
@@ -128,7 +146,7 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
   // The maintenance-window image-update flow is preserved (not broken by the redesign).
   assert.match(sys, /confirmMaintenanceWindow/);
   assert.match(sys, /system-updates/);
-  assert.match(sys, /href="\/settings\/system\/ssh"/);
+  assert.match(sys, /href: "\/settings\/system\/ssh"/);
   assert.doesNotMatch(sys, /UpdateChannels/);
 });
 

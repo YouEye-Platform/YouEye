@@ -105,3 +105,15 @@ export function normalizeAppSurfaces(manifest: Record<string, unknown> | null | 
   }
   return [...byKey.values()];
 }
+
+/**
+ * Whether the app has its own settings page, shown in Settings → Apps → the app. Apps declare it as the
+ * `settings_panel` capability (the Control Panel's frozen manifest) or as a `settings-panel` surface (the app's own
+ * /api/manifest, which the UI falls back to when a registration carries no frozen manifest). Settings described only
+ * by a schema are not a page and do not count.
+ */
+export function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
+  if (!manifest) return false;
+  return asRecord(manifest.capabilities)?.settings_panel === true
+    || normalizeAppSurfaces(manifest).some((surface) => surface.kind === "settings-panel");
+}

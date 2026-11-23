@@ -2495,7 +2495,6 @@
     "mb5be0abae288": "Collecte désactivée",
     "m391f41a0d510": "Choisissez si les applications prises en charge ajoutent de l’activité à votre chronologie chiffrée.",
     "ma584ca624d6e": "Déverrouillez l’historique chiffré avec votre code secret de chiffrement",
-    "m627ce14f7b75": "Dépôt : {repository}",
     "mb2585dff0f5d": "Cette box ne revient jamais à une version antérieure. Si vous passez à un canal en retard sur la version installée, elle attend que ce canal la rattrape.",
     "m970dd0475e19": "Cette box suit désormais le canal {channel}.",
     "m84d6732746f8": "Le canal n'a pas pu être modifié.",
@@ -2623,7 +2622,7 @@
     "appearance": "Apparence",
     "apps": "Applications",
     "ai": "IA",
-    "language": "Langue",
+    "language": "Langue et région",
     "users": "Personnes",
     "system": "Système",
     "network": "Réseau",
@@ -2633,7 +2632,26 @@
     "administration": "Administration",
     "open": "Ouvrir la navigation des paramètres",
     "privacy": "Confidentialité",
-    "title": "Paramètres"
+    "title": "Paramètres",
+    "signedInAs": "Connecté en tant que {username}",
+    "hint": {
+      "profile": "Photo, nom, mot de passe et connexion",
+      "appearance": "Clair ou sombre, couleurs et votre titre",
+      "privacy": "Votre chronologie et son verrou",
+      "apps": "Apps installées, mises à jour et accès",
+      "ai": "Votre assistant IA",
+      "language": "Langue, fuseau horaire et formats",
+      "users": "Comptes du foyer et invitations",
+      "system": "Mises à jour, état et accès à distance",
+      "network": "Adresse, YouEye Names et HTTPS",
+      "backup": "Disque de sauvegarde et points de restauration",
+      "about": "Version et licences",
+      "general": "Nom, adresse, version et réglages par défaut"
+    },
+    "you": "Vous",
+    "thisServer": "Ce serveur",
+    "general": "Général",
+    "back": "Retour"
   },
   "aiNavigation": {
     "models": "Modèles",
@@ -2654,5 +2672,429 @@
     "boundSelection": "Continuez avec le même disque, le même point de restauration et les mêmes applications. Saisissez à nouveau la clé ; les étapes terminées ne seront pas répétées.",
     "finish": "Terminer la restauration initiale",
     "resume": "Reprendre la restauration initiale"
+  },
+  "marketStore": {
+    "manageInSettings": "Gérer dans les Réglages",
+    "managedInSettings": "Mises à jour, accès et données : Réglages → Apps.",
+    "subtitle": "Des apps pour votre serveur. Tout tourne à la maison.",
+    "searchPlaceholder": "Chercher une app, ou ce qu’il vous faut",
+    "clearSearch": "Effacer la recherche",
+    "someMissing": "{count, plural, one {# app n’a pas pu être chargée} other {# apps n’ont pas pu être chargées}}. Les autres sont affichées.",
+    "featured": "À la une",
+    "seeApp": "Voir {app}",
+    "builtForHint": "Faites pour YouEye : elles utilisent votre compte et s’intègrent ici.",
+    "results": "Résultats pour « {query} »",
+    "categories": "Catégories",
+    "addedByAddress": "Ajoutées par adresse",
+    "noResults": "Aucune app ne correspond à « {query} ».",
+    "showAll": "Voir toutes les apps",
+    "notFound": "Il n’y a pas d’app « {app} » dans vos marchés.",
+    "by": "par {developer}",
+    "installed": "{app} est installée",
+    "installSteps": "Voir les étapes",
+    "done": "Terminé",
+    "screenshots": "Captures d’écran",
+    "about": "À propos",
+    "more": "Plus",
+    "less": "Moins",
+    "whatsNew": "Nouveautés",
+    "version": "Version {version}",
+    "tags": "Mots-clés",
+    "related": "Plus dans {category}",
+    "close": "Fermer",
+    "previous": "Précédente",
+    "next": "Suivante",
+    "facts": {
+      "signIn": "Connexion",
+      "signInAccount": "Votre compte {site}",
+      "signInGate": "D’abord {site}",
+      "signInOwn": "Ses propres comptes",
+      "access": "Qui peut l’ouvrir",
+      "accessUsers": "Utilisateurs de {site}",
+      "accessAnyone": "Toute personne ayant le lien",
+      "licence": "Licence",
+      "version": "Version"
+    },
+    "adds": {
+      "title": "Ce qu’elle ajoute à votre serveur",
+      "address": "Sa propre adresse",
+      "account": "Connexion avec votre compte {site}",
+      "accountHint": "Chacun utilise le compte qu’il a déjà ; personne n’a besoin d’un nouveau mot de passe.",
+      "gate": "Derrière la connexion {site}",
+      "gateHint": "On se connecte à {site} avant d’y accéder.",
+      "public": "Ouverte à toute personne ayant le lien",
+      "publicHint": "Elle a sa propre connexion.",
+      "widgets": "Widgets",
+      "widgetsHint": "Elle peut afficher des widgets sur votre page d’accueil {site}.",
+      "notifications": "Notifications",
+      "notificationsHint": "Elle peut vous envoyer des notifications dans {site}.",
+      "ai": "Utilise YouEye AI",
+      "aiHint": "Elle peut utiliser les modèles d’IA de Réglages → IA.",
+      "email": "E-mail",
+      "emailHint": "Elle envoie des e-mails avec les réglages de messagerie de votre serveur.",
+      "links": "Ouvre des liens",
+      "linksHint": "Certains types de liens peuvent s’ouvrir dans l’app.",
+      "surfaces": "Apparaît dans {site}",
+      "surfacesHint": "Son contenu apparaît à {count, plural, one {# endroit} other {# endroits}} dans {site}."
+    },
+    "links": {
+      "title": "Liens",
+      "website": "Site web",
+      "docs": "Documentation",
+      "support": "Aide",
+      "source": "Code source"
+    },
+    "install": {
+      "opensAt": "S’ouvre à {address}",
+      "access": "Qui peut l’utiliser",
+      "uses": "Ce qu’elle peut utiliser",
+      "options": "Nom, adresse et plus"
+    },
+    "seeAll": "Tout voir"
+  },
+  "systemPages": {
+    "services": {
+      "title": "Services et composants",
+      "description": "Les services de la plateforme, ce qu'ils utilisent et leurs images de conteneur.",
+      "hint": "Services de la plateforme, utilisation en direct et composants"
+    },
+    "machine": {
+      "title": "Cette machine",
+      "description": "Son adaptateur réseau et qui peut se connecter sur son propre écran.",
+      "hint": "Adaptateur réseau et connexion à la console"
+    },
+    "health": {
+      "hint": "Vérifications et réparations en un clic"
+    },
+    "ssh": {
+      "hint": "Clés pour l'accès SSH"
+    },
+    "ai": {
+      "hint": "Le service d'IA partagé par vos apps"
+    }
+  },
+  "settingsYou": {
+    "profile": {
+      "photoAndName": "Photo et nom",
+      "uploadPhoto": "Importer une photo…",
+      "chooseIcon": "Choisir une icône…",
+      "noEmail": "Non défini",
+      "usernameFixed": "Il vous sert à vous connecter. Il ne peut pas être modifié.",
+      "accountDetails": "Détails du compte",
+      "userId": "ID utilisateur"
+    },
+    "appearance": {
+      "description": "L'apparence de YouEye pour vous. Les changements sont enregistrés aussitôt.",
+      "mode": "Mode",
+      "modeSystemHint": "Suit le réglage clair ou sombre de l'appareil que vous utilisez.",
+      "theme": "Thème de couleurs",
+      "themeHint": "Les couleurs de votre écran d'accueil et de vos applications.",
+      "yourTitle": "Votre titre",
+      "titleOwn": "Vous avez votre propre titre",
+      "titleServer": "Vous voyez le titre du serveur",
+      "titleHint": "Le titre en haut de vos écrans. Vous seul voyez le vôtre.",
+      "useServerTitle": "Utiliser le titre du serveur",
+      "customise": "Personnaliser…"
+    },
+    "title": {
+      "personalTitle": "Votre titre",
+      "personalOwn": "Vous seul voyez ce titre. Les autres gardent celui du serveur ou le leur.",
+      "personalFollowing": "Vous voyez actuellement le titre du serveur. Enregistrez ici un design pour avoir le vôtre ; rien ne change pour les autres.",
+      "serverTitle": "Nom et titre du serveur",
+      "serverDescription": "Le nom et le titre que tout le monde voit, sauf ceux qui ont créé le leur.",
+      "savePersonal": "Enregistrer mon titre",
+      "saveServer": "Enregistrer pour tous",
+      "useServerTitle": "Utiliser le titre du serveur"
+    },
+    "language": {
+      "title": "Langue et région",
+      "description": "Votre langue, votre fuseau horaire et vos formats. Cela ne concerne que vous.",
+      "serverDefault": "Langue du serveur",
+      "region": "Région",
+      "timezone": "Fuseau horaire",
+      "timezoneHint": "Utilisé pour les heures que vous voyez.",
+      "timezoneOther": "Autres",
+      "timezoneDevice": "Cet appareil est dans le fuseau {zone}.",
+      "timezoneUseDevice": "Utiliser le fuseau horaire de cet appareil",
+      "timezoneSaved": "Fuseau horaire enregistré.",
+      "timezoneSaveFailed": "Impossible d'enregistrer le fuseau horaire. Réessayez.",
+      "timezoneLoadFailed": "Impossible de charger votre fuseau horaire. Celui de cet appareil est affiché.",
+      "formats": "Formats",
+      "loading": "Chargement…"
+    },
+    "privacy": {
+      "description": "Ce que votre chronologie conserve, et qui peut l'ouvrir.",
+      "timeline": "Chronologie",
+      "setUpLock": "Configurer…"
+    },
+    "general": {
+      "title": "Général",
+      "description": "Le nom et l'adresse de ce serveur, et les réglages qui s'appliquent à tous.",
+      "name": "Nom",
+      "address": "Adresse",
+      "version": "Version de YouEye",
+      "updates": "Mises à jour",
+      "unavailable": "Indisponible",
+      "unnamed": "Ce serveur",
+      "serverTitle": "Nom et titre du serveur",
+      "serverTitleHint": "Ce que tout le monde voit en haut de ses écrans, sauf ceux qui ont créé leur propre titre.",
+      "customise": "Personnaliser…",
+      "forEveryone": "Pour tout le monde",
+      "defaultLanguageHint": "Utilisée sur l'écran de connexion et jusqu'à ce que chacun choisisse sa langue.",
+      "loading": "Chargement…",
+      "statisticsHint": "Collectées et conservées uniquement sur ce serveur. Elles ne le quittent jamais, sauf si vous téléchargez le rapport et le partagez vous-même.",
+      "resetStatistics": "Supprimer les statistiques…",
+      "licensesHint": "Les logiciels libres sur lesquels YouEye est construit"
+    }
+  },
+  "settingsApps": {
+    "open": "Ouvrir",
+    "turnOff": "Éteindre",
+    "version": "Version {version}",
+    "appSettings": "Réglages de l’app",
+    "notFound": "Cette app n’est pas installée sur ce serveur.",
+    "backToApps": "Retour aux apps",
+    "status": {
+      "off": "{app} est éteinte. Un administrateur peut la rallumer.",
+      "crashLooping": "{app} s’arrête sans cesse.",
+      "unhealthy": "{app} ne répond pas correctement.",
+      "maintenance": "{app} est en cours de mise à jour.",
+      "partial": "Seule une partie de {app} fonctionne."
+    },
+    "updates": {
+      "title": "Mises à jour",
+      "available": "{count, plural, one {# mise à jour disponible} other {# mises à jour disponibles}}",
+      "upToDate": "Tout est à jour.",
+      "check": "Rechercher des mises à jour",
+      "checking": "Recherche…",
+      "seeUpdates": "Voir les mises à jour",
+      "changeSource": "Changer de source…"
+    },
+    "permissions": {
+      "title": "Autorisations que vous lui avez données",
+      "none": "Vous n’avez donné aucune autorisation à {app}.",
+      "revokeNamed": "Révoquer : {permission}",
+      "revokeAll": "Tout révoquer"
+    },
+    "look": {
+      "title": "Nom et icône",
+      "description": "L’apparence de cette app pour vous. Les autres gardent la leur.",
+      "defaultTitle": "Apparence par défaut pour tous",
+      "defaultDescription": "Ce que chacun voit tant qu’il n’a pas choisi son propre nom et titre pour cette app.",
+      "iconUrl": "Adresse web de l’icône",
+      "headerDisplay": "Afficher dans l’en-tête",
+      "reset": "Réinitialiser le nom, l’icône et le titre",
+      "resetDone": "Réinitialisé",
+      "customiseTitle": "Personnaliser le titre…",
+      "customiseDefaultTitle": "Personnaliser le titre par défaut…",
+      "customiseTitleHint": "Lettrage, couleurs et emblème, dans le studio de titres."
+    },
+    "access": {
+      "title": "Qui peut l’utiliser"
+    },
+    "defaultSignIn": {
+      "title": "Identifiants créés à l’installation"
+    },
+    "diagnostics": {
+      "title": "Diagnostic",
+      "failingCheck": "Contrôle d’état en échec",
+      "address": "Adresse",
+      "network": "Le Control Panel gère l’adresse et l’accès direct de cette app."
+    },
+    "uninstall": {
+      "hint": "Supprime {app} de ce serveur. Vous choisissez de conserver ou non ses données.",
+      "action": "Désinstaller…"
+    },
+    "title": {
+      "heading": "Votre titre pour {app}",
+      "defaultHeading": "Titre par défaut de {app}",
+      "description": "Vous seul voyez ce titre. Enregistrez quand il vous plaît.",
+      "defaultDescription": "Tout le monde voit ce titre tant qu’il n’a pas créé le sien.",
+      "back": "Retour à {app}"
+    }
+  },
+  "settingsSystem": {
+    "update": {
+      "installed": "Version installée",
+      "upToDate": "Vous avez la dernière version de ce canal."
+    },
+    "channel": {
+      "line": "Canal : {channel}",
+      "change": "Modifier…",
+      "switched": "Ce serveur suit maintenant le canal {channel}.",
+      "repository": "Dépôt",
+      "repositoryLine": "Mises à jour depuis {repository}",
+      "repositoryHint": "Ce serveur se met à jour à partir des versions de ce dépôt. Pour suivre un autre dépôt YouEye, saisissez son adresse ; le serveur le vérifie avant de changer.",
+      "useOfficial": "Utiliser le dépôt officiel",
+      "invalidRepository": "Saisissez une adresse comme https://host/owner/repository.",
+      "confirm": "Ce serveur suivra le canal {channel} de {repository}. Il ne revient jamais à une version antérieure : si ce canal est en retard sur la version installée, il attend qu’il la rattrape.",
+      "switchSource": "Changer de source",
+      "switchedSource": "Ce serveur suit maintenant le canal {channel} de {repository}, qui propose actuellement YouEye {version}.",
+      "refused": "La source n’a pas pu être changée : {reason}",
+      "names": {
+        "dev": "Dev",
+        "alpha": "Alpha",
+        "beta": "Beta",
+        "stable": "Stable"
+      }
+    },
+    "overview": {
+      "openIssues": "{count, plural, one {# problème ouvert} other {# problèmes ouverts}}",
+      "noIssues": "Aucun problème",
+      "servicesHint": "Ce qui fait tourner ce serveur et l’état de chaque partie",
+      "cores": "{count, plural, one {# cœur} other {# cœurs}}",
+      "ofTotal": "sur {total}"
+    },
+    "services": {
+      "title": "Services",
+      "description": "Tout ce qui fait tourner ce serveur : le rôle de chaque partie, sa version et son état.",
+      "refreshNote": "La mémoire et le processeur sont actualisés toutes les 5 secondes.",
+      "usage": "{memory} · CPU {cpu} %",
+      "cpuOnly": "CPU {cpu} %",
+      "restartNamed": "Redémarrer {name}",
+      "spineSeed": "l’image fournit {version}",
+      "host": {
+        "name": "Système hôte",
+        "desc": "Le système d’exploitation et ses paquets",
+        "descImage": "L’image système en lecture seule sur laquelle ce serveur démarre"
+      },
+      "ui": {
+        "name": "Tableau de bord",
+        "desc": "L’écran d’accueil que tout le monde ouvre chaque jour"
+      },
+      "ai": {
+        "desc": "Modèles et assistants partagés par vos applications"
+      },
+      "incus": {
+        "name": "Moteur de conteneurs",
+        "desc": "Exécute chaque application dans son propre conteneur"
+      },
+      "state": {
+        "running": "En marche",
+        "imageManaged": "Fait partie de l’image système",
+        "starting": "Démarrage",
+        "partial": "En marche partiellement",
+        "degraded": "En difficulté",
+        "needsRepair": "Réparation nécessaire",
+        "stopped": "Arrêté",
+        "error": "Ne répond pas",
+        "notInstalled": "Non installé",
+        "unknown": "Inconnu"
+      }
+    },
+    "images": {
+      "summary": "Avancé : images de conteneur",
+      "description": "Base de données, Passerelle web et Bouclier réseau utilisent des images de conteneur fixées par cette version de YouEye. Ne les changez que pendant une fenêtre de maintenance, après un essai à blanc.",
+      "refresh": "Actualiser les images de conteneur",
+      "dryRun": "Essai à blanc",
+      "adopt": "Adopter et recréer",
+      "missing": "Manquante",
+      "tracking": {
+        "tracked": "Suivie",
+        "untracked": "Non suivie",
+        "missing": "Manquante"
+      }
+    },
+    "health": {
+      "urgent": "{count, plural, one {# urgent} other {# urgents}}",
+      "attention": "{count, plural, one {# demande votre attention} other {# demandent votre attention}}",
+      "checkSoon": "{count, plural, one {# à vérifier bientôt} other {# à vérifier bientôt}}",
+      "info": "{count, plural, one {# pour information} other {# pour information}}",
+      "repeated": "{count, plural, one {# fois} other {# fois}}, la dernière : {date}",
+      "lastSeen": "Vu pour la dernière fois : {date}",
+      "earlier": "{count, plural, one {# occurrence précédente} other {# occurrences précédentes}}",
+      "ignoredGroup": "Ignorés ({count})",
+      "ignoredBecause": "Ignoré parce que : {reason}",
+      "notice": "Information"
+    },
+    "ai": {
+      "service": "Service",
+      "description": "Le service d’IA partagé par vos applications : s’il fonctionne, sa base de données et sa sauvegarde. Les comptes, clés, routes, usages et conversations ne sont jamais affichés ici.",
+      "databaseDetail": "Sa propre base de données, séparée de vos applications",
+      "values": {
+        "ready": "Prêt",
+        "degraded": "En difficulté",
+        "unhealthy": "En panne",
+        "unavailable": "Indisponible",
+        "current": "À jour",
+        "check_failed": "Échec de la vérification",
+        "unknown": "Inconnu",
+        "included": "Incluse"
+      }
+    },
+    "ssh": {
+      "title": "Secure shell",
+      "description": "Connectez-vous à ce serveur en tant que root par SSH, avec des clés uniquement.",
+      "emptyTitle": "Aucune clé pour l’instant",
+      "emptyBody": "Personne ne peut ouvrir une nouvelle session SSH tant que vous n’avez pas ajouté une clé ci-dessous."
+    }
+  },
+  "settingsServer": {
+    "network": {
+      "description": "Comment ce serveur est joint, résolution des noms et blocage des publicités",
+      "tabs": {
+        "address": "Adresse et HTTPS",
+        "dns": "DNS et blocage des publicités"
+      },
+      "dns": {
+        "adBlocking": "Blocage des publicités",
+        "blockingOn": "Protège chaque appareil qui utilise ce serveur comme DNS",
+        "blockingOff": "Les publicités et les traqueurs ne sont pas bloqués"
+      },
+      "routes": {
+        "intro": "Avancé. Voici comment les requêtes atteignent vos applications. YouEye ajoute et retire les routes quand vous installez des applications ou changez l’adresse du serveur : il n’y a rien à régler ici.",
+        "rawConfig": "Configuration brute de la passerelle"
+      },
+      "address": {
+        "title": "Adresse du serveur",
+        "change": "Modifier…",
+        "import": "Importer un nom enregistré…"
+      }
+    },
+    "backups": {
+      "key": {
+        "length": "Au moins 12 caractères.",
+        "mismatch": "Les deux saisies ne correspondent pas encore.",
+        "alreadyChosen": "Vous avez déjà choisi une clé de récupération. Vous la saisissez à chaque sauvegarde.",
+        "change": "Changer la clé de récupération…"
+      },
+      "drive": {
+        "prepare": "Préparer…",
+        "prepareHint": "Un disque vierge doit d’abord être préparé, ce qui l’efface."
+      },
+      "apps": {
+        "manualOnly": "Manuel uniquement",
+        "scheduleHint": "Choisissez la fréquence de sauvegarde automatique de chaque application. Celles en « Manuel uniquement » sont incluses quand vous lancez Sauvegarder maintenant.",
+        "scheduleOff": "Activez les sauvegardes automatiques pour choisir une fréquence pour chaque application."
+      },
+      "setup": {
+        "title": "Configurer les sauvegardes",
+        "intro": "Trois étapes, puis votre premier point de récupération.",
+        "done": "Terminé",
+        "current": "À faire",
+        "firstBackup": "Créer la première sauvegarde",
+        "needsDrive": "Choisissez d’abord un disque de sauvegarde prêt à l’étape 1.",
+        "needsKey": "Saisissez d’abord votre clé de récupération deux fois à l’étape 2."
+      },
+      "now": {
+        "summary": "{count, plural, =0 {Sauvegarde le serveur YouEye.} one {Sauvegarde le serveur YouEye et # application.} other {Sauvegarde le serveur YouEye et # applications.}}",
+        "open": "Sauvegarder maintenant…",
+        "keyPrompt": "Saisissez votre clé de récupération pour chiffrer ce point de récupération."
+      },
+      "auto": {
+        "keyPrompt": "Saisissez votre clé de récupération. YouEye la conserve sur ce serveur pour que les sauvegardes automatiques se fassent sans vous.",
+        "keyPromptStored": "Saisissez à nouveau votre clé de récupération pour enregistrer. Pour la changer, saisissez-en une nouvelle : les prochaines sauvegardes automatiques l’utiliseront.",
+        "saveOpen": "Enregistrer les sauvegardes automatiques…",
+        "needsSetup": "Terminez les étapes ci-dessus pour enregistrer."
+      },
+      "points": {
+        "restoreOpen": "Restaurer…",
+        "restoreFrom": "Restaurer depuis le {date}"
+      }
+    },
+    "people": {
+      "tryAgain": "Réessayer",
+      "manageNamed": "Gérer {name}"
+    }
   }
 }

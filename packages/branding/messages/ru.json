@@ -1789,5 +1789,11 @@
   "sticker.colour.lock": "Закрепить цвета",
   "sticker.colour.unlock": "Открепить цвета",
   "sticker.colour.keep": "Сохранить цвета",
-  "sticker.colour.keeping": "Цвета сохранены"
+  "sticker.colour.keeping": "Цвета сохранены",
+  "title.server.heading": "Название вашего сервера",
+  "title.server.nameLabel": "Как называется ваш сервер?",
+  "title.you.heading": "Ваше собственное название",
+  "title.you.nameLabel": "Что должно быть написано в вашем названии?",
+  "title.app.heading": "Название этого приложения",
+  "title.app.nameLabel": "Как называется это приложение?"
 }

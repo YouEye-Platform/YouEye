@@ -102,10 +102,16 @@ official Market).
 
 ### What the Market shows
 
+- **A store.** The Market home is one grid of apps: search, category chips (and "Added by address" for apps added by
+  URL, all of them), the catalog's own picks and collections, then one shelf per category. An app's page has its one
+  action in the header (Install; Open and Manage in Settings once installed), its facts, screenshots, what installing
+  it adds, and links. The install dialog asks where (address) and who (sign-in, access) first, folds the rest and
+  keeps Install in view. Everything that changes an installed app (update source, manifest sync, default sign-in,
+  uninstall) is on its page in Settings → Apps ([control-panel.md](control-panel.md#settings-pages)).
 - **One card per app.** The Market home shows one entry per id, the official Market's first. An app's page lists the
   other enabled markets (and apps added by URL) that carry the same id ("Also available from …", with their
-  version), and for an installed app where it takes its updates from ("Updates from: …") with **Change**: the guarded
-  source switch below. Nothing switches by itself. `GET /api/market/app/<id>[?source=<id>]` answers
+  version). For an installed app, Settings → Apps → the app → Updates says where it takes its updates from
+  ("Updates from: …") with **Change**: the guarded source switch below. Nothing switches by itself. `GET /api/market/app/<id>[?source=<id>]` answers
   `{app, variants, installed}`: `app` is the app in the named market (else the first enabled market that has it),
   `variants` the other markets' entries, `installed` the source the install recorded (id, name, address, version,
   `updateBlocked`), or null.
@@ -159,7 +165,7 @@ error, Refresh now, and Accept for a market that is not accepted.
 same file; the sources page and `youeye market list` name them until the owner dismisses the note. Apps installed
 from one keep running; their update check says "no update source" (`source-unavailable`) and offers nothing. To
 take updates again, add the market's address (if its publisher has one), which gives it a new id, then choose
-**Change** on each app's page, or run `youeye app source <app> <market id>`.
+**Change** on each app's page in Settings → Apps (Updates), or run `youeye app source <app> <market id>`.
 
 | Call | Does |
 |---|---|
@@ -219,20 +225,20 @@ message names the cause. An update whose new version needs a newer YouEye fails 
 
 **Why an installed app gets no updates.** The update check stores the reason on the installed-app record
 (`/var/lib/youeye/state/installed-apps.json`) as `updateBlocked: { code, message }`, offers nothing, and clears any
-stale offer. The app's page, Settings → Apps and the dashboard's Apps panel show it:
+stale offer. Settings → Apps (the list and the app's Updates section) and the dashboard's Apps panel show it:
 
 | `updateBlocked.code` | Meaning | Remedy |
 |---|---|---|
 | `source-unavailable` | "No update source": its market is no longer on the box (removed, or a git source) or is turned off | turn it on, or add a market that has the app and choose Change |
 | `source-not-accepted` | its custom market is not accepted | `youeye market accept <id>` or Accept on the sources page |
-| `source-changed` | its source id now names another address than the app recorded | Change on the app's page, if you want its updates from there |
+| `source-changed` | its source id now names another address than the app recorded | Change in Settings → Apps → the app → Updates, if you want its updates from there |
 | `requires-newer-youeye` | the market's new version needs a newer YouEye | update YouEye; the offer then appears |
 
 **The source changed.** An app records the market address of its source at install (custom markets only). A source
 id can come to name another address: a removed market's id taken again, or a market's address edited. The app
 follows the address it recorded, never just the id: its update is refused with `source-changed` (the message names
 both addresses) and the update check stores `updateBlocked` as above. The official Market's address follows the
-channel and is never "changed". The remedy is an explicit switch on the app's page
+channel and is never "changed". The remedy is an explicit switch on the app's page in Settings → Apps
 (`PATCH /api/market/app/<id>/source`), which records the new address.
 
 **What can install, update or re-point an app, and how it is guarded**
@@ -436,6 +442,17 @@ permissions.
   network, not its gateway. A connection to a stopped peer uses the peer's reserved address. Incus keeps that
   address while the peer's NIC exists; when the peer is recreated, its connections are pointed at the new address
   when it starts and on every reconcile pass (and when the connection is activated again).
+- **What each side's dashboard row lists** (`pushConnectionsToUI`, `lib/bridges/manager.ts`; the UI keeps it in
+  `apps.connections`, read by the gateway's proxy route and `my-connections`). A connection appears on its consumer's
+  row (the `from` app), with the managed-proxy transport for a `proxy:` connection. It appears on the provider's row
+  (the `to` app) only for a both-ways network connection, as the consumer's host and port (no `url`, no
+  `transport`). A one-way connection and any `proxy:` connection give the provider nothing to call, so its row
+  lists nothing for them. Activation, deactivation, deletion and the 30-second reconcile all use this rule (since
+  0.6.16; before, the reconcile also projected every connection onto its provider: for a `proxy:` connection that
+  failed every 30 s, for a one-way network connection it wrote a reverse entry, which the next pass removes).
+  Changing a connection's direction (`PATCH /api/bridges/<id>` with `direction`) adds or revokes the provider's
+  grant to call the consumer back on an active network connection and pushes both rows (before 0.6.16 it changed
+  only the record).
 - **Connect setup files.** Every time a connection is activated (suggestion, bundle, the target of a waiting bundle
   connection installed later, or `/api/bridges`), the consumer's `connects[].setup` file (`for: connect:<app>`) runs
   with `${peer.*}` and `${self.*}` values. Its `target: peer` steps call the peer's main container. A failure is
@@ -489,8 +506,8 @@ Control Panel reads).
   [Markets and consent](#markets-and-consent)). Apps added by URL get update offers too.
 - **An app whose source id now names another market address** than it recorded is not updated: the answer is 403
   `source-changed` (JSON) or an SSE `failed` event with `code: "source-changed"`, and the update check offers
-  nothing and stores `updateBlocked { code, message }` on the installed-app record. Only an explicit switch on the
-  app's page moves it to that source. An app whose market is gone gets `updateBlocked` `source-unavailable` ("no
+  nothing and stores `updateBlocked { code, message }` on the installed-app record. Only an explicit switch in
+  Settings → Apps → the app moves it to that source. An app whose market is gone gets `updateBlocked` `source-unavailable` ("no
   update source") the same way.
 - **An app added by URL whose setup files changed** is not updated without `allowSetup: true` (`--allow-setup`; the
   update panel says "Setup steps changed" and asks). Nothing is changed before that: the answer is 409
@@ -523,7 +540,8 @@ containers and record the wanted state, so a stopped app stays stopped. Shared s
 
 ## Uninstall
 
-`POST /api/market/uninstall` with `{ appId, keepData }`. **The API keeps data by default; the CLI
+`POST /api/market/uninstall` with `{ appId, keepData }` (in the UI: Settings → Apps → the app → Uninstall, also for an
+app its market no longer lists). **The API keeps data by default; the CLI
 `youeye app remove <id>` deletes it unless `--keep-data` is given.**
 
 The uninstaller decides only from `install.json`. It stops the app's containers, deletes its connections (attempting

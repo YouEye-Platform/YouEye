@@ -45,6 +45,11 @@ import {
   setDefaultRoute,
 } from '../caddy/client';
 import { controlPanelCaddyfile } from '../caddy/caddyfile';
+import { ensureClientAddresses } from '../caddy/client-address';
+
+function warnClientAddresses(error: unknown): void {
+  console.warn('[Caddy] client address check failed:', error instanceof Error ? error.message : String(error));
+}
 import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { recordSystemContainerImage } from './system-images';
@@ -648,6 +653,9 @@ export async function reconcileInfrastructure(
       await ensurePingRoute('youeye-control', 3000);
       await ensureHeaderStrippingRoute();
       await ensureSetupHttpServer('youeye-control', 3000);
+      // Last: the wrappers, then the proxy devices against the finished config (:80 needs the setup server).
+      // Not fatal: Control Panel start and the health monitor run it again.
+      await ensureClientAddresses().catch(warnClientAddresses);
       remit(3, 'skipped', 'Caddy already running and required routes are verified');
     } catch (err) {
       failReconcile(3, 'Caddy is running but required routes could not be verified', err);

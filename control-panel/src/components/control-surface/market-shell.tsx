@@ -16,7 +16,8 @@ export async function MarketShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       <ControlHeader username={session.username} isAdmin={session.isAdmin} hasUserContext={hasUserContext} />
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      {/* The Market takes YouEye's own type and colours (Plex Sans, the quiet neutrals and teal), as Settings does. */}
+      <main className="settings-workspace market-workspace mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-10">{children}</main>
     </div>
   );
 }

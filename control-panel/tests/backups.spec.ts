@@ -302,7 +302,8 @@ test('automatic backups use the protected key and removable-drive identity', () 
 test('Settings polls media without replacing the page during an operation', () => {
   const settings = read('src/components/settings-shell/backup-client.tsx');
   const settingsMediaRoute = read('src/app/settings/api/backup/media/route.ts');
-  assert.match(settings, /setInterval\(\(\) => \{ if \(!busy\) void load\(false\); \}, 5000\)/);
+  // Not during an operation, and never on top of a poll still waiting for its answer.
+  assert.match(settings, /setInterval\(\(\) => \{\s*if \(busy \|\| pollInFlight\.current\) return;[\s\S]*?void load\(false\)[\s\S]*?\}, 5000\)/);
   assert.match(settings, /Progress value=\{progress\}/);
   assert.doesNotMatch(settings, /window\.location|router\.refresh/);
   assert.match(settingsMediaRoute, /export const dynamic = 'force-dynamic'/);

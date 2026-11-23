@@ -63,8 +63,11 @@ owner (since 0.6.14):
   update is `maintenance`; an app the owner stopped is "Intentionally stopped by administrator"; an app another
   operation of this process holds (the in-memory held marker that `withAppLifecycle` sets) is "Busy with another
   operation on this app". None of these counts as a failure. Then: storage reachable, the main container Running
-  (L1), its service active for a native app (L2), its other containers Running (else `starting`), and its HTTP
-  health check (L3; 2xx, 401 and 403 pass). A failure seen while the app was taken by an operation counts as busy.
+  (L1, read from the instance record `GET /1.0/instances/<name>`, not `/state`, which would make Incus measure disk
+  usage), its service active for a native app (L2), its other containers Running (else `starting`), and its HTTP
+  health check (L3; 2xx, 401 and 403 pass). Since 0.6.16 the service is asked (`systemctl is-active`, an exec) only
+  when the app has no HTTP check or the check fails; a passing HTTP check proves it runs. The outcome order is
+  unchanged: an inactive service is L2 before a waiting dependency, and a failing check with an active service is L3. A failure seen while the app was taken by an operation counts as busy.
   After `retries` failures in a row (default 3) and with auto-restart on, it asks the app's queue for a restart,
   with a backoff from 10 s doubling to 5 minutes; after two rounds at 5 minutes the app is `crash-looping` and an
   issue is raised. Ten healthy minutes reset the backoff.
@@ -260,14 +263,37 @@ that already ran keeps it), and the owner's restart clears it on every container
 logged and costs one more restart at the next propagation; it never leaves stopped containers unstarted.
 
 The backup schedule is also in `youeye.yaml`, but Spine reads and writes it (`spine/internal/backup/scheduler.go`).
-The release channel is Spine's host policy (`youeye channel get|set`, `/api/releases/channel`).
+The release channel and repository are Spine's host policy (`youeye channel get|set`, `/api/releases/channel`).
 
 ### Settings pages
 
-`app/settings/(shell)/` and `components/settings-shell/`. The menu shows Profile, Appearance, Privacy, Apps, AI
-and Language to every user, and Users, System, Network, Backup and About to admins. Sub-pages cover branding, TLS,
-DNS, proxy, remote access, containers, permissions, system health and SSH keys. Admin APIs check `session.isAdmin`,
-and changes also need a CSRF token (`X-CSRF-Token`).
+`app/settings/(shell)/` and `components/settings-shell/` (YE-128). The menu has two groups: **You** (Profile,
+Appearance, Language, Privacy, Apps, AI; every user) and **This server** (General, Users, Network, Backup, System;
+admins). On a phone it is a list of sections, each page with a back link.
+
+- **General** (`/settings/general`): the installed release (below), the server title studio (`general/title`: the
+  server's name and title for everyone) and the licences (`general/licenses`).
+- **System** (`/settings/system`): one list of the platform's services and their updates (`system/services`), grouped
+  health (`system/health`), the release channel as one line (Change… switches the channel, or the repository after
+  a confirmation: `components/settings-shell/release-channel.tsx`), this machine's network adapter and console access
+  (`system/machine`), AI and SSH keys.
+- **Apps** (`/settings/apps`): every user's apps in one grouped list; for admins also the waiting updates, said once.
+  Each app has one page (`/settings/apps/<id>`) with sections instead of tabs: App settings (the app's own settings
+  panel), Permissions you gave it, AI, Who can use it (YouEye ID sign-in and access), Sign-in it was installed with,
+  Name and icon (title studio: `apps/<id>/title`, `?scope=server` for the admin's default), Updates (where it takes
+  updates from, Change, Sync manifest), Diagnostics and Uninstall. Managing an installed app lives here; the Market
+  is a store ([market.md](market.md#what-the-market-shows)).
+- **Appearance** has your own title studio (`appearance/title`).
+
+Admin pages redirect a standard user to `/settings` on the server (`getSession()`, `session.isAdmin`), and admin APIs
+check `session.isAdmin`; changes also need a CSRF token (`X-CSRF-Token`).
+
+**Old addresses keep working** (redirects in their old `page.tsx`, checked by `tests/settings-old-links.spec.ts`):
+`/settings/about` → `general`, `about/licenses` → `general/licenses`, `branding` → `general/title`, `containers` →
+`system`, `dns` → `network?tab=dns`, `apps-list` and `app-management` → `apps`, `accounts` → `/settings`, `market` →
+`/market`. The old app tabs (`/settings/apps/<id>?tab=…`, as in a native app's `app_settings_url`) scroll to the
+section that replaced them: `app-settings` → App settings, `manage` → Who can use it, `branding` → Name and icon,
+`permissions`, `ai`, and `network` / `link-handling` → Diagnostics.
 
 ### The installed release
 
@@ -277,7 +303,7 @@ accepted (`lib/releases/installed-release.ts`): `0.6.13-dev.5` on dev, `0.6.13-a
 selection (`/var/lib/youeye-state/core-selection/core-release.json` in `youeye-control`), else from Spine's
 `GET /api/version` `release`. A version baked into a file (`version.json`, Spine's own `version`) is never shown.
 
-- **About** shows the version and a details line, `<version> · <short git tree>` (`0.6.13 · b39fe307`), with a Copy
+- **General** (Settings → General) shows the version and a details line, `<version> · <short git tree>` (`0.6.13 · b39fe307`), with a Copy
   button for support. Settings → System, Settings → Apps (Spine, Control Panel and UI), the UI's app list and
   backups show release versions too; the AI page and service health show Pointer's release version.
 - **YouEye Names:** the heartbeat sends it as `youeyeVersion`.
@@ -312,7 +338,7 @@ YouEye ID and the admission tables are in PostgreSQL (`youeye` database); the da
 | What | How |
 |---|---|
 | Spine, CP, dashboard, image (Incus and the host packages with it) | the System release, applied by Spine. Settings → System; `GET /api/appliance/core-update/check`, then `POST …/core-update/{stage,activate,resume,recover,cancel}` with exact request, command and manifest IDs. The CP only forwards; see [releases.md](releases.md) and [spine.md](spine.md). |
-| Release channel | `GET`/`PUT /api/releases/channel` (`dev`, `alpha`, `beta`, `stable`). The box never downgrades. |
+| Release channel and repository | `GET`/`PUT /api/releases/channel` (admins; `{"channel"}` with `dev`, `alpha`, `beta`, `stable`, and optionally `"repository"`, which Spine checks first: [releases.md](releases.md#the-boxs-channel)). The form offers only the official repository; any other is typed. The box never downgrades. |
 | PostgreSQL, Caddy, Pi-hole | Settings → System: `GET`/`POST /api/deploy/infrastructure/system-updates` compares each container with the image pinned in `system-images.ts` and rebuilds it on that image (`lib/infrastructure/system-updater.ts`). Settings → Apps and the `/embed/apps` page use `POST /settings/api/apps/{postgres,caddy,pihole}/update` with the same acknowledgements (`confirmMaintenanceWindow`, `confirmContainerName`, and `allowDatabaseUpdate` for PostgreSQL). `POST /api/apps/{postgres,caddy,pihole}/update` (the progress stream behind `youeye app update <id>`) runs the same action (`lib/apps/system-container-update.ts`) when the body carries those acknowledgements; without them, as from the CLI, which has no flags for them, its stream ends `failed` with "… is a system container … Update it in Settings → Apps" before anything is touched. The two JSON routes answer HTTP 423 naming the issue while a critical health issue is open. The `/settings/api/apps/<id>/update` route ignores that container's own issue (`service.<id>.down`, `container.<name>.crash-loop`), which the update may repair; `system-updates` makes no such exception. There is no moving-tag update path (`updateOCIApp`, which no built-in app could use, was deleted in 0.6.15). |
 | Incus, host packages | only with the image of a System release. There is no apt route: `/settings/api/apps/<id>/update` and `/api/apps/<id>/update` answer that Spine, the Control Panel, the UI and Incus have no app update (HTTP 404, nothing recorded). |
 | Market apps | `POST /api/market/update`; a journaled, recoverable transaction. Status and recovery: `GET /api/market/update/status?appId=…`, `POST /api/market/update/recovery`. See [app-update-transactions.md](app-update-transactions.md). |

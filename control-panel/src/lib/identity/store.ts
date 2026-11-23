@@ -552,6 +552,9 @@ export function hashPassword(password: string): string {
   return `scrypt$${salt}$${hash}`;
 }
 
+/** Compared against for an unknown username (never matches: no password hashes to all zeroes). */
+const UNKNOWN_USER_HASH = `scrypt$${'0'.repeat(32)}$${'0'.repeat(128)}`;
+
 export function verifyPassword(password: string, stored: string): boolean {
   const [scheme, salt, hash] = stored.split('$');
   if (scheme !== 'scrypt' || !salt || !hash) return false;
@@ -612,7 +615,12 @@ export async function verifyUser(username: string, password: string): Promise<Id
     LIMIT 1
   `);
   const user = rows[0];
-  if (!user || !user.is_active || !verifyPassword(password, user.password_hash)) return null;
+  // An unknown username costs the same scrypt as a wrong password, so timing does not tell whether it exists.
+  if (!user) {
+    verifyPassword(password, UNKNOWN_USER_HASH);
+    return null;
+  }
+  if (!verifyPassword(password, user.password_hash) || !user.is_active) return null;
   const safeUser: IdentityUser = {
     id: user.id,
     username: user.username,

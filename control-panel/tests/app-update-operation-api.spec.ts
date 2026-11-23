@@ -21,7 +21,13 @@ function load(path: string, dependencies: Record<string, unknown>, suffix = ''):
   }).outputText;
   const exports = {};
   new Function('require', 'exports', output)((name: string) => {
-    if (name === 'next-intl') return {useTranslations: () => (key: string) => JSON.parse(readFileSync(join(root, 'messages/en.json'), 'utf8')).interface[key]};
+    if (name === 'next-intl') {
+      const messages = JSON.parse(readFileSync(join(root, 'messages/en.json'), 'utf8'));
+      return {useTranslations: (namespace = 'interface') => (key: string, values: Record<string, unknown> = {}) => {
+        const text = String(messages[namespace]?.[key] ?? key);
+        return text.replace(/\{(\w+)\}/g, (_m: string, name: string) => String(values[name] ?? ''));
+      }};
+    }
     if (!(name in dependencies)) throw new Error(`Unexpected test dependency: ${name}`);
     return dependencies[name];
   }, exports);
@@ -450,6 +456,7 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
     },
     'react/jsx-runtime': require('react/jsx-runtime'),
     'next/link': { default: stub },
+    'next/navigation': { useRouter: () => ({ push: stub, replace: stub }), useSearchParams: () => new URLSearchParams() },
     'lucide-react': new Proxy({}, { get: () => stub }),
     '@/components/ui/button': { Button: ({ children, ...props }: any) => React.createElement('button', props, children) },
     '@/components/ui/badge': { Badge: stub },
@@ -458,6 +465,10 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
     '@/components/ui/label': { Label: stub },
     '@/components/ui/select': {},
     '@/components/ui/switch': {},
+    '@/components/ui/input': {},
+    '@/components/market/app-access-settings': {},
+    '@/components/market/app-management': {},
+    './app-section': { AppSection: ({ children }: any) => React.createElement('section', null, children), groupClass: '', selectClass: '' },
     '@/components/setup/WordArtPickerInline': {},
     '@/components/market/update-blocked': { UpdateBlockedNote: stub },
     './api-base': {},
@@ -467,10 +478,10 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
   const client = load('src/components/settings-shell/apps-client.tsx', dependencies, '\nexport { AdminAppSections };');
   return {
     app, values,
-    tree: () => { index = 0; return client.AdminAppSections({ onOpen: stub }); },
+    tree: () => { index = 0; return client.AdminAppSections({ onOpen: stub, part: 'updates' }); },
     html: () => {
       index = 0;
-      return renderToStaticMarkup(React.createElement(client.AdminAppSections, { onOpen: stub }));
+      return renderToStaticMarkup(React.createElement(client.AdminAppSections, { onOpen: stub, part: 'updates' }));
     },
   };
 }

@@ -17,7 +17,10 @@ test('Health follows the shared Settings hierarchy and neutral surfaces', () => 
 test('Health uses calm status dot and word labels with human service categories', () => {
   assert.match(source, /Check soon/);
   assert.match(source, /Needs attention/);
-  assert.match(source, /translateInterface\(sourceName\(issue.source\)\)/);
+  // The category is a heading over its issues, not a label on every card; repeats are one entry.
+  assert.match(source, /const labelKey = sourceName\(issue\.source\)/);
+  assert.match(source, /<h2[^>]*>\{translateInterface\(category\.labelKey\)\}<\/h2>/);
+  assert.match(source, /t\("health\.repeated"/);
   const en = JSON.parse(fs.readFileSync(path.join(root, "messages/en.json"), "utf8"));
   assert.equal(en.interface.m95b958ec1144, "Apps and connections");
   assert.doesNotMatch(source, /Durable repair registry|Badge variant="outline">\{issue\.source\}/);

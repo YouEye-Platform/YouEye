@@ -7,6 +7,7 @@ import { getUserSettings, getSystemLanguage } from "@/lib/db/queries/settings";
 import { listThemes, createTheme, getUserActiveTheme, setUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCSSVariables } from "@/lib/themes/css-generator";
 import { getUserAppsWithConfig, updateAppBranding, updateAppConfig, updateDrawerSections, updateUserAppBranding } from "@/lib/db/queries/apps";
+import { hasSettingsPanel } from "@/lib/surfaces/normalize";
 import { getDrawerPrefs, saveDrawerPrefs, saveUserWordartOverride, getUserWordartOverride, deleteUserWordartOverride } from "@/lib/db/queries/settings";
 import { getBranding } from "@/lib/db/queries/branding";
 import { deleteNotification, getUnreadCount, getUserNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/db/queries/notifications";
@@ -101,12 +102,6 @@ function normalizeAvatarUrl(image: string | null | undefined, uiBaseUrl: string)
   return image;
 }
 
-function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
-  if (!manifest) return false;
-  const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
-  return capabilities?.settings_panel === true
-    || manifest.settings_panel === true;
-}
 
 function buildAppUrl(
   subdomain: string | null,

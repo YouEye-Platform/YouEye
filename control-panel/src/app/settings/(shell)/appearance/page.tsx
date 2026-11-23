@@ -7,5 +7,5 @@ export default async function AppearanceSettingsPage() {
   if (session?.authMethod === "pam" || session?.authMethod === "cli") {
     redirect("/settings/system");
   }
-  return <AppearanceClient isAdmin={session?.isAdmin ?? false} />;
+  return <AppearanceClient />;
 }

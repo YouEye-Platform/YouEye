@@ -68,3 +68,315 @@
   .settings-workspace [data-slot="input"],
   .settings-workspace select { min-height: 44px; }
 }
+
+/* Phone settings: the list of sections (grouped rows, like a phone's own settings) and the way back to it. */
+.settings-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: .875rem;
+  background: var(--card);
+}
+.settings-group > li + li { border-top: 1px solid var(--border); }
+.settings-row {
+  display: flex;
+  min-height: 3.75rem;
+  align-items: center;
+  gap: .875rem;
+  padding: .625rem 1rem;
+  font-size: 15px;
+  line-height: 1.35;
+  touch-action: manipulation;
+  user-select: none;
+}
+.settings-row:active { background: var(--muted); }
+.settings-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; border-radius: .875rem; }
+.settings-row-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  place-items: center;
+  border-radius: .5rem;
+  background: var(--muted);
+  color: var(--foreground);
+}
+.settings-back {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: .125rem;
+  margin-left: -.375rem;
+  padding-right: .75rem;
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 500;
+  touch-action: manipulation;
+}
+.settings-back:active { opacity: .6; }
+.settings-nav-item { touch-action: manipulation; }
+.settings-nav-item:active { background: var(--muted); }
+
+/* Settings pages: a section is a small heading over one soft group of rows (label, explanation, value or control).
+   .settings-row is a row that goes somewhere; .settings-item is a row that holds a value or a control. */
+/* Additions to the rows above stay unlayered, like them. */
+.settings-group > * + * { border-top: 1px solid var(--border); }
+button.settings-row { width: 100%; text-align: start; user-select: auto; }
+button.settings-row:disabled { opacity: .6; }
+@media (hover: hover) { :is(a, button).settings-row:hover { background: color-mix(in srgb, var(--muted) 60%, transparent); } }
+.settings-row-compact { min-height: 3rem; }
+@media (pointer: coarse) { .settings-row-compact { min-height: 3.25rem; } }
+/* The new parts sit in the components layer, so a Tailwind utility on the same element can still adjust them. */
+@layer components {
+  .settings-sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+  .settings-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: .625rem; min-width: 0; }
+  .settings-section-title { padding-inline: .25rem; font-size: 15px; font-weight: 600; line-height: 1.4; }
+  .settings-section-hint { padding-inline: .25rem; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+  .settings-section-title + .settings-section-hint { margin-top: -.375rem; }
+  .settings-item {
+    display: flex;
+    min-width: 0;
+    min-height: 3.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .5rem .875rem;
+    padding: .75rem 1rem;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  .settings-item-text { min-width: 0; flex: 1 1 12rem; }
+  .settings-item-label { display: block; font-weight: 500; color: var(--foreground); overflow-wrap: anywhere; }
+  .settings-item-hint { display: block; color: var(--muted-foreground); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+  .settings-item-value { min-width: 0; color: var(--muted-foreground); font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; text-align: end; }
+  .settings-item-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .settings-panel { padding: .875rem 1rem; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+  .settings-note { padding-inline: .25rem; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+  .settings-link { color: var(--primary); font-size: 14px; font-weight: 500; border-radius: .25rem; }
+  .settings-link:hover { text-decoration: underline; }
+  .settings-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .settings-select {
+    width: 100%;
+    max-width: 100%;
+    min-height: 2.5rem;
+    padding: .375rem .75rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius);
+    background: var(--background);
+    font-size: 14px;
+  }
+  /* One choice out of a few (light, dark, system): equal parts of one control. */
+  .settings-segments { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: .25rem; padding: .25rem; border-radius: .75rem; background: var(--muted); }
+  .settings-segment {
+    display: flex;
+    min-width: 0;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    padding: .375rem .5rem;
+    border-radius: .5rem;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .settings-segment[aria-checked="true"] { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px #0002, 0 0 0 1px var(--border); }
+  .settings-segment:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  /* Colour themes: a small swatch with its name, not a card each. */
+  .settings-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.25rem, 1fr)); gap: .25rem; padding: .625rem; }
+  .settings-swatch {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: .375rem;
+    padding: .5rem .25rem;
+    border-radius: .625rem;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.3;
+    text-align: center;
+  }
+  .settings-swatch:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .settings-swatch[aria-checked="true"] { color: var(--foreground); font-weight: 600; }
+  .settings-swatch-dot {
+    position: relative;
+    display: flex;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: none;
+    overflow: hidden;
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px var(--border);
+  }
+  .settings-swatch-dot > span { flex: 1; }
+  .settings-swatch[aria-checked="true"] .settings-swatch-dot { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--primary); }
+  .settings-swatch-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The title as it looks in the header, on a quiet stage. */
+  .settings-title-preview {
+    display: flex;
+    min-height: 6rem;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 1.25rem 1rem;
+    background: color-mix(in srgb, var(--muted) 45%, transparent);
+  }
+  .settings-title-preview > * { max-width: 100%; }
+  .settings-profile-head { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 1rem; padding-inline: .25rem; }
+  .settings-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; padding: 1rem; }
+  .settings-field-label { display: block; margin-bottom: .375rem; color: var(--muted-foreground); font-size: 13px; font-weight: 500; }
+  details.settings-details > summary { display: inline-flex; min-height: 2.25rem; cursor: pointer; align-items: center; padding-inline: .25rem; color: var(--muted-foreground); font-size: 13px; border-radius: .25rem; }
+  details.settings-details > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  @media (pointer: coarse) {
+    .settings-segment, .settings-select { min-height: 44px; }
+    .settings-link { display: inline-flex; min-height: 44px; align-items: center; }
+    details.settings-details > summary { min-height: 44px; }
+    .settings-swatch { min-height: 44px; }
+  }
+  .settings-item-top { align-items: flex-start; }
+}
+
+/* One reading width for every Settings page: rows keep their label and value close enough to scan. The title
+   studio pages keep the full width the studio needs. */
+.settings-main:not([data-settings-page$="/title"]) { max-width: 52rem; }
+
+/* Market: one grid of app tiles (icon, name, a line about it), and the strips of an app's page. */
+@layer components {
+  .market-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .25rem 1.5rem; }
+  @media (min-width: 640px) { .market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .market-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .market-tile {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: .875rem;
+    padding: .75rem;
+    margin-inline: -.75rem;
+    border-radius: 1rem;
+    font-size: 15px;
+    line-height: 1.35;
+    touch-action: manipulation;
+  }
+  @media (hover: hover) { .market-tile:hover { background: color-mix(in srgb, var(--muted) 70%, transparent); } }
+  .market-tile:active { background: var(--muted); }
+  .market-tile:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+  /* Short facts in one strip, each once: label above value. */
+  .market-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--border); }
+  @media (min-width: 640px) { .market-facts { grid-template-columns: repeat(var(--market-facts, 4), minmax(0, 1fr)); } }
+  .market-fact { min-width: 0; padding: .875rem .25rem; }
+  @media (min-width: 640px) { .market-fact + .market-fact { border-inline-start: 1px solid var(--border); padding-inline-start: 1rem; } }
+  @media (max-width: 639px) { .market-fact:nth-child(n + 3) { border-top: 1px solid var(--border); } }
+  .market-fact dt { color: var(--muted-foreground); font-size: 12.5px; }
+  .market-fact dd { margin-top: .125rem; overflow-wrap: anywhere; font-size: 14px; font-weight: 600; }
+  .market-shots { display: flex; gap: .75rem; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: .5rem; scrollbar-width: thin; }
+  .market-shot { position: relative; flex: none; width: min(85%, 26rem); aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--border); border-radius: 1rem; background: var(--muted); scroll-snap-align: start; }
+  .market-shot:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+}
+
+/* Market home: apps shown at work. A card is the app's first screenshot above its icon, name and one line. Shelves
+   are grids from tablet width up and rows that scroll sideways on a phone (the next card peeks in). */
+@layer components {
+  .market-shelf { display: grid; grid-template-columns: repeat(var(--market-cols, 4), minmax(0, 1fr)); gap: 2rem 1.25rem; }
+  .market-shelf-large { --market-cols: 3; gap: 2rem 1.5rem; }
+  @media (max-width: 1023px) { .market-shelf:not(.market-shelf-large) { --market-cols: 3; } }
+  @media (max-width: 767px) {
+    .market-shelf {
+      display: flex;
+      gap: 1rem;
+      margin-inline: -1rem;
+      padding: 0 1rem .25rem;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scroll-snap-type: x mandatory;
+      scroll-padding-inline: 1rem;
+      scrollbar-width: none;
+    }
+    .market-shelf::-webkit-scrollbar { display: none; }
+    .market-shelf > * { flex: 0 0 72%; scroll-snap-align: start; }
+    .market-shelf-large > * { flex-basis: 86%; }
+  }
+  .market-results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2rem 1.25rem; }
+  @media (min-width: 560px) { .market-results { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .market-results { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+  .market-card { display: flex; min-width: 0; flex-direction: column; gap: .875rem; border-radius: 1rem; color: inherit; }
+  .market-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+  .market-card-shot {
+    position: relative;
+    display: block;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: .875rem;
+    background: var(--muted);
+    box-shadow: 0 1px 2px rgb(36 42 48 / .04), 0 6px 16px -10px rgb(36 42 48 / .18);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .market-card-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+  .market-card-noshot { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; }
+  @media (hover: hover) {
+    .market-card:hover .market-card-shot { border-color: color-mix(in srgb, var(--foreground) 22%, var(--border)); box-shadow: 0 1px 2px rgb(36 42 48 / .05), 0 12px 24px -12px rgb(36 42 48 / .28); }
+    .market-card:hover .market-card-name > .truncate { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  }
+  .market-card-text { display: flex; min-width: 0; align-items: flex-start; gap: .75rem; }
+  .market-card-name { display: flex; min-width: 0; align-items: baseline; gap: .5rem; color: var(--foreground); font-size: 15px; font-weight: 600; line-height: 1.3; }
+  .market-card-line { display: -webkit-box; margin-top: .2rem; overflow: hidden; color: var(--muted-foreground); font-size: 13.5px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .market-card-state { flex: none; color: var(--primary); font-size: 12.5px; font-weight: 500; }
+  .market-card-large { gap: 1rem; }
+  .market-card-large .market-card-shot { border-radius: 1.125rem; }
+  .market-card-large .market-card-name { font-size: 17px; }
+  .market-card-large .market-card-line { font-size: 14.5px; }
+
+  .market-chips { display: flex; gap: .5rem; flex-wrap: wrap; }
+  @media (max-width: 767px) { .market-chips { flex-wrap: nowrap; margin-inline: -1rem; padding-inline: 1rem; overflow-x: auto; scrollbar-width: none; } .market-chips::-webkit-scrollbar { display: none; } }
+  .market-chip {
+    display: inline-flex;
+    flex: none;
+    min-height: 2.25rem;
+    align-items: center;
+    gap: .375rem;
+    padding: 0 .875rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--background);
+    color: var(--muted-foreground);
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  @media (hover: hover) { .market-chip:hover { color: var(--foreground); border-color: color-mix(in srgb, var(--foreground) 20%, var(--border)); } }
+  .market-chip[aria-pressed="true"] { border-color: var(--foreground); background: var(--foreground); color: var(--background); }
+  .market-chip:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  @media (pointer: coarse) { .market-chip { min-height: 44px; } }
+  .market-search { position: relative; width: 100%; }
+  .market-search input {
+    width: 100%;
+    height: 3rem;
+    padding: 0 2.75rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--foreground);
+    font-size: 15px;
+  }
+  .market-search input::placeholder { color: var(--muted-foreground); }
+  .market-search input:focus { outline: none; border-color: var(--ring); background: var(--background); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent); }
+  .market-search input::-webkit-search-cancel-button { appearance: none; }
+  .market-workspace ::selection { background: color-mix(in srgb, var(--primary) 22%, transparent); }
+}
+@layer components {
+  .market-mosaic { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: row dense; gap: 3.5rem 1.25rem; }
+  .market-mosaic > section { grid-column: span var(--span-d); }
+  .market-mosaic .market-shelf { --market-cols: var(--span-d); }
+  @media (max-width: 1023px) {
+    .market-mosaic { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .market-mosaic > section { grid-column: span var(--span-t); }
+    .market-mosaic .market-shelf { --market-cols: var(--span-t); }
+  }
+  @media (max-width: 767px) {
+    .market-mosaic { grid-template-columns: minmax(0, 1fr); gap: 3rem; }
+    .market-mosaic > section { grid-column: auto; }
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Three columns: two full rows; "See all" has the rest. */
+  .market-mosaic .market-shelf > :nth-child(n + 7) { display: none; }
+}

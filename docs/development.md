@@ -1,7 +1,9 @@
 # Development: building, releasing and testing
 
-YouEye is pre-release. Every machine can be reinstalled, and nothing has to stay
-update-compatible with older development versions until the first public release.
+YouEye has boxes in real use (since 2026-11-22). Every release must update every installed box, from stable 0.6.15
+on, through the normal update and without a reinstall. Test machines can still be wiped for a test, but a reinstall
+never stands in for a working update. A change that can break an installed box, or seems to need a `v2`, goes to the
+owner first, with alternatives ([naming rule](#naming-rule)).
 
 ## Toolchains
 
@@ -100,14 +102,16 @@ change and run both sides.
 
 ## Naming rule
 
-While YouEye is pre-release, nothing first-party is versioned as a second or later variant. A replacement takes the
-original name, schema IDs stay `.v1`, and the old reader is deleted rather than kept alongside.
+Nothing first-party is versioned as a second or later variant: schema IDs stay `.v1` and change only compatibly
+([compatibility rules](#compatibility-rules-for-later-changes)). Never change the meaning of a `.v1` format in place,
+and never add a `v2` to get around that. A reader stays as long as a supported release (stable 0.6.15 or later) can
+still produce what it reads. A change that can't be made compatibly is written up for the owner (what breaks, for
+which releases, at least two alternatives, a recommendation) and is built only after the owner picks one.
 
-- **Numbers start at 1.** Numeric schema and format versions are `1`; a database migration chain that only fresh
-  installs use is squashed into one baseline (Pointer: `0001_baseline.sql`, version 1). The next change after the
-  Release adds `0002`.
-- **No "legacy" paths.** Code that reads or converts data a fresh install of the current version never produces is
-  deleted, not renamed. If current code still produces the data, name the path after what it does.
+- **Numbers start at 1.** Numeric schema and format versions are `1`. Database migration chains are never squashed
+  again: installed boxes have run them (Pointer: `0001_baseline.sql`, version 1), so the next change adds `0002`.
+- **No "legacy" paths.** Code that reads or converts data that no supported release produces is deleted, not
+  renamed. If current code still produces the data, name the path after what it does.
 - **Left alone:** external versions (third-party APIs such as `/api/v3`, Docker manifest media types, Go module
   `/vN` paths, IPv4/v6, OAuth2, HTTP/2), semver release versions, model and product names, and the live YouEye
   Names service's snapshot format.
@@ -120,7 +124,8 @@ Check with `git grep -nE '\b[vV][2-9]\b|[._-][vV][2-9]\b|V[2-9][A-Z]|schemaVersi
 
 ## Compatibility rules for later changes
 
-After the Release every box must keep updating for years, and any feature must arrive by update. Three kinds of code
+Every installed box must keep updating for years (since 2026-11-22, from stable 0.6.15), and any feature must
+arrive by update. Three kinds of code
 are never replaced by an ordinary update before they act, so their formats follow fixed rules (the update-readiness
 audit, Plan 7):
 

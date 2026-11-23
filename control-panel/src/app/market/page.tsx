@@ -1,103 +1,24 @@
 'use client';
 
-
-
-
-
 import { useTranslations as useInterfaceTranslations } from "next-intl";
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react';
 import Link from 'next/link';
-import * as LucideIcons from 'lucide-react';
-import {
-  AlertCircle,
-  Check,
-  Download,
-  Grid3x3,
-  type LucideIcon,
-  Loader2,
-  Package,
-  Plus,
-  Search,
-  Store,
-} from 'lucide-react';
+import { AlertCircle, Download, Loader2, Search, Store, X } from 'lucide-react';
 import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration, MarketBundle } from '@/lib/market/types';
-import { Input } from '@/components/ui/input';
-import { installBlockedLabel } from '@/components/market/update-blocked';
+import { Button } from '@/components/ui/button';
+import { AppCard, MarketIcon, categoryLookup, lucideByName } from '@/components/market/market-parts';
 
-/* ─────────────────────────── helpers ─────────────────────────── */
-
-// Category labels, icons, ordering, and tile colours are data-driven — they come from the
-// `categories:` section of the Market catalog (see fetchCategories / catIndex below), NOT
-// from a hardcoded map. Adding/renaming a category is a catalog.yaml change only.
-const DEFAULT_TILE = { bg: '#f4f4f5', fg: '#52525b' };
-
-function prettify(id: string): string {
-  return id.charAt(0).toUpperCase() + id.slice(1).replace(/[-_]/g, ' ');
-}
-
-function lucideByName(name?: string): LucideIcon {
-  if (!name) return Package;
-  const map = LucideIcons as unknown as Record<string, LucideIcon>;
-  const pascal = name.charAt(0).toUpperCase() + name.slice(1);
-  return map[name] || map[pascal] || Package;
-}
-
-function MarketIcon({ app, size = 44, tile }: { app: MarketApp; size?: number; tile?: { bg: string; fg: string } }) {
-  if (app.iconUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={app.iconUrl}
-        alt=""
-        className="shrink-0 rounded-[14px] object-cover"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
-  const { bg, fg } = tile || DEFAULT_TILE;
-  const Icon = lucideByName(app.icon);
-  return (
-    <div
-      className="flex shrink-0 items-center justify-center rounded-[14px]"
-      style={{ width: size, height: size, background: bg, color: fg }}
-    >
-      <Icon style={{ width: Math.round(size * 0.46), height: Math.round(size * 0.46) }} />
-    </div>
-  );
-}
-
-// Health-at-a-glance dot. Not-installed → muted. Installed → coloured by health:
-// green healthy, red unhealthy, amber unknown (so a broken app stands out on its card).
-function StatusDot({ status, health }: { status?: string; health?: string }) {
-  const translateInterface = useInterfaceTranslations("interface");
-
-  const installed = !!status && status !== 'not-installed';
-  if (!installed) return <span className="inline-block size-2 shrink-0 rounded-full bg-muted-foreground/30" />;
-  const color = health === 'unhealthy' ? 'bg-red-500' : health === 'unknown' ? 'bg-amber-500' : 'bg-green-500';
-  const title = health === 'unhealthy' ? translateInterface("m317b1fbc1e13") : health === 'unknown' ? translateInterface("m6a5465ac1dd5") : translateInterface("m7f1e323b6272");
-  return <span title={title} className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
-}
-
-/** The source of an app that is not from the official Market (a custom source, or "Added" for a URL app). */
-function SourceTag({ app }: { app: MarketApp }) {
-  if (!app.sourceId || app.sourceId === 'official') return null;
-  return (
-    <span className="shrink-0 truncate rounded border border-amber-500/40 px-1.5 py-px text-[10.5px] font-medium text-amber-700 dark:text-amber-500">
-      {app.sourceName || app.sourceId}
-    </span>
-  );
-}
-
-function variantHref(app: MarketApp): string {
-  return app.sourceId ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}` : `/market/${app.id}`;
-}
-
-type Section = 'apps' | 'installed' | 'updates' | 'added';
-
-/* ─────────────────────────── page ─────────────────────────── */
-
+/**
+ * The Market: finding and installing apps. What an installed app does on this server (its health, updates, access
+ * and data) is on its page in Settings → Apps; the Market only says it is installed and opens it.
+ *
+ * Home: every app is shown at work (its first screenshot). The catalog's picks lead (the apps built for YouEye and
+ * its collections, the first one large), then bundles, then one shelf per category; a category chip or a search
+ * shows a full grid. Search and the category are in the address (?q=, ?category=), so they survive back and reload.
+ */
 export default function MarketPage() {
   const translateInterface = useInterfaceTranslations("interface");
+  const market = useInterfaceTranslations("marketStore");
 
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
@@ -111,11 +32,8 @@ export default function MarketPage() {
   const [error, setError] = useState<string | null>(null);
   const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
   const [search, setSearch] = useState('');
-  const [section, setSection] = useState<Section>('apps');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
-  // Tag filter — set by clicking a tag on an app detail page (?tag=...). Read on mount from
-  // the URL (window-based, so no Suspense boundary is needed for this client component).
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  // 'all', a category id, or 'added' (apps added by address).
+  const [category, setCategory] = useState<string>('all');
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -127,9 +45,6 @@ export default function MarketPage() {
       setCategoryDefs(Array.isArray(data.categories) ? data.categories : []);
       setCuration(data.curation ?? null);
       setBundles(Array.isArray(data.bundles) ? data.bundles : []);
-      if (Array.isArray(data.sources)) {
-        setSourceCount(data.sources.filter((s: { enabled?: boolean }) => s.enabled !== false).length || data.sources.length);
-      }
       setError(null);
     } catch (err) {
       console.error('[Market] catalog load failed', err);
@@ -162,10 +77,10 @@ export default function MarketPage() {
     }
   }, []);
 
-  // Install + wire a bundle: POST and stream the SSE progress, showing the latest message.
+  // Install and wire a bundle: POST and read the progress stream, showing the latest message.
   const handleInstallBundle = useCallback(async (bundleId: string, sourceId?: string) => {
     setInstallingBundle(bundleId);
-    setBundleMsg('Starting…');
+    setBundleMsg(translateInterface("m530bcc355f0a"));
     try {
       const query = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
       const res = await fetch(`/api/market/bundles/${bundleId}/install${query}`, { method: 'POST' });
@@ -190,14 +105,14 @@ export default function MarketPage() {
             if (evt.message && evt.message !== 'done') setBundleMsg(evt.message);
             if (evt.status === 'error') setBundleMsg(evt.message || translateInterface("m33b4717bdc2f"));
           } catch {
-            /* ignore partial frame */
+            /* a partial frame */
           }
         }
       }
       setBundleMsg(translateInterface("m256c43047177"));
       await Promise.all([fetchStatuses(), fetchCatalog()]);
     } catch (err) {
-      setBundleMsg(`Failed: ${err instanceof Error ? err.message : String(err)}`);
+      setBundleMsg(`${translateInterface("m33b4717bdc2f")}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setTimeout(() => setInstallingBundle(null), 2500);
     }
@@ -206,387 +121,225 @@ export default function MarketPage() {
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchCatalog(), fetchStatuses(), fetchSourceCount()]).finally(() => setLoading(false));
-    const interval = setInterval(fetchStatuses, 10_000);
+    const interval = setInterval(fetchStatuses, 15_000);
     return () => clearInterval(interval);
   }, [fetchCatalog, fetchStatuses, fetchSourceCount]);
 
-  // Seed the tag filter from ?tag= (set when arriving via a tag click on a detail page).
+  // Search and category from the address (?q=, ?category=; ?tag= from older links is a search).
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('tag');
-    if (t) setTagFilter(t);
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('q') ?? params.get('tag');
+    if (q) setSearch(q);
+    const c = params.get('category');
+    if (c) setCategory(c);
   }, []);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('q', search.trim());
+    if (category !== 'all') params.set('category', category);
+    const query = params.toString();
+    const next = `${window.location.pathname}${query ? `?${query}` : ''}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, '', next);
+  }, [search, category]);
 
-  /* ── derived ── */
-
-  const statusOf = (app: MarketApp) => statuses[app.id]?.status || 'not-installed';
-  const healthOf = (app: MarketApp) => statuses[app.id]?.healthStatus;
-  const isInstalled = (app: MarketApp) => statusOf(app) !== 'not-installed';
-  const hasUpdate = (app: MarketApp) => !!statuses[app.id]?.updateAvailable;
-  // An app this box cannot install says which YouEye it needs, in place of its state.
-  const blockedLabel = (app: MarketApp) => (isInstalled(app) ? null : installBlockedLabel(translateInterface, app));
-  const cardState = (app: MarketApp) => {
-    if (hasUpdate(app)) return <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>;
-    const blocked = blockedLabel(app);
-    if (blocked) return <span className="max-w-[45%] shrink-0 truncate text-[11px] font-medium text-amber-700 dark:text-amber-500" title={blocked}>{blocked}</span>;
-    return <StatusDot status={statusOf(app)} health={healthOf(app)} />;
-  };
-
-  const matchesSearch = (app: MarketApp) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return [app.name, app.description, app.category, app.sourceName, ...(app.tags || [])]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-      .includes(q);
-  };
-
-  // The official Market's variant of an app comes first, so it is the one shown when another source has the same id.
-  const visible = apps.filter(matchesSearch)
-    .sort((a, b) => Number(a.sourceId !== 'official') - Number(b.sourceId !== 'official'));
-  const realApps = visible;
-
-  const counts = {
-    apps: realApps.length,
-    installed: realApps.filter(isInstalled).length,
-    updates: realApps.filter(hasUpdate).length,
-    added: realApps.filter((app) => app.sourceId?.startsWith('direct:')).length,
-  };
-
-  // Category metadata index — data-driven labels/icons/tiles/order from the catalog.
-  const catIndex = useMemo(() => new Map(categoryDefs.map((c) => [c.id, c])), [categoryDefs]);
-  const catLabel = (id?: string) => catIndex.get(id || 'other')?.label ?? prettify(id || 'other');
-  const catTile = (id?: string) => catIndex.get(id || 'other')?.tile ?? DEFAULT_TILE;
-  const catIconName = (id?: string) => catIndex.get(id || 'other')?.icon;
-  const catOrder = (id?: string) => catIndex.get(id || 'other')?.order ?? Number.MAX_SAFE_INTEGER;
-
-  // Categories actually used by apps, ordered by the catalog's `order` (label/icon from data).
-  const usedCategories = Array.from(new Set(realApps.map((a) => a.category).filter(Boolean) as string[]))
-    .sort((a, b) => catOrder(a) - catOrder(b) || a.localeCompare(b));
-
-  // Dedupe by catalog identity so the same app from multiple sources collapses.
-  const dedupe = (list: MarketApp[]) => {
-    const seen = new Set<string>();
-    return list.filter((a) => {
-      const key = `${a.itemKind || 'app'}:${a.id}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  };
-
-  // Resolve an ordered list of app ids → apps (existing real apps only, deduped, order kept).
-  const resolveIds = (ids?: string[]) => {
-    const out: MarketApp[] = [];
-    for (const id of ids ?? []) {
-      const app = realApps.find((a) => a.id === id);
-      if (app && !out.some((o) => o.id === app.id)) out.push(app);
-    }
-    return out;
-  };
-
-  // Native apps — fallback for the spotlight when the catalog declares no curation.
-  const nativeApps = realApps.filter((a) => a.integration === 'native');
-
-  // Spotlight ("Built for <server>" strip) + collections come from catalog curation (data),
-  // with a graceful fallback to native apps when no curation is declared.
-  const spotlightApps = curation?.spotlight?.apps?.length
-    ? resolveIds(curation.spotlight.apps)
-    : dedupe(nativeApps);
-  const spotlightTitle = curation?.spotlight?.title || translateInterface("m0fffd883a159");
-  const collectionStrips = (curation?.collections ?? [])
-    .map((c) => ({ id: c.id, label: c.label, apps: resolveIds(c.apps) }))
-    .filter((c) => c.apps.length > 0);
-
-  // Bundles — curated install-and-wire recipes. Cards resolve their member ids to the
-  // already-loaded apps for icons/names. Members still appear in the normal category browse.
-  const bundleCards = bundles
-    .map((b) => ({ ...b, memberApps: resolveIds(b.members) }))
-    .filter((b) => b.memberApps.length > 0);
-
-  // Never feature an app this box cannot install.
-  const featured = spotlightApps.find((a) => !isInstalled(a) && !a.installBlocked)
-    || spotlightApps.find((a) => !a.installBlocked) || realApps.find((a) => !a.installBlocked);
-
-  // App ids surfaced in a curated strip — excluded from the generic category browse below
-  // (on the unfiltered All-apps view, where the strips are visible) so they aren't shown twice.
-  const curatedIds = new Set<string>([
-    ...spotlightApps.map((a) => a.id),
-    ...collectionStrips.flatMap((c) => c.apps.map((a) => a.id)),
-  ]);
-
-  const sectionApps = (() => {
-    if (section === 'installed') return dedupe(realApps.filter(isInstalled));
-    if (section === 'updates') return dedupe(realApps.filter(hasUpdate));
-    if (section === 'added') return dedupe(realApps.filter((app) => app.sourceId?.startsWith('direct:')));
-    return dedupe(realApps);
-  })();
-
-  const showingStrips = section === 'apps' && categoryFilter === 'all' && !tagFilter;
-  const filteredSectionApps = (categoryFilter === 'all'
-    ? sectionApps
-    : sectionApps.filter((a) => (a.category || 'other') === categoryFilter)
-  )
-    .filter((a) => !tagFilter || a.tags?.some((t) => t.toLowerCase() === tagFilter.toLowerCase()))
-    .filter((a) => !(showingStrips && curatedIds.has(a.id)));
-
-  // Group the browse list by category.
-  const byCategory: Record<string, MarketApp[]> = {};
-  for (const a of filteredSectionApps) {
-    const cat = a.category || 'other';
-    (byCategory[cat] ||= []).push(a);
-  }
+  const categories = useMemo(() => categoryLookup(categoryDefs), [categoryDefs]);
 
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
-  const pill = (active: boolean) =>
-    `inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors ${
-      active ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
-    }`;
+  /* ── derived ── */
+
+  const isInstalled = (app: MarketApp) => (statuses[app.id]?.status || 'not-installed') !== 'not-installed';
+
+  // One entry per app: the official Market's comes first when another source lists the same id.
+  const unique = (() => {
+    const seen = new Set<string>();
+    return [...apps]
+      .sort((a, b) => Number(a.sourceId !== 'official') - Number(b.sourceId !== 'official'))
+      .filter((app) => {
+        const key = `${app.itemKind || 'app'}:${app.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  })();
+  const byId = (ids?: string[]) => (ids ?? []).map((id) => unique.find((app) => app.id === id)).filter((app): app is MarketApp => !!app);
+
+  const query = search.trim().toLowerCase();
+  const matches = (app: MarketApp) => !query || [app.name, app.tagline, app.description, app.category && categories.label(app.category), app.developer, app.sourceName, ...(app.tags || [])]
+    .filter(Boolean).join(' ').toLowerCase().includes(query);
+  // Apps added by address, every one: an app added by URL whose id an official app also has is still listed here (the
+  // one-per-id list above keeps the official copy).
+  const added = apps.filter((app) => app.sourceId?.startsWith('direct:'));
+  const usedCategories = Array.from(new Set(unique.map((app) => app.category || 'other')))
+    .sort((a, b) => categories.order(a) - categories.order(b) || a.localeCompare(b));
+
+  const browsing = !!query || category !== 'all';
+  const listed = (category === 'added' ? added : unique)
+    .filter(matches)
+    .filter((app) => category === 'all' || category === 'added' || (app.category || 'other') === category)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Curation (only decoration: without it the plain shelves show). The catalog's own picks lead the page: the apps
+  // built for YouEye, then its collections. The first non-empty one is shown large. Nothing is "featured" unless the
+  // catalog says so.
+  const builtFor = curation?.spotlight?.apps?.length ? byId(curation.spotlight.apps) : unique.filter((app) => app.integration === 'native');
+  const builtForTitle = curation?.spotlight?.title || translateInterface("m0fffd883a159");
+  const picks = [
+    ...(builtFor.length ? [{ id: 'built-for', label: builtForTitle, hint: market("builtForHint"), apps: builtFor }] : []),
+    ...(curation?.collections ?? []).map((c) => ({ id: c.id, label: c.label, hint: undefined as string | undefined, apps: byId(c.apps) })),
+  ].filter((pick) => pick.apps.length > 0);
+  const bundleCards = bundles.map((b) => ({ ...b, memberApps: byId(b.members) })).filter((b) => b.memberApps.length > 0);
+  const shelves = usedCategories
+    .map((id) => ({ id, apps: unique.filter((app) => (app.category || 'other') === id).sort((a, b) => a.name.localeCompare(b.name)) }))
+    .filter((shelf) => shelf.apps.length > 0);
+  const card = (app: MarketApp, size?: 'large') => (
+    <AppCard key={`${app.id}-${app.sourceId ?? ''}`} app={app} installed={isInstalled(app)} tile={categories.tile(app.category)} size={size} />
+  );
 
   return (
-    <div className="mx-auto max-w-[1040px] space-y-6 px-1 pb-16">
-      {/* Hero */}
-      <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-gradient-to-br from-primary/[0.06] to-transparent p-8">
-        <div>
-          <h1 className="text-[26px] font-bold tracking-tight">{translateInterface("m5238d9bd03d5")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m0ee0f0fef9c7")}</p>
+    <div className="mx-auto max-w-[1120px] pb-20">
+      <header className="flex flex-col gap-5 pb-8 md:flex-row md:items-end md:justify-between md:gap-10">
+        <div className="min-w-0">
+          <h1 className="text-[2.125rem] font-semibold leading-[1.1] tracking-[-0.02em] text-foreground md:text-[2.5rem]">{translateInterface("m5238d9bd03d5")}</h1>
+          <p className="mt-2 max-w-[34rem] text-[15px] leading-relaxed text-muted-foreground">{market("subtitle")}</p>
         </div>
-        <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={translateInterface("ma10a36fa1098")}
-            aria-label={translateInterface("ma10a36fa1098")}
-            className="h-10 rounded-full pl-9 pr-4"
-          />
+        <div className="market-search md:max-w-[22rem]">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={market("searchPlaceholder")} aria-label={translateInterface("ma10a36fa1098")} />
+          {search && (
+            <button type="button" onClick={() => setSearch('')} aria-label={market("clearSearch")}
+              className="absolute right-2 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
-      </section>
+      </header>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+        <div role="alert" className="mb-8 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 shrink-0" /> {error}
         </div>
       )}
-
       {catalogWarnings.length > 0 && (
-        <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
-          <p>{translateInterface("m190601e77afe")}</p>
-          <ul className="mt-2 list-disc pl-5">
+        <details className="settings-details mb-6 text-[13px]">
+          <summary><AlertCircle className="mr-1.5 h-3.5 w-3.5 text-amber-600" aria-hidden />{market("someMissing", { count: catalogWarnings.length })}</summary>
+          <ul className="mt-1 list-disc space-y-0.5 pl-9 text-muted-foreground">
             {catalogWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
           </ul>
-        </div>
+        </details>
       )}
 
-      {/* Pill bar */}
-      <nav className="flex flex-wrap items-center gap-2">
-        <button type="button" className={pill(section === 'apps')} onClick={() => setSection('apps')}>
-          <Grid3x3 className="h-3.5 w-3.5" /> {" "}{translateInterface("m01bed311e7d0")}</button>
-        <button type="button" className={pill(section === 'installed')} onClick={() => setSection('installed')}>
-          <Check className="h-3.5 w-3.5" /> {" "}{translateInterface("mf8b32f4e92bd")}{counts.installed > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.installed}</span>}
-        </button>
-        <button type="button" className={pill(section === 'updates')} onClick={() => setSection('updates')}>
-          <Download className="h-3.5 w-3.5" /> {" "}{translateInterface("m22e2bada8f1c")}{counts.updates > 0 && <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{counts.updates}</span>}
-        </button>
-        <button type="button" className={pill(section === 'added')} onClick={() => setSection('added')}>
-          <Plus className="h-3.5 w-3.5" /> {translateInterface("m6b02e0d363a4")}{counts.added > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.added}</span>}
-        </button>
-
-        {usedCategories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}
-        <button type="button" className={pill(categoryFilter === 'all')} onClick={() => setCategoryFilter('all')}>
-          {translateInterface("ma52ace420f21")}</button>
-        {usedCategories.map((cat) => {
-          const CatIcon = lucideByName(catIconName(cat));
+      <nav aria-label={market("categories")} className="market-chips mb-10">
+        <button type="button" aria-pressed={category === 'all'} className="market-chip" onClick={() => setCategory('all')}>{translateInterface("ma52ace420f21")}</button>
+        {usedCategories.map((id) => {
+          const CategoryIcon = lucideByName(categories.icon(id));
           return (
-            <button key={cat} type="button" className={pill(categoryFilter === cat)} onClick={() => setCategoryFilter(cat)}>
-              <CatIcon className="h-3.5 w-3.5" /> {catLabel(cat)}
+            <button key={id} type="button" aria-pressed={category === id} className="market-chip" onClick={() => setCategory(id)}>
+              <CategoryIcon className="h-3.5 w-3.5" aria-hidden />{categories.label(id)}
             </button>
           );
         })}
-        {tagFilter && (
-          <button
-            type="button"
-            onClick={() => setTagFilter(null)}
-            title={translateInterface("m58f0f5967b9e")}
-            className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[13px] font-medium text-primary"
-          >
-            #{tagFilter} <span className="text-[15px] leading-none">×</span>
+        {added.length > 0 && (
+          <button type="button" aria-pressed={category === 'added'} className="market-chip" onClick={() => setCategory('added')}>
+            {market("addedByAddress")} <span className="tabular-nums opacity-70">{added.length}</span>
           </button>
         )}
-
-        <Link href="/market/sources" className={`${pill(false)} ml-auto`}>
-          <Store className="h-3.5 w-3.5" /> {translateInterface("mcaf85b0888d7")}{sourceCount > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{sourceCount}</span>}
-        </Link>
       </nav>
 
-      {/* Spotlight — "Built for <server>" big-tiles (data-driven curation; All apps, unfiltered) */}
-      {showingStrips && spotlightApps.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-[17px] font-bold tracking-tight">{spotlightTitle}</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {spotlightApps.map((app) => (
-              <Link
-                key={app.id}
-                href={variantHref(app)}
-                className="flex flex-col items-center gap-2 rounded-[14px] p-4 text-center transition-all hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <MarketIcon app={app} size={56} tile={catTile(app.category)} />
-                <span className="text-[13.5px] font-semibold">{app.name}</span>
-                <span className="text-[11.5px] text-muted-foreground">{blockedLabel(app) ?? catLabel(app.category)}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Bundles — curated install-and-wire recipes (data-driven; All apps, unfiltered) */}
-      {showingStrips && bundleCards.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-[17px] font-bold tracking-tight">{translateInterface("mff042b6ded4e")}</h2>
-            <span className="text-[12.5px] text-muted-foreground">{translateInterface("m303e7cf98fb4")}</span>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {bundleCards.map((b) => {
-              const BIcon = lucideByName(b.icon || 'package');
-              return (
-                <div key={b.id} className="flex flex-col gap-3 rounded-2xl border bg-card p-5">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-primary/10 text-primary">
-                      <BIcon className="h-5 w-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-[15px] font-bold">{b.name}
-                        {b.sourceId && b.sourceId !== 'official' && (
-                          <span className="rounded border border-amber-500/40 px-1.5 py-px text-[10.5px] font-medium text-amber-700 dark:text-amber-500">{b.sourceName || b.sourceId}</span>
-                        )}
-                      </div>
-                      <div className="text-[12.5px] text-muted-foreground">{b.setupSummary || b.description}</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {b.memberApps.map((app) => (
-                      <span
-                        key={`${b.id}-${app.id}`}
-                        className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-[12px]"
-                      >
-                        <MarketIcon app={app} size={18} tile={catTile(app.category)} />
-                        {app.name}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => handleInstallBundle(b.id, b.sourceId)}
-                      disabled={installingBundle !== null || b.sourceNotAccepted === true}
-                      title={b.sourceNotAccepted ? translateInterface("m8ba391628be0") : undefined}
-                      className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {installingBundle === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      {installingBundle === b.id ? translateInterface("m530bcc355f0a") : translateInterface("me860b43c8a66")}
-                    </button>
-                    {installingBundle === b.id && bundleMsg && (
-                      <span className="truncate text-[12px] text-muted-foreground">{bundleMsg}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Curated collections (data-driven; All apps, unfiltered) */}
-      {showingStrips && collectionStrips.map((coll) => (
-        <section key={coll.id} className="space-y-2">
-          <h2 className="text-[17px] font-bold tracking-tight">{coll.label}</h2>
-          <div className="grid gap-x-6 gap-y-1 rounded-xl border bg-card p-2 md:grid-cols-2 lg:grid-cols-3">
-            {coll.apps.map((app) => (
-              <Link
-                key={`${coll.id}-${app.id}`}
-                href={variantHref(app)}
-                className="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-accent"
-              >
-                <MarketIcon app={app} size={44} tile={catTile(app.category)} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-semibold"><span className="truncate">{app.name}</span><SourceTag app={app} /></div>
-                  <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
-                </div>
-                {cardState(app)}
-              </Link>
-            ))}
-          </div>
-        </section>
-      ))}
-
-      {/* Featured banner */}
-      {section === 'apps' && categoryFilter === 'all' && featured && (
-        <section className="grid overflow-hidden rounded-2xl border md:grid-cols-2">
-          <div className="flex flex-col justify-center gap-2.5 p-8">
-            <div className="text-[12px] font-semibold uppercase tracking-wider text-primary">{translateInterface("mc533cafab69e")}</div>
-            <h3 className="text-[22px] font-bold tracking-tight">{featured.name}</h3>
-            <p className="text-sm text-muted-foreground">{featured.description}</p>
-            <div className="pt-1">
-              <Link
-                href={variantHref(featured)}
-                className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                {isInstalled(featured) ? translateInterface("m3dfbdb809ebf", { value0: String(featured.name) }) : translateInterface("mfa4031f94844", { value0: String(featured.name) })}
-              </Link>
+      {browsing ? (
+        <section aria-labelledby="market-results" className="space-y-6">
+          <h2 id="market-results" className="text-xl font-semibold tracking-tight">
+            {query ? market("results", { query: search.trim() }) : category === 'added' ? market("addedByAddress") : categories.label(category)}
+            <span className="ml-2 font-normal text-muted-foreground tabular-nums">{listed.length}</span>
+          </h2>
+          {listed.length === 0 ? (
+            <div className="rounded-2xl border border-dashed py-16 text-center">
+              <Store className="mx-auto mb-3 h-9 w-9 text-muted-foreground/50" aria-hidden />
+              <p className="text-[15px] text-muted-foreground">{apps.length === 0 ? translateInterface("mc0d5412c5745") : query ? market("noResults", { query: search.trim() }) : translateInterface("mecb17af93f66")}</p>
+              {apps.length > 0 && (
+                <Button variant="outline" className="mt-5 rounded-full" onClick={() => { setSearch(''); setCategory('all'); }}>{market("showAll")}</Button>
+              )}
             </div>
-          </div>
-          <div className="hidden items-center justify-center bg-gradient-to-br from-slate-900 to-slate-700 p-8 md:flex">
-            <MarketIcon app={featured} size={96} tile={catTile(featured.category)} />
-          </div>
+          ) : (
+            <div className="market-results">{listed.map((app) => card(app))}</div>
+          )}
         </section>
-      )}
-
-      {/* Category sections (compact rows) */}
-      {Object.keys(byCategory).length === 0 ? (
-        <div className="rounded-xl border bg-card py-16 text-center text-muted-foreground">
-          <Store className="mx-auto mb-3 h-10 w-10 opacity-40" />
-          <p className="text-sm">{apps.length === 0 ? translateInterface("mc0d5412c5745") : translateInterface("mecb17af93f66")}</p>
-        </div>
       ) : (
-        Object.entries(byCategory)
-          .sort((a, b) => catOrder(a[0]) - catOrder(b[0]) || a[0].localeCompare(b[0]))
-          .map(([cat, list]) => (
-          <section key={cat} className="space-y-2">
-            <h2 className="text-[17px] font-bold tracking-tight">{catLabel(cat)}</h2>
-            <div className="grid gap-x-6 gap-y-1 rounded-xl border bg-card p-2 md:grid-cols-2 lg:grid-cols-3">
-              {list.map((app) => (
-                <Link
-                  key={`${app.id}-${app.sourceId ?? ''}`}
-                  href={variantHref(app)}
-                  className="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-accent"
-                >
-                  <MarketIcon app={app} size={44} tile={catTile(app.category)} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                      <span className="truncate">{app.name}</span>
-                      <SourceTag app={app} />
-                    </div>
-                    <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
-                  </div>
-                  {cardState(app)}
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))
+        <div className="space-y-14 md:space-y-16">
+          {picks.map((pick, index) => (
+            <section key={pick.id} aria-labelledby={`market-pick-${pick.id}`} className="space-y-5">
+              <div>
+                <h2 id={`market-pick-${pick.id}`} className={`${index === 0 ? 'text-2xl' : 'text-xl'} font-semibold tracking-tight`}>{pick.label}</h2>
+                {pick.hint && <p className="mt-1 text-[14px] text-muted-foreground">{pick.hint}</p>}
+              </div>
+              <div className={`market-shelf${index === 0 ? ' market-shelf-large' : ''}`}
+                style={index === 0 ? ({ '--market-cols': Math.min(3, pick.apps.length) } as CSSProperties) : undefined}>
+                {pick.apps.map((app) => card(app, index === 0 ? 'large' : undefined))}
+              </div>
+            </section>
+          ))}
+
+          {bundleCards.length > 0 && (
+            <section aria-labelledby="market-bundles" className="space-y-5">
+              <div>
+                <h2 id="market-bundles" className="text-xl font-semibold tracking-tight">{translateInterface("mff042b6ded4e")}</h2>
+                <p className="mt-1 text-[14px] text-muted-foreground">{translateInterface("m303e7cf98fb4")}</p>
+              </div>
+              <ul className="settings-group">
+                {bundleCards.map((b) => {
+                  const busy = installingBundle === b.id;
+                  return (
+                    <li key={b.id} className="settings-item">
+                      <span className="flex shrink-0 -space-x-2" aria-hidden>
+                        {b.memberApps.map((app) => <span key={app.id} className="rounded-[10px] ring-2 ring-card"><MarketIcon app={app} size={40} tile={categories.tile(app.category)} /></span>)}
+                      </span>
+                      <span className="settings-item-text">
+                        <span className="settings-item-label">{b.name}</span>
+                        <span className="settings-item-hint">{busy && bundleMsg ? bundleMsg : (b.setupSummary || b.description)}</span>
+                      </span>
+                      <Button className="rounded-full" onClick={() => handleInstallBundle(b.id, b.sourceId)}
+                        disabled={installingBundle !== null || b.sourceNotAccepted === true}
+                        title={b.sourceNotAccepted ? translateInterface("m8ba391628be0") : undefined}>
+                        {busy ? <Loader2 className="animate-spin" /> : <Download />}
+                        {busy ? translateInterface("m530bcc355f0a") : translateInterface("me860b43c8a66")}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+
+          {/* One shelf per category. Small ones sit side by side (each as wide as its apps), packed into the grid. */}
+          <div className="market-mosaic">
+            {shelves.map((shelf) => (
+              <section key={shelf.id} aria-labelledby={`market-shelf-${shelf.id}`} className="min-w-0 space-y-5"
+                style={{ '--span-d': Math.min(4, shelf.apps.length), '--span-t': Math.min(3, shelf.apps.length) } as CSSProperties}>
+                <div className="flex items-baseline justify-between gap-4">
+                  <h2 id={`market-shelf-${shelf.id}`} className="text-xl font-semibold tracking-tight">
+                    {categories.label(shelf.id)}<span className="ml-2 font-normal text-muted-foreground tabular-nums">{shelf.apps.length}</span>
+                  </h2>
+                  {shelf.apps.length > 4 && (
+                    <button type="button" className="settings-link shrink-0" onClick={() => { setCategory(shelf.id); window.scrollTo({ top: 0 }); }}>{market("seeAll")}</button>
+                  )}
+                </div>
+                <div className="market-shelf">{shelf.apps.slice(0, 8).map((app) => card(app))}</div>
+              </section>
+            ))}
+          </div>
+        </div>
       )}
 
-      <div className="text-center text-[12.5px] text-muted-foreground">
-        {translateInterface("connectedMarkets", {count: sourceCount})}<Link href="/market/sources" className="text-primary hover:underline">{translateInterface("mb00d1920b294")}</Link>
-      </div>
+      <p className="mt-16 text-center text-[13px] text-muted-foreground">
+        {translateInterface("connectedMarkets", { count: sourceCount })}
+        <Link href="/market/sources" className="font-medium text-primary hover:underline">{translateInterface("mb00d1920b294")}</Link>
+      </p>
     </div>
   );
 }

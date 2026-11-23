@@ -591,7 +591,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           onLogout={logout}
         />
       </div>
-      <div className="ye-mobile-shell-spacer" aria-hidden="true" />
     </>
   );
 }
