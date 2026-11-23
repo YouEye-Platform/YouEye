@@ -8,6 +8,23 @@ export function requiresFreshUIDatabase(component: Component | null, setupComple
     && component.requestId === `install-${component.manifestSHA256}`;
 }
 
+/**
+ * The fresh UI identity of a dashboard (re)deployed before setup: built from the selected release, as the deploy
+ * writes the UI's marker (`install-<selected manifest>`, lxd-deployer.ts), never from the Control Panel's marker. A box
+ * whose setup never completed may have taken a promotion (a metadata-only request: a new document of the same build)
+ * or an update that reused the Control Panel; its CP marker still names the document it was installed from, so the
+ * selected manifest differs while it is the same install (YE-42: "Fresh UI selection differs from Control Panel").
+ * What must hold is that the Control Panel running is the selection's: the same CP artifact.
+ */
+export function freshUIIdentity(
+  component: Component,
+  selected: { manifestSHA256: string; cpArtifactSHA256: string; uiArtifactSHA256: string },
+): FreshUIIdentity {
+  if (selected.cpArtifactSHA256 !== component.artifactSHA256) throw new Error('Fresh UI selection is not the installed Control Panel\'s release');
+  return { schema: 'youeye.core-component.v1', role: 'ui', requestId: `install-${selected.manifestSHA256}`,
+    manifestSHA256: selected.manifestSHA256, artifactSHA256: selected.uiArtifactSHA256 };
+}
+
 export type FreshUIDatabaseOperations = {
   assertIdentity(): Promise<void>;
   credentials(): Promise<{ host: string; port: string; user: string; password: string }>;

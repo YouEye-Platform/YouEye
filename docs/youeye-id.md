@@ -37,10 +37,21 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
   until the window ends, and 30 per client address in 15 minutes across usernames. Loopback is not a client address:
   before Caddy's proxy devices sent the real client (0.6.17, [architecture.md](architecture.md#networks)) every client
   was `127.0.0.1`, and a limit on it would lock everyone out. A success clears the username's count and gives the
-  address its attempt back; a refused attempt counts against nothing. The address is the first `X-Forwarded-For`
-  entry: through Caddy that is the client, but an app calling YouEye ID through its doorway can send any value, so
-  only the per-username limit holds against an app. Unknown usernames are limited and answered
-  exactly like real ones, and cost the same password hash.
+  address its attempt back; a refused attempt counts against nothing. The address is the TCP peer
+  (`lib/auth/client-address.ts`, since 0.6.18, YE-136): through Caddy, the `X-Forwarded-For` entry Caddy wrote (the
+  client); through an app's doorway, the app's own address whatever headers the app sends, so an app can neither get
+  around the per-address limit nor reset it. Apps whose bridge NATs all arrive as the host's incusbr0 address, which
+  is no client address: for them, as for loopback, only the per-username limit applies
+  ([architecture.md](architecture.md#networks)). Unknown usernames are limited and answered exactly like real ones,
+  and cost the same password hash.
+- The same two limits, each with its own counts, guard the Control Panel's PAM login on a bare IP
+  (`/api/auth/login`, scope `cp-login`; it was 20 per client address in 5 minutes, and every client without a known
+  address shared one count) and the appliance claim (`/api/appliance/claim`, scope `appliance-claim`; a form error,
+  a 409 and a server error count against nothing). The per-username limit is the guard that no address change gets
+  around, so anyone who can reach a sign-in form can keep one username locked with 10 wrong passwords per 15 minutes.
+  The lock ends with the window, or at once when the processes restart (the counts are in memory):
+  `incus exec youeye-control -- systemctl restart youeye-control youeye-id` on the box. The owner reset (`/api/auth/reset-owner`) allows 10 tries per client address in 15
+  minutes; the code itself pauses 15 minutes after every 10 wrong tries (Spine, `consoleaccess/reset.go`).
 
 ## Clients
 

@@ -29,6 +29,11 @@ export function runStartupReconciliation(
       let clientAddressFailure: unknown;
       await (await import('@/lib/caddy/client-address')).ensureClientAddresses()
         .catch((error: unknown) => { clientAddressFailure = error; });
+      // The container's Caddyfile too, which a box deployed before 0.6.16 has without the wrappers: Caddy loads it
+      // when its saved config is lost (YE-140). A failure is logged; the next start tries again.
+      await (await import('@/lib/caddy/caddyfile')).ensureContainerCaddyfile()
+        .then((written) => { if (written) console.log('[Caddy] the container Caddyfile now has the PROXY protocol listener wrappers'); })
+        .catch((error: unknown) => console.warn('[Caddy] container Caddyfile:', error instanceof Error ? error.message : String(error)));
       const raw = await (await import('@/lib/settings')).settingsService.getRaw();
       if (raw.setup_completed && raw.domain) {
         await (await import('@/lib/caddy/client')).reconcileManagedRoutes(raw.domain);

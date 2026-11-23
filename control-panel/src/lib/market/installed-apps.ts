@@ -27,15 +27,8 @@ import {
   recordedCatalogSourceIds,
   recordedSourceAddressChange,
 } from './update-routing';
-import type { AppManifest, InstallMetadata } from './types';
-import { installedProductRelease } from '../releases/product-release';
-import { releaseKey, type ReleaseKey } from '../version';
-
-/** Line and sequence of a native app's accepted product release (null when it has none or it is unreadable). */
-function installedProductKey(appId: string, installMeta: InstallMetadata | null | undefined): ReleaseKey | null {
-  const installed = installedProductRelease(installMeta?.nativeArtifacts?.find((artifact) => artifact.productRelease)?.productRelease, appId);
-  return installed ? releaseKey(installed.release) : null;
-}
+import type { AppManifest } from './types';
+import { installedNativeKey } from '../releases/product-release';
 
 const STORE_PATH = process.env.YOUEYE_INSTALLED_APPS_PATH ?? statePath('installed-apps.json');
 
@@ -517,8 +510,9 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     const availability = projectUpdateAvailability({
       routing,
       installedVersion: app.installedVersion,
-      installedKey: routing.kind === 'channel' ? installedProductKey(app.appId, installMeta) : null,
+      installedKey: routing.kind === 'channel' ? installedNativeKey(installMeta, app.appId) : null,
       installedArtifactSHA256: installMeta?.nativeArtifacts?.map((artifact) => artifact.sha256),
+      installedAt: installMeta?.installedAt ?? app.installedAt,
       catalogVersion,
       candidate,
     });

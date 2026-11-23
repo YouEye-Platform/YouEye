@@ -144,8 +144,10 @@ export async function reconcileClientAddressDevices(
 
 /**
  * The health monitor's periodic check (every minute): only the device side, so a Caddy that came up on a config
- * without the wrappers (a restore of an older backup, a lost autosave, a rebuilt container) stops getting headers
- * within a minute instead of at the next Control Panel start. Never throws.
+ * without the wrappers (a restore of an older backup, a rebuilt container) stops getting headers within a minute
+ * instead of at the next Control Panel start. A lost or unreadable `autosave.json` is not such a case since 0.6.18:
+ * Caddy then loads the container's Caddyfile, which every Control Panel start keeps with the wrappers
+ * (`ensureContainerCaddyfile`, YE-140). Never throws.
  */
 export async function checkClientAddressDevices(): Promise<void> {
   try {

@@ -76,8 +76,8 @@ the UI each have their own inputs and update without a reboot.
 On a Proxmox host, as root:
 
 ```sh
-curl -fsSL https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh | \
-  sh -s -- --repository https://<forge>/<owner>/YouEye --channel dev
+curl -fsSLo install.sh https://<forge>/<owner>/YouEye/releases/download/<tag>/install.sh && \
+  sh install.sh --repository https://<forge>/<owner>/YouEye --channel dev
 ```
 
 - **Unattended test installs:** add `--silent --yes --erase-confirmed --vmid <id> --target-storage <storage>

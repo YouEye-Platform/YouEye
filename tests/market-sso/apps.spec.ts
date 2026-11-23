@@ -5,7 +5,7 @@
 // Known product gaps are recorded per app as `expect: { admin: false }` etc. and checked as such, so a fix
 // shows up as a failing test that must be updated.
 import { test, expect } from '@playwright/test';
-import { USERS, appUrl, signIn } from './lib.mjs';
+import { USERS, appUrl, probe, signIn } from './lib.mjs';
 import { apps } from './apps.config.mjs';
 
 const only = process.env.APPS?.split(',').map((s) => s.trim()).filter(Boolean);
@@ -14,14 +14,11 @@ for (const [id, cfg] of Object.entries(apps)) {
   if (only && !only.includes(id)) continue;
   test.describe(id, () => {
     test.skip(Boolean(cfg.skip), String(cfg.skip));
-    test.beforeAll(async ({ playwright }) => {
+    test.beforeAll(async () => {
       // Skip apps that are not installed (their subdomain does not answer as the app).
-      const request = await playwright.request.newContext();
-      const r = await request.get(appUrl(cfg) + '/', { maxRedirects: 0, failOnStatusCode: false, timeout: 20_000 }).catch(() => null);
-      const status = r?.status() ?? 0;
+      const { status, location } = await probe(appUrl(cfg) + '/');
       // A host with no app falls through to the YouEye dashboard, which redirects "/" to "/settings".
-      const fallback = status >= 300 && status < 400 && new URL(r!.headers()['location'] ?? '/', appUrl(cfg)).pathname === '/settings';
-      await request.dispose();
+      const fallback = status >= 300 && status < 400 && new URL(location || '/', appUrl(cfg)).pathname === '/settings';
       test.skip(!status || status >= 500 || status === 404 || fallback,
         `${id} is not installed or not reachable (${fallback ? 'dashboard fallback' : status || 'no answer'})`);
     });

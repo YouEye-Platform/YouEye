@@ -18,7 +18,8 @@ import { tmpdir } from 'node:os';
 import { appUpdateJournalStore, withAppLifecycle } from '@/lib/market/update-admission';
 import { resolveNativeProduct, stageVerifiedProductArtifact } from '@/lib/market/native-artifact';
 import { acceptProductSequence, productReceipt } from '@/lib/releases/product-release';
-import { compareReleases } from '@/lib/version';
+import { compareReleases, releaseKey } from '@/lib/version';
+import { compareToInstalledNative } from '@/lib/market/update-routing';
 import { getCoreProvenance } from '@/lib/updates/provenance';
 import { publishProductProjection, verifyProductProjection } from '@/lib/releases/product-projection';
 import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease } from '@/lib/pointer/release-metadata';
@@ -96,14 +97,28 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${installed.release.version})`, progress: 100 });
     return;
   }
-  // Without a recorded release (an older provenance record), the same package is the same build, as pointerUpdateState
-  // decides it: nothing to install, and the name it was installed with stays.
+  // Without a recorded release (an older provenance record), the build is ordered as pointerUpdateState orders it
+  // (compareToInstalledNative): the same package is the same build, nothing to install, and the name it was installed
+  // with stays; an older build, or one the box can't order, is refused (YE-141).
   if (!installed) {
     const legacy = await getCoreProvenance('app:pointer');
-    const selectedPackage = selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256;
-    if (legacy?.artifact_sha256 && legacy.artifact_sha256 === selectedPackage) {
-      emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${legacy.version})`, progress: 100 });
-      return;
+    if (legacy) {
+      const order = compareToInstalledNative({
+        key: legacy.key, artifactSHA256: legacy.artifact_sha256 ? [legacy.artifact_sha256] : null,
+        version: legacy.version, installedAt: legacy.updated_at || null,
+      }, {
+        key: releaseKey(selected.release),
+        artifactSHA256: selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256,
+      });
+      if (order === 0) {
+        emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${legacy.version})`, progress: 100 });
+        return;
+      }
+      if (order === null || order < 0) {
+        throw new Error(order === null
+          ? `The channel offers ${appDef.displayName} ${selected.release.version}; this box has ${legacy.version}, installed without a recorded release, and can't tell that it is newer; waiting for a newer build`
+          : `The channel offers ${appDef.displayName} ${selected.release.version}; this box has ${legacy.version}; waiting for the channel to catch up`);
+      }
     }
   }
   // The update runs inside the container: a stopped Pointer is started first, and ends running and verified.

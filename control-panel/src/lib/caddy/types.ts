@@ -29,6 +29,8 @@ export interface Upstream {
 export interface ReverseProxyHandler {
   handler: 'reverse_proxy';
   upstreams: Upstream[];
+  /** Retry of a refused upstream (the Control Panel's routes: `applyControlPanelRetry` in `servers.ts`). */
+  load_balancing?: { try_duration?: string; try_interval?: string; [key: string]: unknown };
   headers?: {
     request?: {
       set?: Record<string, string[]>;

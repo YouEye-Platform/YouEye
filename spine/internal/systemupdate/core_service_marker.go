@@ -2,7 +2,6 @@ package systemupdate
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -96,34 +95,11 @@ func installCoreComponentMarker(root *os.File, j CoreJournal, r *CoreServiceStag
 		return err
 	}
 	temp := r.StageName + ".marker"
-	existing, err := readCoreContainerStateAt(dir, temp)
-	if err == nil {
+	// A temp left by an earlier attempt of this stage is kept when it holds this marker, else written again (YE-42).
+	if err = placeCoreTempAt(dir, temp, 16384, encoded, func(existing []byte) bool {
 		var retained coreComponentMarker
-		if json.Unmarshal(existing, &retained) != nil || retained != target {
-			return fmt.Errorf("interrupted marker differs; paired recovery required")
-		}
-	} else if errors.Is(err, unix.ENOENT) {
-		var owner unix.Stat_t
-		if unix.Fstat(int(dir.Fd()), &owner) != nil {
-			return fmt.Errorf("core state ownership unavailable")
-		}
-		fd, err := openCoreMappedExclusive(dir, temp, 0600)
-		if err != nil {
-			return err
-		}
-		file := os.NewFile(uintptr(fd), "core-component-marker")
-		_, err = file.Write(encoded)
-		if err == nil {
-			err = unix.Fchown(fd, int(owner.Uid), int(owner.Gid))
-		}
-		if err == nil {
-			err = file.Sync()
-		}
-		file.Close()
-		if err != nil {
-			return err
-		}
-	} else {
+		return json.Unmarshal(existing, &retained) == nil && retained == target
+	}); err != nil {
 		return err
 	}
 	if err = mutateCoreMapped(dir, func() error {

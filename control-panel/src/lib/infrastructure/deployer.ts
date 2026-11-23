@@ -65,7 +65,7 @@ import { settingsService } from '../settings';
 import { preparePointerStorage } from '../pointer/storage';
 import { coreSchemaComponent } from '@/lib/updates/core-schema';
 import { selectedCoreRole } from '@/lib/releases/core-release';
-import { configureFreshUIDatabase, requiresFreshUIDatabase, type FreshUIIdentity } from './fresh-ui-database';
+import { configureFreshUIDatabase, freshUIIdentity, requiresFreshUIDatabase, type FreshUIIdentity } from './fresh-ui-database';
 
 const TOTAL_STEPS = 5;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -128,10 +128,11 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
   const freshDatabase = requiresFreshUIDatabase(component, settings.setup_completed === true);
   let freshIdentity: FreshUIIdentity | undefined;
   if (freshDatabase) {
+    // From the selection, as the deploy writes the UI marker (a promotion or a reused CP before setup keeps the CP
+    // marker of the first document); the CP running must be the selection's.
     const selected = selectedCoreRole('ui');
-    if (selected.manifestSHA256 !== component!.manifestSHA256) throw new Error('Fresh UI selection differs from Control Panel');
-    freshIdentity = { schema: 'youeye.core-component.v1', role: 'ui', requestId: component!.requestId,
-      manifestSHA256: selected.manifestSHA256, artifactSHA256: selected.member.artifact.sha256 };
+    freshIdentity = freshUIIdentity(component!, { manifestSHA256: selected.manifestSHA256,
+      cpArtifactSHA256: selectedCoreRole('cp').member.artifact.sha256, uiArtifactSHA256: selected.member.artifact.sha256 });
     spec.deferStart = true;
   }
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;

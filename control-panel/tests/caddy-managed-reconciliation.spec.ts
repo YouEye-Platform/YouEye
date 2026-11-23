@@ -219,7 +219,12 @@ test('DNS-name dial repair is atomic, preserves unrelated routes and security or
   });
   const assets = routes.find((route) => route['@id'] === 'control-pointer-assets-route')!;
   assert.deepEqual(assets.match, [{ host: ['example.test'], path: ['/api/pointer-ui/*'] }]);
-  assert.deepEqual(assets.handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.45.18.16:3000' }] }]);
+  // Every route to the Control Panel's container rides out its restarts (YE-138); app and Pointer routes do not.
+  const retry = { try_duration: '10s', try_interval: '250ms' };
+  assert.deepEqual(assets.handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.45.18.16:3000' }], load_balancing: retry }]);
+  assert.deepEqual(routes[1].handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.45.18.16:3000' }], load_balancing: retry }],
+    'the named ping route gets the address and the retry');
+  assert.equal(JSON.stringify(routes.find((route) => route['@id'] === 'named-pointer')).includes('load_balancing'), false);
   const pointer = routes.find((route) => route['@id'] === 'pointer-inference-route')!;
   assert.deepEqual(pointer.match![0].path, ['/v1', '/v1/*', '/v1beta', '/v1beta/*']);
   assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'named-pointer')), /10\.45\.18\.17:4002/);

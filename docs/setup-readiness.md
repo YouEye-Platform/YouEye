@@ -52,7 +52,9 @@ Complete needs all three: `setup_completed` in `youeye.yaml`, the identity setup
 saved config alone is not proof. Unreadable evidence returns `503` and never means "done".
 
 Setup ends by asking Spine to restart the Control Panel (to load the new SSO environment). The browser then waits
-for readiness; a timeout there is an error, and retrying only repeats that wait.
+for readiness; a timeout there is an error, and retrying only repeats that wait. Spine makes the restart when no app
+or platform work runs: an app install started right after setup delays it until the install ends. Caddy holds
+requests to the Control Panel through it (since 0.6.18) instead of answering 502.
 
 ## Restore during setup
 

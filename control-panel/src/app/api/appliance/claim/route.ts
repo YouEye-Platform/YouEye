@@ -1,12 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  checkRateLimit,
   createSetupSession,
   generateCSRFToken,
-  resetRateLimit,
   setSessionCookies,
 } from '@/lib/auth';
+import { requestClientAddress } from '@/lib/auth/client-address';
+import { beginSignInAttempt, signInNotCounted, signInSucceeded } from '@/lib/identity/sign-in-limit';
 import { isLocalSetupHost, secureCookieFor } from '@/lib/auth/mode';
 import {
   claimApplianceOwner,
@@ -18,14 +18,6 @@ import { validateIdentityPassword } from '@/lib/identity/password-policy';
 import { validateIdentityUsername } from '@/lib/identity/username-policy';
 
 const CLAIM_CSRF_COOKIE = 'ye-claim-csrf';
-const MAX_ATTEMPTS = 10;
-const WINDOW_SECONDS = 300;
-
-function requestIP(request: NextRequest): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || request.headers.get('x-real-ip')
-    || 'unknown';
-}
 
 function requestIsLocalAppliance(request: NextRequest): boolean {
   const host = request.headers.get('host') || '';
@@ -104,29 +96,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'The claim page expired. Reload and try again.' }, { status: 403 });
   }
 
-  const ip = requestIP(request);
-  const rateLimitKey = `appliance-claim:${ip}`;
-  const limit = checkRateLimit(rateLimitKey, MAX_ATTEMPTS, WINDOW_SECONDS);
-  if (!limit.allowed) {
+  let body: Record<string, unknown>;
+  try {
+    const parsed = await request.json() as unknown;
+    body = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return NextResponse.json({ error: 'The owner account could not be prepared. Try again.' }, { status: 400 });
+  }
+  const action = body.action === 'resume' ? 'resume' : 'claim';
+  // Failures per username (resume checks the owner's password) from any address, and per client address (the TCP
+  // peer; Caddy's X-Forwarded-For only from Caddy). Loopback and unknown are no client address (YE-136).
+  const attempt = beginSignInAttempt(
+    typeof body.username === 'string' ? body.username : '',
+    await requestClientAddress(request.headers),
+    'appliance-claim',
+  );
+  if (!attempt.allowed) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in a few minutes.' },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil((limit.resetAt - Date.now()) / 1000)) } }
+      { status: 429, headers: { 'Retry-After': String(Math.max(1, Math.ceil((attempt.retryAt - Date.now()) / 1000))) } }
     );
   }
 
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const action = body.action === 'resume' ? 'resume' : 'claim';
     const status = await getApplianceClaimStatus();
     if (status.setupCompleted) {
+      signInNotCounted(attempt);
       return NextResponse.json({ error: 'This appliance has already completed setup.' }, { status: 409 });
     }
 
     let user;
     if (action === 'claim') {
       const validationError = validateAccount(body);
-      if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+      if (validationError) {
+        signInNotCounted(attempt);
+        return NextResponse.json({ error: validationError }, { status: 400 });
+      }
       if (status.claimed) {
+        signInNotCounted(attempt);
         return NextResponse.json({ error: 'This appliance has already been claimed. Sign in to resume setup.' }, { status: 409 });
       }
       user = await claimApplianceOwner({
@@ -137,25 +144,33 @@ export async function POST(request: NextRequest) {
         email: String(body.email).trim(),
       });
       if (!user) {
+        signInNotCounted(attempt);
         return NextResponse.json({ error: 'The owner account could not be claimed. Reload to see the current state.' }, { status: 409 });
       }
     } else {
-      if (!status.claimed) return NextResponse.json({ error: 'This appliance has not been claimed yet.' }, { status: 409 });
+      if (!status.claimed) {
+        signInNotCounted(attempt);
+        return NextResponse.json({ error: 'This appliance has not been claimed yet.' }, { status: 409 });
+      }
 		const username = typeof body.username === 'string' ? body.username.trim() : '';
 		const password = typeof body.password === 'string' ? body.password : '';
 		const passwordError = validateIdentityPassword(password);
-		if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
+		if (passwordError) {
+        signInNotCounted(attempt);
+        return NextResponse.json({ error: passwordError }, { status: 400 });
+      }
       user = await verifyApplianceOwner(username, password);
-      if (!user) return NextResponse.json({ error: 'Invalid YouEye ID credentials.', remaining: limit.remaining }, { status: 401 });
+      if (!user) return NextResponse.json({ error: 'Invalid YouEye ID credentials.', remaining: attempt.remaining }, { status: 401 });
     }
 
-    resetRateLimit(rateLimitKey);
+    signInSucceeded(attempt);
     const sessionToken = await createSetupSession({ ownerId: user.id, username: user.username });
     const csrfToken = generateCSRFToken();
     await setSessionCookies(sessionToken, csrfToken, { request, maxAge: 7200 });
     return NextResponse.json({ success: true, next: '/setup' });
   } catch (error) {
     console.error('[appliance-claim] Request failed:', error instanceof Error ? error.message : 'unknown error');
+    signInNotCounted(attempt);
     return NextResponse.json({ error: 'The owner account could not be prepared. Try again.' }, { status: 500 });
   }
 }

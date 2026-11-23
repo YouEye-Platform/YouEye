@@ -42,6 +42,22 @@ const { realpathSync } = require('node:fs');
 const { join } = require('node:path');
 const runtime = join(__dirname, '.youeye-runtime', 'node');
 if (realpathSync(process.execPath) === realpathSync(runtime)) {
+  // Every request carries its TCP peer as x-youeye-peer, replacing any value the client sent: the one address an
+  // app behind its doorway cannot forge (YE-136, control-panel/src/lib/auth/client-address.ts).
+  const http = require('node:http');
+  process.env.YOUEYE_PEER_HEADER = '1';
+  const createServer = http.createServer;
+  http.createServer = function youeyeCreateServer(...args) {
+    const at = args.findIndex((arg) => typeof arg === 'function');
+    if (at >= 0) {
+      const listener = args[at];
+      args[at] = function youeyePeerListener(request, response) {
+        request.headers['x-youeye-peer'] = (request.socket && request.socket.remoteAddress) || '';
+        return listener.call(this, request, response);
+      };
+    }
+    return createServer.apply(this, args);
+  };
   require('./next-server.cjs');
 } else {
   const child = spawn(runtime, [__filename, ...process.argv.slice(2)], { stdio: 'inherit', env: process.env });

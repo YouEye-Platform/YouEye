@@ -139,6 +139,13 @@ installed release. Each update has a request ID (`--request`), shown in the jour
 | Failed after the checkpoint (`needs-recovery`) | since 0.6.15 the coordinator restores the previous release by itself; if that recovery stopped too (or on an older Spine), `youeye update core recover --request <id>` restores the checkpoint and the previous release |
 | Staged but not wanted, nothing changed yet | `youeye update core cancel --request <id>` |
 
+A state file the update writes into the Control Panel or dashboard container (the recorded selection
+`core-release.json`, a component marker `core-component.json`, a service file) goes through a temp file next to it
+first. Since 0.6.18 a write that fails removes its temp, and a temp an earlier attempt left (power loss in the middle
+of the write) is written again by `resume` or `recover`. Before 0.6.18 such a temp stopped the step with "interrupted
+core state differs; paired recovery required" or "interrupted marker differs; paired recovery required" and needed a
+person (YE-42).
+
 - Cancel works only before any service was touched: while only `verify-members` and `stage-host` ran, when the
   checkpoint preflight refused, or when the checkpoint's first admission timed out ("Waiting to retry": the
   lifecycle lock was busy for 60 s; since 0.6.15 the panel offers Cancel beside "Retry update"). After that, use
@@ -402,6 +409,24 @@ incus exec youeye-ui -- systemctl restart youeye-ui             # dashboard
 
 `youeye services restart <name>` goes through the Control Panel API, so it does not help when the Control Panel
 itself is down.
+
+Until 0.6.18 `control.` answered 502 for a moment (about 0.3 s) whenever the Control Panel restarted, for example the
+restart setup asks for, which Spine makes after an app install started right after setup (`journalctl -u youeye |
+grep control-restart`: "restarting the Control Panel after … of app or platform work"). Since 0.6.18 Caddy holds the
+request until the new process answers, for up to 10 s. A 502 that comes after a 10 s wait means the Control Panel
+is really down (above); apps with sign-in then also answer after 10 s, because their sign-in check goes to YouEye
+ID in the same container. A box whose Caddy routes to the Control Panel lack `"try_duration": "10s"` (`curl -s
+http://10.x.x.13:2019/config/ | grep -c try_duration`, Caddy's admin address in `docs/architecture.md`) gets them
+at the next Control Panel start.
+
+### "app-update journals could not be inspected" in the Control Panel log
+
+`youeye logs control | grep 'could not be inspected'`. The Control Panel then skips its maintenance loops, the app
+reconciler and the health monitor until it restarts; the error it caught follows the message (since 0.6.18). A fresh
+box before 0.6.18 logged it once or twice during its first deploy, because the Control Panel starts before
+PostgreSQL exists and closing an old alarm needed the database. Since 0.6.18 that only logs "the health registry
+can't be read yet" and the start goes on. After the first deploy, look at the error named: a damaged update receipt
+is described under [One app's record is damaged](#one-apps-record-is-damaged).
 
 ## The dashboard answers 500 after a reboot
 

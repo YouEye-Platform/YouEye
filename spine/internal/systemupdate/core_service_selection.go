@@ -214,33 +214,7 @@ func writeCoreContainerFileAt(dir *os.File, name, temp string, data []byte, limi
 	if err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
-	existing, err := readCoreContainerStateAtLimit(dir, temp, limit)
-	if err == nil {
-		if !bytes.Equal(existing, data) {
-			return fmt.Errorf("interrupted core state differs; paired recovery required")
-		}
-	} else if errors.Is(err, unix.ENOENT) {
-		var owner unix.Stat_t
-		if unix.Fstat(int(dir.Fd()), &owner) != nil || owner.Mode&0022 != 0 {
-			return fmt.Errorf("unsafe core state directory")
-		}
-		fd, err := openCoreMappedExclusive(dir, temp, 0600)
-		if err != nil {
-			return err
-		}
-		file := os.NewFile(uintptr(fd), "core-state")
-		_, err = file.Write(data)
-		if err == nil {
-			err = unix.Fchown(fd, int(owner.Uid), int(owner.Gid))
-		}
-		if err == nil {
-			err = file.Sync()
-		}
-		file.Close()
-		if err != nil {
-			return err
-		}
-	} else {
+	if err = placeCoreTempAt(dir, temp, limit, data, func(existing []byte) bool { return bytes.Equal(existing, data) }); err != nil {
 		return err
 	}
 	if err = mutateCoreMapped(dir, func() error {
@@ -249,4 +223,60 @@ func writeCoreContainerFileAt(dir *os.File, name, temp string, data []byte, limi
 		return err
 	}
 	return dir.Sync()
+}
+
+// placeCoreTempAt leaves temp holding exactly data, ready to be renamed over its target, which the caller has found to
+// differ from data (so the target was never renamed from it). Temp names are scoped to the request and the step
+// (`<stage>.<file>`, `coreSelectionTemp(request)`, a recovery's repair temp), and only that step's action child writes
+// them, holding the step's child lock (`.child-lock`, core_runner.go); nothing reads them. So a temp found here was
+// left by an earlier attempt of this same step, cut short by a failed write or a power loss. A complete one (matches)
+// is kept and renamed. Any other is removed and written again, never trusted, and never a reason to ask for
+// a paired recovery (YE-42). A write that fails removes its own temp.
+func placeCoreTempAt(dir *os.File, temp string, limit int64, data []byte, matches func([]byte) bool) error {
+	var owner unix.Stat_t
+	if unix.Fstat(int(dir.Fd()), &owner) != nil || owner.Mode&0022 != 0 {
+		return fmt.Errorf("unsafe core state directory")
+	}
+	existing, err := readCoreContainerStateAtLimit(dir, temp, limit)
+	if err == nil && matches(existing) {
+		return nil
+	}
+	if !errors.Is(err, unix.ENOENT) {
+		if err = removeCoreTempAt(dir, temp); err != nil {
+			return fmt.Errorf("interrupted core state write could not be removed: %w", err)
+		}
+	}
+	fd, err := openCoreMappedExclusive(dir, temp, 0600)
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(fd), "core-state")
+	_, err = file.Write(data)
+	if err == nil {
+		err = unix.Fchown(fd, int(owner.Uid), int(owner.Gid))
+	}
+	if err == nil {
+		err = syncCoreTemp(file)
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = removeCoreTempAt(dir, temp)
+		return err
+	}
+	return nil
+}
+
+// syncCoreTemp flushes a written temp; tests replace it to cut a write short.
+var syncCoreTemp = func(file *os.File) error { return file.Sync() }
+
+// removeCoreTempAt unlinks a temp file of a core state write (never a directory); one already gone is fine.
+func removeCoreTempAt(dir *os.File, temp string) error {
+	return mutateCoreMapped(dir, func() error {
+		if err := unix.Unlinkat(int(dir.Fd()), temp, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return err
+		}
+		return nil
+	})
 }

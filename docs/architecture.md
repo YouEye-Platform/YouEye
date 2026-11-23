@@ -151,6 +151,11 @@ app and YouEye ID in `X-Forwarded-For`. The fix came in two releases (YE-134):
   `control-panel/src/lib/caddy/servers.ts`). The Control Panel puts them on every config write (`setConfig`), in the
   Caddyfile it deploys, and on the live config at every start (`ensureClientAddressListenerWrappers`). A connection
   without a header is served as before.
+- **0.6.18:** every Control Panel start also rewrites the Caddyfile in `youeye-caddy` (`/etc/caddy/Caddyfile`) with
+  the deploy's when it lacks the wrappers (`ensureContainerCaddyfile` in `lib/caddy/caddyfile.ts`, YE-140): a box
+  deployed before 0.6.16 kept its first Caddyfile, which Caddy loads when its saved config (`autosave.json`) is lost
+  or unreadable. The new file is checked with `caddy adapt` before it replaces the old one, and the running Caddy is
+  not reloaded. So a lost autosave no longer leaves :443 without the wrappers while the devices send headers.
 - **0.6.17** (minimum release 0.6.16, so no box gets it without the wrappers) sets `proxy_protocol: "true"` on both
   devices (`PROXY_DEVICES_SEND_CLIENT_ADDRESS`): at every Control Panel start and after the deployer has loaded
   Caddy's config, never when it creates the instance (the image's stock Caddyfile has no wrappers). Incus then sends
@@ -162,9 +167,43 @@ app and YouEye ID in `X-Forwarded-For`. The fix came in two releases (YE-134):
   read.
 - A header from any other source (an app reaching Caddy over its NIC on the app's bridge) is ignored: Caddy sees the
   app's own address, and an app cannot claim another client's through Caddy. Its doorway to YouEye ID
-  (`gateway:3002`, below) does not pass Caddy, so there an app can send any `X-Forwarded-For`.
+  (`gateway:3002`, below) does not pass Caddy, so there an app can send any `X-Forwarded-For`; the Control Panel
+  ignores it there (next point).
+- **The Control Panel's own limits use the TCP peer** (since 0.6.18, YE-136). The Control Panel's launcher
+  (`/opt/app/server.js`, written by `control-panel/scripts/bundle-node-runtime.mjs`, part of the Control Panel's
+  files) sets `x-youeye-peer` to the socket's remote address on every request to both processes (3000 and 3001),
+  replacing any value a client sent. `requestClientAddress` (`lib/auth/client-address.ts`) then decides the client:
+  - the peer is one of `youeye-caddy`'s addresses (read from its live Incus state, never a fixed offset): the last
+    `X-Forwarded-For` entry, the one Caddy wrote;
+  - the peer is one of the host's own bridge addresses (`ipv4/6.address` of the managed networks): no client. Every
+    app whose bridge NATs (internet access) reaches the doorway as the host's incusbr0 address, and so does the UI's
+    identity proxy; a count on it would let one app lock out the others;
+  - any other peer (an app whose bridge does not NAT): that peer, whatever headers it sent;
+  - loopback (the Control Panel, Spine's `port3000` device, health checks), no peer, or Caddy's addresses unreadable
+    from Incus: no client. Keying an unknown peer on itself would put every browser behind Caddy into one count.
+
+  YouEye ID's sign-in, the Control Panel's PAM login, the appliance claim and the owner reset key their per-address
+  limits on it; without a client only the per-username limits apply ([youeye-id.md](youeye-id.md)). So an app's
+  doorway can neither dodge nor reset them, and nothing can lock everyone out. A Control Panel rollback brings back
+  the older launcher together with the older
+  code, which never reads the header.
 - Pi-hole's DNS devices (TCP and UDP 53) are unchanged: Pi-hole sees every LAN client as one (`127.0.0.1`), and
   per-client statistics and groups cannot tell devices apart.
+
+**Control Panel restarts behind Caddy (0.6.18, YE-138).** Every `reverse_proxy` to the Control Panel's container
+(the Control Panel `:3000` and YouEye ID `:3001`, by address or by name: `control.`, the root-domain Settings and
+Market routes, `/api/ping`, the :80 setup server, YouEye ID and the forward-auth checks of apps that use sign-in)
+has `load_balancing` `try_duration: 10s`, `try_interval: 250ms` (`applyControlPanelRetry` in
+`control-panel/src/lib/caddy/servers.ts`). A Control Panel restart (after setup, a URL change, a restore, an update)
+closes its port for about 0.3 s; Caddy answered every request in that moment with 502 and now keeps dialling until
+the new process answers. Caddy retries a request it could not deliver (the dial failed, any method) and a GET whose
+connection broke (a GET in flight when the old process stopped is sent again); a POST that reached the old process
+is never sent again. When the Control Panel's container is really down (stopped, crash loop) a request to it waits
+10 s before its 502, and so does every request to an app with sign-in, whose forward-auth check goes to YouEye ID
+(`:3001`); before, both failed at once. The Control Panel puts the retry on every config write (`setConfig`), in the
+managed-route reconcile and the installed-app admission reconcile at every start, so a box updated from an older
+release converges at the first start of 0.6.18 (that update's own restart still shows the old 502 for a moment).
+The apps' own upstreams, the dashboard and Pointer routes are unchanged.
 
 ## App doorways
 

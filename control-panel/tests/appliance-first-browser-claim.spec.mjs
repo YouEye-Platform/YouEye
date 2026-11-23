@@ -55,7 +55,7 @@ test('claim and resume are local, origin-bound, CSRF protected, and rate limited
   assert.match(route, /isLocalSetupHost/);
   assert.match(route, /origin === `\$\{protocol\}:\/\/\$\{host\}`/);
   assert.match(route, /timingSafeEqual/);
-  assert.match(route, /checkRateLimit/);
+  assert.match(route, /beginSignInAttempt\(/, "limited like a sign-in (YE-136)");
   assert.match(route, /verifyApplianceOwner/);
   assert.match(mode, /port === '3000'\) return false/);
 });

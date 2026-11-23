@@ -353,9 +353,9 @@ Two checks guard every promotion, patch or not, and pass for a build that follow
 ## Install
 
 ```sh
-curl -fsSL https://releases.youeye.me/install.sh | sh                       # official stable
-curl -fsSL https://releases.youeye.me/install.sh | sh -s -- --channel beta  # official beta
-curl -fsSL <repository>/releases/download/<tag>/install.sh | sh -s -- --repository <repository> --channel dev
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh                  # official stable
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh --channel beta   # official beta
+curl -fsSLo install.sh <repository>/releases/download/<tag>/install.sh && sh install.sh --repository <repository> --channel dev
 ```
 
 `install.sh` is an asset of every System release; `releases.youeye.me/install.sh` is the copy of the current stable

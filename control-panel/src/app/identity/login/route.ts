@@ -4,7 +4,8 @@ import { prepareDesign, renderSvg } from '@youeye/branding/server';
 import { readFileSync } from 'fs';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { createIdentitySession, getClient, verifyUser } from '@/lib/identity/store';
-import { beginSignInAttempt, signInClientAddress, signInSucceeded } from '@/lib/identity/sign-in-limit';
+import { requestClientAddress } from '@/lib/auth/client-address';
+import { beginSignInAttempt, signInSucceeded } from '@/lib/identity/sign-in-limit';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
@@ -459,8 +460,9 @@ export async function POST(request: NextRequest) {
   const returnTo = await safeReturnTo(String(form.get('return_to') || ''), identitySearchParams(request).get('return_to'), config);
   const username = String(form.get('username') || '');
   const password = String(form.get('password') || '');
-  // Per username from any address, and per client address (`sign-in-limit.ts`); the same message either way.
-  const attempt = beginSignInAttempt(username, signInClientAddress(request.headers));
+  // Per username from any address, and per client address (`sign-in-limit.ts`); the same message either way. The
+  // address is the TCP peer (Caddy's X-Forwarded-For only from Caddy), so an app's doorway cannot forge it.
+  const attempt = beginSignInAttempt(username, await requestClientAddress(request.headers));
   if (!attempt.allowed) {
     return html(returnTo, 'Too many sign-in attempts. Try again later.');
   }
