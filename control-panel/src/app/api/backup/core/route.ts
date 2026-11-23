@@ -2,10 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { createPlatformBackup } from '@/lib/backup/platform-backup';
 import { listInstalledApps } from '@/lib/market/metadata';
+import { readInstalledAppManifest } from '@/lib/market/frozen-manifest';
 import { spineClient } from '@/lib/spine/client';
 import { assessBackupCompatibility, readCurrentBackupSourceIdentity } from '@/lib/backup/compatibility';
 
 export const dynamic = 'force-dynamic';
+
+const NAME_WAIT_MS = 2_000;
+
+async function installedAppName(appId: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), NAME_WAIT_MS); });
+  try {
+    const manifest = await Promise.race([readInstalledAppManifest(appId).catch(() => null), timeout]);
+    return manifest?.metadata.name || null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function GET() {
   const session = await getSession();
@@ -39,7 +53,9 @@ export async function GET() {
 	}))).flat();
   return NextResponse.json({
     backups: external.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    apps: apps.map(app => ({ id: app.appId, name: app.appId })),
+    // People choose apps by name: the installed copy's (local, right for any market), never a market read, since the
+    // page asks every few seconds. An app whose copy can't be read in time keeps its id.
+    apps: await Promise.all(apps.map(async app => ({ id: app.appId, name: (await installedAppName(app.appId)) || app.appId }))),
     media: mediaResult.media,
     mediaError: 'error' in mediaResult ? mediaResult.error : undefined,
     config: configResult,

@@ -20,7 +20,7 @@ const english = JSON.parse(read('messages/en.json')).interface as Record<string,
 function shows(source: string, text: string) {
   const id = `m${createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
   assert.equal(english[id], text, `messages/en.json has ${id}`);
-  assert.ok(source.includes(`translateInterface("${id}"`), `the source shows “${text}”`);
+  assert.ok(source.includes(`translateInterface("${id}"`) || source.includes(`translateInterface('${id}'`), `the source shows “${text}”`);
 }
 const json = (body: unknown, init?: ResponseInit) => Response.json(body, init);
 
@@ -173,30 +173,35 @@ test('the update-blocked reason reaches the Market, Settings and the dashboard',
 
 test('an app this box cannot install shows what it needs instead of Install, and gets no install form', () => {
   const detail = read('src/app/market/[appId]/page.tsx');
-  assert.match(detail, /app\.installBlocked \? \([\s\S]*<InstallBlockedNotice app=\{app\} \/>[\s\S]*\) : \(\s*<Button onClick=\{\(\) => setShowInstallDialog\(true\)\}/);
-  assert.match(detail, /showInstallDialog && app && !app\.installBlocked &&/);
+  // The one action in the header: no Install button for a blocked app, and the notice says what it needs.
+  assert.match(detail, /\) : app\.installBlocked \? null : \(\s*<>\s*<Button className="rounded-full px-7" onClick=\{\(\) => setShowInstallDialog\(true\)\}/);
+  assert.match(detail, /!thisInstall && !isInstalled && app\.installBlocked && <div className="mt-5"><InstallBlockedNotice app=\{app\} \/><\/div>/);
+  assert.match(detail, /showInstallDialog && !app\.installBlocked &&/);
   assert.match(read('src/components/market/install-dialog.tsx'), /if \(props\.app\.installBlocked\) return null;/);
+  // Market cards say why instead of offering the app as installable.
+  assert.match(read('src/components/market/market-parts.tsx'), /const blocked = installed \? null : installBlockedLabel\(translateInterface, app\);/);
   const home = read('src/app/market/page.tsx');
-  assert.match(home, /installBlockedLabel\(translateInterface, app\)/);
-  assert.match(home, /const featured = spotlightApps\.find\(\(a\) => !isInstalled\(a\) && !a\.installBlocked\)/);
   // One card per app id, the official Market's first.
   assert.match(home, /sort\(\(a, b\) => Number\(a\.sourceId !== 'official'\) - Number\(b\.sourceId !== 'official'\)\)/);
-  assert.match(home, /const key = `\$\{a\.itemKind \|\| 'app'\}:\$\{a\.id\}`;/);
+  assert.match(home, /const key = `\$\{app\.itemKind \|\| 'app'\}:\$\{app\.id\}`;/);
 });
 
-test('the detail page offers other markets and a Change of update source that needs the owner and their consent', () => {
+test('the detail page offers other markets; Settings changes the update source with the owner and their consent', () => {
   const detail = read('src/app/market/[appId]/page.tsx');
-  shows(detail, 'Updates from');
   shows(detail, 'Also available from {source}');
-  shows(detail, '{source} has version {version}');
   assert.match(detail, /\?source=\$\{encodeURIComponent\(variant\.sourceId\)\}/);
-  assert.match(detail, /authenticatedFetch\(`\/api\/market\/app\/\$\{encodeURIComponent\(app\.id\)\}\/source`, \{\s*method: 'PATCH'/);
+  // The Market is a store now: changing an installed app's update source lives in Settings → Apps.
+  assert.doesNotMatch(detail, /\/source`, \{/);
+  const manage = read('src/components/market/app-management.tsx');
+  shows(manage, 'Updates from');
+  assert.match(manage, /authenticatedFetch\(`\/api\/market\/app\/\$\{encodeURIComponent\(appId\)\}\/source`, \{\s*method: 'PATCH'/);
   // An unaccepted market or one whose version needs a newer YouEye cannot be chosen; an Added app needs the tick.
-  assert.match(detail, /disabled=\{switchingSource !== null \|\| !!blocked \|\| \(direct && switchConsent\[variant\.sourceId\] !== true\)\}/);
-  assert.match(detail, /acceptUnverifiedPublisher: consent, allowSetup: consent/);
+  assert.match(manage, /disabled=\{switching !== null \|\| !!blocked \|\| \(direct && consent\[variant\.sourceId\] !== true\)\}/);
+  assert.match(manage, /acceptUnverifiedPublisher: agreed, allowSetup: agreed/);
   // Nothing switches by itself: the PATCH is only in the click handler.
-  assert.equal(detail.match(/\/source`, \{/g)?.length, 1);
-  assert.match(detail, /onClick=\{\(\) => handleSwitchSource\(variant\)\}/);
+  assert.equal(manage.match(/\/source`, \{/g)?.length, 1);
+  assert.match(manage, /onClick=\{\(\) => switchTo\(variant\)\}/);
+  assert.match(read('src/components/settings-shell/apps-client.tsx'), /<AppUpdateSource appId=\{appId\}/);
 });
 
 test('the sources page shows each market’s own words and state, adds by preview and tick, and lists removed git sources', () => {

@@ -13,19 +13,15 @@ function read(path) {
 test('root Market page exposes combined catalog filters', () => {
   const page = read('src/app/market/page.tsx');
 
-  // The Market browse was restructured from a multi-dropdown filter bar
-  // (searchQuery/sourceFilter/typeFilter/statusFilter) to a section-based browse:
-  // a search box + a section pill bar (Apps / Installed / Updates / Added)
-  // + a category filter. Assert the CURRENT combined-filter contract.
+  // The Market is one grid of apps: a search box + category chips (with "Added by address" when there are such
+  // apps). Installed apps and updates moved to Settings → Apps. Search and category are kept in the address.
   assert.match(page, /const \[search, setSearch\]/);
-  assert.match(page, /const \[section, setSection\]/);
-  assert.match(page, /categoryFilter/);
-  assert.match(page, /matchesSearch/);
-  assert.match(page, /apps\.filter\(matchesSearch\)/);
-  // Section labels present in the pill bar.
-  assert.match(page, /All apps/);
-  assert.match(page, /Installed/);
-  assert.match(page, /Updates/);
-  // Empty state when nothing matches the current search/section/category.
+  assert.match(page, /const \[category, setCategory\]/);
+  assert.match(page, /const matches = \(app: MarketApp\) =>/);
+  assert.match(page, /\.filter\(matches\)/);
+  assert.match(page, /category === 'all' \|\| category === 'added' \|\| \(app\.category \|\| 'other'\) === category/);
+  assert.match(page, /params\.set\('q', search\.trim\(\)\)/);
+  assert.match(page, /params\.set\('category', category\)/);
+  // Empty state when nothing matches the current search/category.
   assert.match(page, /Nothing matches your search or filters/);
 });

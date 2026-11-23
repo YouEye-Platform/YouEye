@@ -5,9 +5,8 @@ import { PageHeader } from "./page-header";
 
 import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { Loader2, Plus, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -46,6 +45,7 @@ function initialsOf(user: IdentityUser) {
 
 export function UsersClient() {
   const translateInterface = useInterfaceTranslations("interface");
+  const settingsServer = useInterfaceTranslations("settingsServer");
   const locale = useLocale();
 function lastSeen(iso: string | null): string {
   if (!iso) return translateInterface("mfde96b0ea420");
@@ -240,16 +240,11 @@ function lastSeen(iso: string | null): string {
       <PageHeader title={translateInterface("m7db20897053b")} description={translateInterface("m802f5286af98")} />
 
       {/* People list */}
-      <Card className="gap-0 py-0">
-        <div className="flex items-center justify-between gap-4 border-b p-4">
-          <h2 className="text-[15px] font-semibold">{loading ? translateInterface("m7db20897053b") : translateInterface("peopleCount", {count: users.length})}</h2>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon-sm" onClick={load} aria-label={translateInterface("m0e9161011702")}>
-              <RefreshCw className="size-4" />
-            </Button>
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" /> {" "}{translateInterface("m66848b5361f4")}</Button>
-          </div>
+      <section aria-labelledby="people-list-heading">
+        <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+          <h2 id="people-list-heading" className="min-w-0 text-[15px] font-semibold tabular-nums">{loading ? translateInterface("m7db20897053b") : translateInterface("peopleCount", {count: users.length})}</h2>
+          <Button className="shrink-0" onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" />{translateInterface("m66848b5361f4")}</Button>
         </div>
 
         {loading ? (
@@ -257,23 +252,27 @@ function lastSeen(iso: string | null): string {
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : error ? (
-          <div className="p-6 text-sm text-destructive">{error}</div>
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-[.875rem] border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <span className="min-w-0">{error}</span>
+            <Button variant="outline" size="sm" onClick={load}>{settingsServer("people.tryAgain")}</Button>
+          </div>
         ) : users.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">{translateInterface("md7647966904f")}</div>
+          <div className="rounded-[.875rem] border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">{translateInterface("md7647966904f")}</div>
         ) : (
-          <div className="divide-y">
+          <ul className="settings-group">
             {users.map((user) => (
-              <div key={userId(user) || user.username} className={`flex items-center gap-3 p-4 ${user.is_active ? "" : "opacity-60"}`}>
-                <div
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[12px] font-semibold text-primary"
+              <li key={userId(user) || user.username} className="flex min-h-[3.75rem] min-w-0 items-center gap-3.5 px-4 py-2.5">
+                <span
+                  aria-hidden="true"
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary ${user.is_active ? "" : "opacity-60"}`}
                 >
                   {initialsOf(user)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 font-medium">
+                </span>
+                <div className={`min-w-0 flex-1 ${user.is_active ? "" : "opacity-60"}`}>
+                  <p className="flex min-w-0 items-center gap-2 text-[15px] font-medium">
                     <span className="truncate">{user.name || user.username}</span>
                     {user.is_superuser && (
-                      <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
                         {translateInterface("mc1c224b03cd9")}</span>
                     )}
                   </p>
@@ -283,13 +282,13 @@ function lastSeen(iso: string | null): string {
                     {user.is_active ? ` · ${lastSeen(user.last_login)}` : translateInterface("m78a523a3e0ab")}
                   </p>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => openManage(user)}>
+                <Button variant="ghost" size="sm" className="shrink-0" onClick={() => openManage(user)} aria-label={settingsServer("people.manageNamed", {name: user.name || user.username})}>
                   {translateInterface("m5a23444828db")}</Button>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </Card>
+      </section>
 
       {/* Add person modal */}
       {createOpen && (

@@ -2495,7 +2495,6 @@
     "mb5be0abae288": "Collection off",
     "m391f41a0d510": "Choose whether supported apps add activity to your encrypted Timeline.",
     "ma584ca624d6e": "Unlock encrypted history with your encryption secret",
-    "m627ce14f7b75": "Repository: {repository}",
     "mb2585dff0f5d": "This box never downgrades. If you switch to a channel that is behind the installed version, it waits until that channel catches up.",
     "m970dd0475e19": "This box now follows the {channel} channel.",
     "m84d6732746f8": "The channel could not be changed.",
@@ -2623,7 +2622,7 @@
     "appearance": "Appearance",
     "apps": "Apps",
     "ai": "AI",
-    "language": "Language",
+    "language": "Language & region",
     "users": "People",
     "system": "System",
     "network": "Network",
@@ -2633,7 +2632,26 @@
     "administration": "Administration",
     "open": "Open Settings navigation",
     "privacy": "Privacy",
-    "title": "Settings"
+    "title": "Settings",
+    "signedInAs": "Signed in as {username}",
+    "hint": {
+      "profile": "Photo, name, password and sign-in",
+      "appearance": "Light or dark, colours and your title",
+      "privacy": "Your timeline and its lock",
+      "apps": "Installed apps, updates and access",
+      "ai": "Your AI assistant",
+      "language": "Language, time zone and formats",
+      "users": "Household accounts and invitations",
+      "system": "Updates, health and remote access",
+      "network": "Address, YouEye Names and HTTPS",
+      "backup": "Backup drive and recovery points",
+      "about": "Version and licences",
+      "general": "Name, address, version and defaults"
+    },
+    "you": "You",
+    "thisServer": "This server",
+    "general": "General",
+    "back": "Back"
   },
   "aiNavigation": {
     "models": "Models",
@@ -2654,5 +2672,429 @@
     "boundSelection": "Continue with the same backup drive, recovery point and apps. Enter its recovery key again; completed restore steps will not run again.",
     "finish": "Finish the original restore",
     "resume": "Resume the original restore"
+  },
+  "marketStore": {
+    "manageInSettings": "Manage in Settings",
+    "managedInSettings": "Updates, access and data are in Settings → Apps.",
+    "subtitle": "Apps for your server. Everything runs at home.",
+    "searchPlaceholder": "Search apps, or what you need",
+    "clearSearch": "Clear search",
+    "someMissing": "{count, plural, one {# app could not be loaded} other {# apps could not be loaded}}. The others are shown.",
+    "featured": "Featured",
+    "seeApp": "See {app}",
+    "builtForHint": "Made for YouEye: they use your account and look at home here.",
+    "results": "Results for “{query}”",
+    "categories": "Categories",
+    "addedByAddress": "Added by address",
+    "noResults": "No app matches “{query}”.",
+    "showAll": "Show all apps",
+    "notFound": "There is no app “{app}” in your markets.",
+    "by": "by {developer}",
+    "installed": "{app} is installed",
+    "installSteps": "Show the steps",
+    "done": "Done",
+    "screenshots": "Screenshots",
+    "about": "About",
+    "more": "More",
+    "less": "Less",
+    "whatsNew": "What's new",
+    "version": "Version {version}",
+    "tags": "Tags",
+    "related": "More in {category}",
+    "close": "Close",
+    "previous": "Previous",
+    "next": "Next",
+    "facts": {
+      "signIn": "Sign-in",
+      "signInAccount": "Your {site} account",
+      "signInGate": "{site} sign-in first",
+      "signInOwn": "Its own accounts",
+      "access": "Who can open it",
+      "accessUsers": "{site} users",
+      "accessAnyone": "Anyone with the link",
+      "licence": "Licence",
+      "version": "Version"
+    },
+    "adds": {
+      "title": "What it adds to your server",
+      "address": "Its own address",
+      "account": "Sign-in with your {site} account",
+      "accountHint": "People use the account they already have; nobody needs a new password.",
+      "gate": "Behind {site} sign-in",
+      "gateHint": "People sign in to {site} before they reach it.",
+      "public": "Open to anyone with the link",
+      "publicHint": "It has its own sign-in.",
+      "widgets": "Widgets",
+      "widgetsHint": "It can show widgets on your {site} home page.",
+      "notifications": "Notifications",
+      "notificationsHint": "It can send you notifications in {site}.",
+      "ai": "Uses YouEye AI",
+      "aiHint": "It can use the AI models set up in Settings → AI.",
+      "email": "Email",
+      "emailHint": "It sends email through your server's mail settings.",
+      "links": "Opens links",
+      "linksHint": "Some kinds of links can open in it.",
+      "surfaces": "Shows up in {site}",
+      "surfacesHint": "Its content appears in {count, plural, one {# place} other {# places}} in {site}."
+    },
+    "links": {
+      "title": "Links",
+      "website": "Website",
+      "docs": "Documentation",
+      "support": "Help",
+      "source": "Source code"
+    },
+    "install": {
+      "opensAt": "Opens at {address}",
+      "access": "Who can use it",
+      "uses": "What it can use",
+      "options": "Name, address and more"
+    },
+    "seeAll": "See all"
+  },
+  "systemPages": {
+    "services": {
+      "title": "Services and components",
+      "description": "The platform's own services, what they use, and their container images.",
+      "hint": "Platform services, live usage and components"
+    },
+    "machine": {
+      "title": "This machine",
+      "description": "Its network adapter and who may sign in at its own screen.",
+      "hint": "Network adapter and console sign-in"
+    },
+    "health": {
+      "hint": "Checks and one-click repairs"
+    },
+    "ssh": {
+      "hint": "Keys for secure shell access"
+    },
+    "ai": {
+      "hint": "The AI service your apps share"
+    }
+  },
+  "settingsYou": {
+    "profile": {
+      "photoAndName": "Photo and name",
+      "uploadPhoto": "Upload photo…",
+      "chooseIcon": "Choose icon…",
+      "noEmail": "Not set",
+      "usernameFixed": "You sign in with it. It can't be changed.",
+      "accountDetails": "Account details",
+      "userId": "User ID"
+    },
+    "appearance": {
+      "description": "How YouEye looks for you. Changes save as you make them.",
+      "mode": "Mode",
+      "modeSystemHint": "Follows the light or dark setting of the device you're using.",
+      "theme": "Colour theme",
+      "themeHint": "The colours of your home screen and apps.",
+      "yourTitle": "Your title",
+      "titleOwn": "You have your own title",
+      "titleServer": "You see the server's title",
+      "titleHint": "The title at the top of your screens. Only you see your own.",
+      "useServerTitle": "Use server title",
+      "customise": "Customise…"
+    },
+    "title": {
+      "personalTitle": "Your title",
+      "personalOwn": "Only you see this title. Everyone else keeps the server's, or their own.",
+      "personalFollowing": "You see the server's title now. Save a design here to have your own; nobody else's changes.",
+      "serverTitle": "Server name and title",
+      "serverDescription": "The name and title everyone sees, unless they have made their own.",
+      "savePersonal": "Save my title",
+      "saveServer": "Save for everyone",
+      "useServerTitle": "Use server title"
+    },
+    "language": {
+      "title": "Language & region",
+      "description": "Your language, time zone and formats. Only you are affected.",
+      "serverDefault": "Server default",
+      "region": "Region",
+      "timezone": "Time zone",
+      "timezoneHint": "Used for the times you see.",
+      "timezoneOther": "Other",
+      "timezoneDevice": "This device is in {zone}.",
+      "timezoneUseDevice": "Use this device's time zone",
+      "timezoneSaved": "Time zone saved.",
+      "timezoneSaveFailed": "Couldn't save the time zone. Try again.",
+      "timezoneLoadFailed": "Couldn't load your time zone. Showing this device's.",
+      "formats": "Formats",
+      "loading": "Loading…"
+    },
+    "privacy": {
+      "description": "What your timeline keeps, and who can open it.",
+      "timeline": "Timeline",
+      "setUpLock": "Set up…"
+    },
+    "general": {
+      "title": "General",
+      "description": "This server's name, address and the settings that apply to everyone.",
+      "name": "Name",
+      "address": "Address",
+      "version": "YouEye version",
+      "updates": "Updates",
+      "unavailable": "Unavailable",
+      "unnamed": "This server",
+      "serverTitle": "Server name and title",
+      "serverTitleHint": "What everyone sees at the top of their screens, unless they made their own title.",
+      "customise": "Customise…",
+      "forEveryone": "For everyone",
+      "defaultLanguageHint": "Used on the sign-in screen and until someone chooses their own language.",
+      "loading": "Loading…",
+      "statisticsHint": "Collected and kept on this server only. They never leave it unless you download and share the report yourself.",
+      "resetStatistics": "Delete statistics…",
+      "licensesHint": "The open software YouEye is built on"
+    }
+  },
+  "settingsApps": {
+    "open": "Open",
+    "turnOff": "Turn off",
+    "version": "Version {version}",
+    "appSettings": "App settings",
+    "notFound": "This app isn’t installed on this server.",
+    "backToApps": "Back to Apps",
+    "status": {
+      "off": "{app} is turned off. An admin can turn it back on.",
+      "crashLooping": "{app} keeps stopping.",
+      "unhealthy": "{app} isn’t responding properly.",
+      "maintenance": "{app} is being updated.",
+      "partial": "Only part of {app} is running."
+    },
+    "updates": {
+      "title": "Updates",
+      "available": "{count, plural, one {# update available} other {# updates available}}",
+      "upToDate": "Everything is up to date.",
+      "check": "Check for updates",
+      "checking": "Checking…",
+      "seeUpdates": "See updates",
+      "changeSource": "Change source…"
+    },
+    "permissions": {
+      "title": "Permissions you gave it",
+      "none": "You haven’t given {app} any permissions.",
+      "revokeNamed": "Revoke: {permission}",
+      "revokeAll": "Revoke all"
+    },
+    "look": {
+      "title": "Name and icon",
+      "description": "How this app appears for you. Other people keep their own.",
+      "defaultTitle": "Default look for everyone",
+      "defaultDescription": "What people see until they choose their own name and title for this app.",
+      "iconUrl": "Icon web address",
+      "headerDisplay": "Show in the header",
+      "reset": "Reset name, icon and title",
+      "resetDone": "Reset",
+      "customiseTitle": "Customise title…",
+      "customiseDefaultTitle": "Customise the default title…",
+      "customiseTitleHint": "Lettering, colours and a mark, in the title studio."
+    },
+    "access": {
+      "title": "Who can use it"
+    },
+    "defaultSignIn": {
+      "title": "Sign-in it was installed with"
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "failingCheck": "Failing health check",
+      "address": "Address",
+      "network": "The Control Panel manages this app’s address and direct access."
+    },
+    "uninstall": {
+      "hint": "Removes {app} from this server. You choose whether to keep its data.",
+      "action": "Uninstall…"
+    },
+    "title": {
+      "heading": "Your title for {app}",
+      "defaultHeading": "Default title for {app}",
+      "description": "Only you see this title. Save when you’re happy with it.",
+      "defaultDescription": "Everyone sees this title until they make their own.",
+      "back": "Back to {app}"
+    }
+  },
+  "settingsSystem": {
+    "update": {
+      "installed": "Installed version",
+      "upToDate": "You have the latest version on this channel."
+    },
+    "channel": {
+      "line": "Channel: {channel}",
+      "change": "Change…",
+      "switched": "This server now follows the {channel} channel.",
+      "repository": "Repository",
+      "repositoryLine": "Updates from {repository}",
+      "repositoryHint": "This server updates from the releases of this repository. To follow another YouEye repository, enter its address; the server checks it before it switches.",
+      "useOfficial": "Use the official repository",
+      "invalidRepository": "Enter an address like https://host/owner/repository.",
+      "confirm": "This server will follow the {channel} channel of {repository}. It never downgrades: if that channel is behind the installed version, it waits until that channel catches up.",
+      "switchSource": "Switch source",
+      "switchedSource": "This server now follows the {channel} channel of {repository}, which offers YouEye {version} now.",
+      "refused": "The source could not be changed: {reason}",
+      "names": {
+        "dev": "Dev",
+        "alpha": "Alpha",
+        "beta": "Beta",
+        "stable": "Stable"
+      }
+    },
+    "overview": {
+      "openIssues": "{count, plural, one {# open issue} other {# open issues}}",
+      "noIssues": "No issues",
+      "servicesHint": "What runs this server and how each part is doing",
+      "cores": "{count, plural, one {# core} other {# cores}}",
+      "ofTotal": "of {total}"
+    },
+    "services": {
+      "title": "Services",
+      "description": "Everything that runs this server: what each part does, its version and how it is doing.",
+      "refreshNote": "Memory and CPU refresh every 5 seconds.",
+      "usage": "{memory} · CPU {cpu}%",
+      "cpuOnly": "CPU {cpu}%",
+      "restartNamed": "Restart {name}",
+      "spineSeed": "image ships {version}",
+      "host": {
+        "name": "Host system",
+        "desc": "The operating system and its packages",
+        "descImage": "The read-only system image this server starts from"
+      },
+      "ui": {
+        "name": "Dashboard",
+        "desc": "The home screen people open every day"
+      },
+      "ai": {
+        "desc": "Models and assistants your apps share"
+      },
+      "incus": {
+        "name": "Container engine",
+        "desc": "Runs every app in its own container"
+      },
+      "state": {
+        "running": "Running",
+        "imageManaged": "Part of the system image",
+        "starting": "Starting",
+        "partial": "Partly running",
+        "degraded": "Having trouble",
+        "needsRepair": "Needs repair",
+        "stopped": "Stopped",
+        "error": "Not responding",
+        "notInstalled": "Not installed",
+        "unknown": "Unknown"
+      }
+    },
+    "images": {
+      "summary": "Advanced: container images",
+      "description": "Database, Web gateway and Network shield run container images pinned by this YouEye release. Change them only in a maintenance window, after a dry run.",
+      "refresh": "Refresh container images",
+      "dryRun": "Dry run",
+      "adopt": "Adopt and recreate",
+      "missing": "Missing",
+      "tracking": {
+        "tracked": "Tracked",
+        "untracked": "Not tracked",
+        "missing": "Missing"
+      }
+    },
+    "health": {
+      "urgent": "{count, plural, one {# urgent} other {# urgent}}",
+      "attention": "{count, plural, one {# needs attention} other {# need attention}}",
+      "checkSoon": "{count, plural, one {# to check soon} other {# to check soon}}",
+      "info": "{count, plural, one {# for information} other {# for information}}",
+      "repeated": "{count, plural, one {# time} other {# times}}, latest: {date}",
+      "lastSeen": "Last seen {date}",
+      "earlier": "{count, plural, one {# earlier occurrence} other {# earlier occurrences}}",
+      "ignoredGroup": "Ignored ({count})",
+      "ignoredBecause": "Ignored because: {reason}",
+      "notice": "Information"
+    },
+    "ai": {
+      "service": "Service",
+      "description": "The AI service your apps share: whether it is running, its database and its backup. Accounts, keys, routes, usage and conversations are never shown here.",
+      "databaseDetail": "Its own database, separate from your apps",
+      "values": {
+        "ready": "Ready",
+        "degraded": "Having trouble",
+        "unhealthy": "Not healthy",
+        "unavailable": "Unavailable",
+        "current": "Up to date",
+        "check_failed": "Check failed",
+        "unknown": "Unknown",
+        "included": "Included"
+      }
+    },
+    "ssh": {
+      "title": "Secure shell",
+      "description": "Sign in to this server as root over SSH, with keys only.",
+      "emptyTitle": "No keys yet",
+      "emptyBody": "Nobody can start a new SSH session until you add a key below."
+    }
+  },
+  "settingsServer": {
+    "network": {
+      "description": "How this server is reached, name lookups and ad blocking",
+      "tabs": {
+        "address": "Address & HTTPS",
+        "dns": "DNS & ad blocking"
+      },
+      "dns": {
+        "adBlocking": "Ad blocking",
+        "blockingOn": "Protects every device that uses this server for DNS",
+        "blockingOff": "Ads and trackers are not blocked"
+      },
+      "routes": {
+        "intro": "Advanced. This is how requests reach your apps. YouEye adds and removes routes when you install apps or change the server address, so there is nothing to set here.",
+        "rawConfig": "Raw gateway configuration"
+      },
+      "address": {
+        "title": "Server address",
+        "change": "Change…",
+        "import": "Import saved name…"
+      }
+    },
+    "backups": {
+      "key": {
+        "length": "At least 12 characters.",
+        "mismatch": "The two entries do not match yet.",
+        "alreadyChosen": "You have already chosen a recovery key. You type it each time you back up.",
+        "change": "Change recovery key…"
+      },
+      "drive": {
+        "prepare": "Prepare…",
+        "prepareHint": "A blank drive has to be prepared first, which erases it."
+      },
+      "apps": {
+        "manualOnly": "Manual only",
+        "scheduleHint": "Choose how often each app is backed up automatically. “Manual only” apps are included when you press Back up now.",
+        "scheduleOff": "Turn on automatic backups to choose a schedule for each app."
+      },
+      "setup": {
+        "title": "Set up backups",
+        "intro": "Three steps, then your first recovery point.",
+        "done": "Done",
+        "current": "Next",
+        "firstBackup": "Create first backup",
+        "needsDrive": "Choose a ready backup drive in step 1 first.",
+        "needsKey": "Enter your recovery key twice in step 2 first."
+      },
+      "now": {
+        "summary": "{count, plural, =0 {Backs up the YouEye server.} one {Backs up the YouEye server and # app.} other {Backs up the YouEye server and # apps.}}",
+        "open": "Back up now…",
+        "keyPrompt": "Enter your recovery key to encrypt this recovery point."
+      },
+      "auto": {
+        "keyPrompt": "Enter your recovery key. YouEye keeps it on this server so automatic backups can run without you.",
+        "keyPromptStored": "Enter your recovery key again to save. To change it, type a new one: later automatic backups will use it.",
+        "saveOpen": "Save automatic backups…",
+        "needsSetup": "Finish the steps above to save."
+      },
+      "points": {
+        "restoreOpen": "Restore…",
+        "restoreFrom": "Restore from {date}"
+      }
+    },
+    "people": {
+      "tryAgain": "Try again",
+      "manageNamed": "Manage {name}"
+    }
   }
 }

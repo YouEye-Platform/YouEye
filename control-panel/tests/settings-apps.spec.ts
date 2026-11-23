@@ -9,23 +9,18 @@ import assert from 'node:assert/strict';
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 const read = (p: string) => englishInterfaceSource(readFileSync(join(repoRoot, p), 'utf8'));
 
-test('Installed-apps list restyled to a card with head + Open Market link', () => {
+test('Installed apps: one grouped list with the Open Market link', () => {
   const c = read('src/components/settings-shell/apps-client.tsx');
-  assert.match(c, />Installed apps</);
-  assert.match(c, />Open Market</);
+  assert.match(c, /title="Installed apps"/);
   assert.match(c, /href="\/market"/);
-  assert.match(c, /overflow-hidden rounded-xl border bg-card/);
+  assert.match(c, /<ul className="settings-group">/);
 });
 
-test('rows show real subdomain + status (no fabricated version/surfaces — pitfall #28)', () => {
+test("each row opens the app's own page and shows a status only when the app is off (pitfall #28)", () => {
   const c = read('src/components/settings-shell/apps-client.tsx');
-  // subdomain rendered as <sub>.<host>, host from window.location
-  assert.match(c, /\$\{app\.subdomain\}\.\$\{host\}/);
-  // No fabricated status (pitfall #28): the row only shows an "off" indicator when
-  // the app is actually stopped — "unknown"/"running" are NOT rendered as a fake
-  // "Running" label. (Replaces the earlier `app.status !== "unknown"` phrasing.)
-  assert.match(c, /app\.status === "stopped"/);
-  assert.match(c, />Manage</);
+  assert.match(c, /href=\{`\/settings\/apps\/\$\{encodeURIComponent\(app\.id\)\}`\}/);
+  // No fabricated status: "unknown"/"running" are not rendered as a fake "Running" label.
+  assert.match(c, /\{app\.status === "stopped" && /);
 });
 
 test('page header matches the mockup copy', () => {

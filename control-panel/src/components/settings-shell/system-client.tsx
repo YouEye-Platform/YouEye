@@ -8,17 +8,21 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Box,
   CheckCircle2,
+  ChevronRight,
   Clock,
+  Cog,
   Cpu,
   Database,
   HardDrive,
+  HeartPulse,
   KeyRound,
+  LayoutDashboard,
   Loader2,
   type LucideIcon,
   MemoryStick,
   Monitor,
-  PackageCheck,
   RefreshCw,
   Route,
   Server,
@@ -28,11 +32,8 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ApplianceSystemUpdate } from "@/components/settings-shell/appliance-system-update";
-import { ConsoleAccessCard } from "@/components/settings-shell/console-access-card";
-import { HostNetworkCard } from "@/components/settings-shell/host-network-card";
 import { restartServiceRequest } from "@/lib/health/client";
 import type { SpinePersistentStatus, SpineRuntimeStatus } from "@/lib/spine/client";
 
@@ -79,9 +80,21 @@ interface SystemUpdatePlan {
   reason: string;
 }
 
-// Human service names (skill copy rule / D4 — never surface raw component names).
+/** A platform component as `/api/apps/unified` lists it (the source the old "System components" list used). */
+interface PlatformComponent {
+  id: string;
+  displayName: string;
+  description: string;
+  category: "system" | "infrastructure" | "user";
+  version?: string;
+  status: string;
+  appHealthState?: string;
+}
 
-const PLATFORM_ORDER = ["spine", "__cp__", "postgres", "caddy", "pihole"];
+// One list, in the order a person thinks about the server: the system itself, what people see, what apps rely on.
+const SERVICE_ORDER = ["host-system", "spine", "control-panel", "ui", "postgres", "caddy", "pihole", "pointer", "incus"];
+// The pinned images are named by image id; the services by slug.
+const IMAGE_SERVICE: Record<SystemUpdatePlan["id"], string> = { postgresql: "postgres", caddy: "caddy", pihole: "pihole" };
 
 function fmtMB(mb: number, locale: string) {
   if (!mb || mb <= 0) return "—";
@@ -114,37 +127,52 @@ function StatCard({
   warn?: boolean;
 }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
+    <div className="min-w-0 rounded-xl border bg-card p-4">
       <div className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground">
-        <Icon className="size-3.5" />
-        {label}
+        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">{label}</span>
       </div>
-      <div className="mt-1 text-[22px] font-bold tracking-tight">{value}</div>
-      {meter !== undefined ? (
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+      <div className="mt-1 truncate text-lg font-bold tracking-tight tabular-nums sm:text-[22px]" title={value}>{value}</div>
+      {meter !== undefined && (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
           <div className={`h-full rounded-full ${warn ? "bg-amber-500" : "bg-primary"}`} style={{ width: `${Math.min(Math.max(meter, 0), 100)}%` }} />
         </div>
-      ) : sub ? (
-        <div className="mt-1 text-[12px] text-muted-foreground">{sub}</div>
-      ) : null}
+      )}
+      {sub && <div className="mt-1.5 truncate text-[12px] tabular-nums text-muted-foreground" title={sub}>{sub}</div>}
     </div>
   );
 }
 
-function StatusDot({ status }: { status: string }) {
-  const translateInterface = useInterfaceTranslations("interface");
+const STATE_KEYS: Record<string, { key: string; tone: "ok" | "warn" | "bad" | "none" }> = {
+  running: { key: "running", tone: "ok" },
+  ok: { key: "running", tone: "ok" },
+  healthy: { key: "running", tone: "ok" },
+  "image-managed": { key: "imageManaged", tone: "ok" },
+  starting: { key: "starting", tone: "warn" },
+  partial: { key: "partial", tone: "warn" },
+  degraded: { key: "degraded", tone: "warn" },
+  "repair-required": { key: "needsRepair", tone: "warn" },
+  stopped: { key: "stopped", tone: "bad" },
+  error: { key: "error", tone: "bad" },
+  unhealthy: { key: "error", tone: "bad" },
+  "not-found": { key: "notInstalled", tone: "none" },
+  "not-installed": { key: "notInstalled", tone: "none" },
+  unknown: { key: "unknown", tone: "none" },
+};
 
-  const ok = status === "running" || status === "ok" || status === "healthy" || status === "image-managed";
-  const label = status === "image-managed" ? translateInterface("m60392a796c39") : ok ? translateInterface("mf4ccae29e1bb") : status;
+/** A service's state in words, with a dot that repeats it (never colour alone). */
+function ServiceState({ status }: { status: string }) {
+  const t = useInterfaceTranslations("settingsSystem");
+  const known = STATE_KEYS[status];
+  const tone = known?.tone ?? "warn";
+  const dot = tone === "ok" ? "bg-green-500" : tone === "warn" ? "bg-amber-500" : tone === "bad" ? "bg-destructive" : "bg-muted-foreground";
   return (
-    <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
-      <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-amber-500"}`} />
-      {label}
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] text-muted-foreground">
+      <span className={`inline-block size-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
+      {known ? t(`services.state.${known.key}`) : status}
     </span>
   );
 }
-
-/** `release`: the installed release's version, shown for the parts it installed (System, Server interface). */
 
 // Unsafe requests carry the session's CSRF token, which the route checks (requireAdminCsrf).
 async function systemUpdateCsrfToken(): Promise<string> {
@@ -154,19 +182,33 @@ async function systemUpdateCsrfToken(): Promise<string> {
   return body.csrfToken as string;
 }
 
-export function SystemClient({ release }: { release?: string }) {
+/**
+ * System, in two pages. The overview: updates first, then the machine's load, then a list of the rest. Services
+ * (`view="services"`): one list of everything that runs the server (what it does, version, live usage, state,
+ * Restart where there is one), with the pinned container images folded at the end.
+ * `release`: the installed release's version, shown for the parts it installed (the system, Spine, the Control Panel).
+ */
+export function SystemClient({ release, view = "overview" }: { release?: string; view?: "overview" | "services" }) {
+  const systemPages = useInterfaceTranslations("systemPages");
   const locale = useLocale();
   const translateInterface = useInterfaceTranslations("interface");
-const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIcon }> = {
-  spine: { name: translateInterface("m6a81c94a4745"), desc: translateInterface("m0fc6d6605ce1"), icon: Server },
-  postgres: { name: translateInterface("mfa7fe67124e9"), desc: translateInterface("me73f7545c5d6"), icon: Database },
-  caddy: { name: translateInterface("m0ffcd855ea52"), desc: translateInterface("mcf227fcff97c"), icon: Route },
-  pihole: { name: translateInterface("m434eceb156ee"), desc: translateInterface("m5694cd21cd72"), icon: ShieldCheck },
-};
-
+  const t = useInterfaceTranslations("settingsSystem");
+  const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIcon }> = {
+    "host-system": { name: t("services.host.name"), desc: t("services.host.desc"), icon: Server },
+    spine: { name: translateInterface("m6a81c94a4745"), desc: translateInterface("m0fc6d6605ce1"), icon: Cog },
+    "control-panel": { name: translateInterface("m0d6a16e62a51"), desc: translateInterface("m52858a1e8a21"), icon: Monitor },
+    ui: { name: t("services.ui.name"), desc: t("services.ui.desc"), icon: LayoutDashboard },
+    postgres: { name: translateInterface("mfa7fe67124e9"), desc: translateInterface("me73f7545c5d6"), icon: Database },
+    caddy: { name: translateInterface("m0ffcd855ea52"), desc: translateInterface("mcf227fcff97c"), icon: Route },
+    pihole: { name: translateInterface("m434eceb156ee"), desc: translateInterface("m5694cd21cd72"), icon: ShieldCheck },
+    pointer: { name: translateInterface("mb535945fa809"), desc: t("services.ai.desc"), icon: Sparkles },
+    incus: { name: t("services.incus.name"), desc: t("services.incus.desc"), icon: Box },
+  };
 
   const [data, setData] = useState<SystemInfo | null>(null);
   const [health, setHealth] = useState<ServiceHealth[]>([]);
+  const [components, setComponents] = useState<PlatformComponent[]>([]);
+  const [openIssues, setOpenIssues] = useState<number | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
   const [restartError, setRestartError] = useState("");
   const [systemPlans, setSystemPlans] = useState<SystemUpdatePlan[]>([]);
@@ -210,6 +252,18 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
     }
   }, []);
 
+  // The platform's own components (host system, container engine, dashboard…): the rows that open a detail page.
+  const loadComponents = useCallback(async () => {
+    try {
+      const res = await fetch("/api/apps/unified");
+      if (!res.ok) return;
+      const body = await res.json();
+      if (Array.isArray(body.apps)) setComponents((body.apps as PlatformComponent[]).filter((app) => app.category !== "user"));
+    } catch {
+      // supplementary; the list still shows the services it knows.
+    }
+  }, []);
+
   const loadSystemPlans = useCallback(async () => {
     setPlansLoading(true);
     setPlanError("");
@@ -223,30 +277,45 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
     setPlansLoading(false);
   }, [translateInterface]);
 
+  const services = view === "services";
+
   useEffect(() => {
     load();
-    loadSystemPlans();
-  }, [load, loadSystemPlans]);
+    if (services) loadSystemPlans();
+  }, [load, loadSystemPlans, services]);
 
-  // Refresh the main cards as well as the service rows. Schedule after each
+  // The overview shows how many health issues are open, on the Health row.
+  useEffect(() => {
+    if (services) return;
+    let stopped = false;
+    fetch("/api/health/issues")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => { if (!stopped && typeof body?.summary?.open === "number") setOpenIssues(body.summary.open); })
+      .catch(() => { /* the row simply shows no count */ });
+    return () => { stopped = true; };
+  }, [services]);
+
+  // Refresh the figures and the component list. Schedule after each
   // response so slow requests cannot overlap or flash the full-page loader.
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
-      await load(true);
+      await Promise.all([load(true), services ? loadComponents() : Promise.resolve()]);
       if (!stopped) timer = setTimeout(refresh, 15_000);
     };
+    if (services) void loadComponents();
     timer = setTimeout(refresh, 15_000);
     return () => { stopped = true; clearTimeout(timer); };
-  }, [load]);
+  }, [load, loadComponents, services]);
 
   // Live usage refreshes every 5s.
   useEffect(() => {
+    if (!services) return;
     loadHealth();
     const id = setInterval(loadHealth, 5000);
     return () => clearInterval(id);
-  }, [loadHealth]);
+  }, [loadHealth, services]);
 
   async function restartService(slug: string) {
     setRestarting(slug);
@@ -347,54 +416,52 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
   }
 
   function updateLabel(plan: SystemUpdatePlan) {
-    if (!plan.exists) return "Missing";
-    if (plan.trackingStatus !== "tracked") return "Adopt/Recreate";
-    return plan.updateAvailable ? "Update" : translateInterface("m6cb9539bf90d");
+    if (!plan.exists) return t("images.missing");
+    if (plan.trackingStatus !== "tracked") return t("images.adopt");
+    return plan.updateAvailable ? translateInterface("mc1c1009d3f37") : translateInterface("m6cb9539bf90d");
   }
-
-  const refreshAll = useCallback(() => {
-    load();
-    loadHealth();
-    loadSystemPlans();
-  }, [load, loadHealth, loadSystemPlans]);
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   if (error) return <div className="rounded-lg border p-6 text-sm text-destructive">{error}</div>;
   if (!data) return null;
 
-  const healthBySlug = Object.fromEntries(health.map((h) => [h.slug, h]));
-  const isAppliance = data.runtime.kind === "appliance-image";
-  const platformRows = PLATFORM_ORDER.map((slug) => {
-    if (slug === "__cp__") {
-      return { key: "__cp__", icon: Monitor, name: translateInterface("m0d6a16e62a51"), desc: translateInterface("m52858a1e8a21"), version: release ?? "", status: "running" };
-    }
-    if (slug === "spine" && isAppliance) {
-      return {
-        key: "spine",
-        icon: PackageCheck,
-        name: translateInterface("m996eea0a4157"),
-        desc: translateInterface("mc474624e6d25"),
-        // The installed release; the image and Spine builds are never shown (About has the details line).
-        version: release ?? "",
-        status: data.runtime.repair_required ? "repair-required" : "image-managed",
-      };
-    }
-    const h = healthBySlug[slug];
-    const meta = SERVICE_META[slug];
-    if (!meta) return null;
-    return {
-      key: slug,
-      icon: meta.icon,
-      name: meta.name,
-      desc: meta.desc,
-      version: showVersion(h?.version),
-      status: h?.status || "running",
-    };
-  }).filter((row): row is NonNullable<typeof row> => row !== null);
 
-  const usageRows = health
-    .filter((h) => h.restartable && (h.memory > 0 || h.cpuPercent >= 0))
-    .sort((a, b) => b.memory - a.memory);
+  const healthBySlug = Object.fromEntries(health.map((h) => [h.slug, h]));
+  const componentById = Object.fromEntries(components.map((c) => [c.id, c]));
+  const isAppliance = data.runtime.kind === "appliance-image";
+
+  // One row per service: what the health monitor knows (state, usage, Restart) joined with the platform's
+  // component list (version, the detail page). Components the list does not know by name still get a row.
+  const serviceIds = [...SERVICE_ORDER, ...components.map((c) => c.id).filter((id) => !SERVICE_ORDER.includes(id))];
+  const serviceRows = serviceIds.map((id) => {
+    const live: ServiceHealth | undefined = healthBySlug[id];
+    const component: PlatformComponent | undefined = componentById[id];
+    const meta = SERVICE_META[id];
+    const name = meta?.name ?? component?.displayName ?? id;
+    let desc = meta?.desc ?? component?.description ?? "";
+    let version = showVersion(live?.version) || showVersion(component?.version);
+    let status = live?.status || component?.status || "";
+    if (id === "host-system" && isAppliance) {
+      desc = t("services.host.descImage");
+      // The installed release; the image and Spine builds are never shown (General has the details line).
+      version = release ?? version;
+      status = data.runtime.repair_required ? "repair-required" : "image-managed";
+    }
+    if (id === "spine") version = release ?? version;
+    if (id === "control-panel") {
+      version = release ?? version;
+      status = status || "running"; // this page is served by it
+    }
+    if (id === "incus") version = version || showVersion(data.incus?.version);
+    const cpu = live && live.cpuPercent >= 0 ? Math.round(live.cpuPercent) : null;
+    const memory = live && live.memory > 0 ? fmtMB(live.memory, locale) : "";
+    const usage = memory && cpu !== null ? t("services.usage", { memory, cpu }) : memory || (cpu !== null ? t("services.cpuOnly", { cpu }) : "");
+    return {
+      id, icon: meta?.icon ?? Server, name, desc, version, status, usage,
+      restartSlug: live?.restartable ? live.slug : null,
+      href: component ? `/settings/apps/${encodeURIComponent(id)}?from=system` : null,
+    };
+  });
 
   const memUsed = data.memory?.used_mb ?? 0;
   const memTotal = data.memory?.total_mb ?? 0;
@@ -402,215 +469,217 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
   const diskTotal = data.disk?.total_gb ?? 0;
   const cpuUsage = data.cpu?.usage_percent ? Number.parseFloat(data.cpu.usage_percent) : 0;
 
+  if (!services) {
+    const pages = [
+      {
+        href: "/settings/system/health", icon: HeartPulse, title: translateInterface("mfd576da5aa1f"), hint: systemPages("health.hint"),
+        value: openIssues === null ? "" : openIssues > 0 ? t("overview.openIssues", { count: openIssues }) : t("overview.noIssues"),
+        attention: (openIssues ?? 0) > 0,
+      },
+      { href: "/settings/system/services", icon: Server, title: t("services.title"), hint: t("overview.servicesHint") },
+      ...(isAppliance ? [{ href: "/settings/system/ssh", icon: KeyRound, title: t("ssh.title"), hint: systemPages("ssh.hint") }] : []),
+      ...(isAppliance ? [{ href: "/settings/system/machine", icon: Monitor, title: systemPages("machine.title"), hint: systemPages("machine.hint") }] : []),
+      { href: "/settings/system/ai", icon: Sparkles, title: translateInterface("mb535945fa809"), hint: systemPages("ai.hint") },
+    ] as Array<{ href: string; icon: LucideIcon; title: string; hint: string; value?: string; attention?: boolean }>;
+    return (
+      <div className="space-y-6">
+        <PageHeader title={translateInterface("m6725e7bbcd28")} description={translateInterface("m0621419ae136")} />
+
+        {isAppliance && <ApplianceSystemUpdate />}
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard icon={Cpu} label="CPU" value={`${Math.round(cpuUsage)}%`} meter={cpuUsage} sub={data.cpu?.cores ? t("overview.cores", { count: data.cpu.cores }) : undefined} />
+          <StatCard icon={MemoryStick} label={translateInterface("mc3963aedaac6")} value={fmtMB(memUsed, locale)} meter={pct(memUsed, memTotal)} warn={pct(memUsed, memTotal) >= 85} sub={memTotal > 0 ? t("overview.ofTotal", { total: fmtMB(memTotal, locale) }) : undefined} />
+          <StatCard icon={HardDrive} label={translateInterface("m340e0cf3bfa8")} value={`${diskUsed.toLocaleString(locale)} GB`} meter={pct(diskUsed, diskTotal)} warn={pct(diskUsed, diskTotal) >= 85} sub={diskTotal > 0 ? t("overview.ofTotal", { total: `${diskTotal.toLocaleString(locale)} GB` }) : undefined} />
+          <StatCard icon={Clock} label={translateInterface("md63ab4711473")} value={data.uptime} sub={data.hostname} />
+        </div>
+
+        <ul className="settings-group">
+          {pages.map((row) => (
+            <li key={row.href}>
+              <Link href={row.href} className="settings-row">
+                <span className="settings-row-icon" aria-hidden="true"><row.icon className="size-[18px]" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-foreground">{row.title}</span>
+                  <span className="block text-[13px] text-muted-foreground">{row.hint}</span>
+                </span>
+                {row.value && (
+                  <span className="flex shrink-0 items-center gap-1.5 text-[13px] tabular-nums text-muted-foreground">
+                    {row.attention && <span className="inline-block size-2 rounded-full bg-amber-500" aria-hidden="true" />}
+                    {row.value}
+                  </span>
+                )}
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader title={translateInterface("m6725e7bbcd28")} description={translateInterface("m0621419ae136")} />
+      <PageHeader title={t("services.title")} description={t("services.description")} />
 
-      <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h2 className="text-[15px] font-semibold">{translateInterface("mfd576da5aa1f")}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {translateInterface("mf18eb29c95c2")}</p>
-        </div>
-        <Button asChild>
-          <Link href="/settings/system/health">{translateInterface("m8b2ca2cc5e13")}</Link>
-        </Button>
-      </Card>
-
-      {isAppliance && (
-        <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-start gap-3">
-            <KeyRound className="mt-0.5 size-5 text-primary" />
-            <div>
-              <h2 className="text-[15px] font-semibold">{translateInterface("me774fce31fac")}</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m8ddb2bf3361e")}</p>
-            </div>
-          </div>
-          <Button asChild><Link href="/settings/system/ssh">SSH</Link></Button>
-        </Card>
-      )}
-      <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-start gap-3">
-          <Sparkles className="mt-0.5 size-5 text-primary" />
-          <div>
-            <h2 className="text-[15px] font-semibold">{translateInterface("mb535945fa809")}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m4a911e38f8a3")}</p>
-          </div>
-        </div>
-        <Button variant="outline" asChild><Link href="/settings/system/ai">{translateInterface("mb92e45055098")}</Link></Button>
-      </Card>
-
-      {/* Stat row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Cpu} label="CPU" value={`${Math.round(cpuUsage)}%`} meter={cpuUsage} />
-        <StatCard icon={MemoryStick} label={translateInterface("mc3963aedaac6")} value={fmtMB(memUsed, locale)} meter={pct(memUsed, memTotal)} warn={pct(memUsed, memTotal) >= 85} />
-        <StatCard icon={HardDrive} label={translateInterface("m340e0cf3bfa8")} value={`${diskUsed} GB`} meter={pct(diskUsed, diskTotal)} warn={pct(diskUsed, diskTotal) >= 85} />
-        <StatCard icon={Clock} label={translateInterface("md63ab4711473")} value={data.uptime} sub={data.hostname} />
-      </div>
-
-      {isAppliance && <HostNetworkCard />}
-      {isAppliance && <ApplianceSystemUpdate />}
-      {isAppliance && <ConsoleAccessCard />}
-
-      {/* Platform services */}
-      <Card className="gap-0 py-0">
-        <div className="flex items-center justify-between gap-4 border-b p-4">
-          <h2 className="text-[15px] font-semibold">{translateInterface("mc78ffe195710")}</h2>
-          <Button variant="ghost" size="sm" onClick={refreshAll} disabled={plansLoading}>
-            <RefreshCw className="size-4" /> {" "}{translateInterface("mf26f3275e735")}</Button>
-        </div>
-        <div className="divide-y">
-          {platformRows.map((row) => {
+      <section className="space-y-2">
+        {restartError && <p role="alert" className="rounded-lg border border-destructive/30 px-4 py-3 text-sm text-destructive">{restartError}</p>}
+        <ul className="settings-group">
+          {serviceRows.map((row) => {
             const Icon = row.icon;
+            const label = (
+              <>
+                <span className="settings-row-icon" aria-hidden="true"><Icon className="size-[18px]" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium text-foreground">{row.name}</span>
+                    {row.version && <span className="text-[12px] tabular-nums text-muted-foreground">{row.version}</span>}
+                  </span>
+                  {row.desc && <span className="block text-[13px] text-muted-foreground">{row.desc}</span>}
+                </span>
+              </>
+            );
             return (
-              <div key={row.key} className="flex items-center gap-3 p-4">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-                  <Icon className="size-4" />
+              <li key={row.id} className="flex flex-col gap-1.5 px-4 py-2.5 text-[15px] leading-[1.35] lg:min-h-[3.75rem] lg:flex-row lg:items-center lg:gap-4">
+                {row.href ? (
+                  <Link
+                    href={row.href}
+                    className="flex min-h-11 min-w-0 flex-1 items-center gap-3.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {label}
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground lg:hidden" aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <div className="flex min-h-11 min-w-0 flex-1 items-center gap-3.5">{label}</div>
+                )}
+                <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pl-[2.875rem] lg:shrink-0 lg:flex-nowrap lg:pl-0">
+                  {/* Fixed columns on wide screens so usage, state and Restart line up down the list. */}
+                  <span className={`text-[13px] tabular-nums text-muted-foreground lg:w-40 lg:text-right ${row.usage ? "" : "hidden lg:block"}`}>{row.usage}</span>
+                  <span className="lg:w-36">{row.status ? <ServiceState status={row.status} /> : null}</span>
+                  <span className="ml-auto flex justify-end lg:ml-0 lg:w-28">
+                    {row.restartSlug && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label={t("services.restartNamed", { name: row.name })}
+                        onClick={() => restartService(row.restartSlug!)}
+                        disabled={restarting === row.restartSlug}
+                      >
+                        {restarting === row.restartSlug ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                        {translateInterface("m6b983a81e5e8")}
+                      </Button>
+                    )}
+                  </span>
+                  <span className="hidden w-4 lg:block">
+                    {row.href && (
+                      <Link href={row.href} tabIndex={-1} aria-hidden="true" className="block text-muted-foreground hover:text-foreground">
+                        <ChevronRight className="size-4" />
+                      </Link>
+                    )}
+                  </span>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{row.name}</p>
-                  <p className="truncate text-[13px] text-muted-foreground">{row.desc}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  {row.version && <span className="text-[12px] tabular-nums text-muted-foreground">{row.version}</span>}
-                  <StatusDot status={row.status} />
-                </div>
-              </div>
+              </li>
             );
           })}
-        </div>
-      </Card>
+        </ul>
+        <p className="px-1 text-[12.5px] text-muted-foreground">{t("services.refreshNote")}</p>
+      </section>
 
-      {/* Live usage (core services with real, already-sampled usage) */}
-      <Card className="gap-0 py-0">
-        <div className="flex items-center justify-between gap-4 border-b p-4">
-          <h2 className="text-[15px] font-semibold">{translateInterface("m5ff9aa406f8b")}</h2>
-          <span className="text-[12.5px] text-muted-foreground">{translateInterface("m58643433f1e4")}</span>
+      {/* Container images (admin): pinned by this release; a maintenance-window flow, so folded away. */}
+      <details className="group">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" />
+          {t("images.summary")}
+        </summary>
+        <div className="mt-2 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <p className="max-w-prose text-sm text-muted-foreground">{t("images.description")}</p>
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={loadSystemPlans} disabled={plansLoading} title={t("images.refresh")}>
+              {plansLoading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+              <span className="sr-only">{t("images.refresh")}</span>
+            </Button>
+          </div>
+          {planError && <div role="alert" className="rounded-lg border p-4 text-sm text-destructive">{planError}</div>}
+          {plansLoading && !systemPlans.length ? (
+            <div className="flex justify-center rounded-lg border py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <div className="grid gap-3 xl:grid-cols-3">
+              {systemPlans.map((plan) => {
+                const needsAttention = plan.recreateRecommended || plan.updateAvailable || plan.trackingStatus === "missing";
+                const canUpdate = plan.exists && (plan.updateAvailable || plan.trackingStatus !== "tracked");
+                const updating = updateStatus[plan.id] === "Starting..." || updateStatus[plan.id]?.startsWith("Stopping") || updateStatus[plan.id]?.startsWith("Rebuilding") || updateStatus[plan.id]?.startsWith("Starting") || updateStatus[plan.id]?.startsWith("Verifying");
+                return (
+                  <div key={plan.id} className="min-w-0 space-y-3 rounded-xl border bg-card p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold">{SERVICE_META[IMAGE_SERVICE[plan.id]]?.name ?? plan.id}</h3>
+                        <p className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{plan.containerName}</p>
+                      </div>
+                      <Badge variant={needsAttention ? "secondary" : "outline"} className="shrink-0">{t(`images.tracking.${plan.trackingStatus}`)}</Badge>
+                    </div>
+                    <dl className="space-y-2 text-xs">
+                      <div>
+                        <dt className="text-muted-foreground">{translateInterface("me0d1b68224bf")}</dt>
+                        <dd className="break-all font-mono">{plan.currentVersion || plan.currentImage || translateInterface("mb23a6a8439c0")}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">{translateInterface("m978354db0c00")}</dt>
+                        <dd className="break-all font-mono">{plan.desiredVersion} · {plan.desiredImage}</dd>
+                      </div>
+                    </dl>
+                    <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                      {needsAttention ? <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                      <span className="min-w-0">{plan.reason}</span>
+                    </p>
+                    {plan.id === "postgresql" && (
+                      <p className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0">{translateInterface("mce32ec9424c4")}</span>
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => dryRun(plan)}
+                        disabled={!plan.exists || dryRunStatus[plan.id] === "Planning..."}
+                      >
+                        {dryRunStatus[plan.id] === "Planning..." ? <Loader2 className="h-4 w-4 animate-spin" /> : t("images.dryRun")}
+                      </Button>
+                      <Button
+                        variant={canUpdate ? "destructive" : "outline"}
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => {
+                          setConfirmPlan(plan);
+                          setConfirmName("");
+                          setMaintenanceConfirmed(false);
+                        }}
+                        disabled={!canUpdate || updating}
+                      >
+                        {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : canUpdate ? `${updateLabel(plan)}…` : updateLabel(plan)}
+                      </Button>
+                    </div>
+                    {dryRunStatus[plan.id] && dryRunStatus[plan.id] !== "Planning..." && (
+                      <p className="break-words text-xs text-muted-foreground" role="status">{dryRunStatus[plan.id]}</p>
+                    )}
+                    {updateStatus[plan.id] && updateStatus[plan.id] !== "Starting..." && (
+                      <p className="break-words text-xs text-muted-foreground" role="status">{updateStatus[plan.id]}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-        {restartError && <p role="alert" className="border-b p-4 text-sm text-destructive">{restartError}</p>}
-        {usageRows.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">{translateInterface("m7bbe5547614d")}</div>
-        ) : (
-          <div className="divide-y">
-            {usageRows.map((h) => {
-              const meta = SERVICE_META[h.slug];
-              const Icon = meta?.icon ?? Server;
-              const cpu = h.cpuPercent >= 0 ? Math.round(h.cpuPercent) : null;
-              return (
-                <div key={h.slug} className="flex items-center gap-3 p-4">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-                    <Icon className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">{meta?.name ?? h.name}</p>
-                    <p className="text-[13px] text-muted-foreground">{fmtMB(h.memory, locale)} {translateInterface("mc064fbca9d9d")}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(Math.max(cpu ?? 0, 0), 100)}%` }} />
-                    </div>
-                    <span className="w-9 text-right text-[12px] tabular-nums text-muted-foreground">{cpu === null ? "—" : `${cpu}%`}</span>
-                    <Button variant="ghost" size="sm" onClick={() => restartService(h.slug)} disabled={restarting === h.slug}>
-                      {restarting === h.slug ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                      {translateInterface("m6b983a81e5e8")}</Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      {/* Core container images (admin): pinned by this release; maintenance-window update flow. */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><Database className="h-4 w-4" />{translateInterface("m44f668d33a33")}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("me6725578efa8")}</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={loadSystemPlans} disabled={plansLoading}>
-            {plansLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          </Button>
-        </div>
-        {planError && <div className="rounded-lg border p-4 text-sm text-destructive">{planError}</div>}
-        {plansLoading && !systemPlans.length ? (
-          <div className="flex justify-center rounded-lg border py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-3">
-            {systemPlans.map((plan) => {
-              const isTracked = plan.trackingStatus === "tracked";
-              const needsAttention = plan.recreateRecommended || plan.updateAvailable || plan.trackingStatus === "missing";
-              const canUpdate = plan.exists && (plan.updateAvailable || plan.trackingStatus !== "tracked");
-              const updating = updateStatus[plan.id] === "Starting..." || updateStatus[plan.id]?.startsWith("Stopping") || updateStatus[plan.id]?.startsWith("Rebuilding") || updateStatus[plan.id]?.startsWith("Starting") || updateStatus[plan.id]?.startsWith("Verifying");
-              return (
-                <div key={plan.id} className="space-y-3 rounded-xl border p-4 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h4 className="text-sm font-semibold">{plan.id}</h4>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{plan.containerName}</p>
-                    </div>
-                    <Badge variant={needsAttention ? "secondary" : "outline"}>{plan.trackingStatus}</Badge>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">{translateInterface("me0d1b68224bf")}</span>
-                      <p className="break-words font-mono">{plan.currentVersion || plan.currentImage || translateInterface("mb23a6a8439c0")}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">{translateInterface("m978354db0c00")}</span>
-                      <p className="break-words font-mono">{plan.desiredVersion} · {plan.desiredImage}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-                    {needsAttention ? <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
-                    <span>{plan.reason}</span>
-                  </div>
-                  {plan.id === "postgresql" && (
-                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{translateInterface("mce32ec9424c4")}</span>
-                    </div>
-                  )}
-                  <Button
-                    variant={isTracked && plan.updateAvailable ? "default" : "outline"}
-                    size="sm"
-                    className="w-full"
-                    onClick={() => dryRun(plan)}
-                    disabled={!plan.exists || dryRunStatus[plan.id] === "Planning..."}
-                  >
-                    {dryRunStatus[plan.id] === "Planning..." ? <Loader2 className="h-4 w-4 animate-spin" /> : translateInterface("m765351d892b4")}
-                  </Button>
-                  {dryRunStatus[plan.id] && dryRunStatus[plan.id] !== "Planning..." && (
-                    <p className="text-xs text-muted-foreground">{dryRunStatus[plan.id]}</p>
-                  )}
-                  <Button
-                    variant={canUpdate ? "destructive" : "outline"}
-                    size="sm"
-                    className="w-full"
-                    onClick={() => {
-                      setConfirmPlan(plan);
-                      setConfirmName("");
-                      setMaintenanceConfirmed(false);
-                    }}
-                    disabled={!canUpdate || updating}
-                  >
-                    {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : updateLabel(plan)}
-                  </Button>
-                  {updateStatus[plan.id] && updateStatus[plan.id] !== "Starting..." && (
-                    <p className="text-xs text-muted-foreground">{updateStatus[plan.id]}</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      </details>
 
       {confirmPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="system-confirm-title">
           <div className="w-full max-w-md space-y-4 rounded-xl border bg-background p-5 shadow-lg">
             <div>
-              <h3 className="text-base font-semibold">{updateLabel(confirmPlan)} {confirmPlan.id}</h3>
+              <h3 id="system-confirm-title" className="text-base font-semibold">{updateLabel(confirmPlan)}: {SERVICE_META[IMAGE_SERVICE[confirmPlan.id]]?.name ?? confirmPlan.id}</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 {translateInterface("m85b09d810b47", {container: confirmPlan.containerName, image: confirmPlan.desiredImage})}
               </p>
@@ -623,7 +692,7 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
             </label>
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="system-confirm-name">{translateInterface("m9f19f38a7e23", {container: confirmPlan.containerName})}</label>
-              <Input id="system-confirm-name" value={confirmName} onChange={(event) => setConfirmName(event.target.value)} placeholder={confirmPlan.containerName} />
+              <Input id="system-confirm-name" value={confirmName} onChange={(event) => setConfirmName(event.target.value)} placeholder={confirmPlan.containerName} autoComplete="off" spellCheck={false} />
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmPlan(null)}>{translateInterface("m19766ed6ccb2")}</Button>

@@ -91,8 +91,9 @@ func ReadAcceptedCoreSelection(root string) (CoreHostSelection, releasecache.Cor
 }
 
 // PolicyCoreSelection is what the box follows: the repository and channel in
-// its protected, installer-written policy. No configuration writable through
-// the Spine API (and so by the Control Panel) participates.
+// its protected, installer-written policy. Nothing else writable through the
+// Spine API participates; the policy itself changes only through
+// SetReleaseSource (owner, 2026-11-23: also from Settings, guarded there).
 func PolicyCoreSelection(root string) (CoreReleaseSelection, error) {
 	policy, err := LoadReleasePolicy(filepath.Join(root, "release-policy.json"))
 	if err != nil {

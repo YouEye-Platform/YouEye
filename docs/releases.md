@@ -36,7 +36,8 @@ downloads use HTTPS with normal certificate checks. When signing returns, it att
   derives `YOUEYE_LINE` (`X.Y.Z`, checked against `VERSION`). A failed build bumps `N`.
 - **Promotion never rebuilds and never changes a file.** It writes one new small release document that names the
   build under the channel's name and binds the very same files by SHA-256. A fix found on alpha is new code: a new
-  build (`dev.6`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line.
+  build (`dev.6`) promoted as `alpha.2`. Stable happens once per line; the next stable is a new line. A fix for
+  a release that is already out is a [patch release](#patch-releases) on the next free line.
 - **Build names exist only on dev.** On dev a release's `version` is its build name. A promoted release is named
   only by its channel name; nothing a box shows names the dev build it came from.
 - What is baked into files: since 0.6.13 only the line and the git tree. Spine gets them through `-ldflags`
@@ -202,10 +203,34 @@ The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
  "core_manifest_sha256":"…"}
 ```
 
-- `repository` never changes after installation. The only built-in default is the official public repository;
-  any other one (for example a development forge) is used only because `--repository` was given at install.
-- `youeye channel get|set <channel>` (or Settings in the Control Panel, through Spine `PUT /api/releases/channel`)
-  switches between channels of the same repository.
+- `repository` is set at install. The only built-in default is the official public repository; any other one (for
+  example a development forge) is used only because `--repository` was given at install, or because an admin
+  switched to it (below). The product never suggests another host.
+- `youeye channel get|set <channel>` (or Settings → System in the Control Panel, through Spine
+  `PUT /api/releases/channel`) switches between channels of the same repository.
+- **Switching repository** (since 0.6.16, YE-130; owner, 2026-11-23): `youeye channel set <channel> --repository
+  <url>` as root on the box, or Settings → System → Change… (admins; Spine `PUT /api/releases/channel` with
+  `{"channel":…,"repository":…}`). Both run `systemupdate.SetReleaseSource`, which:
+  - refuses before `/var/lib/youeye-state/first-deploy/complete` exists (first boot binds the install-time
+    repository);
+  - canonicalises the URL (`releasecache.CanonicalRepository`: `https://host/owner/repository`, no credentials,
+    query or fragment; a trailing `/` or `.git` is dropped);
+  - reads that repository's channel index once, with the same client and discovery as the box's other index reads,
+    and refuses unless it parses, has a `youeye` entry and that entry names the same repository;
+  - refuses when the policy changed while the index was read (another admin or the CLI);
+  - records the old repository's download address (`<repository>/releases/download`) in `download-bases.json` for
+    the installed release's tag and the last update journal's target tag, unless the index named one for them: the
+    new repository may not hold those tags, and a Control Panel redeploy, a Spine adopt or a stage under way still
+    needs their files;
+  - then writes `repository` and `channel` (the same atomic write as a channel switch). `release-policy.json` keeps
+    `youeye.release-policy.v1` and its fields; older Spines read it unchanged.
+
+  The answer names the head the new channel offers (`head_version` in the API). The update check, the downloads of
+  every newer release, and native apps and Pointer (the Control Panel reads them through Spine's
+  `/api/releases/index`) read the repository live, so updates now depend on that host. Booting never needs the
+  new host: the network check ([above](#channel-index-no-release-listing)) runs at the first deploy, before a switch
+  is allowed, and again only when network settings are changed from the console (`youeye-installer network`),
+  which then needs the new host too. The same ordering applies: a switch never downgrades.
 - **A box never downgrades.** After a channel switch the box takes any release with a higher key
   ([line, then sequence](#ordering-line-then-sequence)) and never older files:
   - a stable box on 0.6.13 that switches to dev takes the dev channel's current build when it was published after
@@ -246,7 +271,71 @@ read a document without `build`, so it reaches 0.6.13 through 0.6.12, on every c
 - Until the Release cleanup: readers accept both shapes, index entries keep the temporary `build`, the 0.6.12
   stones stay in the indexes, and State and Data records are written in both shapes
   ([development.md](development.md#compatibility-rules-for-later-changes)). All of it is deleted before the Release
-  (Backlog).
+  (Backlog), and only once it is shown that no supported release (stable 0.6.15 or later) needs it.
+
+## Patch releases
+
+A patch is a fix for a version that is already released, put on the channel it is for without waiting for
+everything else on `dev`. **A box needs nothing for it:** a patch is an ordinary release document with a higher key
+([line, then sequence](#ordering-line-then-sequence)) than the release it fixes, so every box on the channel takes it
+through the normal update, and no box ever goes back.
+
+| Step | Who | What |
+|---|---|---|
+| 1 | the fixer | `Tools/release/patch start <product> <alpha\|beta\|stable> <slug>`: branch `nick/<slug>` on the development forge, starting at the commit of the release the channel holds, with `VERSION` set to the patch line |
+| 2 | the fixer | fix on that branch; build it like any build, off the dev channel: `Tools/release/publish nick/<slug> --no-index` (an app or Pointer: `Tools/release/app-release <repo> --commit nick/<slug>`); test the build |
+| 3 | the reviewer | bring the fix into `dev`: cherry-pick the fix commits, or merge or squash the branch (its first commit sets `VERSION` and conflicts by design: `dev` keeps its own line) |
+| 4 | the publisher | `Tools/release/promote <product> <channel> --release <tag of the build>`: the same files on the channel, never a rebuild |
+
+**The patch line.** The patch takes the first line after the fixed release's line that no release of the product
+uses, on any host, under any name; `dev` then moves to the first unused line after the patch unless it is already
+on a later one. Stable `0.6.15` is patched as `0.6.16`, and `dev` goes on as `0.6.17`.
+
+- Above the fixed release's line, because boxes take only a higher key and stable names a line once.
+- A line of its own, because inside one line only the publish time orders builds: a patch sharing a line with dev
+  builds would sort among them by the clock, and that line's stable name could later mean two builds.
+- `dev` moves above it (one commit that changes `VERSION` only), so every later dev build sorts above the patch by
+  line and the next normal release is an update for patched boxes too.
+- When lines in between are in use (alpha already holds `0.6.16`, so the patch of stable `0.6.15` is `0.6.17`), the
+  tool warns: the patch sorts above those builds without having their code. They can no longer be promoted over
+  it, and a `minimum_release` (compared by line only) must not name one of those lines while boxes may come from
+  the patch.
+- `minimum_release`, the reader and the stepping stones need nothing: the patch keeps the fixed release's
+  `.youeye/minimum-release`, so every box that could install the fixed release installs the patch directly, the
+  channel's stones stay, and a box on the patch meets every `minimum_release` the fixed release met.
+
+**The build.** `publish` treats a ref that is not in `dev` like any other with two differences: it requires
+`--no-index` (a patch never goes on the dev channel), and it reuses unchanged parts only from builds in the branch's
+own history, never from a dev build that happens to have the same inputs for one part. The build is
+`0.6.16-dev.1`, with its own `sequence`.
+
+**Putting it on the channel.** `promote --release <tag>` does the ordinary promotion step (a new release document
+with the channel's name, the same files and `sequence`, the snapshot commit, the index write with its stone checks)
+for exactly that build, and prints its plan first:
+
+- The target channel must take it. It is refused when the build's key is not above the channel's head, and when
+  the build is not built on that head (the head's source tree is not in the build's history): it would take the
+  head's changes away from every box there.
+- Every channel from alpha up to the target whose head is older and part of the build takes it too, alpha first: a
+  patch of stable also goes to beta and alpha while they hold the fixed release, as `0.6.16-alpha.1`,
+  `0.6.16-beta.1` and `0.6.16`. A channel whose head is newer is left alone. So is a channel whose head is older by
+  key but holds work the patch does not have; that head can then no longer reach the target, and the next build
+  from `dev` replaces it. The dev channel is never written: it gets the fix through the merge and the next publish.
+- **Merge-back.** It is refused until the build's commit is in `dev`: an ancestor of `dev`, or every commit of the
+  branch has an equal in `dev` by `git patch-id` (a cherry-pick or rebase), or the whole change equals one commit
+  there (a squash). `VERSION` is left out of the comparison. Otherwise the next release from `dev` would lose the fix.
+- A re-run goes on where an earlier run stopped.
+
+Two checks guard every promotion, patch or not, and pass for a build that follows the channel's head on `dev`:
+
+- **Built on the head.** The build must have what the target's head has (its source tree in the build's history,
+  or its commits in the build by patch id). After a patch reached a channel, a dev build from before the merge is
+  refused there even though its line is higher.
+- **Image order.** The A/B engine orders system images by their own build name and refuses an older one
+  (`target_image_version`, [above](#versions-one-build-a-name-per-channel); `spine/internal/systemupdate/manifest.go`).
+  A patch that changes the image builds a new one under the
+  patch line; a later dev build that still reuses an image built before it is refused at promotion. Publish that
+  build again with `--rebuild-image`.
 
 ## Install
 
@@ -312,6 +401,8 @@ fix the app or its configuration. Never loosen the guard.
   - **beta / stable:** after a public hygiene check of the tree (no private host names), one GitHub snapshot commit
     with that tree on `beta` / `main`; the GitHub release with a copy of every file, each verified by SHA-256; the
     GitHub index and the `releases.youeye.me` copy (`install.sh` too on stable).
+- `Tools/release/patch start` and `Tools/release/promote <product> <channel> --release <tag>` — a fix for a
+  released version from its own branch straight to its channel ([Patch releases](#patch-releases)).
 - `Tools/release/index show <channel>` prints each product's version, tree, sequence and shape (and, for a promoted
   release, the dev build it came from); `index clean-check` reports build names (`-dev.`) in published files
   outside the listed exceptions. Details in the workspace's `Tools/README.md`.

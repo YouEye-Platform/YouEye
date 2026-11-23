@@ -10,29 +10,34 @@ const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..
 const read = (p: string) => englishInterfaceSource(readFileSync(join(repoRoot, p), 'utf8'));
 const has = (p: string) => existsSync(join(repoRoot, p));
 
-test('Browse page layout includes hero, pill bar, Built-for, Featured, and Sources pill', () => {
+test('Browse is one grid of apps: title + search, category chips, curated shelves, and the sources footer', () => {
   const m = read('src/app/market/page.tsx');
-  assert.match(m, /Apps for your server/);                 // hero tagline
-  assert.match(m, /All apps/);
-  assert.match(m, /Installed/);
-  assert.match(m, /Updates/);
-  assert.match(m, /Built for your server/);
-  assert.match(m, /Featured/);
-  assert.match(m, /href="\/market\/sources"/);             // Sources pill + footer
-  assert.match(m, /Manage sources/);                       // footer link
+  assert.match(m, />Market<\/h1>/);
+  assert.match(m, /type="search" value=\{search\}/);
+  assert.match(m, /onClick=\{\(\) => setCategory\('all'\)\}>All</);
+  assert.match(m, /Built for your server/);              // the catalog's spotlight, or the native apps
+  assert.match(m, /curation\?\.collections/);              // the catalog's own collections, never invented picks
+  assert.match(m, /const shelves = usedCategories/);       // one shelf per category
+  assert.match(m, /href="\/market\/sources"/);
+  assert.match(m, /Manage sources/);
+  // Installed apps and their updates are managed in Settings → Apps, not here.
+  assert.doesNotMatch(m, /\/api\/market\/updates/);
 });
 
 test('Browse uses real catalog/status data + category-coloured icon tiles', () => {
   const m = read('src/app/market/page.tsx');
   assert.match(m, /\/api\/market\/catalog/);
   assert.match(m, /\/api\/market\/status/);
-  // Category tiles are DATA-DRIVEN from the catalog `categories:` section (catIndex
-  // + catTile), not a hardcoded CATEGORY_TILE map.
-  assert.match(m, /catIndex/);
-  assert.match(m, /const catTile =/);
-  assert.match(m, /function MarketIcon/);
-  // rows/tiles navigate to the detail page
-  assert.match(m, /function variantHref/);
+  // Category tiles are DATA-DRIVEN from the catalog `categories:` section, not a hardcoded map.
+  assert.match(m, /categoryLookup\(categoryDefs\)/);
+  assert.match(m, /tile=\{categories\.tile\(app\.category\)\}/);
+  const parts = read('src/components/market/market-parts.tsx');
+  assert.match(parts, /export function MarketIcon/);
+  assert.match(parts, /tile: \(id\?: string\) => of\(id\)\?\.tile \?\? DEFAULT_TILE/);
+  // cards navigate to the detail page, with the source for another market's copy
+  assert.match(parts, /export function appHref/);
+  assert.match(parts, /\?source=\$\{encodeURIComponent\(app\.sourceId\)\}/);
+  assert.match(parts, /<Link href=\{appHref\(app\)\}/);
 });
 
 test('Browse is token-styled, not hardcoded grays/blues (Workstream A)', () => {
@@ -65,27 +70,29 @@ test('Sources toggles persist to the real source API (no fake control)', () => {
   assert.match(s, /active_sources/);
 });
 
-test('App detail rebuilt to mockup: hero (88px tile) + meta band + 2-up gallery + About', () => {
+test('App detail is a store page: header with the one action, facts, screenshots, About', () => {
   const d = read('src/app/market/[appId]/page.tsx');
-  assert.match(d, /heroTile/);                 // category-coloured 88px tile
-  assert.match(d, /size-\[88px\]/);
-  assert.match(d, />Version</);
-  assert.match(d, />Category</);
-  assert.match(d, />Source</);
-  assert.match(d, />Developer</);
-  assert.match(d, />Account login</);
-  assert.match(d, /About this app/);
-  // gallery shows designed placeholders, never broken images
-  assert.match(d, /aspectRatio: '16 \/ 10'/);
-  assert.match(d, /<Camera /);
+  assert.match(d, /<MarketIcon app=\{app\} size=\{88\} tile=\{categories\.tile\(app\.category\)\} \/>/);
+  assert.match(d, /const action = thisInstall \? null : isInstalled \?/);
+  assert.match(d, /className="market-facts/);
+  assert.match(d, /market\("facts\.signIn"\)/);
+  assert.match(d, /market\("facts\.access"\)/);
+  assert.match(d, /className="market-shots"/);
+  assert.match(d, />About<\/h2>/);
 });
 
-test('App detail preserves install/uninstall machinery + drops the fake domain fallback', () => {
+test('App detail keeps the install machinery; uninstall lives in Settings; no fake domain fallback', () => {
   const d = read('src/app/market/[appId]/page.tsx');
   assert.match(d, /InstallDialog/);
-  assert.match(d, /handleInstall/);
-  assert.match(d, /UninstallDialog/);
-  assert.match(d, /handleUninstall/);
+  assert.match(d, /const handleInstall = async/);
+  assert.match(d, /onInstall=\{handleInstall\}/);
+  // An installed app is opened, or managed (and uninstalled) in Settings → Apps.
+  assert.match(d, /href=\{`\/settings\/apps\/\$\{encodeURIComponent\(app\.id\)\}`\}>Manage in Settings</);
+  assert.doesNotMatch(d, /\/api\/market\/uninstall/);
+  const manage = read('src/components/market/app-management.tsx');
+  assert.match(manage, /<UninstallDialog app=\{app\} onUninstall=\{uninstall\}/);
+  assert.match(manage, /authenticatedFetch\('\/api\/market\/uninstall'/);
+  assert.match(read('src/components/settings-shell/apps-client.tsx'), /<AppUninstall appId=\{appId\} appName=\{title\} \/>/);
   assert.doesNotMatch(d, /youeye\.local/);     // pitfall #13
 });
 

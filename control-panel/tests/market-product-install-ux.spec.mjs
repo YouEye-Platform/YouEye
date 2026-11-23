@@ -10,22 +10,26 @@ function read(path) {
   return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(root, path), "utf8")) : readFileSync(join(root, path), "utf8");
 }
 
-test('app detail uses a sticky action panel and keeps install progress in that panel', () => {
+test('app detail keeps its one action in the header and install progress right under it', () => {
   const detail = read('src/app/market/[appId]/page.tsx');
 
-  assert.match(detail, /lg:grid-cols-\[minmax\(0,1fr\)_340px\]/);
-  assert.match(detail, /lg:sticky lg:top-24/);
+  // The action (Install, or Open + Manage in Settings) sits in the header; while this app installs, progress replaces it.
+  assert.match(detail, /const action = thisInstall \? null : isInstalled \?/);
+  assert.match(detail, /\{action && <div className="flex shrink-0/);
+  assert.match(detail, /\{thisInstall && \(\s*<section aria-live="polite"/);
   assert.match(detail, /Installing \{(?:app\.name|String\(app\.name\))\}/);
-  assert.match(detail, /Open(?:\{" "\})?\s*\{app\.name\}/);
-  assert.match(detail, /What this app uses/);
+  assert.match(detail, />Open<ExternalLink \/>/);
+  assert.match(detail, /const additions = /);   // what installing it adds to this server
 });
 
 test('completed install history does not hide reinstall after uninstall', () => {
   const detail = read('src/app/market/[appId]/page.tsx');
 
-  assert.match(detail, /data\.done && !data\.error/);
+  // A finished, successful install is never replayed when the page opens (the app's status says it is installed),
+  // so an old success cannot hide Install after an uninstall; a failed one stays so its reason can be read.
+  assert.match(detail, /if \(data\.done && !data\.error\) return;/);
   assert.match(detail, /\/api\/market\/status\?app=/);
-  assert.match(detail, /currentStatus\.status === 'not-installed'/);
+  assert.match(detail, /const isInstalled = \(status\?\.status \?\? 'not-installed'\) !== 'not-installed';/);
 });
 
 test('install progress remains scoped to the current app across navigation and async polling', () => {
@@ -39,7 +43,7 @@ test('install progress remains scoped to the current app across navigation and a
   assert.match(detail, /!!installError \|\| latestInstallEvent\?\.status === 'error'/);
   assert.match(detail, /message: ['"]Preparing installation\.\.\.['"]/);
   assert.match(detail, /if \(data\.events\?\.length\) setInstallEvents\(data\.events\)/);
-  assert.match(detail, /installOperationAppId === appId && !installDone\s*\? ["']Installing["']/);
+  assert.match(detail, /const installFailed = installOperationAppId === appId && installDone/);
 });
 
 test('install dialog submits an immediate manifest-defaulted account-login choice', () => {
@@ -47,8 +51,11 @@ test('install dialog submits an immediate manifest-defaulted account-login choic
   const types = read('src/lib/market/types.ts');
   const engine = read('src/lib/market/engine.ts');
 
-  assert.match(dialog, /Protect this app with account login/);
-  assert.match(dialog, /Default from manifest/);
+  // The switch starts at the manifest's default and is locked where the manifest decides (YE-65's meaning unchanged).
+  assert.match(dialog, /useState\(\(\) => defaultAccountLogin\(app\)\)/);
+  assert.match(dialog, /const accountLoginLocked = app\.supportsSSO \|\| loginIntegration\?\.required \|\| \(!loginIntegration && app\.forwardAuth === 'disabled'\)/);
+  assert.match(dialog, /row\('account', accountLoginLabel, accountLoginHint, protectWithAccountLogin, \(\) => toggleAccountLogin\(\), !!accountLoginLocked\)/);
+  assert.match(dialog, /Sign in with YouEye ID/);
   assert.match(dialog, /protectWithAccountLogin,/);
   assert.match(dialog, /type="submit"/);
   assert.match(types, /protectWithAccountLogin\?: boolean/);
@@ -61,13 +68,15 @@ test('install dialog submits an immediate manifest-defaulted account-login choic
   assert.match(engine, /resolveForwardAuth\(\s*manifest,\s*hasOwnAccountLogin,\s*forwardAuthChoice/s);
 });
 
-test('market browse sections preserve existing source variants', () => {
+test('market browse keeps other markets\' copies reachable', () => {
   const market = read('src/app/market/page.tsx');
+  const parts = read('src/components/market/market-parts.tsx');
 
-  // Section state drives Apps / Installed / Updates / Added separation.
-  assert.match(market, /const \[section, setSection\]/);
-  assert.match(market, /'apps' \| 'installed' \| 'updates' \| 'added'/);
-  // Source variants are preserved: rows link to the app + its source.
-  assert.match(market, /variantHref/);
-  assert.match(market, /sourceId/);
+  // One card per app id (the official one first); apps added by address are all listed under their own chip, and a
+  // card for another market's copy links to it with its source.
+  assert.match(market, /const added = apps\.filter\(\(app\) => app\.sourceId\?\.startsWith\('direct:'\)\)/);
+  assert.match(market, /key=\{`\$\{app\.id\}-\$\{app\.sourceId \?\? ''\}`\}/);
+  assert.match(parts, /\?source=\$\{encodeURIComponent\(app\.sourceId\)\}/);
+  // The detail page names the other markets that have the app.
+  assert.match(read('src/app/market/[appId]/page.tsx'), /variants\.map\(\(variant\) =>/);
 });

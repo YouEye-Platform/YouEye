@@ -12,8 +12,9 @@ import {
   activateBridge,
   deactivateBridge,
   deleteBridge,
+  setBridgeDirection,
 } from '@/lib/bridges/manager';
-import { getBridge, updateBridge } from '@/lib/bridges/store';
+import { getBridge } from '@/lib/bridges/store';
 import { requireAdminCsrf, requireAdmin } from '@/lib/auth/rbac';
 
 export async function GET(
@@ -55,7 +56,11 @@ export async function PATCH(
     }
 
     if (body.direction) {
-      const bridge = await updateBridge(bridgeId, { direction: body.direction });
+      if (body.direction !== 'one-way' && body.direction !== 'both-ways') {
+        return NextResponse.json({ error: 'invalid direction' }, { status: 400 });
+      }
+      // Through the manager: an active connection's reverse grant and both UI rows follow the new direction.
+      const bridge = await setBridgeDirection(bridgeId, body.direction);
       if (!bridge) return NextResponse.json({ error: 'not found' }, { status: 404 });
       return NextResponse.json({ bridge });
     }

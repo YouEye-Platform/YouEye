@@ -61,6 +61,14 @@ nftables, Incus (`incus-base` from trixie-backports), the systemd units in `appl
 `youeye …` or the scripts in `appliance/scripts/`), the initramfs hooks, and the **seed Spine** at
 `/usr/local/bin/youeye`. It changes only with an image build.
 
+The image also carries what ordinary hardware needs (since 0.6.16, YE-130): early CPU microcode for every AMD and
+Intel CPU (`amd64-microcode`, `intel-microcode`; the initrd starts with it, and the build refuses an initrd without
+both), device firmware under `/usr/lib/firmware` (`firmware-amd-graphics`, `firmware-intel-graphics`,
+`firmware-misc-nonfree`, `firmware-realtek`, `firmware-bnx2`, `firmware-bnx2x`, `wireless-regdb`) and
+`/etc/locale.conf` with `LANG=C.UTF-8` (`/etc/default/locale`, which pam_env reads at login, links to it). NVIDIA GPU and Wi-Fi-only firmware are not in the image. The firmware
+lets the hardware start (a GPU initialises, a Realtek NIC loads its blob); GPU drivers load from the System root,
+not the initrd. Apps can't use the GPU: no `/dev/dri` is passed into app containers.
+
 **State.** The initramfs mounts it and bind-mounts these into the read-only root
 (`appliance/initramfs/youeye-state`): `/etc/machine-id`, `/etc/hostid`, `/etc/shadow`, `/etc/ssh`,
 `/etc/systemd/network`, `/root`, `/var/lib/systemd` and `/var/log`. State also holds:
@@ -132,6 +140,29 @@ and checks are in `control-panel/src/lib/incus/app-network-ipam.ts` and `app-net
   direct Pointer access, PostgreSQL unless it uses the shared database, and every other app's /27.
 - **Connections** between two apps add a second, filtered NIC on the peer's bridge (see [market.md](market.md)).
 - DNS for apps goes to the bridge's dnsmasq, which forwards to Pi-hole.
+
+**Client addresses.** LAN and internet clients reach Caddy through `youeye-caddy`'s Incus proxy devices
+(`proxy0` `tcp:0.0.0.0:80`, `proxy1` `tcp:0.0.0.0:443`, both `connect tcp:127.0.0.1:<port>`), which open a new
+connection from inside the container. Without more, Caddy sees every such client as `127.0.0.1`, and so does every
+app and YouEye ID in `X-Forwarded-For`. The fix comes in two releases (YE-134):
+
+- **0.6.16:** every Caddy server on :80 or :443 reads a PROXY protocol header first: listener wrappers
+  `proxy_protocol` (allowed source `127.0.0.1/32` only) then `tls` (`clientAddressListenerWrappers` in
+  `control-panel/src/lib/caddy/servers.ts`). The Control Panel puts them on every config write (`setConfig`), in the
+  Caddyfile it deploys, and on the live config at every start (`ensureClientAddressListenerWrappers`). A connection
+  without a header is served as before, so nothing changes for clients yet.
+- **The next release** (its minimum release is 0.6.16) sets `proxy_protocol: "true"` on both devices: Incus then
+  sends the real client in a PROXY header, and Caddy passes it on in `X-Forwarded-For`.
+- **Never a header without the wrapper:** that would stop all HTTPS. At every Control Panel start (after the
+  wrappers), in the infrastructure reconcile and every minute in the health monitor, `reconcileClientAddressDevices`
+  (`lib/caddy/client-address.ts`) removes the flag from a device whose port has no server with the wrappers
+  (Caddy's own automatic :80 redirect server counts as none), and from every device when Caddy's config cannot be
+  read.
+- A header from any other source (an app reaching Caddy over its NIC on the app's bridge) is ignored: Caddy sees the
+  app's own address, and an app cannot claim another client's through Caddy. Its doorway to YouEye ID
+  (`gateway:3002`, below) does not pass Caddy, so there an app can send any `X-Forwarded-For`.
+- Pi-hole's DNS devices (TCP and UDP 53) are unchanged: Pi-hole sees every LAN client as one (`127.0.0.1`), and
+  per-client statistics and groups cannot tell devices apart.
 
 ## App doorways
 

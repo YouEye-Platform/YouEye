@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -60,42 +61,85 @@ func (s *Server) releaseChannelView() (map[string]string, error) {
 	return view, nil
 }
 
+// firstDeployMarker exists once the first deploy finished; tests replace it.
+func (s *Server) firstDeployMarker() string {
+	if s.firstDeployCompletePath != "" {
+		return s.firstDeployCompletePath
+	}
+	return systemupdate.FirstDeployCompletePath
+}
+
+// handleReleaseChannel shows and changes what the box follows. A PUT changes
+// the channel and, with "repository", the repository: the one path through
+// the API that changes the release root (owner, 2026-11-23). It is the CLI's
+// `youeye channel set --repository` (systemupdate.SetReleaseSource): the
+// target's channel index is read first, the change is refused before the
+// first deploy, and the box never downgrades. The Control Panel lets only
+// admins call it.
 func (s *Server) handleReleaseChannel(w http.ResponseWriter, r *http.Request) {
+	view := map[string]string{}
 	switch r.Method {
 	case http.MethodGet:
 	case http.MethodPut:
 		var body struct {
-			Channel string `json:"channel"`
+			Channel    string `json:"channel"`
+			Repository string `json:"repository,omitempty"`
 		}
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&body) != nil || !releasecache.ValidChannel(body.Channel) {
 			errorResponse(w, "channel must be one of dev, alpha, beta, stable", http.StatusBadRequest)
 			return
 		}
-		policy, err := systemupdate.LoadReleasePolicy(s.releasePolicyPath())
-		if err != nil {
+		if _, err := systemupdate.LoadReleasePolicy(s.releasePolicyPath()); err != nil {
 			errorResponse(w, "release policy unavailable", http.StatusConflict)
 			return
 		}
-		policy.Channel = body.Channel
-		if err := systemupdate.SaveReleasePolicy(s.releasePolicyPath(), policy); err != nil {
-			errorResponse(w, "could not save the channel", http.StatusInternalServerError)
+		read := func(ctx context.Context, repository, channel string) (releasecache.ChannelIndex, error) {
+			index, _, err := fetchChannelIndex(r.WithContext(ctx), repository, channel)
+			return index, err
+		}
+		source, err := systemupdate.SetReleaseSource(r.Context(), systemupdate.ReleaseSourceChange{PolicyPath: s.releasePolicyPath(),
+			FirstDeployMarker: s.firstDeployMarker(), CoreRoot: s.coreRoot(), Channel: body.Channel, Repository: body.Repository, Read: read})
+		if err != nil {
+			errorResponse(w, err.Error(), releaseSourceStatus(err))
 			return
 		}
 		s.releaseIndex.mu.Lock()
 		s.releaseIndex.key = ""
 		s.releaseIndex.mu.Unlock()
+		if source.RepositoryChanged {
+			view["head_version"] = source.Head
+		}
 	default:
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	view, err := s.releaseChannelView()
+	current, err := s.releaseChannelView()
 	if err != nil {
 		errorResponse(w, "release policy unavailable", http.StatusConflict)
 		return
 	}
+	for key, value := range current {
+		view[key] = value
+	}
 	jsonResponse(w, view)
+}
+
+// releaseSourceStatus is the HTTP status of a refused release source change.
+func releaseSourceStatus(err error) int {
+	switch {
+	case errors.Is(err, systemupdate.ErrReleaseSourceInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, systemupdate.ErrReleaseSourceTooEarly), errors.Is(err, systemupdate.ErrReleaseSourceChanged):
+		return http.StatusConflict
+	case errors.Is(err, systemupdate.ErrReleaseSourceUnreachable):
+		return http.StatusBadGateway
+	case errors.Is(err, systemupdate.ErrReleaseSourceRefused):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // releaseErrorCode classifies a release host failure for the Control Panel.

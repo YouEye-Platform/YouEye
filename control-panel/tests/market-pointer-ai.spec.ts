@@ -62,7 +62,8 @@ test('app AI controls require an administrator, CSRF, explicit takeover, and ide
   assert.match(deletion, /await beforeDelete\(current\)/);
   assert.match(provider, /input\.is_active === true[\s\S]*setPointerManagedActorState\(id, 'active'\)/);
   assert.match(identityStore, /is_active boolean NOT NULL DEFAULT true/);
-  assert.match(identityStore, /!user\.is_active \|\| !verifyPassword/);
+  // Inactive users are refused (after the same scrypt as a wrong password, YE-134).
+  assert.match(identityStore, /!verifyPassword\(password, user\.password_hash\) \|\| !user\.is_active/);
   assert.match(identityTokens, /return user\?\.is_active \? user : null/);
 });
 

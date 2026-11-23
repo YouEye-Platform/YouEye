@@ -20,8 +20,9 @@ import (
 const ReleasePolicySchema = "youeye.release-policy.v1"
 
 // ReleasePolicy is written by the installer into protected State. Repository
-// never changes after installation; Channel changes only through
-// `youeye channel set`. CoreManifestSHA256 is the digest of the
+// and Channel change only through SetReleaseSource (`youeye channel set`, or
+// the admin-only Spine API), which checks a new repository first and refuses
+// before the first deploy. CoreManifestSHA256 is the digest of the
 // core-release.json the installer installed: the root of trust.
 type ReleasePolicy struct {
 	Schema             string `json:"schema"`

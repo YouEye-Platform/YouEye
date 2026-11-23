@@ -34,7 +34,10 @@ export type CreativeProps = {
   onNext?: () => void;
   titleLocks?: Locks;
   onTitleLocks?: (locks: Locks) => void;
+  /** Whose title this is: the setup wizard's server (default), the server from Settings, your own, or an app's. */
+  subject?: TitleSubject;
 };
+export type TitleSubject = "setup" | "server" | "you" | "app";
 export function Art({
   d,
   theme,

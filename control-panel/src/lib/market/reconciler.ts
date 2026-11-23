@@ -23,7 +23,7 @@ import { settingsService } from '@/lib/settings';
 import { repairRouteForCurrentDomain } from '@/lib/reconfigure/route-repair';
 import { deleteAppStorage } from './storage';
 import { AppLifecycleAdmissionError, withAppInventory, withAppLifecycle } from './update-admission';
-import { pushConnectionsToUI, refreshConnectionGrants } from '../bridges/manager';
+import { pushConnectionsToUI, refreshConnectionGrants, UIProjectionDriftError } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import { appContainerAddress, hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
 import {
@@ -143,16 +143,24 @@ export async function reconcileApps(): Promise<ReconcileResult> {
     if (networkResult.observedNetworks && activeNetworkIds.has(meta.appId)
       && !networkProblemIds.has(meta.appId) && installedById.has(meta.appId)
       && meta.lifecycleState === 'active' && uiRegistrations?.has(meta.appId)) {
-      try {
-        const operation = getTrackedInstall(meta.appId);
-        if (operation && (!operation.done || operation.error)) throw new Error('Install operation needs admission');
-        await pushConnectionsToUI(meta.appId, {
-          required: true, observed: uiRegistrations.get(meta.appId), auditOnly: true,
-        });
-        continue;
-      } catch {
-        // No write is possible in the projection audit. Repair reads current
-        // metadata/network state after acquiring lifecycle admission.
+      // An unreadable operation record (corrupt or insecure) needs admission as well; the repair reports it.
+      let operation: ReturnType<typeof getTrackedInstall> | null = null;
+      let operationReadable = true;
+      try { operation = getTrackedInstall(meta.appId); } catch { operationReadable = false; }
+      if (operationReadable && (!operation || (operation.done && !operation.error))) {
+        try {
+          await pushConnectionsToUI(meta.appId, {
+            required: true, observed: uiRegistrations.get(meta.appId), auditOnly: true,
+          });
+          continue;
+        } catch (error) {
+          // No write is possible in the projection audit. Repair reads current
+          // metadata/network state after acquiring lifecycle admission. Drift is
+          // expected and repaired quietly; anything else is logged with its cause.
+          if (!(error instanceof UIProjectionDriftError)) {
+            console.warn(`[reconcile] ui-drawer:${meta.appId} audit failed, repairing: ${describeErrorChainForLog(error)}`);
+          }
+        }
       }
     }
 

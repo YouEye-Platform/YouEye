@@ -22,6 +22,7 @@ const retainedAction = "youeye.core-update.pending";
 
 export function CoreSystemUpdate({ initial }: { initial: CoreUpdateStatus }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsSystem");
 const phaseLabels: Record<string, string> = {
   prepared: translateInterface("me2562d8c9913"), applying: translateInterface("m9ec16b3ede4f"), "awaiting-restart": translateInterface("m6a6c90ba7ebe"),
   "needs-recovery": translateInterface("mc1ebc7817870"), recovering: translateInterface("mad2ddfb8e585"), cancelling: translateInterface("m63ce917c7015"), cancelled: translateInterface("m92e1f6f46f0d"),
@@ -143,15 +144,19 @@ async function headers() {
     : transaction ? phaseLabels[transaction.phase] ?? translateInterface("m01ea9b2b1311") : translateInterface("m06f9580f5c7b");
   // The box never downgrades: a channel behind the installed version offers nothing.
   const available = candidate && !candidate.behind && candidate.manifest_sha256 !== status.installed?.manifest_sha256;
-  return <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
-    <div className="flex flex-wrap items-start justify-between gap-3">
+  // With no update request there is nothing to report beside the version itself.
+  const stateLine = waitingForApps ? translateInterface("m331f54039409") : canRetryAdmission ? translateInterface("me8d51f7276c8") : transaction ? state : "";
+  return <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h3 className="text-sm font-medium">{translateInterface("m2a1ec4ff37ff")}</h3>
-        <p className="mt-1 text-sm">{status.installed?.release.version ?? translateInterface("mc0a7f647c17d")}</p>
-        <p className="mt-1 text-sm text-muted-foreground" role="status">{waitingForApps ? translateInterface("m331f54039409") : canRetryAdmission ? translateInterface("me8d51f7276c8") : state}{unfinished && currentStep && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? translateInterface("m89f42c216c85")}` : ""}</p>
+        <h2 className="text-[13px] font-medium text-muted-foreground">{t("update.installed")}</h2>
+        <p className="mt-0.5 break-words text-xl font-semibold tracking-tight tabular-nums">
+          {status.installed?.release.version ? `YouEye ${status.installed.release.version}` : translateInterface("mc0a7f647c17d")}
+        </p>
+        {stateLine && <p className="mt-1 text-sm text-muted-foreground" role="status">{stateLine}{unfinished && currentStep && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? translateInterface("m89f42c216c85")}` : ""}</p>}
       </div>
-      <Button variant="outline" disabled={!!busy || !!unfinished} onClick={() => void check()}>
-        {busy === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} {" "}{translateInterface("mf26f3275e735")}</Button>
+      <Button variant="outline" className="shrink-0 self-start" disabled={!!busy || !!unfinished} onClick={() => void check()}>
+        {busy === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{translateInterface("mf26f3275e735")}</Button>
     </div>
     {connection && <Alert><AlertDescription>{connection}</AlertDescription></Alert>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -169,7 +174,7 @@ async function headers() {
       <p className="text-sm">{translateInterface("mdacfb2679d3b", {version: candidate.release.version})} {candidate.restart_required ? translateInterface("mddd9af48f331") : translateInterface("m435af341384a")}</p>
       <Button disabled={!!busy || !!pending} onClick={() => void submit("stage")}>{candidate.restart_required ? translateInterface("mb1025ed60c51", { value0: String(candidate.release.version) }) : translateInterface("mfa4031f94844", { value0: String(candidate.release.version) })}</Button>
     </div>}
-    {candidate && !available && !unfinished && <p className="text-sm text-muted-foreground">{candidate.behind && candidate.message ? candidate.message : translateInterface("m1ae973cac2cc")}</p>}
+    {candidate && !available && !unfinished && <p className="text-sm text-muted-foreground" role="status">{candidate.behind && candidate.message ? candidate.message : t("update.upToDate")}</p>}
     {unfinished && <div className="space-y-3">
       <p className="text-sm text-muted-foreground">{translateInterface("m9da15bdd0599", {version: transaction.target_version})}</p>
       {waitingForApps && <p className="text-sm text-muted-foreground">{translateInterface("m7460797e6c6d")}</p>}

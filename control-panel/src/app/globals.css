@@ -300,8 +300,7 @@
 }
 .embed-row:last-child { border-bottom: none; }
 
-.ye-mobile-shell-only,
-.ye-mobile-shell-spacer {
+.ye-mobile-shell-only {
   display: none;
 }
 
@@ -316,9 +315,11 @@
     display: flex;
   }
 
-  .ye-mobile-shell-spacer {
-    display: block;
-    height: calc(64px + env(safe-area-inset-bottom));
+  /* Room for the bottom bar at the end of the page, not at the top (where a spacer used to leave a gap under the
+     header and the page's end stayed under the bar). */
+  body:has(.ye-mobile-shell-only) {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
 
   .ye-mobile-top-header {
@@ -374,3 +375,11 @@
 .dark .onboarding-card { background: #203932; border-color: #4c6c61; box-shadow: 0 7px 0 #10221d; }
 .studio-save-bar { position: sticky; bottom: 1rem; z-index: 20; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); box-shadow: 0 4px 18px #0002; }
 @media (max-width: 767px) { .studio-save-bar { bottom: calc(5.5rem + env(safe-area-inset-bottom)); } }
+
+/* Touch (mobile-native, Emil Kowalski's skills): no grey flash on tap, as controls have their own pressed state; taps
+   are not held back for a double-tap zoom; text fields at 16px so iOS does not zoom the page into them. */
+html { -webkit-tap-highlight-color: transparent; }
+:where(button, a, [role="button"], summary, label) { touch-action: manipulation; }
+@media (pointer: coarse) {
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select) { font-size: 16px; }
+}

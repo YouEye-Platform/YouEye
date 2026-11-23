@@ -30,14 +30,18 @@ import { getSystemStaticIP } from '@/lib/incus/static-ips';
 import { incusDownloadFile } from '@/lib/incus/server';
 import { waitForIncusReady } from '@/lib/incus/readiness';
 import { appRouteId } from './app-route-id';
+import { withCaddyMutation } from './serial';
 import { isUsableIPv4 } from '@/lib/incus/ipv4';
 import { containerExists } from '@/lib/infrastructure/oci-deployer';
 import {
+  applyClientAddressListenerWrappers,
   applySetupHttpServer,
   canonicalJSON,
+  clientAddressListenerWrappers,
   internalIssuer,
   mainServer,
   mainServerName,
+  newMainServer,
   routeServers,
   SETUP_HTTP_SERVER,
   STRIPPED_REQUEST_HEADERS,
@@ -195,6 +199,21 @@ export async function ensureAdminListenerPinned(): Promise<boolean> {
 }
 
 /**
+ * Put the PROXY protocol listener wrappers (`servers.ts`) on the live config's :80 and :443 servers. Every write
+ * adds them (`setConfig`), but a box updated from a release without them keeps its autosaved config until the next
+ * write: this converges it at every Control Panel start, before any proxy device may send a header
+ * (`client-address.ts`). Returns whether it rewrote the config.
+ */
+export async function ensureClientAddressListenerWrappers(): Promise<boolean> {
+  return withCaddyMutation(async () => {
+    const config = await getConfig();
+    if (!applyClientAddressListenerWrappers(structuredClone(config))) return false;
+    await setConfig(config);
+    return true;
+  });
+}
+
+/**
  * Set the full Caddy configuration.
  * Caddy's --resume flag auto-saves to /config/caddy/autosave.json,
  * so config survives container restarts without manual persistence.
@@ -204,6 +223,10 @@ export async function setConfig(config: CaddyConfig): Promise<void> {
   // which also converges boxes whose saved config still listens on 0.0.0.0.
   // Caddy's origin check rejects the CP's requests (no matching Origin), so it
   // stays off; the listen address is what limits who can reach the API.
+  // Every :80 and :443 server reads a PROXY header from 127.0.0.1 first (`servers.ts`), so no writer, a full
+  // config from the API included, can leave a server the proxy devices may send headers to without the wrappers.
+  // On the caller's object too, so a caller that compares what Caddy reads back sees what was written.
+  applyClientAddressListenerWrappers(config);
   const prepared = structuredClone(config);
   prepared.admin = { ...prepared.admin, listen: await caddyAdminAddress(), enforce_origin: false };
   delete prepared.admin.origins;
@@ -927,6 +950,7 @@ export function generateInitialConfig(hosts: string[]): CaddyConfig {
         servers: {
           srv0: {
             listen: [':443'],
+            listener_wrappers: clientAddressListenerWrappers(),
             routes: [],
             tls_connection_policies: [{}],
             // The :80 setup server redirects named hosts to HTTPS.
@@ -1098,11 +1122,7 @@ async function addRouteWithoutStripping(
   const serverName = mainServerName(config);
 
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
+    config.apps.http.servers[serverName] = newMainServer();
   }
 
   // Ensure HTTPS is properly configured
@@ -1300,11 +1320,7 @@ export async function ensureHeaderStrippingRoute(): Promise<void> {
 
   const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
+    config.apps.http.servers[serverName] = newMainServer();
   }
 
   const routes = config.apps.http.servers[serverName].routes || [];
@@ -1355,11 +1371,7 @@ export async function ensurePingRoute(containerName: string = 'youeye-control', 
 
   const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
+    config.apps.http.servers[serverName] = newMainServer();
   }
 
   const routes = config.apps.http.servers[serverName].routes || [];
@@ -1492,11 +1504,7 @@ function configureControlSettingsRoutes(config: CaddyConfig, domain: string, ups
 
   const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
+    config.apps.http.servers[serverName] = newMainServer();
   }
 
   ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
@@ -1607,7 +1615,7 @@ function configurePointerInferenceRoutes(config: CaddyConfig, domain: string, up
   if (!config.apps.http.servers) config.apps.http.servers = {};
   const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = { listen: [':443'], routes: [], tls_connection_policies: [{}] };
+    config.apps.http.servers[serverName] = newMainServer();
   }
   ensureHTTPSConfig(config, config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
@@ -1735,6 +1743,8 @@ export async function reconcileManagedRoutes(
     configureControlSettingsRoutes(candidate, domain, dials.get('youeye-control:3000')!);
     if (pointer) configurePointerInferenceRoutes(candidate, domain, dials.get('youeye-pointer:4002')!);
     rewriteDial(candidate, replacements);
+    // This path writes with setConfigExact, so it adds the PROXY protocol wrappers itself (`servers.ts`).
+    applyClientAddressListenerWrappers(candidate);
     if (canonicalConfig(await dependencies.read()) !== canonicalConfig(before)) {
       throw new Error('Caddy configuration changed during reconciliation; retry without overwriting it');
     }
@@ -1793,11 +1803,7 @@ export async function ensureIdentityRoute(
 
   const serverName = mainServerName(config);
   if (!config.apps.http.servers[serverName]) {
-    config.apps.http.servers[serverName] = {
-      listen: [':443'],
-      routes: [],
-      tls_connection_policies: [{}],
-    };
+    config.apps.http.servers[serverName] = newMainServer();
   }
 
   ensureHTTPSConfig(config, config.apps.http.servers[serverName]);

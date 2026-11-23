@@ -8,18 +8,20 @@ import StickerMachine from "./creative/StickerMachine";
 import { Modal, Artwork } from "./components";
 import { MarkLibrary } from "./MarkLibrary";
 import type { Locks } from "./creative/data";
+import type { TitleSubject } from "./creative/shared";
 import { useBrandingTranslations } from "./locale";
 import "./style.css";
 
 /** The editable v1 document is the only durable state. Locks/history stay local. */
 export function TitleStudio({
-  design, onChange, onContinue, onBack, initialStage = "title",
+  design, onChange, onContinue, onBack, initialStage = "title", subject = "setup",
 }: {
   design: Design;
   onChange: (design: Design) => void;
   onContinue?: () => void;
   onBack?: () => void;
   initialStage?: "title" | "icon";
+  subject?: TitleSubject;
 }) {
   const t = useBrandingTranslations();
   const [stage, setStage] = useState(initialStage);
@@ -50,7 +52,7 @@ export function TitleStudio({
     onMark: () => setMarkOpen(true),
     onColours: () => setMarkOpen(true), onDetails: () => setMarkOpen(true),
     onTheme: () => setTheme((value) => value === "light" ? "dark" : "light"),
-    onNext: () => setStage("icon"), titleLocks, onTitleLocks: setTitleLocks,
+    onNext: () => setStage("icon"), titleLocks, onTitleLocks: setTitleLocks, subject,
   };
   return (
     <div className="mytitle-scope">

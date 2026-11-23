@@ -3,12 +3,12 @@
 import { PageHeader } from "./page-header";
 
 import { useTranslations as useInterfaceTranslations } from "next-intl";
-import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as LucideIcons from "lucide-react";
-import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, ExternalLink, Loader2, Power, PowerOff, RefreshCw, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -16,11 +16,13 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
+import { Input } from "@/components/ui/input";
 import { UpdateBlockedNote } from "@/components/market/update-blocked";
+import { AppAccessSettings } from "@/components/market/app-access-settings";
+import { AppDefaultCredentials, AppUninstall, AppUpdateSource } from "@/components/market/app-management";
 import type { UpdateBlocked } from "@/lib/market/types";
-import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
+import { AppSection, groupClass, selectClass } from "./app-section";
 
 interface DrawerApp {
   id: string;
@@ -101,19 +103,9 @@ interface Permission {
   scopes?: string[];
 }
 
-type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling";
+type AppTab = "app-settings" | "overview" | "manage" | "ai" | "branding" | "permissions" | "network" | "link-handling";
+const APP_TABS: AppTab[] = ["app-settings", "overview", "manage", "ai", "branding", "permissions", "network", "link-handling"];
 type BrandingScope = "user" | "server";
-
-const DEFAULT_APP_WORDART: SiteNameStyle = {
-  fontFamily: "Montserrat",
-  fontSize: "1.5rem",
-  fontWeight: 800,
-  letterSpacing: "0.02em",
-  color: "#ffffff",
-  gradient: null,
-  textShadow: "none",
-  textTransform: "none",
-};
 
 function StatusDot({ status }: { status?: string | null }) {
   const color = status === "running" ? "bg-green-500" : status === "partial" ? "bg-amber-500" : status === "stopped" ? "bg-red-500" : "bg-muted-foreground";
@@ -122,10 +114,6 @@ function StatusDot({ status }: { status?: string | null }) {
 
 function isAppOff(app?: UnifiedApp | null) {
   return !!app && (app.enabled === false || app.desiredState === "stopped" || app.status === "stopped");
-}
-
-function OffDot() {
-  return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />;
 }
 
 function appHealthLabel(app?: UnifiedApp | null) {
@@ -175,34 +163,27 @@ function getLucideIcon(name: string): ComponentType<{ className?: string; style?
     : null;
 }
 
-function AppIcon({ app }: { app: DrawerApp | UnifiedApp }) {
+function AppIcon({ app, size = "md" }: { app: DrawerApp | UnifiedApp; size?: "md" | "lg" }) {
   const [imgError, setImgError] = useState(false);
   const name = "name" in app ? app.name : app.displayName;
   const icon = "custom_icon_url" in app ? app.custom_icon_url || app.icon : app.icon;
   const Icon = icon && !imgError ? getLucideIcon(icon) : null;
+  const box = size === "lg" ? "h-14 w-14 rounded-2xl" : "h-9 w-9 rounded-lg";
 
   return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent">
+    <div className={`flex shrink-0 items-center justify-center overflow-hidden bg-accent ${box}`}>
       {icon?.startsWith("emoji:") ? (
-        <span className="text-lg">{icon.slice(6)}</span>
+        <span className={size === "lg" ? "text-3xl" : "text-lg"}>{icon.slice(6)}</span>
       ) : icon && (icon.startsWith("/") || icon.startsWith("http") || icon.startsWith("data:")) ? (
         // eslint-disable-next-line @next/next/no-img-element
-        !imgError ? <img src={icon} alt="" className="h-9 w-9 rounded-lg object-cover" onError={() => setImgError(true)} /> : <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
+        !imgError ? <img src={icon} alt="" className={`object-cover ${box}`} onError={() => setImgError(true)} /> : <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
       ) : Icon ? (
-        <Icon className="h-5 w-5 text-foreground/80" />
+        <Icon className={size === "lg" ? "h-7 w-7 text-foreground/80" : "h-5 w-5 text-foreground/80"} />
       ) : (
         <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
       )}
     </div>
   );
-}
-
-function tabClass(active: boolean) {
-  return `flex items-center gap-2 border-b-2 pb-3 text-sm font-medium transition-colors ${
-    active
-      ? "border-primary text-foreground"
-      : "border-transparent text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground"
-  }`;
 }
 
 function identityConsentApi(appId: string): string {
@@ -224,7 +205,7 @@ function permissionTitle(permission: Permission) {
 
 
 
-function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
+function InstalledAppsList() {
   const translateInterface = useInterfaceTranslations("interface");
 
   const [apps, setApps] = useState<DrawerApp[]>([]);
@@ -248,51 +229,45 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const host = typeof window !== "undefined" ? window.location.hostname : "";
-
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center justify-between px-[18px] py-3">
-        <h2 className="text-[15px] font-semibold">{translateInterface("mdf76d7f1e93c")}</h2>
-        <Link href="/market" className="text-[13px] font-medium text-primary hover:underline">{translateInterface("mfbf25423f41e")}</Link>
-      </div>
+    <AppSection
+      id="installed"
+      title={translateInterface("mdf76d7f1e93c")}
+      action={
+        <Link href="/market" className="inline-flex shrink-0 items-center rounded-sm text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:min-h-11">
+          {translateInterface("mfbf25423f41e")}
+        </Link>
+      }
+    >
       {loading ? (
-        <div className="flex items-center justify-center gap-2 border-t py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{translateInterface("mf8bcca389b95")}</div>
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{translateInterface("mf8bcca389b95")}</div>
       ) : error ? (
-        <div className="border-t py-12 text-center text-sm text-muted-foreground"><AlertCircle className="mx-auto mb-2 h-6 w-6 opacity-50" />{error}</div>
+        <p role="alert" className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><AlertCircle className="h-4 w-4 shrink-0" aria-hidden />{error}</p>
       ) : apps.length === 0 ? (
-        <div className="border-t py-10 text-center text-sm text-muted-foreground">{translateInterface("mf0b2cf399f5f")}</div>
+        <p className="py-4 text-sm text-muted-foreground">{translateInterface("mf0b2cf399f5f")}</p>
       ) : (
-        apps.map((app) => {
-          const off = app.status === "stopped";
-          return (
-            <button
-              key={app.id}
-              onClick={() => onOpen(app.id)}
-              className="flex w-full items-center gap-3 border-t px-[18px] py-3 text-left transition-colors hover:bg-accent/40"
-            >
-              <AppIcon app={app} />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <div className="truncate text-sm font-medium">{app.name}</div>
-                  {off && <><OffDot /><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></>}
-                </div>
-                {app.subdomain && (
-                  <div className="truncate text-[13px] text-muted-foreground">{host ? `${app.subdomain}.${host}` : app.subdomain}</div>
-                )}
-              </div>
-              <span className="hidden text-[13px] font-medium text-muted-foreground sm:inline">{translateInterface("m5a23444828db")}</span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/40" />
-            </button>
-          );
-        })
+        <ul className="settings-group">
+          {apps.map((app) => (
+            <li key={app.id}>
+              <Link href={`/settings/apps/${encodeURIComponent(app.id)}`} className="settings-row hover:bg-accent/40">
+                <AppIcon app={app} />
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{app.name}</span>
+                {/* A status only when the app is not running. */}
+                {app.status === "stopped" && <span className="shrink-0 text-[13px] text-muted-foreground">{translateInterface("mca7981b46ecf")}</span>}
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
-    </section>
+    </AppSection>
   );
 }
 
-function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
+/** Apps shows the updates (`part="updates"`); System lists the platform's own components (`part="components"`). */
+function AdminAppSections({ onOpen, part }: { onOpen: (id: string) => void; part: "updates" | "components" }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsApps");
 
   const [apps, setApps] = useState<UnifiedApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -629,23 +604,30 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
           )}
         </ConfirmDialog>
       )}
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="flex items-center justify-between gap-4 px-[18px] py-3">
-          <div>
-            <h3 className="text-base font-semibold">{updates.length > 0 ? translateInterface("ma0909182f8d7") : translateInterface("m22e2bada8f1c")}</h3>
-            <p className="text-[13px] text-muted-foreground">{translateInterface("m50bdf4b5f230", {count: updates.length})}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {translateInterface("mcad7ceef401a")}</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={checkUpdates} disabled={checking}>
+      {part === "updates" && <AppSection
+        id="updates"
+        title={updates.length > 0 ? t("updates.available", { count: updates.length }) : t("updates.title")}
+        action={updates.length > 0 ? (
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={checkUpdates} disabled={checking}>
             {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {checking ? translateInterface("m0dfe1d63c9d8") : translateInterface("m9ed79ee9b212")}
+            {checking ? t("updates.checking") : t("updates.check")}
           </Button>
-        </div>
-        {updates.length === 0 ? (
-          <div className="border-t px-[18px] py-8 text-center text-sm text-muted-foreground">{translateInterface("mb9e08498866d")}</div>
-        ) : (
-          <div>
+        ) : undefined}
+      >
+        <div className={groupClass}>
+          {/* Said once: nothing to do, and the way to look again. */}
+          {updates.length === 0 && (
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5">
+              <p className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" aria-hidden />
+                {t("updates.upToDate")}
+              </p>
+              <Button variant="ghost" size="sm" className="shrink-0" onClick={checkUpdates} disabled={checking}>
+                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {checking ? t("updates.checking") : t("updates.check")}
+              </Button>
+            </div>
+          )}
             {updates.map((app) => {
               const component = updateStatusComponent(app.id);
               const status = statuses.get(component);
@@ -655,16 +637,16 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
               const statusUnavailable = app.category === "user"
                 && (!operations.has(app.id) || operationErrors.has(app.id));
               return (
-                <div key={app.id} className="border-t px-[18px] py-3">
-                  <div className="flex w-full items-center gap-3">
-                    <button type="button" onClick={() => onOpen(app.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                <div key={app.id} className="min-w-0 px-4 py-3">
+                  <div className="flex w-full min-w-0 items-center gap-3">
+                    <button type="button" onClick={() => onOpen(app.id)} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
                       <AppIcon app={app} />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-medium">{app.displayName}</p>
-                        <p className="text-xs text-muted-foreground">{app.updateInfo || translateInterface("mff8b555d818f")}</p>
+                        <p className="truncate text-[15px] font-medium text-foreground">{app.displayName}</p>
+                        <p className="text-[13px] text-muted-foreground tabular-nums [overflow-wrap:anywhere]">{app.updateInfo || translateInterface("mff8b555d818f")}</p>
                       </div>
                     </button>
-                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating || !!operation?.pending || statusUnavailable}>
+                    <Button size="sm" className="shrink-0" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating || !!operation?.pending || statusUnavailable}>
                       {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       {operation?.pending ? translateInterface("m331551b0de41") : isUpdating ? translateInterface("m0b5260e1b405") : translateInterface("mc1c1009d3f37")}
                     </Button>
@@ -697,7 +679,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                         <span className="truncate">{status.message}</span>
-                        <span>{Math.max(0, Math.min(100, status.progress || 0))}%</span>
+                        <span className="tabular-nums">{Math.max(0, Math.min(100, status.progress || 0))}%</span>
                       </div>
                       {isUpdating && (
                         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -711,20 +693,20 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                 </div>
               );
             })}
-          </div>
-        )}
-        {blockedApps.map((app) => (
-          <div key={`blocked-${app.id}`} className="border-t px-[18px] py-3">
-            <button type="button" onClick={() => onOpen(app.id)} className="flex w-full min-w-0 items-center gap-3 text-left">
-              <AppIcon app={app} />
-              <p className="min-w-0 flex-1 truncate text-[13px] font-medium">{app.displayName}</p>
-            </button>
-            <UpdateBlockedNote blocked={app.updateBlocked!} appId={app.id} className="mt-2" />
-          </div>
-        ))}
-      </section>
+          {blockedApps.map((app) => (
+            <div key={`blocked-${app.id}`} className="min-w-0 px-4 py-3">
+              <button type="button" onClick={() => onOpen(app.id)} className="flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                <AppIcon app={app} />
+                <p className="min-w-0 flex-1 truncate text-[15px] font-medium text-foreground">{app.displayName}</p>
+              </button>
+              <UpdateBlockedNote blocked={app.updateBlocked!} appId={app.id} className="mt-2" />
+            </div>
+          ))}
+        </div>
+        {updates.length > 0 && <p className="text-xs leading-relaxed text-muted-foreground">{translateInterface("mcad7ceef401a")}</p>}
+      </AppSection>}
 
-      <section className="overflow-hidden rounded-xl border bg-card">
+      {part === "components" && <section className="overflow-hidden rounded-xl border bg-card">
         <div className="px-[18px] py-3">
           <h3 className="text-base font-semibold">{translateInterface("m3fea190da427")}</h3>
           <p className="text-[13px] text-muted-foreground">{translateInterface("meccb6abcf328")}</p>
@@ -749,9 +731,15 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             </button>
           ))}
         </div>
-      </section>
+      </section>}
     </>
   );
+}
+
+/** The platform's own components (Incus, Spine, PostgreSQL, Caddy…), on the System page. */
+export function SystemComponents() {
+  const router = useRouter();
+  return <AdminAppSections part="components" onOpen={(id) => router.push(`/settings/apps/${encodeURIComponent(id)}?from=system`)} />;
 }
 
 function AppSettingsEmbed({ app }: { app: DrawerApp }) {
@@ -915,26 +903,23 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
   const selectedGroup = status.groups.find((group) => group.id === groupId);
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-3">
       {error && <Alert variant="destructive">{error}</Alert>}
       {notice && <Alert>{notice}</Alert>}
       {needsAttention && (
         <Alert variant="destructive">
           {translateInterface("m283317ddeb03")}</Alert>
       )}
-      <div className="rounded-lg border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-primary" />
-              <h3 className="font-semibold">{translateInterface("m18ff0c26ee4a")}</h3>
-              <Badge variant={status.enabled ? "default" : "secondary"}>{status.enabled ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</Badge>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
+      <div className={groupClass}>
+        <div className="flex min-w-0 items-center justify-between gap-4 px-4 py-3.5">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">{translateInterface("m18ff0c26ee4a")}</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
               {translateInterface("mad79cfea2624", {app: title})}
             </p>
           </div>
           <Switch
+            className="shrink-0"
             checked={status.enabled}
             disabled={busy || (!ownerIsCurrent && !status.enabled) || (!status.connection && !groupId)}
             onCheckedChange={(enabled) => void mutate(enabled ? "enable" : "disable", enabled ? groupId : undefined)}
@@ -942,8 +927,8 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
           />
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
+        <div className="grid min-w-0 gap-4 px-4 py-3.5 md:grid-cols-2">
+          <div className="min-w-0 space-y-2">
             <Label htmlFor={`ai-group-${appId}`}>{translateInterface("madb24ff365bd")}</Label>
             <Select
               value={groupId}
@@ -953,7 +938,7 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
                 if (status.connection && ownerIsCurrent) void mutate("change_group", value);
               }}
             >
-              <SelectTrigger id={`ai-group-${appId}`}><SelectValue placeholder={translateInterface("m0c7e5871a4e6")} /></SelectTrigger>
+              <SelectTrigger id={`ai-group-${appId}`} className="w-full min-w-0"><SelectValue placeholder={translateInterface("m0c7e5871a4e6")} /></SelectTrigger>
               <SelectContent>
                 {status.groups.map((group) => (
                   <SelectItem key={group.id} value={group.id} disabled={group.status === "empty"}>
@@ -964,9 +949,9 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
             </Select>
             {selectedGroup?.unavailableRouteCount ? <p className="text-xs text-destructive">{translateInterface("m26f9ccc0629f")}</p> : null}
           </div>
-          <div className="rounded-md bg-muted/40 p-3 text-sm">
+          <div className="min-w-0 text-sm">
             <p className="font-medium">{translateInterface("m639a40e82b9a")}</p>
-            <p className="mt-1 text-muted-foreground">
+            <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
               {status.connection
                 ? `${status.connection.groupName} · ${status.connection.keyPreview}`
                 : translateInterface("m4a1c5d30939d", { value0: String(title) })}
@@ -976,12 +961,12 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
         </div>
 
         {!ownerIsCurrent && status.connection && (
-          <div className="mt-5 flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+          <div className="flex min-w-0 flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <p className="text-sm font-medium">{translateInterface("m0eba3d4ee43f")}{status.installation?.routingOwner?.displayName || translateInterface("mc13dc9685345")}</p>
               <p className="mt-1 text-xs text-muted-foreground">{translateInterface("m615937f6702b")}</p>
             </div>
-            <Button disabled={busy || !groupId} onClick={() => void mutate("takeover", groupId)}>
+            <Button variant="outline" className="shrink-0" disabled={busy || !groupId} onClick={() => void mutate("takeover", groupId)}>
               {translateInterface("m3213cd836138")}</Button>
           </div>
         )}
@@ -990,15 +975,29 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
   );
 }
 
-function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; isAdmin: boolean; hasUserContext: boolean; onBack: () => void }) {
+/** Old `?tab=` links land on the section that took the tab's place. */
+const TAB_SECTIONS: Record<AppTab, string | null> = {
+  overview: null,
+  "app-settings": "settings",
+  manage: "access",
+  ai: "ai",
+  branding: "name-and-icon",
+  permissions: "permissions",
+  network: "diagnostics",
+  "link-handling": "diagnostics",
+};
+
+function AppDetail({ appId, isAdmin, hasUserContext }: { appId: string; isAdmin: boolean; hasUserContext: boolean }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsApps");
 function permissionDescription(permission: Permission) {
   if (permission.descriptor?.description) return permission.descriptor.description;
   return translateInterface("m40ff0a06c8a1");
 }
 
 
-  const [tab, setTab] = useState<AppTab>("overview");
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") as AppTab | null;
   const [drawerApps, setDrawerApps] = useState<DrawerApp[]>([]);
   const [unifiedApps, setUnifiedApps] = useState<UnifiedApp[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -1013,6 +1012,8 @@ function permissionDescription(permission: Permission) {
   const [signIn, setSignIn] = useState<{ available: boolean; enabled: boolean } | null>(null);
   const [signInPending, setSignInPending] = useState<boolean | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
+  // Diagnostics is folded until someone opens it (or an old Network / Link handling link does).
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState<boolean | null>(null);
   const drawerApp = drawerApps.find((app) => app.id === appId);
   const unifiedApp = unifiedApps.find((app) => app.id === appId);
   const title = drawerApp?.name || unifiedApp?.displayName || appId;
@@ -1041,6 +1042,39 @@ function permissionDescription(permission: Permission) {
   useEffect(() => {
     load().catch(() => setLoading(false));
   }, [load]);
+
+  // Old tab links (?tab=permissions) and anchors (#permissions): go to the section and move focus to its heading.
+  useEffect(() => {
+    if (loading) return;
+    const target = (requestedTab && APP_TABS.includes(requestedTab) ? TAB_SECTIONS[requestedTab] : null)
+      || (() => { try { return decodeURIComponent(window.location.hash.slice(1)); } catch { return ""; } })()
+      || null;
+    if (!target) return;
+    if (target === "diagnostics") setDiagnosticsOpen(true);
+    let stopped = false;
+    const go = (focus: boolean) => {
+      if (stopped) return;
+      const section = document.getElementById(target);
+      if (!section) return;
+      section.scrollIntoView({ block: "start" });
+      if (focus) document.getElementById(`${target}-heading`)?.focus({ preventScroll: true });
+    };
+    const frame = window.requestAnimationFrame(() => go(true));
+    // Sections above load their own data and push this one down: settle once more, unless the reader has moved on.
+    const timer = window.setTimeout(() => go(false), 700);
+    const stop = () => { stopped = true; };
+    window.addEventListener("wheel", stop, { passive: true, once: true });
+    window.addEventListener("touchstart", stop, { passive: true, once: true });
+    window.addEventListener("keydown", stop, { once: true });
+    return () => {
+      stopped = true;
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      window.removeEventListener("wheel", stop);
+      window.removeEventListener("touchstart", stop);
+      window.removeEventListener("keydown", stop);
+    };
+  }, [loading, requestedTab]);
 
   async function revokeAppPermission(permission: string) {
     const isIdentityConsent = permission === "identity:youeye-id:sign-in";
@@ -1146,28 +1180,56 @@ function permissionDescription(permission: Permission) {
   }
 
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
-  const off = isAppOff(unifiedApp);
-  const controllable = isAdmin && unifiedApp?.category === "user" && (unifiedApp.containers?.length ?? 0) > 0;
+  const off = unifiedApp ? isAppOff(unifiedApp) : drawerApp?.status === "stopped";
+  const isUserApp = unifiedApp?.category === "user";
+  const controllable = isAdmin && isUserApp && (unifiedApp?.containers?.length ?? 0) > 0;
+  const credentialState = unifiedApp?.serviceCredentialState;
   const databaseNote = unifiedApp?.databaseMode === "shared"
     ? translateInterface("m2b43e68d0127")
     : unifiedApp?.databaseMode === "own"
       ? translateInterface("m0a30a7ab7ad1")
       : translateInterface("m54dd7b4ad1cb");
-  const tabs = [
-    { id: "app-settings", label: translateInterface("mda645334193e"), icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
-    { id: "overview", label: translateInterface("md4b1ea5708dd"), icon: <Info className="h-4 w-4" /> },
-    { id: "ai", label: translateInterface("m11fb682be0a0"), icon: <Sparkles className="h-4 w-4" />, adminOnly: true, hide: !aiSupported },
-    { id: "branding", label: translateInterface("md417aa16da36"), icon: <Palette className="h-4 w-4" />, userOnly: true },
-    { id: "permissions", label: translateInterface("mabccc78cc93c"), icon: <Shield className="h-4 w-4" />, userOnly: true },
-    { id: "network", label: translateInterface("m1744b96470b5"), icon: <Network className="h-4 w-4" />, adminOnly: true },
-    { id: "link-handling", label: translateInterface("mca153aaec316"), icon: <Unplug className="h-4 w-4" />, userOnly: true },
-  ] satisfies Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean; userOnly?: boolean; hide?: boolean }>;
-  const visibleTabs = tabs.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || hasUserContext) && !item.hide);
+
+  // The one place the app's state is said, and only when it is not simply running.
+  const healthState = unifiedApp?.appHealthState;
+  const status: { text: string; serious: boolean } | null =
+    credentialState === "revoked" ? { text: translateInterface("m2a6af261ee1c"), serious: true }
+    : credentialState === "pending" ? { text: translateInterface("m3727b0acb45f"), serious: false }
+    : powerPending === "stop" ? { text: translateInterface("md54dbde107ff", { app: title }), serious: false }
+    : powerPending === "start" ? { text: translateInterface("mc5e3c57a0200", { app: title }), serious: false }
+    : powerPending === "restart" ? { text: translateInterface("m50b3619959e5", { app: title }), serious: false }
+    : off ? { text: controllable ? translateInterface("mf649fdfe21ba", { value0: String(title) }) : t("status.off", { app: title }), serious: true }
+    : healthState === "crash-looping" ? { text: t("status.crashLooping", { app: title }), serious: true }
+    : healthState === "unhealthy" ? { text: t("status.unhealthy", { app: title }), serious: true }
+    : healthState === "starting" ? { text: translateInterface("mc5e3c57a0200", { app: title }), serious: false }
+    : healthState === "maintenance" ? { text: t("status.maintenance", { app: title }), serious: false }
+    : unifiedApp?.status === "partial" ? { text: t("status.partial", { app: title }), serious: false }
+    : null;
+  const healthDetail = unifiedApp?.healthDetail && healthState && healthState !== "running" ? unifiedApp.healthDetail : null;
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
+  if (!drawerApp && !unifiedApp) {
+    return (
+      <div className="space-y-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">{appId}</h1>
+        <p className="text-sm text-muted-foreground">{t("notFound")}</p>
+        <Button variant="outline" asChild><Link href="/settings/apps">{t("backToApps")}</Link></Button>
+      </div>
+    );
+  }
+
+  const canStart = controllable && off && credentialState !== "pending" && credentialState !== "revoked";
+  const canOpen = !!drawerApp?.url && !off;
+  const hasActions = canOpen || canStart || (controllable && !off) || (isAdmin && credentialState === "pending");
+  const showPermissions = hasUserContext && (!!drawerApp || isUserApp || permissions.length > 0);
+  const showLook = hasUserContext && (!!drawerApp || isUserApp);
+  const showDiagnostics = isAdmin && !!unifiedApp;
+  // A platform component's page is mostly its diagnostics: open them there.
+  const diagnosticsShown = diagnosticsOpen ?? !isUserApp;
+
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-10">
       <ConfirmDialog
         open={confirmStop}
         title={translateInterface("m49c04461d6d0", { value0: String(title) })}
@@ -1180,325 +1242,361 @@ function permissionDescription(permission: Permission) {
         <p className="text-[13px] leading-relaxed text-muted-foreground">{databaseNote}</p>
       </ConfirmDialog>
 
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" />
-        {translateInterface("mbac125489c7e")}</button>
-
-      <div className="flex items-center gap-3">
-        <AppIcon app={drawerApp || unifiedApp || { id: appId, displayName: title, description: "", icon: "", category: "user", type: "", containers: [], status: "unknown", updateAvailable: false }} />
-        <div>
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground">{unifiedApp?.description || translateInterface("m26d693ad28cb")}</p>
+      <header id="overview" className="min-w-0 scroll-mt-24 space-y-4">
+        <div className="flex min-w-0 items-start gap-4">
+          <AppIcon size="lg" app={drawerApp || unifiedApp || { id: appId, displayName: title, description: "", icon: "", category: "user", type: "", containers: [], status: "unknown", updateAvailable: false }} />
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">{title}</h1>
+            {unifiedApp?.description && <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{unifiedApp.description}</p>}
+            {unifiedApp?.version && <p className="mt-1 text-[13px] text-muted-foreground tabular-nums">{t("version", { version: unifiedApp.version })}</p>}
+          </div>
         </div>
-      </div>
 
-      <div className="border-b">
-        <nav className="flex flex-wrap gap-6" aria-label={translateInterface("m5b2173e206c6")}>
-          {visibleTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={tabClass(tab === item.id)}>{item.icon}{item.label}</button>)}
-        </nav>
-      </div>
-
-      {tab === "app-settings" && (
-        drawerApp && hasAppSettings
-          ? <AppSettingsEmbed app={drawerApp} />
-          : <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m9a805719b511")}</div>
-      )}
-
-      {tab === "overview" && (
-        <div className="rounded-lg border divide-y">
-          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{translateInterface("mc6ed837d495b")}</span>
-                {off && <><OffDot /><span className="sr-only">{translateInterface("mca7981b46ecf")}</span></>}
-                {appHealthLabel(unifiedApp) && <Badge variant={appHealthVariant(unifiedApp)}>{appHealthLabel(unifiedApp)}</Badge>}
-              </div>
-              <p className="mt-1 text-[13px] text-muted-foreground">
-                {unifiedApp?.serviceCredentialState === "revoked"
-                  ? translateInterface("m2a6af261ee1c")
-                  : unifiedApp?.serviceCredentialState === "pending"
-                    ? translateInterface("m3727b0acb45f")
-                  : off
-                  ? translateInterface("mf649fdfe21ba", { value0: String(title) })
-                  : powerPending
-                    ? powerPending === "stop" ? translateInterface("md54dbde107ff", {app: title}) : powerPending === "start" ? translateInterface("mc5e3c57a0200", {app: title}) : translateInterface("m50b3619959e5", {app: title})
-                    : translateInterface("m49cdfe959956", {app: title, state: unifiedApp?.status || translateInterface("ma191bf55dd89")})}
+        {(status || powerError) && (
+          <div className="space-y-1" aria-live="polite">
+            {status && (
+              <p role="status" className="flex min-w-0 items-start gap-2 text-sm text-foreground">
+                <span className={`mt-[.45rem] h-2 w-2 shrink-0 rounded-full ${status.serious ? "bg-destructive" : "bg-amber-500"}`} aria-hidden />
+                <span className="min-w-0">{status.text}{healthDetail ? ` ${healthDetail}` : ""}</span>
               </p>
-              {unifiedApp?.healthDetail && unifiedApp.appHealthState && unifiedApp.appHealthState !== "running" && (
-                <p className="mt-1 text-[13px] text-muted-foreground">{unifiedApp.healthDetail}</p>
-              )}
-              {powerError && <p className="mt-1 text-[13px] text-destructive">{powerError}</p>}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {isAdmin && unifiedApp?.serviceCredentialState === "pending" && (
-                <Button variant="outline" size="sm" onClick={() => void reconcileCredentials()} disabled={credentialPending}>
-                  {credentialPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {credentialPending ? translateInterface("m393dc4a3ec89") : translateInterface("m3b6c613892eb")}
-                </Button>
-              )}
-              {drawerApp?.url && !off && (
-                <Button variant="outline" size="sm" asChild>
-                  <a href={drawerApp.url}>
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    {translateInterface("me51c6b48fb9e")}</a>
-                </Button>
-              )}
-              {controllable && off && unifiedApp?.serviceCredentialState !== "pending" && unifiedApp?.serviceCredentialState !== "revoked" && (
-                <Button size="sm" onClick={() => controlPower("start")} disabled={powerPending !== null}>
-                  {powerPending === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
-                  {translateInterface("m2e4f3ea97036")}</Button>
-              )}
-              {controllable && !off && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => controlPower("restart")} disabled={powerPending !== null}>
-                    {powerPending === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                    {translateInterface("m6b983a81e5e8")}</Button>
-                  <Button variant="outline" size="sm" onClick={() => setConfirmStop(true)} disabled={powerPending !== null}>
-                    {powerPending === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />}
-                    {translateInterface("ma71f685036e7")}</Button>
-                </>
-              )}
-            </div>
+            )}
+            {powerError && <p role="alert" className="text-sm text-destructive">{powerError}</p>}
           </div>
-          <div className="grid gap-4 p-4 text-sm sm:grid-cols-2">
-            <div><span className="text-muted-foreground">{translateInterface("m920e413c7d41")}</span><p className="font-medium">{unifiedApp?.status || drawerApp?.status || translateInterface("mb23a6a8439c0")}</p></div>
-            <div><span className="text-muted-foreground">{translateInterface("m55898449eb74")}</span><p className="font-medium">{appHealthLabel(unifiedApp) || unifiedApp?.healthStatus || translateInterface("mb23a6a8439c0")}</p></div>
-            <div><span className="text-muted-foreground">{translateInterface("mdd167905de0d")}</span><p className="font-medium">{unifiedApp?.version || "—"}</p></div>
-            <div><span className="text-muted-foreground">{translateInterface("mbaaddf70fb5d")}</span><p className="font-medium">{unifiedApp?.type || "app"}</p></div>
-            <div><span className="text-muted-foreground">{translateInterface("me7a241debad5")}</span><p className="font-medium">{drawerApp?.url ? <a className="inline-flex items-center gap-1 text-primary hover:underline" href={drawerApp.url}><ExternalLink className="h-3 w-3" /> {" "}{translateInterface("med077f3d8125")}</a> : "—"}</p></div>
+        )}
+
+        {hasActions && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {canOpen && (
+              <Button asChild>
+                <a href={drawerApp!.url!}>
+                  <ExternalLink />
+                  {t("open")}</a>
+              </Button>
+            )}
+            {canStart && (
+              <Button onClick={() => controlPower("start")} disabled={powerPending !== null}>
+                {powerPending === "start" ? <Loader2 className="animate-spin" /> : <Power />}
+                {translateInterface("m2e4f3ea97036")}</Button>
+            )}
+            {isAdmin && credentialState === "pending" && (
+              <Button variant="outline" onClick={() => void reconcileCredentials()} disabled={credentialPending}>
+                {credentialPending && <Loader2 className="animate-spin" />}
+                {credentialPending ? translateInterface("m393dc4a3ec89") : translateInterface("m3b6c613892eb")}
+              </Button>
+            )}
+            {controllable && !off && (
+              <>
+                <Button variant="ghost" onClick={() => controlPower("restart")} disabled={powerPending !== null}>
+                  {powerPending === "restart" ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                  {translateInterface("m6b983a81e5e8")}</Button>
+                <Button variant="ghost" onClick={() => setConfirmStop(true)} disabled={powerPending !== null}>
+                  {powerPending === "stop" ? <Loader2 className="animate-spin" /> : <PowerOff />}
+                  {t("turnOff")}</Button>
+              </>
+            )}
           </div>
-          {controllable && (
-            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium">{translateInterface("md7b62393f565")}</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">
-                  {translateInterface("mc2fbdcac2b30")}</p>
-                {healthPolicyError ? <p className="mt-1 text-[13px] text-destructive">{healthPolicyError}</p> : null}
-              </div>
-              <Switch
-                checked={unifiedApp?.autoRestart !== false}
-                disabled={healthPolicyPending}
-                onCheckedChange={setAutomaticRecovery}
-                aria-label={translateInterface("m73999e808689", { value0: String(title) })}
-              />
-            </div>
-          )}
-          {isAdmin && signIn?.available && (
-            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium">{translateInterface("mfb7ed10de1ed")}</p>
-                  <Badge variant={signIn.enabled ? "default" : "secondary"}>{signIn.enabled ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}</Badge>
-                </div>
-                <p className="mt-1 text-[13px] text-muted-foreground">
-                  {signInPending !== null
-                    ? <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" />{signInPending ? translateInterface("m8f71b12330db", { app: title }) : translateInterface("m709433447a43", { app: title })}</span>
-                    : signIn.enabled ? translateInterface("m3bf590b2bb82", { app: title }) : translateInterface("m2f5875924e6c", { app: title })}
-                </p>
-                {signInError ? <p className="mt-1 text-[13px] text-destructive">{signInError}</p> : null}
-              </div>
-              <Switch
-                checked={signInPending ?? signIn.enabled}
-                disabled={signInPending !== null}
-                onCheckedChange={(enabled) => void setYouEyeSignIn(enabled)}
-                aria-label={translateInterface("m70843fac04a3", { app: title })}
-              />
-            </div>
-          )}
-          {unifiedApp?.containers?.map((container) => (
-            <div key={container.name} className="flex items-center justify-between p-4 text-sm">
-              <div><p className="font-medium">{container.name}</p><p className="text-xs text-muted-foreground">{container.ip || translateInterface("m737d8fa3e6b2")}</p></div>
-              <Badge variant="outline">{container.status}</Badge>
-            </div>
-          ))}
-        </div>
+        )}
+      </header>
+
+      {drawerApp && hasAppSettings && (
+        <AppSection id="settings" title={t("appSettings")}>
+          <AppSettingsEmbed app={drawerApp} />
+        </AppSection>
       )}
 
-      {tab === "ai" && isAdmin && aiSupported && <AppAISettings appId={appId} title={title} />}
-
-      {tab === "branding" && <AppBranding appId={appId} isAdmin={isAdmin} appName={title} />}
-
-      {tab === "permissions" && (
-        <div className="space-y-3">
-          {permissions.length > 0 && (
-            <div className="flex justify-end">
-              <Button variant="outline" size="sm" onClick={revokeAllPermissions}>{translateInterface("meceb04bfa892")}</Button>
-            </div>
-          )}
+      {showPermissions && (
+        <AppSection id="permissions" title={t("permissions.title")}>
           {permissions.length === 0 ? (
-            <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m8e6805519977")}</div>
-          ) : permissions.map((permission) => (
-            <div key={permission.id || permission.permission} className="flex items-start justify-between gap-3 rounded-md bg-accent/30 px-3 py-2.5 text-sm">
-              <div className="min-w-0">
-                <p className="truncate font-medium">{permissionTitle(permission)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{permissionDescription(permission)}</p>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {permission.descriptor?.category && <Badge variant="outline">{permission.descriptor.category}</Badge>}
-                  {permission.descriptor?.risk && <Badge variant="outline">{permission.descriptor.risk} {translateInterface("m2c6ef0f0d0e4")}</Badge>}
-                  <Badge variant="outline">{permission.grantType || translateInterface("mdd515d1975b8")}</Badge>
+            <p className="text-sm text-muted-foreground">{t("permissions.none", { app: title })}</p>
+          ) : (
+            <>
+              <ul className="settings-group">
+                {permissions.map((permission) => {
+                  const facts = [
+                    permission.descriptor?.category,
+                    permission.descriptor?.risk ? `${permission.descriptor.risk} ${translateInterface("m2c6ef0f0d0e4")}` : null,
+                    permission.grantType,
+                  ].filter(Boolean).join(" · ");
+                  return (
+                    <li key={permission.id || permission.permission} className="flex min-w-0 flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground [overflow-wrap:anywhere]">{permissionTitle(permission)}</p>
+                        <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{permissionDescription(permission)}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground/80 [overflow-wrap:anywhere]">
+                          {facts ? `${facts} · ` : ""}<span className="font-mono">{permission.permission}</span>
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 self-start"
+                        onClick={() => revokeAppPermission(permission.permission)}
+                        aria-label={t("permissions.revokeNamed", { permission: permissionTitle(permission) })}
+                      >{translateInterface("m87e6d00bbf53")}</Button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {permissions.length > 1 && (
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={revokeAllPermissions}>{t("permissions.revokeAll")}</Button>
+              )}
+            </>
+          )}
+        </AppSection>
+      )}
+
+      {showLook && <AppLook appId={appId} appName={title} scope="user" onChanged={() => { load().catch(() => {}); }} />}
+
+      {isAdmin && aiSupported && (
+        <AppSection id="ai" title={translateInterface("m11fb682be0a0")}>
+          <AppAISettings appId={appId} title={title} />
+        </AppSection>
+      )}
+
+      {isAdmin && isUserApp && (
+        <AppSection id="access" title={t("access.title")}>
+          {signIn?.available && (
+            <div className={groupClass}>
+              <div className="flex min-w-0 items-center justify-between gap-4 px-4 py-3.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">{translateInterface("mfb7ed10de1ed")}</p>
+                  <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
+                    {signInPending !== null
+                      ? <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" />{signInPending ? translateInterface("m8f71b12330db", { app: title }) : translateInterface("m709433447a43", { app: title })}</span>
+                      : signIn.enabled ? translateInterface("m3bf590b2bb82", { app: title }) : translateInterface("m2f5875924e6c", { app: title })}
+                  </p>
+                  {signInError ? <p role="alert" className="mt-1 text-[13px] text-destructive">{signInError}</p> : null}
                 </div>
-                <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{permission.permission}</p>
+                <Switch
+                  className="shrink-0"
+                  checked={signInPending ?? signIn.enabled}
+                  disabled={signInPending !== null}
+                  onCheckedChange={(enabled) => void setYouEyeSignIn(enabled)}
+                  aria-label={translateInterface("m70843fac04a3", { app: title })}
+                />
               </div>
-              <Button variant="outline" size="sm" onClick={() => revokeAppPermission(permission.permission)}>{translateInterface("m87e6d00bbf53")}</Button>
             </div>
-          ))}
-        </div>
+          )}
+          <AppAccessSettings appId={appId} />
+        </AppSection>
       )}
 
-      {tab === "network" && isAdmin && (
-        <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-          {translateInterface("m0daef8af935c")}</div>
+      {isAdmin && isUserApp && <AppDefaultCredentials appId={appId} />}
+
+      {isAdmin && showLook && <AppLook appId={appId} appName={title} scope="server" />}
+
+      {isAdmin && isUserApp && (
+        <AppUpdateSource appId={appId} updateInfo={unifiedApp?.updateAvailable ? unifiedApp.updateInfo || "" : null} />
       )}
 
-      {tab === "link-handling" && (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{translateInterface("m27e281ba50ac")}</div>
+      {showDiagnostics && unifiedApp && (
+        <section id="diagnostics" className="min-w-0 scroll-mt-24">
+          <details
+            className="group"
+            open={diagnosticsShown}
+            onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}
+          >
+            <summary
+              id="diagnostics-heading"
+              className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"
+            >
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden />
+              <h2 className="text-base font-semibold text-foreground">{t("diagnostics.title")}</h2>
+            </summary>
+            <div className={`${groupClass} mt-3`}>
+              {controllable && (
+                <div className="flex min-w-0 items-center justify-between gap-4 px-4 py-3.5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">{translateInterface("md7b62393f565")}</p>
+                    <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{translateInterface("mc2fbdcac2b30")}</p>
+                    {healthPolicyError ? <p role="alert" className="mt-1 text-[13px] text-destructive">{healthPolicyError}</p> : null}
+                  </div>
+                  <Switch
+                    className="shrink-0"
+                    checked={unifiedApp.autoRestart !== false}
+                    disabled={healthPolicyPending}
+                    onCheckedChange={setAutomaticRecovery}
+                    aria-label={translateInterface("m73999e808689", { value0: String(title) })}
+                  />
+                </div>
+              )}
+              <dl className="grid min-w-0 gap-x-6 gap-y-3 px-4 py-3.5 text-sm sm:grid-cols-2">
+                <div className="min-w-0">
+                  <dt className="text-[13px] text-muted-foreground">{translateInterface("mbaaddf70fb5d")}</dt>
+                  <dd className="font-medium [overflow-wrap:anywhere]">{unifiedApp.type || "app"}</dd>
+                </div>
+                {unifiedApp.failingLevel && (
+                  <div className="min-w-0">
+                    <dt className="text-[13px] text-muted-foreground">{t("diagnostics.failingCheck")}</dt>
+                    <dd className="font-medium">{unifiedApp.failingLevel}</dd>
+                  </div>
+                )}
+                {drawerApp?.url && (
+                  <div className="min-w-0 sm:col-span-2">
+                    <dt className="text-[13px] text-muted-foreground">{t("diagnostics.address")}</dt>
+                    <dd className="font-mono text-[13px] [overflow-wrap:anywhere]">{drawerApp.url}</dd>
+                  </div>
+                )}
+              </dl>
+              {unifiedApp.containers?.map((container) => (
+                <div key={container.name} className="flex min-w-0 items-center justify-between gap-4 px-4 py-3.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-mono text-[13px] font-medium [overflow-wrap:anywhere]">{container.name}</p>
+                    <p className="text-xs text-muted-foreground tabular-nums">{container.ip || translateInterface("m737d8fa3e6b2")}</p>
+                  </div>
+                  <span className="shrink-0 text-[13px] text-muted-foreground">{container.status}</span>
+                </div>
+              ))}
+              <p className="px-4 py-3.5 text-[13px] leading-relaxed text-muted-foreground">{t("diagnostics.network")}</p>
+            </div>
+          </details>
+        </section>
       )}
+
+      {isAdmin && isUserApp && <AppUninstall appId={appId} appName={title} />}
     </div>
   );
 }
 
-function AppBranding({ appId, appName, isAdmin }: { appId: string; appName: string; isAdmin: boolean }) {
+/**
+ * How an app is shown: for you (`user`: your name for it, its icon, how it shows in the header) or the default for
+ * everyone (`server`, admins). The title itself is drawn in the studio, on its own page.
+ */
+function AppLook({ appId, appName, scope, onChanged }: { appId: string; appName: string; scope: BrandingScope; onChanged?: () => void }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const t = useInterfaceTranslations("settingsApps");
 
-  const [tab, setTab] = useState<"my-branding" | "server-default">("my-branding");
-  return (
-    <div className="space-y-6">
-      <div className="flex gap-1 border-b">
-        <button className={tabClass(tab === "my-branding")} onClick={() => setTab("my-branding")}>{translateInterface("ma9f351a4b44d")}</button>
-        {isAdmin && <button className={tabClass(tab === "server-default")} onClick={() => setTab("server-default")}>{translateInterface("m173243930c8e")}</button>}
-      </div>
-      {tab === "my-branding" && <AppBrandingEditor appId={appId} appName={appName} scope="user" />}
-      {tab === "server-default" && isAdmin && <AppBrandingEditor appId={appId} appName={appName} scope="server" />}
-    </div>
-  );
-}
-
-function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: string; scope: BrandingScope }) {
-  const translateInterface = useInterfaceTranslations("interface");
-
-  const [style, setStyle] = useState<SiteNameStyle>(DEFAULT_APP_WORDART);
   const [headerDisplayMode, setHeaderDisplayMode] = useState("logo-text");
   const [customName, setCustomName] = useState("");
+  const [originalName, setOriginalName] = useState(appName);
   const [customIconUrl, setCustomIconUrl] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const isUser = scope === "user";
   const endpoint = uiSettingsApi(`apps/branding/${scope}/${encodeURIComponent(appId)}`);
+  const sectionId = isUser ? "name-and-icon" : "default-look";
 
   const load = useCallback(async () => {
-    setLoading(true);
     const res = await fetch(endpoint);
-    if (res.ok) {
-      const data = await res.json();
-      setStyle(data.brandingWordart ?? DEFAULT_APP_WORDART);
-      setHeaderDisplayMode(data.headerDisplayMode ?? "logo-text");
-      setCustomName(data.customName ?? data.originalName ?? appName);
-      setCustomIconUrl(data.customIconUrl ?? "");
-    }
-    setLoading(false);
+    if (!res.ok) { setState("missing"); return; }
+    const data = await res.json();
+    setHeaderDisplayMode(data.headerDisplayMode ?? "logo-text");
+    setOriginalName(data.originalName ?? appName);
+    setCustomName(data.customName ?? "");
+    setCustomIconUrl(data.customIconUrl ?? "");
+    setState("ready");
   }, [appName, endpoint]);
 
-  useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
+  useEffect(() => { load().catch(() => setState("missing")); }, [load]);
 
+  // Only what this form shows is sent; the title drawn in the studio is left as it is.
   async function save() {
     setSaving(true);
-    const payload: Record<string, unknown> = {
-      brandingWordart: style,
-      headerDisplayMode,
-    };
+    const payload: Record<string, unknown> = { headerDisplayMode };
     if (isUser) {
-      payload.customName = customName.trim() || null;
+      const name = customName.trim();
+      payload.customName = name && name !== originalName ? name : null;
       payload.customIconUrl = customIconUrl.trim() || null;
     }
     const res = await fetch(endpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    });
-    setStatus(res.ok ? translateInterface("mb5c120b316c2") : translateInterface("m53ad6f999b1f"));
+    }).catch(() => null);
+    setStatus(res?.ok ? translateInterface("mb5c120b316c2") : translateInterface("m53ad6f999b1f"));
     setSaving(false);
+    if (res?.ok) onChanged?.();
   }
 
   async function reset() {
     setSaving(true);
-    const res = await fetch(endpoint, { method: "DELETE" });
-    setStatus(res.ok ? translateInterface("mdaee7606b339") : translateInterface("m089cb45b70a0"));
-    await load();
+    const res = await fetch(endpoint, { method: "DELETE" }).catch(() => null);
+    setStatus(res?.ok ? t("look.resetDone") : translateInterface("m089cb45b70a0"));
+    await load().catch(() => {});
     setSaving(false);
+    if (res?.ok) onChanged?.();
   }
 
-  if (loading) return <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  // Not one of this person's apps (a platform component, say): nothing to name.
+  if (state === "missing") return null;
 
+  const fieldId = `${sectionId}-${appId}`;
   return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="text-base font-semibold">{isUser ? translateInterface("ma9f351a4b44d") : translateInterface("m173243930c8e")}</h3>
-        <p className="text-[13px] text-muted-foreground">
-          {isUser ? translateInterface("m0f65725af27c") : translateInterface("mf7dd68186a22")}
-        </p>
-      </div>
-
-      {isUser && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium">{translateInterface("m2b7f6a84de91")}</span>
-            <input value={customName} onChange={(event) => setCustomName(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
-          </label>
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium">{translateInterface("ma215d4d2a43d")}</span>
-            <input value={customIconUrl} onChange={(event) => setCustomIconUrl(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="https://..." />
-          </label>
+    <AppSection
+      id={sectionId}
+      title={isUser ? t("look.title") : t("look.defaultTitle")}
+      description={isUser ? t("look.description") : t("look.defaultDescription")}
+    >
+      {state === "loading" ? (
+        <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className={groupClass}>
+          <div className="space-y-4 p-4">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+              {isUser && (
+                <>
+                  <div className="min-w-0 space-y-1.5">
+                    <Label htmlFor={`${fieldId}-name`}>{translateInterface("m2b7f6a84de91")}</Label>
+                    <Input id={`${fieldId}-name`} value={customName} placeholder={originalName} autoComplete="off" onChange={(event) => setCustomName(event.target.value)} />
+                  </div>
+                  <div className="min-w-0 space-y-1.5">
+                    <Label htmlFor={`${fieldId}-icon`}>{t("look.iconUrl")}</Label>
+                    <Input id={`${fieldId}-icon`} type="url" inputMode="url" value={customIconUrl} placeholder="https://..." autoComplete="off" spellCheck={false} onChange={(event) => setCustomIconUrl(event.target.value)} />
+                  </div>
+                </>
+              )}
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor={`${fieldId}-header`}>{t("look.headerDisplay")}</Label>
+                <select id={`${fieldId}-header`} value={headerDisplayMode} onChange={(event) => setHeaderDisplayMode(event.target.value)} className={selectClass}>
+                  <option value="logo-text">{translateInterface("m473c351183d5")}</option>
+                  <option value="logo-only">{translateInterface("m7a0470083bd6")}</option>
+                  <option value="text-only">{translateInterface("ma10f973bb176")}</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{translateInterface("m1509f561f241")}</Button>
+              {isUser && (
+                <Button size="sm" variant="ghost" onClick={reset} disabled={saving}>
+                  <RotateCcw className="h-4 w-4" />
+                  {t("look.reset")}</Button>
+              )}
+              {status && <span role="status" className="text-sm text-muted-foreground">{status}</span>}
+            </div>
+          </div>
+          <Link
+            href={`/settings/apps/${encodeURIComponent(appId)}/title${isUser ? "" : "?scope=server"}`}
+            className="settings-row hover:bg-accent/40"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium text-foreground">{isUser ? t("look.customiseTitle") : t("look.customiseDefaultTitle")}</span>
+              <span className="block text-[13px] text-muted-foreground">{t("look.customiseTitleHint")}</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
         </div>
       )}
-
-      <label className="space-y-1.5 text-sm">
-        <span className="font-medium">{translateInterface("mdaf03ec57700")}</span>
-        <select value={headerDisplayMode} onChange={(event) => setHeaderDisplayMode(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm sm:max-w-xs">
-          <option value="logo-text">{translateInterface("m473c351183d5")}</option>
-          <option value="logo-only">{translateInterface("m7a0470083bd6")}</option>
-          <option value="text-only">{translateInterface("ma10f973bb176")}</option>
-        </select>
-      </label>
-
-      <WordArtPickerInline siteName={customName || appName} style={style} setStyle={(next) => { setStyle(next); if (isUser && next.mytitle) setCustomName(next.mytitle.name); }} />
-
-      <div className="studio-save-bar flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{translateInterface("m1509f561f241")}</Button>
-        {isUser && (
-          <Button size="sm" variant="outline" onClick={reset} disabled={saving}>
-            <RotateCcw className="h-4 w-4" />
-            {translateInterface("mdaee7606b339")}</Button>
-        )}
-        {status && <span className="text-sm text-muted-foreground">{status}</span>}
-      </div>
-    </div>
+    </AppSection>
   );
 }
 
 export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { isAdmin: boolean; hasUserContext?: boolean; initialAppId?: string }) {
   const translateInterface = useInterfaceTranslations("interface");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Old links: /settings/apps?app=<id>.
+  const appId = initialAppId || searchParams.get("app");
+  const open = (id: string) => router.push(`/settings/apps/${encodeURIComponent(id)}`);
 
-  const [selectedApp, setSelectedApp] = useState<string | null>(initialAppId || null);
-
-  const urlApp = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("app");
-  }, []);
-
-  useEffect(() => {
-    if (urlApp) setSelectedApp(urlApp);
-  }, [urlApp]);
-
-  if (selectedApp) {
-    return <AppDetail appId={selectedApp} isAdmin={isAdmin} hasUserContext={hasUserContext} onBack={() => setSelectedApp(null)} />;
-  }
+  // The way back (to Apps, or to System for its components) is the Settings shell's.
+  if (appId) return <AppDetail appId={appId} isAdmin={isAdmin} hasUserContext={hasUserContext} />;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-8">
       <PageHeader title={translateInterface("m89dd748442c1")} description={translateInterface("mbc5dbd212da8")} />
-      {hasUserContext && <InstalledAppsList onOpen={setSelectedApp} />}
-      {isAdmin && <AdminAppSections onOpen={setSelectedApp} />}
+      {hasUserContext && <InstalledAppsList />}
+      {isAdmin && <AdminAppSections part="updates" onOpen={open} />}
     </div>
   );
 }

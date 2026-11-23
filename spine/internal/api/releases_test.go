@@ -52,6 +52,118 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
+// The repository changes only through the same guarded path as the CLI
+// (systemupdate.SetReleaseSource): its index is read once first, and every
+// refusal leaves the policy as it was.
+func TestReleaseChannelSwitchesRepository(t *testing.T) {
+	const other = "https://github.com/YouEye-Platform/YouEye"
+	put := func(s *Server, body string) (*httptest.ResponseRecorder, map[string]any) {
+		w := httptest.NewRecorder()
+		s.handleReleaseChannel(w, httptest.NewRequest(http.MethodPut, "/api/releases/channel", strings.NewReader(body)))
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w, out
+	}
+	oldBases := systemupdate.DownloadBasesPath
+	systemupdate.DownloadBasesPath = filepath.Join(t.TempDir(), "download-bases.json")
+	t.Cleanup(func() { systemupdate.DownloadBasesPath = oldBases })
+	deployed := func(t *testing.T) *Server {
+		s := releaseTestServer(t)
+		s.firstDeployCompletePath = filepath.Join(t.TempDir(), "complete")
+		if err := os.WriteFile(s.firstDeployCompletePath, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	index := func(repository, channel string) releasecache.ChannelIndex {
+		return releasecache.ChannelIndex{Channel: channel, Products: map[string]releasecache.ChannelEntry{"youeye": {Repository: repository, Version: "0.6.16"}}}
+	}
+
+	t.Run("ok and back", func(t *testing.T) {
+		s := deployed(t)
+		reads := []string{}
+		stubChannelIndex(t, func(repository, channel string) (releasecache.ChannelIndex, []byte, error) {
+			reads = append(reads, repository+" "+channel)
+			return index(repository, channel), nil, nil
+		})
+		w, body := put(s, `{"channel":"beta","repository":"https://GitHub.com/YouEye-Platform/YouEye.git"}`)
+		if w.Code != 200 || body["repository"] != other || body["channel"] != "beta" || body["head_version"] != "0.6.16" {
+			t.Fatal(w.Code, body)
+		}
+		policy, err := systemupdate.LoadReleasePolicy(s.releasePolicyPath())
+		if err != nil || policy.Repository != other || policy.Channel != "beta" || policy.CoreManifestSHA256 != strings.Repeat("a", 64) || policy.Schema != systemupdate.ReleasePolicySchema {
+			t.Fatal(policy, err)
+		}
+		if fmt.Sprint(reads) != "["+other+" beta]" {
+			t.Fatal(reads)
+		}
+		w, body = put(s, `{"channel":"stable","repository":"`+testReleaseRepository+`"}`)
+		if w.Code != 200 || body["repository"] != testReleaseRepository || body["channel"] != "stable" {
+			t.Fatal(w.Code, body)
+		}
+		// Only the channel: no index read, no head_version.
+		reads = nil
+		w, body = put(s, `{"channel":"dev"}`)
+		if _, ok := body["head_version"]; w.Code != 200 || ok || len(reads) != 0 {
+			t.Fatal(w.Code, body, reads)
+		}
+	})
+
+	refusals := []struct {
+		name, body string
+		status     int
+		deployed   bool
+		fetch      func(repository, channel string) (releasecache.ChannelIndex, []byte, error)
+	}{
+		{name: "invalid URL", body: `{"channel":"beta","repository":"http://github.com/YouEye-Platform/YouEye"}`, status: http.StatusBadRequest, deployed: true},
+		{name: "before first deploy", body: `{"channel":"beta","repository":"` + other + `"}`, status: http.StatusConflict},
+		{name: "unreachable", body: `{"channel":"beta","repository":"` + other + `"}`, status: http.StatusBadGateway, deployed: true,
+			fetch: func(string, string) (releasecache.ChannelIndex, []byte, error) {
+				return releasecache.ChannelIndex{}, nil, fmt.Errorf("dial tcp: i/o timeout")
+			}},
+		{name: "not an index", body: `{"channel":"beta","repository":"` + other + `"}`, status: http.StatusUnprocessableEntity, deployed: true,
+			fetch: func(string, string) (releasecache.ChannelIndex, []byte, error) {
+				return releasecache.ChannelIndex{}, nil, fmt.Errorf("%w at x: decode", releasecache.ErrInvalidIndex)
+			}},
+		{name: "wrong repository", body: `{"channel":"beta","repository":"` + other + `"}`, status: http.StatusUnprocessableEntity, deployed: true,
+			fetch: func(_, channel string) (releasecache.ChannelIndex, []byte, error) {
+				return index(testReleaseRepository, channel), nil, nil
+			}},
+		{name: "no youeye", body: `{"channel":"beta","repository":"` + other + `"}`, status: http.StatusUnprocessableEntity, deployed: true,
+			fetch: func(_, channel string) (releasecache.ChannelIndex, []byte, error) {
+				return releasecache.ChannelIndex{Channel: channel, Products: map[string]releasecache.ChannelEntry{}}, nil, nil
+			}},
+	}
+	for _, c := range refusals {
+		t.Run(c.name, func(t *testing.T) {
+			s := releaseTestServer(t)
+			s.firstDeployCompletePath = filepath.Join(t.TempDir(), "complete")
+			if c.deployed {
+				s = deployed(t)
+			}
+			reads := 0
+			stubChannelIndex(t, func(repository, channel string) (releasecache.ChannelIndex, []byte, error) {
+				reads++
+				if c.fetch == nil {
+					return index(repository, channel), nil, nil
+				}
+				return c.fetch(repository, channel)
+			})
+			before, _ := os.ReadFile(s.releasePolicyPath())
+			w, body := put(s, c.body)
+			if w.Code != c.status || body["error"] == "" {
+				t.Fatal(w.Code, body)
+			}
+			if after, _ := os.ReadFile(s.releasePolicyPath()); string(after) != string(before) {
+				t.Fatal("a refused switch changed the policy")
+			}
+			if !c.deployed && reads != 0 {
+				t.Fatal("index read before first deploy")
+			}
+		})
+	}
+}
+
 func TestReleaseChannelGetAndPut(t *testing.T) {
 	s := releaseTestServer(t)
 	w := httptest.NewRecorder()
@@ -64,7 +176,7 @@ func TestReleaseChannelGetAndPut(t *testing.T) {
 		t.Fatal("installed_version reported without a receipt", body)
 	}
 
-	for _, bad := range []string{`{"channel":"main"}`, `{"channel":""}`, `{"channel":"beta","repository":"https://evil.example/x/YouEye"}`, `not json`} {
+	for _, bad := range []string{`{"channel":"main"}`, `{"channel":""}`, `{"channel":"beta","source":"x"}`, `not json`} {
 		w = httptest.NewRecorder()
 		s.handleReleaseChannel(w, httptest.NewRequest(http.MethodPut, "/api/releases/channel", strings.NewReader(bad)))
 		if w.Code != http.StatusBadRequest {

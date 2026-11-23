@@ -1,85 +1,52 @@
 'use client';
 
-
-
-
-
 import { useTranslations as useInterfaceTranslations } from "next-intl";
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
 import Link from 'next/link';
 import {
-  ArrowLeft,
-  Loader2,
   AlertCircle,
-  ExternalLink,
-  Trash2,
-  Shield,
-  Package,
-  Search,
-  MessageCircle,
-  BookOpen,
-  StickyNote,
-  Camera,
+  AtSign,
   BellRing,
-  Globe,
-  Tag,
+  BookOpen,
+  Bot,
+  Camera,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  KeyRound,
-  Eye,
-  EyeOff,
-  Copy,
-  Plug,
-  RefreshCw,
   Code2,
+  ExternalLink,
+  Globe,
+  KeyRound,
+  LayoutGrid,
+  Link2,
+  Loader2,
+  Mail,
+  MessageCircle,
+  ShieldCheck,
+  Trash2,
+  Users,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InstallDialog } from '@/components/market/install-dialog';
-import { UninstallDialog } from '@/components/market/uninstall-dialog';
-import { HealthDot } from '@/components/market/health-dot';
-import { AppAccessSettings } from '@/components/market/app-access-settings';
-import { InstallBlockedNotice, UpdateBlockedNote, installBlockedLabel } from '@/components/market/update-blocked';
+import { InstallBlockedNotice } from '@/components/market/update-blocked';
+import { AppTile, MarketIcon, MarketPicture, categoryLookup } from '@/components/market/market-parts';
 import { authenticatedFetch } from '@/lib/api-client';
-import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent, MarketAppInstalledSource, MarketAppVariant } from '@/lib/market/types';
+import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent, MarketAppVariant, MarketCategory } from '@/lib/market/types';
 
-const ICON_MAP: Record<string, typeof Search> = {
-  search: Search,
-  'message-circle': MessageCircle,
-  'book-open': BookOpen,
-  'sticky-note': StickyNote,
-  camera: Camera,
-  package: Package,
-  'bell-ring': BellRing,
-  plug: Plug,
-};
-
-
-
-// Colorful app-icon tile by category (mockup palette — intentionally light in both
-// themes, like an OS home-screen icon).
-const HERO_TILE: Record<string, { background: string; color: string }> = {
-  productivity: { background: '#eff6ff', color: '#2563eb' },
-  media: { background: '#fdf2f8', color: '#db2777' },
-  search: { background: '#f5f3ff', color: '#7c3aed' },
-  social: { background: '#ecfeff', color: '#0891b2' },
-  utilities: { background: '#f0f9ff', color: '#0284c7' },
-};
-function heroTile(category?: string) {
-  return HERO_TILE[category || ''] || { background: '#f4f4f5', color: '#52525b' };
-}
-
+/**
+ * An app in the Market, as it is published (the same on every server): what it is, what it adds to this server,
+ * and Install. Once installed, the page only opens it or its page in Settings → Apps, where its access, updates,
+ * data and health are.
+ *
+ * Order: header with the one action → facts (each once) → screenshots → about → what it adds → what's new → links
+ * → other sources and tags → more apps like it.
+ */
 export default function AppDetailPage() {
   const translateInterface = useInterfaceTranslations("interface");
-const preparingInstallEvent: InstallEvent = {
-  step: 0,
-  totalSteps: 0,
-  status: 'running',
-  message: translateInterface("mb7b55c7307a4"),
-};
-
+  const market = useInterfaceTranslations("marketStore");
+  const preparingInstallEvent: InstallEvent = { step: 0, totalSteps: 0, status: 'running', message: translateInterface("mb7b55c7307a4") };
 
   const params = useParams();
   const router = useRouter();
@@ -88,15 +55,16 @@ const preparingInstallEvent: InstallEvent = {
   const sourceId = searchParams.get('source') || undefined;
 
   const [app, setApp] = useState<MarketApp | null>(null);
-  // Other markets (and apps added by URL) with the same app id, and where the installed app takes its updates from.
+  // Other markets (and apps added by address) with the same app id.
   const [variants, setVariants] = useState<MarketAppVariant[]>([]);
-  const [installed, setInstalled] = useState<MarketAppInstalledSource | null>(null);
-  const [choosingSource, setChoosingSource] = useState(false);
   const [status, setStatus] = useState<AppStatusInfo | null>(null);
+  const [catalog, setCatalog] = useState<{ apps: MarketApp[]; categories: MarketCategory[] }>({ apps: [], categories: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [domain, setDomain] = useState('');
   const [siteName, setSiteName] = useState('YouEye');
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [shown, setShown] = useState<number | null>(null);
 
   // Install state
   const [showInstallDialog, setShowInstallDialog] = useState(false);
@@ -106,22 +74,8 @@ const preparingInstallEvent: InstallEvent = {
   const [installError, setInstallError] = useState<string | null>(null);
   const [installOperationAppId, setInstallOperationAppId] = useState<string | null>(null);
   const [pollingAppId, setPollingAppId] = useState<string | null>(null);
-  const [switchingSource, setSwitchingSource] = useState<string | null>(null);
-  const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
-  // Switching to an app added by URL needs the same consent as installing it (per Added app).
-  const [switchConsent, setSwitchConsent] = useState<Record<string, boolean>>({});
-  const [syncingManifest, setSyncingManifest] = useState(false);
-  const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
-
-  // Uninstall state
-  const [showUninstallDialog, setShowUninstallDialog] = useState(false);
-  const [uninstalling, setUninstalling] = useState(false);
+  const [removeMessage, setRemoveMessage] = useState<string | null>(null);
   const [removingDirectEntry, setRemovingDirectEntry] = useState(false);
-
-  // Credentials state
-  const [credentials, setCredentials] = useState<{ label: string; username: string; password: string }[]>([]);
-  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
-  const [visiblePasswords, setVisiblePasswords] = useState<Set<number>>(new Set());
 
   const fetchApp = useCallback(async () => {
     try {
@@ -139,8 +93,7 @@ const preparingInstallEvent: InstallEvent = {
       }
       setApp(data.app);
       setVariants(Array.isArray(data.variants) ? data.variants : []);
-      setInstalled(data.installed ?? null);
-    } catch (err) {
+    } catch {
       setError(translateInterface("m49a2883cb71a"));
     }
   }, [appId, sourceId, translateInterface]);
@@ -148,11 +101,9 @@ const preparingInstallEvent: InstallEvent = {
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(`/api/market/status?app=${encodeURIComponent(appId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setStatus(data);
+      if (res.ok) setStatus(await res.json());
     } catch {
-      // Status fetch failure is non-fatal
+      // Not fatal: the page shows the app as not installed.
     }
   }, [appId]);
 
@@ -165,39 +116,37 @@ const preparingInstallEvent: InstallEvent = {
         if (data.siteName) setSiteName(data.siteName);
       }
     } catch {
-      // Will use fallback
+      // The address is left out.
     }
   }, []);
 
-  const fetchCredentials = useCallback(async () => {
+  // The catalog, for the category's name and more apps like this one (the box keeps it; this does not wait on the
+  // network).
+  const fetchCatalog = useCallback(async () => {
     try {
-      const res = await authenticatedFetch(`/api/market/credentials?app=${encodeURIComponent(appId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCredentials(data.credentials ?? []);
-      }
+      const res = await fetch('/api/market/catalog');
+      if (!res.ok) return;
+      const data = await res.json();
+      setCatalog({ apps: Array.isArray(data.apps) ? data.apps : [], categories: Array.isArray(data.categories) ? data.categories : [] });
     } catch {
-      // Credentials fetch failure is non-fatal
-    } finally {
-      setCredentialsLoaded(true);
+      // No related apps.
     }
-  }, [appId]);
+  }, []);
 
   useEffect(() => {
-    Promise.all([fetchApp(), fetchStatus(), fetchDomain()]).finally(() =>
-      setLoading(false)
-    );
-
-    fetchCredentials();
+    setLoading(true);
+    setError(null);
+    setAboutOpen(false);
+    Promise.all([fetchApp(), fetchStatus(), fetchDomain()]).finally(() => setLoading(false));
+    void fetchCatalog();
     const interval = setInterval(fetchStatus, 10_000);
     return () => clearInterval(interval);
-  }, [fetchApp, fetchStatus, fetchDomain, fetchCredentials]);
+  }, [fetchApp, fetchStatus, fetchDomain, fetchCatalog]);
 
-  // ── Polling for install progress ─────────────────────────────
+  // ── Install progress ─────────────────────────────
 
   useEffect(() => {
-    // Next can preserve this client component while changing a dynamic route.
-    // Never let one app's terminal operation state appear on another app.
+    // Next can keep this component while the app in the address changes: never show one app's install on another.
     setInstalling(false);
     setInstallEvents([]);
     setInstallDone(false);
@@ -226,7 +175,7 @@ const preparingInstallEvent: InstallEvent = {
             setTimeout(fetchStatus, 1000);
           }
         }
-      } catch { /* ignore */ }
+      } catch { /* the next poll */ }
     };
     const interval = setInterval(poll, 1500);
     void poll();
@@ -236,54 +185,39 @@ const preparingInstallEvent: InstallEvent = {
     };
   }, [appId, pollingAppId, fetchStatus]);
 
-  // Check on mount if there's already an active install for this app
+  // An install already running (or one that failed) for this app shows when the page opens.
   useEffect(() => {
     let active = true;
     async function checkExistingInstall() {
       try {
         const res = await fetch(`/api/market/install-status?app=${encodeURIComponent(appId)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!active || data.appId !== appId) return;
-          if (!data.done && (!data.events || data.events.length === 0)) {
-            setInstalling(true);
-            setInstallOperationAppId(appId);
-            setInstallEvents([preparingInstallEvent]);
-            setInstallError(null);
-            setPollingAppId(appId);
-            return;
-          }
-          if (data.events && data.events.length > 0) {
-            // Successful terminal history is useful across refreshes while the
-            // app exists. Once it has been uninstalled, however, replaying an
-            // old "installed successfully" card hides the real install action.
-            // Keep failed history visible, and retain the durable record for
-            // diagnostics, but suppress stale success presentation.
-            if (data.done && !data.error) {
-              const statusRes = await fetch(`/api/market/status?app=${encodeURIComponent(appId)}`);
-              if (statusRes.ok) {
-                const currentStatus = await statusRes.json();
-                if (!active || currentStatus.status === 'not-installed') return;
-              }
-            }
-            setInstalling(true);
-            setInstallOperationAppId(appId);
-            setInstallEvents(data.events);
-            setInstallError(data.error || null);
-            if (data.done) {
-              setInstallDone(true);
-            } else {
-              setPollingAppId(appId);
-            }
-          }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active || data.appId !== appId) return;
+        if (!data.done && (!data.events || data.events.length === 0)) {
+          setInstalling(true);
+          setInstallOperationAppId(appId);
+          setInstallEvents([preparingInstallEvent]);
+          setInstallError(null);
+          setPollingAppId(appId);
+          return;
         }
-      } catch { /* ignore */ }
+        if (data.events && data.events.length > 0) {
+          // A finished, successful install is not replayed: the app's state says it is installed (or, once it was
+          // uninstalled, an old "installed" would hide Install). A failed one stays, so its reason can be read.
+          if (data.done && !data.error) return;
+          setInstalling(true);
+          setInstallOperationAppId(appId);
+          setInstallEvents(data.events);
+          setInstallError(data.error || null);
+          if (data.done) setInstallDone(true);
+          else setPollingAppId(appId);
+        }
+      } catch { /* nothing to show */ }
     }
     void checkExistingInstall();
     return () => { active = false; };
   }, [appId]);
-
-  // ── Install handler ────────────────────────────────────────
 
   const handleInstall = async (config: InstallConfig) => {
     setShowInstallDialog(false);
@@ -292,982 +226,388 @@ const preparingInstallEvent: InstallEvent = {
     setInstallEvents([preparingInstallEvent]);
     setInstallDone(false);
     setInstallError(null);
-
-    // Fire and forget — the server handles everything in the background
+    // The server installs in the background; the page follows its progress.
     try {
       const res = await authenticatedFetch('/api/market/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
-
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-
-      // Don't read the SSE stream — just let the connection drop.
-      // The server continues the install regardless.
-      // Close the response body immediately to free resources.
-      try { res.body?.cancel(); } catch { /* ignore */ }
+      try { res.body?.cancel(); } catch { /* already closed */ }
     } catch (err) {
-      setInstallEvents([{
-        step: 0,
-        totalSteps: 0,
-        status: 'error',
-        message: translateInterface("m545028cf06c9"),
-        detail: String(err),
-      }]);
+      setInstallEvents([{ step: 0, totalSteps: 0, status: 'error', message: translateInterface("m545028cf06c9"), detail: String(err) }]);
       setInstallError(err instanceof Error ? err.message : String(err));
       setInstallDone(true);
       return;
     }
-
-    // Start polling for status
     setPollingAppId(config.appId);
-  };
-
-  // Change where the installed app takes its updates from: only on the owner's choice, with Plan 10's consent.
-  const handleSwitchSource = async (target: MarketAppVariant) => {
-    if (!app) return;
-    setSwitchingSource(target.sourceId);
-    setSourceSwitchMessage(null);
-    try {
-      const consent = switchConsent[target.sourceId] === true;
-      const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/source`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target.sourceId.startsWith('direct:')
-          ? { sourceId: target.sourceId, acceptUnverifiedPublisher: consent, allowSetup: consent }
-          : { sourceId: target.sourceId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || translateInterface("m5aa40c1a8a54"));
-      setSourceSwitchMessage(translateInterface("me1c329162f46", {source: String(data.sourceName || target.sourceName || target.sourceId)}));
-      setChoosingSource(false);
-      await Promise.all([fetchApp(), fetchStatus()]);
-    } catch (err) {
-      setSourceSwitchMessage(err instanceof Error ? err.message : translateInterface("m5aa40c1a8a54"));
-    } finally {
-      setSwitchingSource(null);
-    }
-  };
-
-  const handleSyncManifest = async () => {
-    if (!app) return;
-    setSyncingManifest(true);
-    setManifestSyncMessage(null);
-    try {
-      const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/manifest-sync`, {
-        method: 'POST',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.status !== 'ok') throw new Error(data.error || translateInterface("m1264a555555b"));
-      const source = data.sourceId || status?.sourceName || status?.sourceId || app.sourceName || app.sourceId || translateInterface("m97fc597a6e34");
-      const surfaceCopy = Number.isFinite(data.surfaces)
-        ? translateInterface("mcef48023dc9a", {count: Number(data.surfaces)})
-        : translateInterface("m2e1444edc0e2");
-      setManifestSyncMessage(translateInterface("m915c8bdb5720", {app: app.name, source, surfaces: surfaceCopy}));
-      await Promise.all([fetchApp(), fetchStatus()]);
-    } catch (err) {
-      setManifestSyncMessage(err instanceof Error ? err.message : translateInterface("m1264a555555b"));
-    } finally {
-      setSyncingManifest(false);
-    }
-  };
-
-  // ── Uninstall handler ──────────────────────────────────────
-
-  const handleUninstall = async (appIdToUninstall: string, keepData: boolean) => {
-    setShowUninstallDialog(false);
-    setUninstalling(true);
-    try {
-      await authenticatedFetch('/api/market/uninstall', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appId: appIdToUninstall, keepData }),
-      });
-      await fetchStatus();
-    } catch (err) {
-      alert(`Uninstall failed: ${err}`);
-    } finally {
-      setUninstalling(false);
-    }
   };
 
   const handleRemoveDirectEntry = async () => {
     if (!app?.sourceId?.startsWith('direct:')) return;
     setRemovingDirectEntry(true);
     try {
-      const res = await authenticatedFetch(`/api/market/direct/${encodeURIComponent(app.sourceId)}`, {
-        method: 'DELETE',
-      });
+      const res = await authenticatedFetch(`/api/market/direct/${encodeURIComponent(app.sourceId)}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || translateInterface("m1a8ce79186c6"));
       router.push('/market');
     } catch (err) {
-      setSourceSwitchMessage(err instanceof Error ? err.message : translateInterface("m1a8ce79186c6"));
+      setRemoveMessage(err instanceof Error ? err.message : translateInterface("m1a8ce79186c6"));
     } finally {
       setRemovingDirectEntry(false);
     }
   };
 
-  // ── Loading state ──────────────────────────────────────────
+  const categories = useMemo(() => categoryLookup(catalog.categories), [catalog.categories]);
+
+  // ── Loading and not found ─────────────────────────
+
+  const back = (
+    <Link href="/market" className="settings-back -ml-1 mb-4 w-fit">
+      <ChevronLeft className="size-5" aria-hidden />
+      {translateInterface("m5238d9bd03d5")}
+    </Link>
+  );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-muted-foreground" /></div>;
   }
-
-  // ── Error / Not found state ────────────────────────────────
 
   if (error || !app) {
     return (
-      <div className="space-y-6">
-        <button
-          onClick={() => router.push('/market')}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {translateInterface("m7e0461b96831")}</button>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
-          <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-          <h2 className="text-lg font-semibold text-foreground mb-1">{translateInterface("mfc142cacf2d2")}</h2>
-          <p className="text-sm text-muted-foreground">
-            {error || translateInterface("mf5c4b7d985ec", { value0: String(appId) })}
-          </p>
-          <Button
-            variant="outline"
-            className="mt-4"
-            onClick={() => router.push('/market')}
-          >
-            {translateInterface("mf3198e9d9e96")}</Button>
+      <div className="mx-auto max-w-3xl">
+        {back}
+        <div className="rounded-2xl border border-dashed p-10 text-center">
+          <AlertCircle className="mx-auto mb-3 h-9 w-9 text-muted-foreground/60" aria-hidden />
+          <h1 className="text-lg font-semibold">{translateInterface("mfc142cacf2d2")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">{error || market("notFound", { app: appId })}</p>
+          <Button variant="outline" className="mt-5 rounded-full" onClick={() => router.push('/market')}>{translateInterface("mf3198e9d9e96")}</Button>
         </div>
       </div>
     );
   }
 
-  // ── Derived state ──────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────
 
-  const appStatus = status?.status ?? 'not-installed';
-  const isInstalled = appStatus !== 'not-installed';
+  const isInstalled = (status?.status ?? 'not-installed') !== 'not-installed';
   const isDirectEntry = !!app.sourceId?.startsWith('direct:');
-  const FallbackIcon = ICON_MAP[app.icon] ?? Package;
-  const longDescription = app.detail?.longDescription || app.description;
-  const screenshots = app.detail?.screenshots ?? [];
-
-  // Plain-language access surface — who can reach this app.
-  const gated = status?.forwardAuthEnabled || app.supportsSSO || app.integrations?.some((i) => i.type === 'identity');
-  const accessLevel: 'public' | 'server-users' = gated ? 'server-users' : 'public';
-  const accessLabel = accessLevel === 'server-users' ? translateInterface("mc664ff9c2740", {site: siteName}) : 'Public';
-  const accessOneLiner = accessLevel === 'server-users'
-    ? translateInterface("m2a2e0c73779e", {site: siteName})
-    : translateInterface("m35b0d6f9bfd7");
-  // Every market on this box that has this app (the one shown first), and the ones an installed app could switch to.
-  const shownVariant: MarketAppVariant | null = app.sourceId ? {
-    sourceId: app.sourceId, sourceName: app.sourceName || app.sourceId, version: app.version ?? null,
-    ...(app.sourceNotAccepted ? { sourceNotAccepted: true as const } : {}),
-    ...(app.installBlocked ? { installBlocked: true as const } : {}),
-    ...(app.needsYouEye ? { needsYouEye: app.needsYouEye } : {}),
-  } : null;
-  const switchTargets = [...(shownVariant ? [shownVariant] : []), ...variants]
-    .filter((variant) => variant.sourceId !== installed?.sourceId);
-  const variantBlock = (variant: MarketAppVariant) => variant.installBlocked
-    ? installBlockedLabel(translateInterface, { installBlocked: { code: 'requires-newer-youeye', message: '' }, needsYouEye: variant.needsYouEye })
-    : variant.sourceNotAccepted ? translateInterface("m8ba391628be0") : null;
-  // Listed, but its custom source is not accepted: install and switch are refused until the owner accepts it.
   const sourceNotAccepted = app.sourceNotAccepted === true;
-  const capabilityLabels = [
-    app.capabilities?.widgets ? 'Widgets' : null,
-    app.capabilities?.notifications ? 'Notifications' : null,
-    app.capabilities?.smtp ? translateInterface("m5208955c81b6") : null,
-    app.capabilities?.link_handlers?.length ? translateInterface("m0abf73ccd714") : null,
-    app.surfaces?.length ? translateInterface("m8861a842bbcd", {count: app.surfaces.length}) : null,
-  ].filter(Boolean) as string[];
+  const screenshots = app.detail?.screenshots ?? [];
+  const about = app.detail?.longDescription || app.description;
+  const summary = app.tagline || (app.detail?.longDescription ? app.description : null);
+  const aboutIsLong = about.length > 360 || about.split('\n').length > 4;
+
+  // How people sign in, and who can open it, as the manifest says (whether an installed app's sign-in is on, and who
+  // may use it, are on its page in Settings).
+  const ownAccountSignIn = app.supportsSSO || !!app.integrations?.some((integration) => integration.type === 'identity');
+  const gate = app.forwardAuth !== 'disabled';
+  const everyone = !!app.publicAccess || (!ownAccountSignIn && !gate);
+  const signIn = ownAccountSignIn ? market("facts.signInAccount", { site: siteName }) : gate ? market("facts.signInGate", { site: siteName }) : market("facts.signInOwn");
+  const access = everyone ? market("facts.accessAnyone") : market("facts.accessUsers", { site: siteName });
+  const facts = [
+    { label: market("facts.signIn"), value: signIn },
+    { label: market("facts.access"), value: access },
+    app.license ? { label: market("facts.licence"), value: app.license } : null,
+    app.version ? { label: market("facts.version"), value: app.version } : null,
+  ].filter((fact): fact is { label: string; value: string } => !!fact);
+
+  // What installing it adds to this server, in plain words.
+  type Addition = { icon: typeof Globe; label: string; hint: string };
+  const additions = ([
+    !isInstalled && domain && app.defaultSubdomain ? { icon: Globe, label: market("adds.address"), hint: `${app.defaultSubdomain}.${domain}` } : null,
+    ownAccountSignIn ? { icon: KeyRound, label: market("adds.account", { site: siteName }), hint: market("adds.accountHint") } : null,
+    !ownAccountSignIn && gate ? { icon: ShieldCheck, label: market("adds.gate", { site: siteName }), hint: market("adds.gateHint", { site: siteName }) } : null,
+    everyone ? { icon: Users, label: market("adds.public"), hint: market("adds.publicHint") } : null,
+    app.capabilities?.widgets ? { icon: LayoutGrid, label: market("adds.widgets"), hint: market("adds.widgetsHint", { site: siteName }) } : null,
+    app.capabilities?.notifications ? { icon: BellRing, label: market("adds.notifications"), hint: market("adds.notificationsHint", { site: siteName }) } : null,
+    app.capabilities?.ai_api ? { icon: Bot, label: market("adds.ai"), hint: market("adds.aiHint") } : null,
+    app.capabilities?.smtp ? { icon: Mail, label: market("adds.email"), hint: market("adds.emailHint") } : null,
+    app.capabilities?.link_handlers?.length ? { icon: Link2, label: market("adds.links"), hint: app.capabilities.link_handlers.map((handler) => handler.description).filter(Boolean).join(' · ') || market("adds.linksHint") } : null,
+    app.surfaces?.length ? { icon: AtSign, label: market("adds.surfaces", { site: siteName }), hint: market("adds.surfacesHint", { count: app.surfaces.length, site: siteName }) } : null,
+  ] as (Addition | null)[]).filter((addition): addition is Addition => !!addition);
+
+  const host = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } };
+  const links = [
+    app.website ? { icon: Globe, label: market("links.website"), url: app.website } : null,
+    app.docs ? { icon: BookOpen, label: market("links.docs"), url: app.docs } : null,
+    app.support ? { icon: MessageCircle, label: market("links.support"), url: app.support } : null,
+    app.sourceCode ? { icon: Code2, label: market("links.source"), url: app.sourceCode } : null,
+  ].filter((link): link is { icon: typeof Globe; label: string; url: string } => !!link);
+
+  const related = (() => {
+    const seen = new Set<string>([app.id]);
+    return catalog.apps
+      .filter((other) => other.category === app.category && !other.installBlocked)
+      .filter((other) => (seen.has(other.id) ? false : (seen.add(other.id), true)))
+      .slice(0, 6);
+  })();
 
   const latestInstallEvent = installEvents[installEvents.length - 1];
-  const installPercent = latestInstallEvent?.totalSteps
-    ? Math.round((latestInstallEvent.step / latestInstallEvent.totalSteps) * 100)
-    : 0;
-  const installFailed = installOperationAppId === appId
-    && installDone
-    && (!!installError || latestInstallEvent?.status === 'error');
+  const installPercent = latestInstallEvent?.totalSteps ? Math.round((latestInstallEvent.step / latestInstallEvent.totalSteps) * 100) : 0;
+  const thisInstall = installing && installOperationAppId === appId && installEvents.length > 0;
+  const installFailed = installOperationAppId === appId && installDone && (!!installError || latestInstallEvent?.status === 'error');
 
-  return (
-    <div className="space-y-6 max-w-6xl">
-      {/* Back button */}
-      <button
-        onClick={() => router.push('/market')}
-        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {translateInterface("m7e0461b96831")}</button>
+  // ── The one action, in the header ───────────────────
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-      <div className="space-y-6">
-      {/* Hero */}
-      <div className="flex flex-wrap items-center gap-5">
-        <div
-          className="flex size-[88px] shrink-0 items-center justify-center rounded-[22px] border shadow-sm"
-          style={heroTile(app.category)}
-        >
-          {app.iconUrl ? (
-            <Image src={app.iconUrl} alt={app.name} width={48} height={48} className="h-12 w-12 object-contain" unoptimized />
-          ) : (
-            <FallbackIcon className="h-10 w-10" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-[28px] font-bold tracking-tight text-foreground">{app.name}</h1>
-          </div>
-          <p className="mt-1 text-[15px] text-muted-foreground">{app.description}</p>
-          {isInstalled && status?.url && (
-            <a href={status.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm text-primary hover:underline">
-              {status.url}<ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-        </div>
-      </div>
-
-      {/* Meta band */}
-      <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-6">
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mdd167905de0d")}</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m292c06f0045a")}</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m0e570ca6fabe")}</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || translateInterface("m5238d9bd03d5")}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m3fb7b39416f1")}</span><span className="truncate text-[13.5px] font-semibold">{app.developer || app.sourceName || '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("mc011d6097bfb")}</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">{translateInterface("m50dfc76409a6")}</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{(app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}</span></div>
-      </div>
-
-      {sourceNotAccepted && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <p className="text-sm text-foreground">
-            {translateInterface("me9861c99fab8", { source: app.sourceName || app.sourceId || '', id: app.sourceId || '' })}</p>
-        </div>
-      )}
-
-      {isDirectEntry && (
-        <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
-          <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{translateInterface("m8687edd1b0f6")}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {translateInterface("m9ef0e4135980")}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Access surface — plain-language "who can reach this app" + a live full-URL chip */}
-      {(
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
-          <div className="flex items-center gap-3">
-            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-500' : 'bg-primary/10 text-primary'}`}>
-              {accessLevel === 'public' ? <Globe className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">{accessLabel}</p>
-              <p className="text-xs text-muted-foreground">{accessOneLiner}</p>
-            </div>
-          </div>
-          {(() => {
-            const url = isInstalled && status?.url ? status.url : (domain ? `https://${app.defaultSubdomain}.${domain}` : null);
-            if (!url) return null;
-            return (
-              <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground hover:bg-accent">
-                {url.replace(/^https?:\/\//, '')}<ExternalLink className="h-3 w-3" />
-              </a>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Gallery — real screenshots, or designed placeholders (never broken images) */}
-      <div className="grid gap-3.5 sm:grid-cols-2">
-        {(screenshots.length > 0 ? screenshots.slice(0, 2) : [null, null]).map((shot, i) =>
-          shot ? (
-            <FeaturedScreenshot key={shot.url} screenshot={shot} index={i} />
-          ) : (
-            <div key={i} className="flex items-center justify-center rounded-2xl border bg-muted/30 text-muted-foreground/40" style={{ aspectRatio: '16 / 10' }}>
-              <Camera className="h-7 w-7" />
-            </div>
-          ),
-        )}
-      </div>
-      {screenshots.length > 2 && (
-        <div className="rounded-xl border bg-card p-[22px]">
-          <h2 className="mb-3 text-[15px] font-semibold">{translateInterface("m60abd385d123")}</h2>
-          <ScreenshotGallery screenshots={screenshots} />
-        </div>
-      )}
-
-      {/* About */}
-      <div className="rounded-xl border bg-card p-[22px]">
-        <h2 className="text-[15px] font-semibold">{translateInterface("m147cb2830419")}</h2>
-        <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-          {longDescription}
-        </div>
-      </div>
-
-      {/* What's new — release notes for the current version */}
-      {app.detail?.releaseNotes && (
-        <div className="rounded-xl border bg-card p-[22px]">
-          <h2 className="text-[15px] font-semibold">{translateInterface("m135e912e8905")}{app.version ? ' ' + translateInterface("me429bc12e900", {version: app.version}) : ''}</h2>
-          <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-            {app.detail.releaseNotes}
-          </div>
-        </div>
-      )}
-
-      {/* Details section */}
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-          {translateInterface("m89a9f577c96e")}</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* SSO / Forward-Auth */}
-          {isInstalled ? (
-            <AppAccessSettings appId={app.id} />
-          ) : (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("m7c3130232881")}</p>
-                <p className="text-sm font-medium text-foreground">
-                  {app.supportsSSO ? (
-                    <span className="text-green-600">{translateInterface("m3b8ed34667d8")}</span>
-                  ) : app.forwardAuth !== 'disabled' ? (
-                    <span className="text-green-600">{translateInterface("ma6f7ed7701fa")}</span>
-                  ) : (
-                    <span className="text-muted-foreground">{translateInterface("m75081b593d15")}</span>
-                  )}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {capabilityLabels.length > 0 && (
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("ma14a04ae3d9d")}</p>
-                <p className="text-sm font-medium text-foreground">
-                  {capabilityLabels.join(', ')}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Website */}
-          {app.website && (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Globe className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("mb5a229ac8bec")}</p>
-                <a
-                  href={app.website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-medium text-primary hover:underline flex items-center gap-1"
-                >
-                  {(() => {
-                    try {
-                      return new URL(app.website).hostname;
-                    } catch {
-                      return app.website;
-                    }
-                  })()}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Source code */}
-          {app.sourceCode && (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <Code2 className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("mbf046c7395cb")}</p>
-                <a href={app.sourceCode} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-                  {(() => { try { return new URL(app.sourceCode!).hostname; } catch { return app.sourceCode; } })()}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Documentation */}
-          {app.docs && (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <BookOpen className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("mc205924de0fe")}</p>
-                <a href={app.docs} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-                  {translateInterface("m61479fda2da0")}<ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Support */}
-          {app.support && (
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-muted">
-                <MessageCircle className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{translateInterface("mbe91940b79f4")}</p>
-                <a href={app.support} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
-                  {translateInterface("mfd64e81bf74d")}<ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          )}
-
-        </div>
-
-        {/* Where this app comes from: other markets, and where an installed app takes its updates from */}
-        {((isInstalled && installed) || variants.length > 0) && (
-          <div className="mt-5 space-y-3 border-t border-border pt-4">
-            {isInstalled && installed && (
-              <div>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">{translateInterface("m2c0729afc9a9")}</p>
-                    <p className="text-sm font-medium text-foreground">{installed.sourceName || '—'}</p>
-                    {installed.sourceAddress && (
-                      <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={installed.sourceAddress}>{installed.sourceAddress}</p>
-                    )}
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setChoosingSource((open) => !open)} aria-expanded={choosingSource}>
-                    {translateInterface("mc0bf75bd78bf")}</Button>
-                </div>
-                {installed.updateBlocked && (
-                  <UpdateBlockedNote blocked={installed.updateBlocked} appId={app.id} onAppPage className="mt-2" />
-                )}
-                {choosingSource && (
-                  <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
-                    <p className="text-[13px] text-muted-foreground">{translateInterface("m4a8878ba958d")}</p>
-                    {switchTargets.length === 0 ? (
-                      <p className="text-[13px] text-foreground">
-                        {translateInterface("m5eda0c99287d")}{" "}
-                        <Link href="/market/sources" className="font-medium text-primary hover:underline">{translateInterface("mbc5015d35cc2")}</Link>
-                      </p>
-                    ) : switchTargets.map((variant) => {
-                      const blocked = variantBlock(variant);
-                      const direct = variant.sourceId.startsWith('direct:');
-                      return (
-                        <div key={variant.sourceId} className="flex flex-wrap items-center gap-3 rounded-md border bg-card px-3 py-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-foreground">{variant.sourceName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {variant.version ? `v${variant.version}` : ''}
-                              {blocked ? `${variant.version ? ' · ' : ''}${blocked}` : ''}
-                            </p>
-                          </div>
-                          {direct && !blocked && (
-                            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-foreground">
-                              <input
-                                type="checkbox"
-                                checked={switchConsent[variant.sourceId] === true}
-                                onChange={(event) => setSwitchConsent((current) => ({ ...current, [variant.sourceId]: event.target.checked }))}
-                              />
-                              {translateInterface("m5ae862f2c24b")}</label>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSwitchSource(variant)}
-                            disabled={switchingSource !== null || !!blocked || (direct && switchConsent[variant.sourceId] !== true)}
-                            title={blocked ?? undefined}
-                          >
-                            {switchingSource === variant.sourceId ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
-                            {translateInterface("m9d19bd2659fc")}</Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-            {variants.map((variant) => (
-              <div key={variant.sourceId} className="text-[13px]">
-                <p className="text-foreground">
-                  {translateInterface("mf1c107e6139e", { source: variant.sourceName })}{" · "}
-                  <Link href={`/market/${encodeURIComponent(app.id)}?source=${encodeURIComponent(variant.sourceId)}`} className="font-medium text-primary hover:underline">
-                    {translateInterface("mdcc839a4015c")}</Link>
-                </p>
-                {variant.version && app.version && variant.version !== app.version && (
-                  <p className="text-xs text-muted-foreground">{translateInterface("m3fdd7247b42c", { source: variant.sourceName, version: variant.version })}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {sourceSwitchMessage && (
-          <div className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">
-            {sourceSwitchMessage}
-          </div>
-        )}
-
-        {manifestSyncMessage && (
-          <div className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">
-            {manifestSyncMessage}
-          </div>
-        )}
-
-        {/* Tags */}
-        {app.tags.length > 0 && (
-          <div className="mt-5 pt-4 border-t border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <Tag className="h-4 w-4 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
-                {translateInterface("m1331275bc537")}</p>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {app.tags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => router.push(`/market?tag=${encodeURIComponent(tag)}`)}
-                  title={translateInterface("m08e9841e0650", { value0: String(tag) })}
-                  className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-      </div>
-
-      {/* Default Credentials (shown when app is installed and has credentials) */}
-      {isInstalled && credentialsLoaded && credentials.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <KeyRound className="h-4 w-4 text-amber-600" />
-            <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wide">
-              {translateInterface("m4b18a259d742")}</h2>
-          </div>
-          <div className="space-y-3">
-            {credentials.map((cred, i) => (
-              <div key={i} className="rounded-lg border border-amber-200 bg-card p-4">
-                <p className="text-xs text-muted-foreground font-medium mb-2">{cred.label}</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">{translateInterface("me3b89e9d33f8")}</p>
-                    <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono text-foreground">{cred.username}</code>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(cred.username)}
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title={translateInterface("m7ba3cdab9a58")}
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">{translateInterface("me7cf3ef4f17c")}</p>
-                    <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono text-foreground">
-                        {visiblePasswords.has(i) ? cred.password : '\u2022'.repeat(12)}
-                      </code>
-                      <button
-                        onClick={() => {
-                          setVisiblePasswords((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(i)) next.delete(i);
-                            else next.add(i);
-                            return next;
-                          });
-                        }}
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title={visiblePasswords.has(i) ? translateInterface("ma60a56c584b3") : translateInterface("m6aeaa6a53d09")}
-                      >
-                        {visiblePasswords.has(i) ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                      </button>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(cred.password)}
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
-                        title={translateInterface("me8cd8b5d57c9")}
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-amber-600/70 mt-3">
-            {translateInterface("mfbb85e515554")}</p>
-        </div>
-      )}
-
-      </div>
-
-      <aside className="lg:sticky lg:top-24">
-        <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("m920e413c7d41")}</p>
-              <div className="mt-2 flex items-center gap-2">
-                {isInstalled ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Package className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className="text-sm font-medium text-foreground">
-                  {isInstalled
-                    ? appStatus
-                    : installing && installOperationAppId === appId && !installDone
-                      ? translateInterface("m8749b1693f74")
-                      : translateInterface("mbda18b9e55aa")}
-                </span>
-                {isInstalled && (
-                  <HealthDot
-                    healthStatus={status?.healthStatus}
-                    healthCheckedAt={status?.healthCheckedAt}
-                  />
-                )}
-              </div>
-            </div>
-
-            {installing && installOperationAppId === appId && installEvents.length > 0 ? (
-              <div className="space-y-4">
-                <div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-foreground">
-                      {installDone
-                        ? installFailed ? translateInterface("md472ecf6a07e") : translateInterface("m5fa7aac5375c")
-                        : translateInterface("m336d8f982177", { value0: String(app.name) })}
-                    </span>
-                    <span className="text-muted-foreground">{installPercent}%</span>
-                  </div>
-                  <div className="mt-2 h-2 rounded-full bg-muted">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        installFailed ? 'bg-red-500' : installDone ? 'bg-green-500' : 'bg-primary'
-                      }`}
-                      style={{ width: `${installPercent}%` }}
-                    />
-                  </div>
-                  {latestInstallEvent?.message && (
-                    <p className="mt-2 text-sm text-muted-foreground">{latestInstallEvent.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {installEvents.slice(-6).map((event, i) => (
-                    <div key={`${event.step}-${i}-${event.message}`} className="flex items-start gap-2 text-sm">
-                      <div className={`mt-0.5 ${
-                        event.status === 'running' ? 'text-primary' :
-                        event.status === 'success' ? 'text-green-500' :
-                        event.status === 'error' ? 'text-red-500' : 'text-muted-foreground'
-                      }`}>
-                        {event.status === 'running' ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : event.status === 'error' ? (
-                          <AlertCircle className="h-4 w-4" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-foreground">{event.message}</p>
-                        {event.detail && <p className="truncate text-xs text-muted-foreground">{event.detail}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {installDone && (
-                  <div className="grid gap-2">
-                    {!installFailed && status?.url && (
-                      <Button onClick={() => window.open(status.url, '_blank')}>
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        {translateInterface("med077f3d8125")}{" "}{app.name}
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setInstalling(false);
-                        setInstallEvents([]);
-                        setInstallDone(false);
-                      }}
-                    >
-                      {translateInterface("m48845bff334a")}</Button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="grid gap-2">
-                {!isInstalled ? (
-                  <>
-                    {app.installBlocked ? (
-                      // This box cannot install it: what it needs instead of Install, and no install form.
-                      <InstallBlockedNotice app={app} />
-                    ) : (
-                      <Button onClick={() => setShowInstallDialog(true)} disabled={sourceNotAccepted}>
-                        {translateInterface("m569ca49f4aaf")}{" "}{app.name}
-                      </Button>
-                    )}
-                    {isDirectEntry && (
-                      <Button
-                        variant="outline"
-                        onClick={handleRemoveDirectEntry}
-                        disabled={removingDirectEntry}
-                      >
-                        {removingDirectEntry ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                        {translateInterface("mf466b942b616")}</Button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    {status?.url && (
-                      <Button onClick={() => window.open(status.url, '_blank')}>
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        {translateInterface("med077f3d8125")}{" "}{app.name}
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      onClick={handleSyncManifest}
-                      disabled={syncingManifest}
-                    >
-                      {syncingManifest ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                      {translateInterface("m1119b6d92587")}</Button>
-                    <Button
-                      variant="outline"
-                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                      onClick={() => setShowUninstallDialog(true)}
-                      disabled={uninstalling}
-                    >
-                      {uninstalling ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-                      {translateInterface("mfe199528850a")}</Button>
-                  </>
-                )}
-              </div>
-            )}
-
-            <div className="border-t border-border pt-4 text-sm">
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">{translateInterface("m0e570ca6fabe")}</span>
-                <span className="text-right font-medium text-foreground">{app.sourceName || app.sourceId || translateInterface("m5238d9bd03d5")}</span>
-              </div>
-              {app.version && (
-                <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-muted-foreground">{translateInterface("mdd167905de0d")}</span>
-                  <span className="font-medium text-foreground">v{app.version}</span>
-                </div>
-              )}
-              <div className="mt-2 flex justify-between gap-3">
-                <span className="text-muted-foreground">{translateInterface("m50dfc76409a6")}</span>
-                <span className="text-right font-medium text-foreground">
-                  {app.supportsSSO ? translateInterface("m78a6a8fe9be5") : status?.forwardAuthEnabled ? translateInterface("mb0ed26337336") : app.forwardAuth === 'disabled' ? translateInterface("mca1844969742") : translateInterface("m59be71333c96")}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-      </div>
-
-      {/* Install dialog */}
-      {showInstallDialog && app && !app.installBlocked && (
-        <InstallDialog
-          app={app}
-          domain={domain || ''}
-          siteName={siteName}
-          onInstall={handleInstall}
-          onClose={() => setShowInstallDialog(false)}
-        />
-      )}
-
-      {/* Uninstall dialog */}
-      {showUninstallDialog && app && (
-        <UninstallDialog
-          app={app}
-          onUninstall={handleUninstall}
-          onClose={() => setShowUninstallDialog(false)}
-        />
-      )}
-
-    </div>
-  );
-}
-
-// ── Screenshot Gallery Component ───────────────────────────────
-
-interface ScreenshotGalleryProps {
-  screenshots: { url: string; caption?: string }[];
-}
-
-function FeaturedScreenshot({
-  screenshot,
-  index,
-}: {
-  screenshot: { url: string; caption?: string };
-  index: number;
-}) {
-  const translateInterface = useInterfaceTranslations("interface");
-
-  const [unavailable, setUnavailable] = useState(false);
-  const label = screenshot.caption || translateInterface("m7e71e3bb6213", { value0: String(index + 1) });
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl border bg-muted/30" style={{ aspectRatio: '16 / 10' }}>
-      {unavailable ? (
-        <div
-          role="img"
-          aria-label={translateInterface("m50ce40e10ef8", { value0: String(label) })}
-          className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground/60"
-        >
-          <Camera className="h-7 w-7" />
-          <span className="text-xs">{translateInterface("mb9bfa8c88c0d")}</span>
-        </div>
-      ) : (
-        <Image
-          src={screenshot.url}
-          alt={label}
-          fill
-          className="object-cover"
-          unoptimized
-          onError={() => setUnavailable(true)}
-        />
-      )}
-      {screenshot.caption && (
-        <div className="absolute inset-x-0 bottom-0 bg-background/85 px-3.5 py-2 text-[12.5px] text-muted-foreground">
-          {screenshot.caption}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
-  const translateInterface = useInterfaceTranslations("interface");
-
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [unavailable, setUnavailable] = useState<Set<number>>(new Set());
-
-  const markUnavailable = (index: number) => {
-    setUnavailable((current) => new Set(current).add(index));
-    setSelectedIndex((current) => current === index ? null : current);
-  };
-
-  return (
+  const action = thisInstall ? null : isInstalled ? (
     <>
-      {/* Horizontal scroll strip */}
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-thin">
-        {screenshots.map((shot, i) => (
-          <button
-            key={i}
-            onClick={() => setSelectedIndex(i)}
-            disabled={unavailable.has(i)}
-            className="shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
-          >
-            {unavailable.has(i) ? (
-              <div
-                role="img"
-                aria-label={translateInterface("m50ce40e10ef8", { value0: String(shot.caption || translateInterface("m02f26e93f8eb", {number: i + 1})) })}
-                className="flex h-[180px] w-[280px] flex-col items-center justify-center gap-2 bg-muted/30 text-muted-foreground/60"
-              >
-                <Camera className="h-7 w-7" />
-                <span className="text-xs">{translateInterface("mb9bfa8c88c0d")}</span>
-              </div>
-            ) : (
-              <Image
-                src={shot.url}
-                alt={shot.caption || translateInterface("m7e71e3bb6213", { value0: String(i + 1) })}
-                width={280}
-                height={180}
-                className="h-[180px] w-auto object-cover"
-                unoptimized
-                onError={() => markUnavailable(i)}
-              />
-            )}
-            {shot.caption && (
-              <p className="text-xs text-muted-foreground px-2 py-1.5 bg-muted truncate max-w-[280px]">
-                {shot.caption}
-              </p>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Lightbox */}
-      {selectedIndex !== null && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={() => setSelectedIndex(null)}
-        >
-          <div
-            className="relative max-w-[90vw] max-h-[90vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Navigation arrows */}
-            {selectedIndex > 0 && (
-              <button
-                onClick={() => setSelectedIndex(selectedIndex - 1)}
-                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 z-10"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-            )}
-            {selectedIndex < screenshots.length - 1 && (
-              <button
-                onClick={() => setSelectedIndex(selectedIndex + 1)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 z-10"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            )}
-
-            {/* Image */}
-            <Image
-              src={screenshots[selectedIndex].url}
-              alt={
-                screenshots[selectedIndex].caption ||
-                translateInterface("m7e71e3bb6213", { value0: String(selectedIndex + 1) })
-              }
-              width={1200}
-              height={800}
-              className="rounded-lg max-h-[85vh] w-auto object-contain"
-              unoptimized
-              onError={() => markUnavailable(selectedIndex)}
-            />
-
-            {/* Caption */}
-            {screenshots[selectedIndex].caption && (
-              <p className="text-center text-sm text-white/80 mt-3">
-                {screenshots[selectedIndex].caption}
-              </p>
-            )}
-
-            {/* Counter */}
-            <p className="text-center text-xs text-white/50 mt-1">
-              {selectedIndex + 1} / {screenshots.length}
-            </p>
-          </div>
-        </div>
+      {status?.url && (
+        <Button asChild className="rounded-full px-6">
+          <a href={status.url} target="_blank" rel="noopener noreferrer">{translateInterface("med077f3d8125")}<ExternalLink /></a>
+        </Button>
+      )}
+      <Button asChild variant="outline" className="rounded-full">
+        <Link href={`/settings/apps/${encodeURIComponent(app.id)}`}>{market("manageInSettings")}</Link>
+      </Button>
+    </>
+  ) : app.installBlocked ? null : (
+    <>
+      <Button className="rounded-full px-7" onClick={() => setShowInstallDialog(true)} disabled={sourceNotAccepted}>{translateInterface("m569ca49f4aaf")}</Button>
+      {isDirectEntry && (
+        <Button variant="ghost" className="rounded-full" onClick={handleRemoveDirectEntry} disabled={removingDirectEntry}>
+          {removingDirectEntry ? <Loader2 className="animate-spin" /> : <Trash2 />}
+          {translateInterface("mf466b942b616")}
+        </Button>
       )}
     </>
   );
+
+  return (
+    <div className="mx-auto max-w-[880px] pb-16">
+      {back}
+
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
+        <div className="flex min-w-0 flex-1 items-start gap-4 sm:gap-5">
+          <MarketIcon app={app} size={88} tile={categories.tile(app.category)} />
+          <div className="min-w-0 flex-1 pt-1">
+            <h1 className="text-[26px] font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-[30px]">{app.name}</h1>
+            {summary && <p className="mt-1 text-[15px] leading-snug text-muted-foreground">{summary}</p>}
+            <p className="mt-1.5 text-[13px] text-muted-foreground">
+              {[app.developer && market("by", { developer: app.developer }), app.category && categories.label(app.category), app.sourceId && app.sourceId !== 'official' ? (app.sourceName || app.sourceId) : null].filter(Boolean).join(' · ')}
+            </p>
+            {isInstalled && <p className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-foreground"><CheckCircle2 className="h-4 w-4 text-primary" aria-hidden />{translateInterface("mf8b32f4e92bd")}</p>}
+          </div>
+        </div>
+        {action && <div className="flex shrink-0 flex-wrap gap-2 sm:flex-col sm:items-stretch sm:pt-2 [&>*]:flex-1 sm:[&>*]:flex-none">{action}</div>}
+      </header>
+
+      {!thisInstall && !isInstalled && app.installBlocked && <div className="mt-5"><InstallBlockedNotice app={app} /></div>}
+      {removeMessage && <p role="alert" className="mt-3 text-[13px] text-destructive">{removeMessage}</p>}
+
+      {thisInstall && (
+        <section aria-live="polite" className="mt-6 rounded-2xl border bg-card p-5">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="font-medium">
+              {installDone ? (installFailed ? translateInterface("md472ecf6a07e") : market("installed", { app: app.name })) : translateInterface("m336d8f982177", { value0: String(app.name) })}
+            </span>
+            {!installDone && <span className="text-muted-foreground tabular-nums">{installPercent}%</span>}
+          </div>
+          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className={`h-full rounded-full transition-all duration-500 ${installFailed ? 'bg-destructive' : 'bg-primary'}`} style={{ width: `${installDone ? 100 : installPercent}%` }} />
+          </div>
+          {latestInstallEvent?.message && <p className="mt-2.5 text-[13px] text-muted-foreground">{latestInstallEvent.message}</p>}
+          {installFailed && latestInstallEvent?.detail && <p className="mt-1 text-[13px] text-destructive [overflow-wrap:anywhere]">{latestInstallEvent.detail}</p>}
+          {installEvents.length > 1 && (
+            <details className="settings-details mt-2">
+              <summary>{market("installSteps")}</summary>
+              <ol className="mt-2 space-y-1.5 text-[13px]">
+                {installEvents.map((event, i) => (
+                  <li key={`${event.step}-${i}-${event.message}`} className="flex items-start gap-2">
+                    {event.status === 'running' ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                      : event.status === 'error' ? <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+                      : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{event.message}{event.detail ? <span className="text-muted-foreground"> · {event.detail}</span> : null}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+          {installDone && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {!installFailed && status?.url && (
+                <Button asChild className="rounded-full px-6"><a href={status.url} target="_blank" rel="noopener noreferrer">{translateInterface("med077f3d8125")}<ExternalLink /></a></Button>
+              )}
+              <Button variant="outline" className="rounded-full" onClick={() => { setInstalling(false); setInstallEvents([]); setInstallDone(false); }}>
+                {installFailed ? translateInterface("m48845bff334a") : market("done")}
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {sourceNotAccepted && (
+        <p className="mt-5 flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+          {translateInterface("me9861c99fab8", { source: app.sourceName || app.sourceId || '', id: app.sourceId || '' })}
+        </p>
+      )}
+      {isDirectEntry && (
+        <p className="mt-5 flex items-start gap-2.5 rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+          <Globe className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span><span className="font-medium text-foreground">{translateInterface("m8687edd1b0f6")}.</span> {translateInterface("m9ef0e4135980")}</span>
+        </p>
+      )}
+
+      {facts.length > 0 && (
+        <dl className="market-facts mt-7" style={{ '--market-facts': facts.length } as CSSProperties}>
+          {facts.map((fact) => (
+            <div key={fact.label} className="market-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
+          ))}
+        </dl>
+      )}
+
+      {screenshots.length > 0 && (
+        <section aria-label={market("screenshots")} className="mt-7">
+          <div className="market-shots">
+            {screenshots.map((shot, i) => (
+              <button key={shot.url} type="button" className="market-shot" onClick={() => setShown(i)}
+                aria-label={shot.caption || translateInterface("m7e71e3bb6213", { value0: String(i + 1) })}>
+                <Shot url={shot.url} />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="mt-8 space-y-9">
+        <section aria-labelledby="market-about" className="space-y-2">
+          <h2 id="market-about" className="text-lg font-semibold tracking-tight">{market("about")}</h2>
+          <Prose text={about} className={aboutIsLong && !aboutOpen ? 'max-h-[8.25rem] overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]' : ''} />
+          {aboutIsLong && (
+            <button type="button" className="settings-link" onClick={() => setAboutOpen((open) => !open)}>{aboutOpen ? market("less") : market("more")}</button>
+          )}
+        </section>
+
+        {additions.length > 0 && (
+          <section aria-labelledby="market-adds" className="settings-section">
+            <h2 id="market-adds" className="text-lg font-semibold tracking-tight">{market("adds.title")}</h2>
+            <ul className="settings-group">
+              {additions.map((addition) => {
+                const Icon = addition.icon;
+                return (
+                  <li key={addition.label} className="settings-item">
+                    <span className="settings-row-icon" aria-hidden><Icon className="size-[18px]" /></span>
+                    <span className="settings-item-text">
+                      <span className="settings-item-label">{addition.label}</span>
+                      <span className="settings-item-hint">{addition.hint}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {app.detail?.releaseNotes && (
+          <section aria-labelledby="market-new" className="space-y-2">
+            <h2 id="market-new" className="text-lg font-semibold tracking-tight">{market("whatsNew")}</h2>
+            {app.version && <p className="text-[13px] text-muted-foreground tabular-nums">{market("version", { version: app.version })}</p>}
+            <Prose text={app.detail.releaseNotes} />
+          </section>
+        )}
+
+        {links.length > 0 && (
+          <section aria-labelledby="market-links" className="settings-section">
+            <h2 id="market-links" className="text-lg font-semibold tracking-tight">{market("links.title")}</h2>
+            <ul className="settings-group">
+              {links.map((link) => {
+                const Icon = link.icon;
+                return (
+                  <li key={link.label}>
+                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="settings-row settings-row-compact">
+                      <span className="settings-row-icon" aria-hidden><Icon className="size-[18px]" /></span>
+                      <span className="min-w-0 flex-1 font-medium">{link.label}</span>
+                      <span className="min-w-0 truncate text-[13px] text-muted-foreground">{host(link.url)}</span>
+                      <ExternalLink className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {(variants.length > 0 || app.tags.length > 0) && (
+          <section className="space-y-3">
+            {variants.map((variant) => (
+              <p key={variant.sourceId} className="text-[13px] text-muted-foreground">
+                {translateInterface("mf1c107e6139e", { source: variant.sourceName })}
+                {variant.version && app.version && variant.version !== app.version ? ` (${variant.version})` : ''}{" · "}
+                <Link href={`/market/${encodeURIComponent(app.id)}?source=${encodeURIComponent(variant.sourceId)}`} className="font-medium text-primary hover:underline">{translateInterface("mdcc839a4015c")}</Link>
+              </p>
+            ))}
+            {app.tags.length > 0 && (
+              <ul className="flex flex-wrap gap-1.5" aria-label={market("tags")}>
+                {app.tags.map((tag) => (
+                  <li key={tag}>
+                    <Link href={`/market?q=${encodeURIComponent(tag)}`} className="inline-flex h-8 items-center rounded-full bg-muted px-3 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">{tag}</Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {related.length > 0 && (
+          <section aria-labelledby="market-related" className="space-y-3">
+            <h2 id="market-related" className="text-lg font-semibold tracking-tight">{market("related", { category: categories.label(app.category) })}</h2>
+            <div className="market-grid">
+              {related.map((other) => <AppTile key={`${other.id}-${other.sourceId ?? ''}`} app={other} installed={false} tile={categories.tile(other.category)} />)}
+            </div>
+          </section>
+        )}
+      </div>
+
+      {shown !== null && screenshots[shown] && (
+        <div role="dialog" aria-modal="true" aria-label={screenshots[shown].caption || market("screenshots")}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={() => setShown(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setShown(null);
+            if (event.key === 'ArrowLeft') setShown((index) => (index !== null && index > 0 ? index - 1 : index));
+            if (event.key === 'ArrowRight') setShown((index) => (index !== null && index < screenshots.length - 1 ? index + 1 : index));
+          }}>
+          <div className="relative max-h-full max-w-5xl" onClick={(event) => event.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={screenshots[shown].url} alt={screenshots[shown].caption || ''} className="max-h-[80vh] w-auto rounded-xl object-contain" />
+            <p className="mt-3 text-center text-sm text-white/80">{screenshots[shown].caption} <span className="tabular-nums text-white/50">{shown + 1} / {screenshots.length}</span></p>
+            <button type="button" autoFocus onClick={() => setShown(null)} aria-label={market("close")} className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"><X className="h-4 w-4" /></button>
+            {shown > 0 && <button type="button" onClick={() => setShown(shown - 1)} aria-label={market("previous")} className="absolute left-2 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"><ChevronLeft className="h-5 w-5" /></button>}
+            {shown < screenshots.length - 1 && <button type="button" onClick={() => setShown(shown + 1)} aria-label={market("next")} className="absolute right-2 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"><ChevronRight className="h-5 w-5" /></button>}
+          </div>
+        </div>
+      )}
+
+      {showInstallDialog && !app.installBlocked && (
+        <InstallDialog app={app} domain={domain || ''} siteName={siteName} onInstall={handleInstall} onClose={() => setShowInstallDialog(false)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Text from a manifest: blank lines make paragraphs, and a line that starts with "-", "*" or "•" stays its own line;
+ * other line breaks are where its author wrapped the text, so they flow (they would break oddly on a phone).
+ */
+function Prose({ text, className = '' }: { text: string; className?: string }) {
+  const paragraphs = text.trim().split(/\n\s*\n/).map((paragraph) => paragraph.split('\n').reduce<string[]>((lines, line) => {
+    const trimmed = line.trim();
+    if (/^[-*•]\s/.test(trimmed) || lines.length === 0) lines.push(trimmed);
+    else lines[lines.length - 1] += ` ${trimmed}`;
+    return lines;
+  }, []));
+  return (
+    <div className={`space-y-3 text-[15px] leading-relaxed text-foreground/85 ${className}`}>
+      {paragraphs.map((lines, i) => <p key={i}>{lines.map((line, j) => <span key={j} className="block">{line}</span>)}</p>)}
+    </div>
+  );
+}
+
+/** A screenshot, or a quiet frame where it does not load. */
+function Shot({ url }: { url: string }) {
+  return <MarketPicture src={url} className="absolute inset-0 h-full w-full object-cover object-top"
+    fallback={<span className="absolute inset-0 flex items-center justify-center text-muted-foreground/50"><Camera className="h-7 w-7" /></span>} />;
 }

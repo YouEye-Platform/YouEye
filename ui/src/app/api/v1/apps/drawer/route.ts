@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
+import { hasSettingsPanel } from "@/lib/surfaces/normalize";
 
 function buildAppUrl(
   subdomain: string | null,
@@ -22,12 +23,6 @@ function buildAppUrl(
   return ssoEntryUrl ? `${baseUrl}${ssoEntryUrl}` : baseUrl;
 }
 
-function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
-  if (!manifest) return false;
-  const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
-  return capabilities?.settings_panel === true
-    || manifest.settings_panel === true;
-}
 
 export async function GET(request: NextRequest) {
   const session = await getSession();

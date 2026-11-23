@@ -1,54 +1,48 @@
 "use client";
 
-import { PageHeader } from "./page-header";
-
-import { useTranslations as useInterfaceTranslations } from "next-intl";
-import type React from "react";
-import { useEffect, useMemo, useState } from "react";
-import { Check } from "lucide-react";
-import { uiSettingsApi } from "./api-base";
 import { useLocale, useTranslations } from "next-intl";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Loader2 } from "lucide-react";
 import { languages as LANGUAGES } from "@/i18n/config";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "./page-header";
+import { uiSettingsApi } from "./api-base";
 
+const FALLBACK_ZONES = ["UTC", "America/New_York", "Europe/London", "Europe/Berlin", "Asia/Tokyo", "Australia/Sydney"];
 
-function LanguageOption({
-  active,
-  disabled,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  disabled: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`flex w-full cursor-pointer items-center justify-between rounded-lg border px-4 py-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-        active
-          ? "border-primary bg-primary/10 text-foreground"
-          : "border-border text-muted-foreground hover:border-border/80 hover:text-foreground"
-      }`}
-    >
-      {children}
-      {active && <Check className="h-4 w-4 text-primary" />}
-    </button>
-  );
+function deviceZone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
 }
 
-export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
-  const translateInterface = useInterfaceTranslations("interface");
+/** "America/Argentina/Buenos_Aires" reads as "Argentina / Buenos Aires" under the "America" group. */
+function zoneCity(zone: string): string {
+  const slash = zone.indexOf("/");
+  return (slash < 0 ? zone : zone.slice(slash + 1)).replace(/_/g, " ").replace(/\//g, " / ");
+}
 
+/** The current offset of a zone, like "GMT+2"; empty when the browser cannot say. */
+function zoneOffset(zone: string, locale: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale, { timeZone: zone, timeZoneName: "shortOffset" })
+      .formatToParts(new Date()).find((part) => part.type === "timeZoneName")?.value ?? "";
+  } catch { return ""; }
+}
+
+/** Language & region: your language, your time zone, and how dates and times then read. Each choice saves at once. */
+export function LanguageClient() {
   const t = useTranslations("languageSettings");
+  const y = useTranslations("settingsYou.language");
   const locale = useLocale();
+
   const [language, setLanguage] = useState<string | null>(null);
   const [systemLanguage, setSystemLanguage] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
-  const [showServerPicker, setShowServerPicker] = useState(false);
+  const [languageReady, setLanguageReady] = useState(false);
+  const [savingLanguage, setSavingLanguage] = useState<string | null | undefined>(undefined);
+  const [languageStatus, setLanguageStatus] = useState("");
+
+  const [timezone, setTimezone] = useState<string | null>(null);
+  const [device, setDevice] = useState<string | null>(null);
+  const [savingZone, setSavingZone] = useState(false);
+  const [zoneStatus, setZoneStatus] = useState<{ text: string; error: boolean } | null>(null);
 
   useEffect(() => {
     fetch(uiSettingsApi("language"))
@@ -56,170 +50,195 @@ export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
       .then((data) => {
         setLanguage(data.language ?? null);
         setSystemLanguage(data.systemLanguage ?? "en");
+        setLanguageReady(true);
       })
-      .catch(() => setStatus(t("loadFailed")));
-    if (isAdmin) {
-      fetch("/api/setup/config")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => setSystemLanguage(data?.language ?? "en"))
-        .catch(() => {});
-    }
-  }, [isAdmin, t]);
+      .catch(() => setLanguageStatus(t("loadFailed")));
+  }, [t]);
 
-  function refreshLanguage() {
-    // Signal other same-origin views. They re-read their own authenticated locale.
-    if (typeof BroadcastChannel !== "undefined") {
-      const channel = new BroadcastChannel("youeye-language");
-      channel.postMessage({ type: "changed" });
-      channel.close();
-    }
-    window.location.reload();
-  }
+  useEffect(() => {
+    const here = deviceZone();
+    setDevice(here);
+    fetch(uiSettingsApi("profile"))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("profile"))))
+      .then((data) => setTimezone(data?.timezone || here))
+      .catch(() => { setTimezone(here); setZoneStatus({ text: y("timezoneLoadFailed"), error: true }); });
+  }, [y]);
 
-  async function chooseUser(next: string | null) {
-    setSaving(true);
-    setStatus("");
+  async function chooseLanguage(next: string | null) {
+    if (savingLanguage !== undefined || next === language) return;
+    setSavingLanguage(next);
+    setLanguageStatus("");
     try {
       const res = await fetch(uiSettingsApi("language"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language: next }),
       });
-      if (!res.ok) throw new Error(translateInterface("m157dca92e425"));
+      if (!res.ok) throw new Error("save");
       setLanguage(next);
-      refreshLanguage();
-    } catch { setStatus(t("saveFailed")); }
-    finally { setSaving(false); }
+      // Signal other same-origin views. They re-read their own authenticated locale.
+      if (typeof BroadcastChannel !== "undefined") {
+        const channel = new BroadcastChannel("youeye-language");
+        channel.postMessage({ type: "changed" });
+        channel.close();
+      }
+      window.location.reload();
+    } catch {
+      setLanguageStatus(t("saveFailed"));
+      setSavingLanguage(undefined);
+    }
   }
 
-  async function chooseSystem(next: string) {
-    setSaving(true);
-    setStatus("");
+  // Same save as Profile used: the profile PATCH takes the fields it is given.
+  async function chooseZone(next: string) {
+    if (savingZone || next === timezone) return;
+    const previous = timezone;
+    setTimezone(next);
+    setSavingZone(true);
+    setZoneStatus(null);
     try {
-      const res = await fetch("/api/user/language", {
+      const res = await fetch(uiSettingsApi("profile"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale: next }),
+        body: JSON.stringify({ timezone: next }),
       });
-      if (!res.ok) throw new Error(translateInterface("m157dca92e425"));
-      setSystemLanguage(next);
-      setShowServerPicker(false);
-      refreshLanguage();
-    } catch { setStatus(t("saveFailed")); }
-    finally { setSaving(false); }
+      if (!res.ok) throw new Error("save");
+      setZoneStatus({ text: y("timezoneSaved"), error: false });
+    } catch {
+      setTimezone(previous);
+      setZoneStatus({ text: y("timezoneSaveFailed"), error: true });
+    } finally {
+      setSavingZone(false);
+    }
   }
 
-  // Date/time formats are derived from the active locale (honest — they follow the
-  // language; we do NOT store editable per-format overrides, which have no backend yet).
   const activeLocale = language || systemLanguage || locale;
-  const formats = useMemo(() => {
-    try {
-      const sample = new Date(2026, 5, 12, 14, 5);
-      const dateExample = new Intl.DateTimeFormat(activeLocale, { dateStyle: "long" }).format(sample);
-      const hour12 = new Intl.DateTimeFormat(activeLocale, { hour: "numeric" }).resolvedOptions().hour12;
-      return { dateExample, timeFormat: hour12 ? t("hour12") : t("hour24") };
-    } catch {
-      return { dateExample: "—", timeFormat: "—" };
-    }
-  }, [activeLocale, t]);
 
-  const serverLangLabel = useMemo(() => {
-    const match = LANGUAGES.find((l) => l.code === (systemLanguage || "en"));
-    return match ? `${match.native}${match.native !== match.english ? ` (${match.english})` : ""}` : systemLanguage || "—";
-  }, [systemLanguage]);
+  // Zones grouped by region, so the list of about 400 can be scanned (and typed into: the browser's own type-ahead).
+  // Built in the browser only (after mount), as the server's list of zones can differ from the browser's.
+  const zoneGroups = useMemo(() => {
+    if (!device) return [];
+    let zones: string[];
+    try { zones = Intl.supportedValuesOf("timeZone"); } catch { zones = FALLBACK_ZONES; }
+    if (timezone && !zones.includes(timezone)) zones = [timezone, ...zones];
+    const groups = new Map<string, Array<{ zone: string; label: string }>>();
+    for (const zone of zones) {
+      const region = zone.includes("/") ? zone.slice(0, zone.indexOf("/")) : "";
+      const offset = zoneOffset(zone, "en");
+      groups.set(region, [...(groups.get(region) ?? []), { zone, label: `${zoneCity(zone)}${offset ? ` (${offset})` : ""}` }]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+  }, [timezone, device]);
+
+  // Formats follow the language; the clock follows the time zone. Worked out in the browser, once both are known.
+  const formats = useMemo(() => {
+    if (!languageReady || !timezone) return null;
+    try {
+      const now = new Date();
+      const zoned = { timeZone: timezone };
+      const hour12 = new Intl.DateTimeFormat(activeLocale, { hour: "numeric" }).resolvedOptions().hour12;
+      return {
+        date: new Intl.DateTimeFormat(activeLocale, { dateStyle: "full", ...zoned }).format(now),
+        time: new Intl.DateTimeFormat(activeLocale, { timeStyle: "short", ...zoned }).format(now),
+        clock: hour12 ? t("hour12") : t("hour24"),
+        number: new Intl.NumberFormat(activeLocale).format(1234567.89),
+      };
+    } catch {
+      return null;
+    }
+  }, [activeLocale, languageReady, timezone, t]);
+
+  const serverLanguage = LANGUAGES.find((item) => item.code === (systemLanguage || "en"));
+  const options: Array<{ code: string | null; label: string; detail: string }> = [
+    { code: null, label: y("serverDefault"), detail: serverLanguage?.native ?? "" },
+    ...LANGUAGES.map((item) => ({ code: item.code, label: item.native, detail: item.native !== item.english ? item.english : "" })),
+  ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={translateInterface("ma4fe65264ef7")} description={translateInterface("m7a29d43dbf1d")} />
-
-      {/* Your language */}
-      <Card className="gap-0 py-0">
-        <div className="space-y-4 p-5">
-          <div>
-            <h2 className="text-[15px] font-semibold">{t("personal")}</h2>
-            <p className="mt-0.5 text-[13px] text-muted-foreground">{t("personalHint")}</p>
+    <div>
+      <PageHeader title={y("title")} description={y("description")} />
+      <div className="settings-sections">
+        <section className="settings-section" aria-labelledby="language-yours">
+          <h2 id="language-yours" className="settings-section-title">{t("personal")}</h2>
+          <div role="radiogroup" aria-labelledby="language-yours" className="settings-group">
+            {options.map((option) => {
+              const active = languageReady && language === option.code;
+              const saving = savingLanguage !== undefined && savingLanguage === option.code;
+              return (
+                <button
+                  key={option.code ?? "default"}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!languageReady || savingLanguage !== undefined}
+                  onClick={() => void chooseLanguage(option.code)}
+                  className="settings-row settings-row-compact"
+                  lang={option.code ?? undefined}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className={active ? "font-medium text-foreground" : "text-foreground"}>{option.label}</span>
+                    {option.detail && <span className="ml-2 text-[13px] text-muted-foreground">{option.detail}</span>}
+                  </span>
+                  {saving
+                    ? <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+                    : active && <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />}
+                </button>
+              );
+            })}
           </div>
+          <p role="status" className="settings-note empty:hidden">{languageStatus}</p>
+        </section>
 
-          <div className="space-y-2.5">
-            <LanguageOption active={language === null} disabled={saving} onClick={() => chooseUser(null)}>
-              <span className="font-medium">{t("systemDefault")}</span>
-            </LanguageOption>
-            {LANGUAGES.map((item) => (
-              <LanguageOption
-                key={item.code}
-                active={language === item.code}
-                disabled={saving}
-                onClick={() => chooseUser(item.code)}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="font-medium">{item.native}</span>
-                  {item.native !== item.english && <span className="text-muted-foreground">({item.english})</span>}
-                </span>
-              </LanguageOption>
-            ))}
-          </div>
-
-          <div className="rounded-md border bg-muted/40 p-3">
-            <p className="text-[13px] font-medium text-muted-foreground">{t("formatsHint")}</p>
-            <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-muted-foreground">
-              <span>
-                {t("dates")} <span className="text-foreground">{formats.dateExample}</span>
-              </span>
-              <span>
-                {t("time")} <span className="text-foreground">{formats.timeFormat}</span>
-              </span>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Server default (admin) */}
-      {isAdmin && (
-        <Card className="gap-0 py-0">
-          <div className="space-y-3 p-5">
-            <h2 className="flex items-center text-[15px] font-semibold">
-              {t("serverDefault")}
-              <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                {translateInterface("mc1c224b03cd9")}</span>
-            </h2>
-
-            <div className="flex items-center justify-between gap-4 rounded-md border p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t("defaultLanguage")}</p>
-                <p className="text-[13px] text-muted-foreground">
-                  {t("defaultHint", { language: serverLangLabel })}
-                </p>
+        <section className="settings-section" aria-labelledby="language-region">
+          <h2 id="language-region" className="settings-section-title">{y("region")}</h2>
+          <div className="settings-group">
+            <div className="settings-item">
+              <label htmlFor="settings-timezone" className="settings-item-text">
+                <span className="settings-item-label">{y("timezone")}</span>
+                <span className="settings-item-hint">{y("timezoneHint")}</span>
+              </label>
+              <div className="w-full min-w-0 sm:w-72">
+                <select
+                  id="settings-timezone"
+                  className="settings-select"
+                  value={timezone ?? ""}
+                  disabled={!timezone || !device || savingZone}
+                  onChange={(event) => void chooseZone(event.target.value)}
+                >
+                  {!timezone && <option value="">{y("loading")}</option>}
+                  {zoneGroups.map(([region, zones]) => (
+                    <optgroup key={region || "other"} label={region || y("timezoneOther")}>
+                      {zones.map(({ zone, label }) => <option key={zone} value={zone}>{label}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
-              <button
-                onClick={() => setShowServerPicker((v) => !v)}
-                className="shrink-0 text-[13px] font-medium text-primary hover:underline"
-              >
-                {showServerPicker ? t("close") : t("change")}
-              </button>
             </div>
-
-            {showServerPicker && (
-              <div className="space-y-2.5">
-                {LANGUAGES.map((item) => (
-                  <LanguageOption
-                    key={item.code}
-                    active={systemLanguage === item.code}
-                    disabled={saving}
-                    onClick={() => chooseSystem(item.code)}
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="font-medium">{item.native}</span>
-                      {item.native !== item.english && <span className="text-muted-foreground">({item.english})</span>}
-                    </span>
-                  </LanguageOption>
-                ))}
+            {timezone && device && device !== timezone && (
+              <div className="settings-item">
+                <span className="settings-item-text">
+                  <span className="settings-item-hint">{y("timezoneDevice", { zone: device.replace(/_/g, " ") })}</span>
+                </span>
+                <button type="button" className="settings-link" disabled={savingZone} onClick={() => void chooseZone(device)}>{y("timezoneUseDevice")}</button>
+              </div>
+            )}
+            {formats && (
+              <div className="settings-item settings-item-top">
+                <span className="settings-item-text">
+                  <span className="settings-item-label">{y("formats")}</span>
+                  <span className="settings-item-hint">{t("formatsHint")}</span>
+                </span>
+                <span className="block w-full min-w-0 text-sm tabular-nums text-foreground sm:w-72">
+                  <span className="block">{formats.date}</span>
+                  <span className="block">{formats.time} <span className="text-muted-foreground">({formats.clock})</span></span>
+                  <span className="block">{formats.number}</span>
+                </span>
               </div>
             )}
           </div>
-        </Card>
-      )}
-
-      {status && <p className="text-sm text-muted-foreground">{status}</p>}
+          <p role="status" className={`settings-note empty:hidden ${zoneStatus?.error ? "text-destructive" : ""}`}>{zoneStatus?.text ?? ""}</p>
+        </section>
+      </div>
     </div>
   );
 }

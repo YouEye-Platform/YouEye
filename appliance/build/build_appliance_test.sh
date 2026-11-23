@@ -56,6 +56,19 @@ for vendored in LICENSE go.mod yescrypt.go yescrypt_wrapper.go; do
         fail "source-owned yescrypt dependency is missing: $vendored"
 done
 require_text "$build" 'e2fsprogs,restic,zstd'
+# YE-130: microcode, firmware and a locale in the image; early microcode for
+# both vendors whatever CPU builds it, checked in the built initrd.
+require_text "$build" 'hardware_packages="amd64-microcode,intel-microcode,firmware-amd-graphics,firmware-intel-graphics,firmware-misc-nonfree,firmware-realtek,'
+require_text "$build" '--include="$base_packages,$hardware_packages"'
+require_text "$build" 'cat > "$rootfs/etc/locale.conf" <<'"'"'EOF'"'"
+require_text "$build" 'ln -sfn ../locale.conf "$rootfs/etc/default/locale"'
+require_text "$build" 'LANG=C.UTF-8'
+require_text "$build" 'AMD64UCODE_INITRAMFS=early'
+require_text "$build" 'IUCODE_TOOL_SCANCPUS=no'
+require_text "$build" 'kernel/x86/microcode/AuthenticAMD.bin kernel/x86/microcode/GenuineIntel.bin'
+if grep -q 'firmware-nvidia-graphics\|firmware-iwlwifi' <(grep '^hardware_packages=' "$build"); then
+    fail 'the image leaves out the large NVIDIA and Wi-Fi-only firmware'
+fi
 
 for default in \
 	'build_inputs="${BUILD_INPUTS_PATH:-$source_dir/appliance/build-inputs.json}"' \

@@ -1,3 +1,5 @@
+import { PROXY_DEVICE_SOURCE } from './servers';
+
 /**
  * The Caddyfile the Control Panel loads when it deploys Caddy. The Control Panel then edits the live config through
  * the admin API (`client.ts`); `setDefaultRoute` adds the :80 setup server (`servers.ts`).
@@ -10,6 +12,8 @@
  *   Caddy starts; Caddy makes and renews its own intermediate (30 days) and issues 7-day leaves on demand (Caddy's
  *   defaults are 7 days and 12 hours), so an owner who clicked through the warning doesn't see it every few hours.
  * - On-demand certificates ask the Control Panel first (`permission http`; Caddy 2.10 deprecated `ask`).
+ * - Every server reads a PROXY header from 127.0.0.1 before TLS, like every config the Control Panel writes
+ *   (`clientAddressListenerWrappers` in `servers.ts`).
  */
 export function controlPanelCaddyfile(adminAddress: string, controlIP: string): string {
   return [
@@ -18,6 +22,14 @@ export function controlPanelCaddyfile(adminAddress: string, controlIP: string): 
     `        origins ${adminAddress}`,
     '    }',
     '    auto_https disable_redirects',
+    '    servers {',
+    '        listener_wrappers {',
+    '            proxy_protocol {',
+    `                allow ${PROXY_DEVICE_SOURCE}`,
+    '            }',
+    '            tls',
+    '        }',
+    '    }',
     '    pki {',
     '        ca local {',
     '            intermediate_lifetime 30d',

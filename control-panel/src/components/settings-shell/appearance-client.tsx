@@ -1,35 +1,17 @@
 "use client";
 
-import { PageHeader } from "./page-header";
-
-import { useTranslations as useInterfaceTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Check, Loader2, Monitor, Moon, Palette, RotateCcw, Save, Sun } from "lucide-react";
+import { Check, Loader2, Monitor, Moon, Sun } from "lucide-react";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
-import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { uiSettingsApi } from "./api-base";
 import { applyThemeMode, broadcastThemeMode, type ThemeMode } from "@/lib/theme";
-import { TitleStudio, initialDesign } from "@youeye/branding/studio";
+import { resolveTitle } from "@youeye/branding/appearance";
 import { notifyAppearanceSaved } from "@youeye/branding/appearance-events";
-import { useRef as useInterfaceTranslationRef } from "react";
-
-const DEFAULT_STYLE: SiteNameStyle = {
-  fontFamily: "Inter",
-  fontSize: "1.5rem",
-  fontWeight: 700,
-  letterSpacing: "0.02em",
-  color: "#ffffff",
-  gradient: null,
-  textShadow: "none",
-  textTransform: "none",
-};
-
-interface AppearanceClientProps {
-  isAdmin: boolean;
-}
+import { PageHeader } from "./page-header";
+import { TitlePreview } from "./title-preview";
+import { uiSettingsApi } from "./api-base";
 
 interface Theme {
   id: string;
@@ -38,200 +20,17 @@ interface Theme {
   isPreset?: boolean;
 }
 
-interface Branding {
-  site_name: string;
-  site_name_style: SiteNameStyle | null;
-  accent_color?: string | null;
-  logo_url?: string | null;
-  favicon_url?: string | null;
-}
-
-function tabClass(active: boolean) {
-  return `border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-    active
-      ? "border-primary text-foreground"
-      : "border-transparent text-muted-foreground hover:text-foreground"
-  }`;
-}
-
 function swatchColors(theme: Theme) {
-  return Object.values(theme.colors || {}).slice(0, 5);
+  return Object.values(theme.colors || {}).slice(0, 4);
 }
 
-function BrandingTabs({ isAdmin }: { isAdmin: boolean }) {
-  const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
-
-  const [tab, setTab] = useState<"my-wordart" | "server-branding">("my-wordart");
-  const [branding, setBranding] = useState<Branding | null>(null);
-  const [myStyle, setMyStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
-  const [hasPersonalTitle, setHasPersonalTitle] = useState(false);
-  const [serverStyle, setServerStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
-  const [siteName, setSiteName] = useState("YouEye");
-  const [accentColor, setAccentColor] = useState("#8B5CF6");
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [brandingReady, setBrandingReady] = useState(false);
-
-  const load = useCallback(async () => {
-    const [brandingRes, wordartRes] = await Promise.all([
-      fetch("/api/ui/branding", { cache: "no-store" }),
-      fetch(uiSettingsApi("wordart"), { cache: "no-store" }),
-    ]);
-    if (!brandingRes.ok || !wordartRes.ok) throw new Error(interfaceTranslationRef.current("m73e43c9933f5"));
-    const nextBranding = await brandingRes.json();
-    const wordart = wordartRes.ok ? await wordartRes.json() : null;
-    if (nextBranding) {
-      setBranding(nextBranding);
-      setSiteName(nextBranding.site_name || "YouEye");
-      setAccentColor(nextBranding.accent_color || "#8B5CF6");
-      const style = nextBranding.site_name_style || DEFAULT_STYLE;
-      setServerStyle(style);
-      setMyStyle(wordart?.wordart || style);
-      setHasPersonalTitle(wordart?.wordart != null);
-      setBrandingReady(true);
-    }
-  }, []);
-
-  useEffect(() => { load().catch(() => setStatus(interfaceTranslationRef.current("mfbc0355a01b6"))); }, [load]);
-
-  async function saveMyWordArt() {
-    if (!brandingReady || saving) return;
-    setSaving(true);
-    setStatus("");
-    try {
-      const res = await fetch(uiSettingsApi("wordart"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wordart: { ...myStyle, mytitle: myStyle.mytitle || initialDesign(branding?.site_name || "YouEye") } }),
-      });
-      if (res.ok) {
-        const saved = await res.json();
-        setMyStyle(saved.wordart);
-        setHasPersonalTitle(true);
-        notifyAppearanceSaved();
-      }
-      setStatus(res.ok ? translateInterface("mb5c120b316c2") : translateInterface("m53ad6f999b1f"));
-    } catch {
-      setStatus(translateInterface("mdeef0ac7e1a7"));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function resetMyWordArt() {
-    if (saving) return;
-    setSaving(true);
-    try {
-      const res = await fetch(uiSettingsApi("wordart"), { method: "DELETE" });
-      if (res.ok) {
-        // Read the saved server appearance, never an unsaved administrator draft.
-        notifyAppearanceSaved();
-        await load();
-      }
-      setStatus(res.ok ? translateInterface("mdaee7606b339") : translateInterface("m089cb45b70a0"));
-    } catch {
-      setStatus(translateInterface("mee741ad8f51f"));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function saveServerBranding() {
-    if (!brandingReady || saving) return;
-    setSaving(true);
-    setStatus("");
-    try {
-      const res = await fetch("/api/ui/branding", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          site_name: siteName,
-          site_name_style: { ...serverStyle, mytitle: serverStyle.mytitle || initialDesign(siteName) },
-          expected_revision: branding?.site_name_style?.mytitleRevision ?? null,
-          accent_color: accentColor,
-          logo_url: branding?.logo_url ?? null,
-          favicon_url: branding?.favicon_url ?? null,
-        }),
-      });
-      setStatus(res.ok ? translateInterface("mb5c120b316c2") : res.status === 409 ? translateInterface("m17101f149928") : translateInterface("m53ad6f999b1f"));
-      if (res.ok) {
-        notifyAppearanceSaved();
-        await load();
-      }
-    } catch {
-      setStatus(translateInterface("m123b50166680"));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!brandingReady) {
-    return (
-      <section className="space-y-3" aria-busy={!status}>
-        <p role={status ? "alert" : "status"}>{status || translateInterface("m4d6ed05cad3d")}</p>
-        {status && <Button variant="outline" onClick={() => {
-          setStatus("");
-          load().catch(() => setStatus(translateInterface("mfbc0355a01b6")));
-        }}>{translateInterface("md8b8392e2c54")}</Button>}
-      </section>
-    );
-  }
-
-  return (
-    <section className="space-y-6">
-      <div className="flex gap-1 border-b">
-        <button className={tabClass(tab === "my-wordart")} onClick={() => setTab("my-wordart")}>{translateInterface("mf10711672771")}</button>
-        {isAdmin && <button className={tabClass(tab === "server-branding")} onClick={() => setTab("server-branding")}>{translateInterface("m6c567bcc7589")}</button>}
-      </div>
-
-      {tab === "my-wordart" && (
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-base font-semibold">{translateInterface("mf10711672771")}</h3>
-            <p className="text-sm text-muted-foreground">{translateInterface("m2573d00b8bb9")}{hasPersonalTitle ? translateInterface("mef1b9738c762") : translateInterface("me0eb9f44c2d0")}</p>
-          </div>
-          <WordArtPickerInline siteName={branding?.site_name || "YouEye"} style={myStyle} setStyle={setMyStyle} />
-          <div className="studio-save-bar flex gap-3">
-            <Button onClick={saveMyWordArt} disabled={saving || !brandingReady} size="sm"><Save className="h-4 w-4" /> {translateInterface("m1509f561f241")}</Button>
-            <Button onClick={resetMyWordArt} disabled={saving || !brandingReady} variant="outline" size="sm"><RotateCcw className="h-4 w-4" /> {translateInterface("m0fbea84dff55")}</Button>
-          </div>
-
-        </div>
-      )}
-
-      {tab === "server-branding" && isAdmin && (
-        <div className="space-y-5">
-          <div>
-            <h3 className="text-base font-semibold">{translateInterface("m1713ce3d42f1")}</h3>
-            <p className="text-sm text-muted-foreground">{translateInterface("m91c7731241e9")}</p>
-          </div>
-          <TitleStudio design={serverStyle.mytitle || initialDesign(siteName)} onChange={(design) => {
-            setSiteName(design.name);
-            setServerStyle((style) => ({ ...style, mytitle: design }));
-          }} />
-          <label className="flex items-center justify-between gap-4 rounded-xl border p-4 text-sm">
-            <span><span className="block font-medium">{translateInterface("ma607f90a3d24")}</span><span className="text-muted-foreground">{translateInterface("m3a165ba8b440")}</span></span>
-            <Switch checked={serverStyle.showHeaderLogo === true} onCheckedChange={(showHeaderLogo) => setServerStyle((style) => ({ ...style, showHeaderLogo }))} />
-          </label>
-          <div className="studio-save-bar"><Button onClick={saveServerBranding} disabled={saving || !brandingReady}><Save className="h-4 w-4" />{saving ? translateInterface("m23e39291d613") : translateInterface("mdec2db9309ac")}</Button><span role="status" className="text-sm">{status}</span></div>
-        </div>
-      )}
-
-      {status && <p className="text-sm text-muted-foreground">{status}</p>}
-    </section>
-  );
-}
-
-function ThemeSettings() {
-  const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+/** Light or dark, then the colour theme: the everyday choices, first on the page. Both save as you choose. */
+function ModeAndTheme() {
+  const translateInterface = useTranslations("interface");
+  const t = useTranslations("settingsYou.appearance");
 
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeName, setActiveName] = useState<string | null>(null);
   const [mode, setMode] = useState("system");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -244,37 +43,35 @@ function ThemeSettings() {
       .then(([allThemes, active]) => {
         setThemes(Array.isArray(allThemes) ? allThemes : []);
         setActiveId(active.id || null);
-        setActiveName(active.name || null);
         setMode(active.mode || "system");
       })
-      .catch(() => setStatus(interfaceTranslationRef.current("mda137f32b86e")))
+      .catch(() => setStatus(translateInterface("mda137f32b86e")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [translateInterface]);
 
   async function selectTheme(themeId: string) {
+    if (themeId === activeId) return;
     setActiveId(themeId);
     const res = await fetch(uiSettingsApi("themes/active"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ themeId }),
-    });
-    const data = res.ok ? await res.json() : null;
-    if (data?.name) setActiveName(data.name);
-    setStatus(res.ok ? translateInterface("mf172e79132fc") : translateInterface("m6530c2cf3950"));
+    }).catch(() => null);
+    setStatus(res?.ok ? translateInterface("mf172e79132fc") : translateInterface("m6530c2cf3950"));
   }
 
   async function selectMode(nextMode: string) {
+    if (nextMode === mode) return;
     setMode(nextMode);
-    // Apply immediately so this page re-themes on click, and tell the header
-    // (source-of-truth state) so it stays in sync; the PUT below persists it.
+    // Apply at once so this page re-themes on click, and tell the header so it stays in sync; the PUT persists it.
     applyThemeMode(nextMode as ThemeMode);
     broadcastThemeMode(nextMode as ThemeMode);
     const res = await fetch(uiSettingsApi("themes/active"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: nextMode }),
-    });
-    setStatus(res.ok ? translateInterface("ma263d21422c0") : translateInterface("m8eaeda81ecca"));
+    }).catch(() => null);
+    setStatus(res?.ok ? translateInterface("ma263d21422c0") : translateInterface("m8eaeda81ecca"));
   }
 
   const modes = [
@@ -284,61 +81,149 @@ function ThemeSettings() {
   ];
 
   return (
-    <section className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-semibold">{translateInterface("mb012e90c4079")}</h3>
-          <p className="text-sm text-muted-foreground">{translateInterface("m31efa2e5b94d")}</p>
-        </div>
-        {activeName && <Badge variant="secondary" className="gap-1.5"><Palette className="h-3 w-3" />{activeName}</Badge>}
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {themes.map((theme) => (
-            <button key={theme.id} onClick={() => selectTheme(theme.id)} className={`rounded-lg border p-3 text-left transition-colors hover:bg-accent/40 ${activeId === theme.id ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`}>
-              <div className="mb-2.5 flex gap-1.5">
-                {swatchColors(theme).map((color, index) => <span key={`${theme.id}-${index}`} className="h-6 w-6 rounded-full border" style={{ backgroundColor: color }} />)}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="truncate text-sm font-medium">{theme.name}</span>
-                {activeId === theme.id && <Check className="h-4 w-4 text-primary" />}
-              </div>
+    <>
+      <section className="settings-section" aria-labelledby="appearance-mode">
+        <h2 id="appearance-mode" className="settings-section-title">{t("mode")}</h2>
+        <div role="radiogroup" aria-labelledby="appearance-mode" className="settings-segments sm:max-w-md">
+          {modes.map((item) => (
+            <button key={item.id} type="button" role="radio" aria-checked={mode === item.id} onClick={() => void selectMode(item.id)} className="settings-segment">
+              <item.icon className="size-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{item.label}</span>
             </button>
           ))}
         </div>
-      )}
+        {mode === "system" && <p className="settings-section-hint">{t("modeSystemHint")}</p>}
+      </section>
 
-      <div className="space-y-3">
-        <h3 className="text-base font-semibold">{translateInterface("m5e23ec6a300d")}</h3>
-        <div className="flex flex-wrap gap-3">
-          {modes.map((item) => {
-            const Icon = item.icon;
-            const active = mode === item.id;
-            return (
-              <button key={item.id} onClick={() => selectMode(item.id)} className={`flex items-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors ${active ? "border-primary bg-primary/5" : "border-transparent bg-muted hover:bg-accent"}`}>
-                <Icon className="h-5 w-5" />
-                {item.label}
-              </button>
-            );
-          })}
+      <section className="settings-section" aria-labelledby="appearance-theme">
+        <h2 id="appearance-theme" className="settings-section-title">{t("theme")}</h2>
+        <p className="settings-section-hint">{t("themeHint")}</p>
+        {loading ? (
+          <div className="settings-group flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden="true" /></div>
+        ) : themes.length > 0 ? (
+          <div className="settings-group"><div role="radiogroup" aria-labelledby="appearance-theme" className="settings-swatches">
+            {themes.map((theme) => {
+              const colors = swatchColors(theme);
+              const active = activeId === theme.id;
+              return (
+                <button key={theme.id} type="button" role="radio" aria-checked={active} title={theme.name} onClick={() => void selectTheme(theme.id)} className="settings-swatch">
+                  <span className="settings-swatch-dot" aria-hidden="true">
+                    {(colors.length > 0 ? colors : ["var(--muted)"]).map((color, index) => <span key={index} style={{ backgroundColor: color }} />)}
+                    {active && <span className="absolute inset-0 grid place-items-center bg-black/25 text-white"><Check className="size-4" strokeWidth={3} /></span>}
+                  </span>
+                  <span className="settings-swatch-name">{theme.name}</span>
+                </button>
+              );
+            })}
+          </div></div>
+        ) : null}
+        <p role="status" className="settings-note empty:hidden">{status}</p>
+      </section>
+    </>
+  );
+}
+
+interface Branding {
+  site_name: string;
+  site_name_style: SiteNameStyle | null;
+}
+
+/** The title you see in the header: a preview, and the studio one step away on its own page. */
+function YourTitle() {
+  const translateInterface = useTranslations("interface");
+  const t = useTranslations("settingsYou.appearance");
+
+  const [title, setTitle] = useState<{ name: string; style: SiteNameStyle | null; own: boolean } | null>(null);
+  const [status, setStatus] = useState("");
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const [brandingRes, wordartRes] = await Promise.all([
+      fetch("/api/ui/branding", { cache: "no-store" }),
+      fetch(uiSettingsApi("wordart"), { cache: "no-store" }),
+    ]);
+    if (!brandingRes.ok || !wordartRes.ok) throw new Error("load");
+    const branding: Branding = await brandingRes.json();
+    const personal: SiteNameStyle | null = (await wordartRes.json())?.wordart ?? null;
+    const shared = { site_name: branding?.site_name || "YouEye", site_name_style: branding?.site_name_style ?? null };
+    const resolved = resolveTitle<SiteNameStyle, SiteNameStyle>(shared, personal);
+    setTitle({ name: resolved.name, style: resolved.style, own: personal != null });
+  }, []);
+
+  const loadOrReport = useCallback(() => {
+    setFailed(false);
+    setStatus("");
+    load().catch(() => { setFailed(true); setStatus(translateInterface("mfbc0355a01b6")); });
+  }, [load, translateInterface]);
+
+  useEffect(() => { loadOrReport(); }, [loadOrReport]);
+
+  async function followServerTitle() {
+    if (busy) return;
+    setBusy(true);
+    setStatus("");
+    try {
+      const res = await fetch(uiSettingsApi("wordart"), { method: "DELETE" });
+      if (res.ok) {
+        notifyAppearanceSaved();
+        await load();
+      }
+      setStatus(res.ok ? translateInterface("mdaee7606b339") : translateInterface("m089cb45b70a0"));
+    } catch {
+      setStatus(translateInterface("mee741ad8f51f"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section" aria-labelledby="appearance-title">
+      <h2 id="appearance-title" className="settings-section-title">{t("yourTitle")}</h2>
+      <div className="settings-group">
+        {title ? (
+          <TitlePreview name={title.name} style={title.style} />
+        ) : (
+          <div className="settings-title-preview" aria-busy={!failed}>
+            {failed
+              ? <Button variant="outline" size="sm" onClick={loadOrReport}>{translateInterface("md8b8392e2c54")}</Button>
+              : <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />}
+          </div>
+        )}
+        <div className="settings-item">
+          <span className="settings-item-text">
+            <span className="settings-item-label">{title?.own ? t("titleOwn") : t("titleServer")}</span>
+            <span className="settings-item-hint">{t("titleHint")}</span>
+          </span>
+          <span className="settings-item-actions">
+            {title?.own && (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void followServerTitle()}>
+                {busy && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+                {t("useServerTitle")}
+              </Button>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <Link href="/settings/appearance/title">{t("customise")}</Link>
+            </Button>
+          </span>
         </div>
       </div>
-      {status && <p className="text-sm text-muted-foreground">{status}</p>}
+      <p role="status" className="settings-note empty:hidden">{status}</p>
     </section>
   );
 }
 
-export function AppearanceClient({ isAdmin }: AppearanceClientProps) {
-  const translateInterface = useInterfaceTranslations("interface");
+export function AppearanceClient() {
+  const translateInterface = useTranslations("interface");
+  const t = useTranslations("settingsYou.appearance");
 
   return (
-    <div className="space-y-10">
-      <PageHeader title={translateInterface("m3907fa7f8072")} description={translateInterface("m5650a6cd91ea")} />
-      <BrandingTabs isAdmin={isAdmin} />
-      <ThemeSettings />
+    <div>
+      <PageHeader title={translateInterface("m3907fa7f8072")} description={t("description")} />
+      <div className="settings-sections">
+        <ModeAndTheme />
+        <YourTitle />
+      </div>
     </div>
   );
 }

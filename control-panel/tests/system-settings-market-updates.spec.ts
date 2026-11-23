@@ -16,7 +16,8 @@ test('settings system page surfaces the pinned core image plans safely', () => {
   const settingsApi = readControl('src/app/settings/api/deploy/infrastructure/system-updates/route.ts');
   const updater = readControl('src/lib/infrastructure/system-updater.ts');
 
-  assert.match(client, /Core container images/);
+  // The pinned images sit under a folded "Advanced: container images" on Services.
+  assert.match(client, /<details[\s\S]*t\("images\.summary"\)/);
   assert.ok(client.includes('/settings/api/deploy/infrastructure/system-updates'));
   assert.match(client, /"untracked"/);
   assert.match(client, /adoptUntracked: plan\.trackingStatus !== "tracked"/);
@@ -24,8 +25,8 @@ test('settings system page surfaces the pinned core image plans safely', () => {
   assert.match(client, /confirmMaintenanceWindow: true/);
   assert.match(client, /confirmContainerName: plan\.containerName/);
   assert.match(client, /Database image changes require an explicit maintenance window/);
-  assert.match(client, /Dry Run/);
-  assert.match(client, /Adopt\/Recreate/);
+  assert.match(client, /t\("images\.dryRun"\)/);
+  assert.match(client, /t\("images\.adopt"\)/);
   assert.match(client, /Type(?:\{" "\})?\s*\{confirmPlan\.containerName\} to continue/);
   assert.match(client, /I have a maintenance window/);
 

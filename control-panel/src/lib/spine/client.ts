@@ -249,6 +249,8 @@ export interface SpineReleaseChannel {
   repository: string;
   channel: string;
   installed_version?: string;
+  /** After a repository switch: the YouEye version the new channel offers. */
+  head_version?: string;
 }
 
 export interface SpineReleaseIndex {
@@ -449,9 +451,12 @@ export class SpineClient {
     return this.request('/api/releases/channel');
   }
 
-  /** Ask Spine to follow another channel of the same repository. */
-  async setReleaseChannel(channel: string): Promise<SpineReleaseChannel> {
-    return this.request('/api/releases/channel', 'PUT', { channel });
+  /**
+   * Ask Spine to follow another channel and, with repository, another
+   * repository (Spine reads its channel index first and may refuse).
+   */
+  async setReleaseChannel(channel: string, repository?: string): Promise<SpineReleaseChannel> {
+    return this.request('/api/releases/channel', 'PUT', repository === undefined ? { channel } : { channel, repository });
   }
 
   /** The channel index of the box's channel, fetched and cached by Spine. */

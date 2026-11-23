@@ -1,6 +1,6 @@
 import { getAllInstalledApps, updateHealthProbeState, updateHealthStatus } from './installed-apps';
 import { readInstallMetadata } from './metadata';
-import { containerExists, getContainerIP } from '@/lib/infrastructure/oci-deployer';
+import { getContainerIP } from '@/lib/infrastructure/oci-deployer';
 import { incusRequest, execShell } from '@/lib/incus/server';
 import { observeIssue, resolveIssue } from '@/lib/health/issues';
 import type { InstallMetadata } from './types';
@@ -156,8 +156,11 @@ async function probeOne(appId: string, meta: InstallMetadata | null, persistedSt
     return await handleFailure(appId, containerName, 'L1', `${containerName} is not RUNNING`, meta, healthcheck);
   }
 
+  // A passing HTTP check proves the service runs, so the service is asked (an exec into the container) only when the
+  // app has no HTTP check or the check fails. The outcome order is unchanged: L2, then a dependency, then L3.
+  const l3 = healthcheck !== false ? await probeHTTP(containerName, healthcheck, primary.port) : null;
   const service = primary.service || primary.systemdService || metaAny.serviceName || inferServiceName(primary, containerName);
-  if (service) {
+  if (service && !l3?.ok) {
     const active = await isServiceActive(containerName, service);
     if (!active) {
       return await handleFailure(appId, containerName, 'L2', `${service} is not active`, meta, healthcheck);
@@ -169,11 +172,8 @@ async function probeOne(appId: string, meta: InstallMetadata | null, persistedSt
     return await handleDependencyWait(appId, dependencyFailure.level, dependencyFailure.detail);
   }
 
-  if (healthcheck !== false) {
-    const l3 = await probeHTTP(containerName, healthcheck, primary.port);
-    if (!l3.ok) {
-      return await handleFailure(appId, containerName, 'L3', l3.detail, meta, healthcheck);
-    }
+  if (l3 && !l3.ok) {
+    return await handleFailure(appId, containerName, 'L3', l3.detail, meta, healthcheck);
   }
 
   const previous = states.get(appId);
@@ -301,11 +301,18 @@ async function checkDependencyFailure(
   return null;
 }
 
+/**
+ * The instance record carries the status. `/state` would also make Incus measure disk usage (a `zfs get` per call),
+ * which the prober never reads. A missing instance or an unreachable Incus reads as not running, as before.
+ */
 async function isRunning(name: string): Promise<boolean> {
-  if (!(await containerExists(name))) return false;
-  const resp = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${name}/state`);
-  const meta = resp.metadata as Record<string, unknown> | undefined;
-  return meta?.status === 'Running';
+  try {
+    const resp = await incusRequest<{ status?: unknown }>('GET', `/1.0/instances/${encodeURIComponent(name)}`);
+    if (resp.type === 'error') return false;
+    return resp.metadata?.status === 'Running';
+  } catch {
+    return false;
+  }
 }
 
 async function isServiceActive(containerName: string, service: string): Promise<boolean> {
