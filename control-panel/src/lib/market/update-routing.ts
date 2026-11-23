@@ -1,4 +1,4 @@
-import { compareReleases, isNewer, type ReleaseKey } from '@/lib/version';
+import { compareLines, compareReleases, isNewer, releaseLine, type ReleaseKey } from '@/lib/version';
 import { normalizeMarketAddress } from './market-format';
 import type { CatalogEntry } from './types';
 
@@ -171,15 +171,50 @@ export function sameBuild(installed: readonly string[] | null | undefined, candi
   return !!candidate && !!installed?.length && installed.every((sha256) => sha256 === candidate);
 }
 
+/** What a box knows of a native app's installed build. */
+export interface InstalledNativeBuild {
+  /** Line and sequence of the installed release: its recorded release, else its product floor (the last accepted). */
+  key?: ReleaseKey | null;
+  /** SHA-256 of each installed app package (install.json `nativeArtifacts`). */
+  artifactSHA256?: readonly string[] | null;
+  /** The installed release name (its line is read from it). */
+  version?: string | null;
+  /** When the install record was created (ISO time): the installed build was published before it. */
+  installedAt?: string | null;
+}
+
+/**
+ * Order of a native app's channel release against the build it runs: 1 newer, 0 the same build, -1 older, null when
+ * this box can't tell (then it is neither offered nor applied: a box never downgrades an app, YE-141).
+ *
+ * With a release key (recorded, or the product floor) the key decides. Without one (installed or restored before
+ * 0.6.15), the build decides as far as the box can see it:
+ * - the same package (`standalone.tar`) is the same build (YE-139);
+ * - another line is older or newer by its line, as the key would order it;
+ * - in the same line, a release whose `sequence` (its publish time) is after the install record was created is
+ *   newer: the installed build was published before it was installed (or restored). Anything else can't be ordered,
+ *   and the app waits for a build published after it was installed, or for the next line.
+ */
+export function compareToInstalledNative(
+  installed: InstalledNativeBuild,
+  candidate: { key: ReleaseKey; artifactSHA256?: string | null },
+): number | null {
+  if (installed.key) return compareReleases(candidate.key, installed.key);
+  if (sameBuild(installed.artifactSHA256, candidate.artifactSHA256)) return 0;
+  const line = installed.version ? releaseLine(installed.version) : null;
+  if (!line) return null;
+  const order = compareLines(candidate.key.line, line);
+  if (order !== 0) return order;
+  const installedAt = installed.installedAt ? Date.parse(installed.installedAt) / 1000 : NaN;
+  return Number.isFinite(installedAt) && candidate.key.sequence > installedAt ? 1 : null;
+}
+
 /**
  * Whether a native app's channel release is the build it runs (YE-139): the same line and sequence as its recorded
  * release, or, without one, the same package. The update then has nothing to do and the installed name stays.
  */
-export function isInstalledNativeBuild(
-  installed: { key?: ReleaseKey | null; artifactSHA256?: readonly string[] | null },
-  candidate: { key: ReleaseKey; artifactSHA256?: string | null },
-): boolean {
-  return installed.key ? compareReleases(candidate.key, installed.key) === 0 : sameBuild(installed.artifactSHA256, candidate.artifactSHA256);
+export function isInstalledNativeBuild(installed: InstalledNativeBuild, candidate: { key: ReleaseKey; artifactSHA256?: string | null }): boolean {
+  return compareToInstalledNative(installed, candidate) === 0;
 }
 
 /**
@@ -199,6 +234,8 @@ export function projectUpdateAvailability(input: {
   installedKey?: ReleaseKey | null;
   /** SHA-256 of each installed app package (install.json `nativeArtifacts`), for an install without a recorded release. */
   installedArtifactSHA256?: readonly string[] | null;
+  /** When the install record was created, for an install without a recorded release (see compareToInstalledNative). */
+  installedAt?: string | null;
   catalogVersion: string | null;
   candidate?: UpdateCandidate | null;
 }): UpdateAvailability {
@@ -210,17 +247,13 @@ export function projectUpdateAvailability(input: {
     try {
       if (!candidate) {
         updateAvailable = !installedVersion || isNewer(version, installedVersion);
-      } else if (!input.installedKey) {
-        // No recorded release (an older install, or an app restored before 0.6.15): the build decides when it is
-        // known. The same package as the installed one is the same build under whatever name. Another package can't
-        // be ordered without a release key, so it is offered as before (the update itself still refuses an older
-        // build by the product's floor), as is any release when the packages aren't known; never the release the
-        // app already shows (one name is one release on a channel).
-        updateAvailable = !sameBuild(input.installedArtifactSHA256, candidate.artifactSHA256)
-          && version !== installedVersion;
       } else if (candidate.key) {
-        // Only a newer build is an update; the same build under another name is not (YE-139).
-        updateAvailable = compareReleases(candidate.key, input.installedKey) > 0;
+        // Only a newer build is an update: not the same build under another name (YE-139), not an older one, and not
+        // one this box can't order against an install without a recorded release (YE-141).
+        updateAvailable = compareToInstalledNative({
+          key: input.installedKey, artifactSHA256: input.installedArtifactSHA256, version: installedVersion,
+          installedAt: input.installedAt,
+        }, { key: candidate.key, artifactSHA256: candidate.artifactSHA256 }) === 1;
       }
     } catch {
       updateAvailable = false;

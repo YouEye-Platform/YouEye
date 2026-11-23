@@ -13,13 +13,19 @@ import {
   SIGN_IN_ADDRESS_ATTEMPTS,
   SIGN_IN_USERNAME_ATTEMPTS,
   SIGN_IN_WINDOW_SECONDS,
-  signInClientAddress,
+  signInNotCounted,
   signInSucceeded,
+  type SignInScope,
 } from '../src/lib/identity/sign-in-limit';
 
 /** One sign-in as the route does it: `correct` stands for the password check. */
-function signIn(username: string, address: string | null, correct = false): 'refused' | 'failed' | 'signed-in' {
-  const attempt = beginSignInAttempt(username, address);
+function signIn(
+  username: string,
+  address: string | null,
+  correct = false,
+  scope: SignInScope = 'id-login',
+): 'refused' | 'failed' | 'signed-in' {
+  const attempt = beginSignInAttempt(username, address, scope);
   if (!attempt.allowed) return 'refused';
   if (!correct) return 'failed';
   signInSucceeded(attempt);
@@ -75,18 +81,41 @@ test('one address is stopped after 30 failures across usernames; other addresses
 });
 
 test('loopback and unknown are not client addresses, so no address limit locks everyone out', () => {
-  const headers = (values: Record<string, string>) => new Headers(values);
-  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '192.168.1.50' })), '192.168.1.50');
-  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '192.168.1.50, 10.45.18.13' })), '192.168.1.50');
-  assert.equal(signInClientAddress(headers({ 'x-real-ip': '192.168.1.51' })), '192.168.1.51');
-  assert.equal(signInClientAddress(headers({ 'x-forwarded-for': '::ffff:192.168.1.52' })), '192.168.1.52');
-  for (const loopback of ['127.0.0.1', '127.0.0.53', '::1', '::ffff:127.0.0.1', 'unknown']) {
-    assert.equal(signInClientAddress(headers({ 'x-forwarded-for': loopback })), null, loopback);
-  }
-  assert.equal(signInClientAddress(headers({})), null);
-
   for (let i = 0; i < 100; i++) assert.equal(signIn(`user${i}`, null), 'failed');
   assert.equal(signIn('owner', null, true), 'signed-in');
+});
+
+test('each scope counts on its own (YE-136): YouEye ID, the Control Panel login, the claim', () => {
+  for (let i = 0; i < 10; i++) signIn('owner', '192.168.1.40', false, 'cp-login');
+  assert.equal(signIn('owner', '192.168.1.41', true, 'cp-login'), 'refused');
+  assert.equal(signIn('owner', '192.168.1.41', true, 'id-login'), 'signed-in');
+  assert.equal(signIn('owner', '192.168.1.41', true, 'appliance-claim'), 'signed-in');
+});
+
+test('remaining is the smaller of the username\'s and the address\'s; settling twice refunds once', () => {
+  for (let i = 0; i < 25; i++) signIn(`user${i}`, '192.168.1.70');
+  assert.equal(beginSignInAttempt('fresh', '192.168.1.70').remaining, 4, 'the address has 4 left after this one');
+  assert.equal(beginSignInAttempt('fresh2', null).remaining, 9);
+  const attempt = beginSignInAttempt('owner', '192.168.1.71');
+  signInSucceeded(attempt);
+  signInNotCounted(attempt);
+  signInSucceeded(attempt);
+  assert.equal(beginSignInAttempt('other', '192.168.1.71').remaining, 9, 'the address got exactly one attempt back');
+});
+
+test('a form error counts against nothing; a refused attempt is not refunded', () => {
+  for (let i = 0; i < 50; i++) {
+    const attempt = beginSignInAttempt('owner', '192.168.1.60', 'appliance-claim');
+    assert.equal(attempt.allowed, true);
+    signInNotCounted(attempt);
+  }
+  assert.equal(beginSignInAttempt('owner', '192.168.1.60', 'appliance-claim').remaining, 9);
+  for (let i = 0; i < 9; i++) signIn('owner', '192.168.1.60', false, 'appliance-claim');
+  const refused = beginSignInAttempt('owner', '192.168.1.60', 'appliance-claim');
+  assert.equal(refused.allowed, false);
+  signInNotCounted(refused);
+  signInSucceeded(refused);
+  assert.equal(signIn('owner', '192.168.1.61', true, 'appliance-claim'), 'refused', 'nothing a refusal does unlocks it');
 });
 
 test('unknown and real usernames are limited the same way, with the same message', () => {
@@ -94,7 +123,7 @@ test('unknown and real usernames are limited the same way, with the same message
   assert.equal(signIn('no-such-user', '192.168.1.31'), 'refused');
   const root = process.env.CONTROL_PANEL_ROOT ?? process.cwd();
   const route = readFileSync(join(root, 'src/app/identity/login/route.ts'), 'utf8');
-  assert.match(route, /beginSignInAttempt\(username, signInClientAddress\(request\.headers\)\)/);
+  assert.match(route, /beginSignInAttempt\(username, await requestClientAddress\(request\.headers\)\)/);
   assert.match(route, /if \(!attempt\.allowed\) \{\n\s+return html\(returnTo, 'Too many sign-in attempts\. Try again later\.'\);/);
   assert.match(route, /if \(!user\) \{\n\s+return html\(returnTo, 'Invalid username or password\.'\);\n\s+\}\n\s+signInSucceeded\(attempt\);/);
   assert.doesNotMatch(route, /id-login:/, 'the old per-address-and-username key is gone');

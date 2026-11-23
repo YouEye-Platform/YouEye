@@ -122,6 +122,12 @@ certificate, Names) happen under it. A platform backup takes that lock once per 
 update can run between two archives instead of waiting for the whole set); for the whole set, and a restore for its
 whole run, the Control Panel holds its backup operation lock `/var/lib/youeye/backups/.operation.flock`.
 
+A restart asked for while app work runs is made when that work ends: the restart setup asks for lands about 1 s after
+an app install that was started right after setup ("restarting the Control Panel after 1m12s of app or platform
+work"), and an ordinary install asks for none. The restart closes the Control Panel's port for about 0.3 s; since
+0.6.18 Caddy rides that out instead of answering 502 (YE-138, `docs/architecture.md`, "Control Panel restarts behind
+Caddy").
+
 A Spine archive step (`/api/backup/run`, `/api/backup/restore`) arrives in the middle of such an operation. A System
 update asked for meanwhile holds the admission gate exclusively for up to 60 s while it waits for the lifecycle lock
 (which the restore holds), then gives up without a reservation; a restart attempt holds the gate for a moment too.

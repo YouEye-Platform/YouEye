@@ -35,6 +35,7 @@ import { isUsableIPv4 } from '@/lib/incus/ipv4';
 import { containerExists } from '@/lib/infrastructure/oci-deployer';
 import {
   applyClientAddressListenerWrappers,
+  applyControlPanelRetry,
   applySetupHttpServer,
   canonicalJSON,
   clientAddressListenerWrappers,
@@ -227,6 +228,8 @@ export async function setConfig(config: CaddyConfig): Promise<void> {
   // config from the API included, can leave a server the proxy devices may send headers to without the wrappers.
   // On the caller's object too, so a caller that compares what Caddy reads back sees what was written.
   applyClientAddressListenerWrappers(config);
+  // Every route to the Control Panel's container rides out its restarts instead of answering 502 (`servers.ts`).
+  applyControlPanelRetry(config, await currentControlPanelDials());
   const prepared = structuredClone(config);
   prepared.admin = { ...prepared.admin, listen: await caddyAdminAddress(), enforce_origin: false };
   delete prepared.admin.origins;
@@ -315,6 +318,25 @@ export async function resolveCaddyUpstream(upstream: string): Promise<string> {
 
 export async function resolveCaddyUpstreamDial(upstream: string, port: number): Promise<string> {
   return `${await resolveCaddyUpstream(upstream)}:${port}`;
+}
+
+/**
+ * The dials that reach the Control Panel's container: the Control Panel (:3000) and YouEye ID (:3001), by its IPv4
+ * address (`controlIP`, when known) and by every name older configs used for it.
+ */
+export function controlPanelDials(controlIP: string | null): Set<string> {
+  const hosts = ['youeye-control', `youeye-control.${CONTAINER_DOMAIN}`, 'youeye-control.incus'];
+  if (controlIP) hosts.push(controlIP);
+  return new Set(hosts.flatMap((host) => [`${host}:3000`, `${host}:3001`]));
+}
+
+/**
+ * `controlPanelDials` with the Control Panel's static address (its incusbr0 subnet is read once and cached, the same
+ * read the admin address needs). When Incus cannot be read, the names only: a route that dials the address then keeps
+ * what it has until the next write or start.
+ */
+export async function currentControlPanelDials(): Promise<Set<string>> {
+  return controlPanelDials(await getSystemStaticIP('youeye-control').catch(() => null));
 }
 
 function rewriteDial(value: unknown, replacements: Map<string, string>): number {
@@ -1743,6 +1765,7 @@ export async function reconcileManagedRoutes(
     configureControlSettingsRoutes(candidate, domain, dials.get('youeye-control:3000')!);
     if (pointer) configurePointerInferenceRoutes(candidate, domain, dials.get('youeye-pointer:4002')!);
     rewriteDial(candidate, replacements);
+    applyControlPanelRetry(candidate, controlPanelDials(dials.get('youeye-control:3000')!.split(':')[0]));
     // This path writes with setConfigExact, so it adds the PROXY protocol wrappers itself (`servers.ts`).
     applyClientAddressListenerWrappers(candidate);
     if (canonicalConfig(await dependencies.read()) !== canonicalConfig(before)) {

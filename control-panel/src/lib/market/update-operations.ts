@@ -64,7 +64,16 @@ export async function reconcileAppUpdateOperations(): Promise<void> {
   }
   // A receipt with no app in its name could be any app's: nothing can be recovered safely (as before 0.6.9).
   if (damaged.some(d => !d.appId)) throw new Error('An app update receipt that names no app is damaged');
-  await resolveIssue('market.update-journal.damaged');
+  // Closing an earlier alarm is not part of reading the journal. The health registry lives in PostgreSQL, which a
+  // fresh box gets only during its first deploy (the Control Panel starts before it): this start then goes on, and an
+  // alarm that stays open keeps refusing app updates, which is the safe side (YE-42). A damaged receipt above is still
+  // recorded or fails the start.
+  try {
+    await resolveIssue('market.update-journal.damaged');
+  } catch (error) {
+    console.warn(`[app-updates] the health registry can't be read yet; the damaged-receipt alarm is closed at a later start: ${
+      error instanceof Error ? error.message : String(error)}`);
+  }
   const blocked = new Set(damaged.map(d => d.appId));
   const records = scanned.filter(r => !blocked.has(r.appId));
   for (const record of records.filter(r => !r.cleanupComplete)) {

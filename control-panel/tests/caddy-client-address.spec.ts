@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { addRoute, ensureClientAddressListenerWrappers, generateInitialConfig, reconcileManagedRoutes, setConfig } from '../src/lib/caddy/client';
-import { controlPanelCaddyfile } from '../src/lib/caddy/caddyfile';
+import { caddyfileReadsClientAddresses, controlPanelCaddyfile, ensureContainerCaddyfile, type ContainerCaddyfileIO } from '../src/lib/caddy/caddyfile';
 import {
   caddyProxyDevicesForPort,
   ensureClientAddresses,
@@ -147,6 +147,80 @@ test('the deploy Caddyfile puts the same wrappers on every server', () => {
   assert.match(caddyfile, /\n {4}servers \{\n {8}listener_wrappers \{\n {12}proxy_protocol \{\n {16}allow 127\.0\.0\.1\/32\n {12}\}\n {12}tls\n {8}\}\n {4}\}\n/);
   // A global option: before the first site block.
   assert.ok(caddyfile.indexOf('servers {') < caddyfile.indexOf(':443 {'));
+});
+
+/** The Caddyfile a deploy before 0.6.16 wrote (control-panel/src/lib/caddy/caddyfile.ts before 5631827c). */
+const caddyfileBefore0616 = (adminAddress: string, controlIP: string) => [
+  '{', `    admin ${adminAddress} {`, `        origins ${adminAddress}`, '    }', '    auto_https disable_redirects',
+  '    pki {', '        ca local {', '            intermediate_lifetime 30d', '        }', '    }',
+  '    on_demand_tls {', `        permission http http://${controlIP}:3000/api/setup/config`, '    }', '}', '',
+  ':443 {', '    tls {', '        on_demand', '        issuer internal {', '            lifetime 7d', '        }', '    }',
+  `    reverse_proxy ${controlIP}:3000`, '}', '',
+].join('\n');
+
+test('a Caddyfile reads client addresses only with proxy_protocol from the devices\' source before tls (YE-140)', () => {
+  assert.equal(caddyfileReadsClientAddresses(controlPanelCaddyfile('10.45.18.13:2019', '10.45.18.16')), true);
+  assert.equal(caddyfileReadsClientAddresses(caddyfileBefore0616('10.45.18.13:2019', '10.45.18.16')), false);
+  // The image's stock Caddyfile.
+  assert.equal(caddyfileReadsClientAddresses(':80 {\n\troot * /usr/share/caddy\n\tfile_server\n}\n'), false);
+  // Another layout of the same option (tabs, one line, more allowed sources) still counts.
+  assert.equal(caddyfileReadsClientAddresses('{\n\tservers {\n\t\tlistener_wrappers {\n\t\t\tproxy_protocol {\n\t\t\t\tallow 10.0.0.0/8 127.0.0.1/32\n\t\t\t\ttimeout 2s\n\t\t\t}\n\t\t\ttls\n\t\t}\n\t}\n}\n'), true);
+  // Not from the devices' source, without tls after it, or tls first: none reads the devices' headers before TLS.
+  assert.equal(caddyfileReadsClientAddresses('{\n servers {\n  listener_wrappers {\n   proxy_protocol {\n    allow 10.0.0.0/8\n   }\n   tls\n  }\n }\n}\n'), false);
+  assert.equal(caddyfileReadsClientAddresses('{\n servers {\n  listener_wrappers {\n   proxy_protocol {\n    allow 127.0.0.1/32\n   }\n  }\n }\n}\n'), false);
+  assert.equal(caddyfileReadsClientAddresses('{\n servers {\n  listener_wrappers {\n   tls\n   proxy_protocol {\n    allow 127.0.0.1/32\n   }\n  }\n }\n}\n'), false);
+  assert.equal(caddyfileReadsClientAddresses('{\n servers {\n  listener_wrappers {\n   proxy_protocol {\n    allow 127.0.0.1/320\n   }\n   tls\n  }\n }\n}\n'), false);
+});
+
+function containerCaddyfile(state: { exists?: boolean; file: string | null; controlIP?: string | null; writeFails?: boolean }) {
+  const writes: string[] = [];
+  const io: ContainerCaddyfileIO = {
+    exists: async () => state.exists ?? true,
+    read: async () => state.file,
+    addresses: async () => ({ adminAddress: '10.45.18.13:2019', controlIP: state.controlIP === undefined ? '10.45.18.16' : state.controlIP }),
+    write: async (caddyfile) => {
+      if (state.writeFails) throw new Error('Writing the Caddyfile failed (exit 1): Error: adapting config');
+      writes.push(caddyfile); state.file = caddyfile;
+    },
+  };
+  return { io, writes, state };
+}
+
+test('every Control Panel start gives a Caddyfile without the wrappers the deploy\'s Caddyfile, once (YE-140)', async () => {
+  // A box deployed before 0.6.16: its first Caddyfile is replaced with what a deploy writes now.
+  const old = containerCaddyfile({ file: caddyfileBefore0616('10.45.18.13:2019', '10.45.18.16') });
+  assert.equal(await ensureContainerCaddyfile(old.io), true);
+  assert.deepEqual(old.writes, [controlPanelCaddyfile('10.45.18.13:2019', '10.45.18.16')]);
+  assert.equal(caddyfileReadsClientAddresses(old.state.file!), true);
+  assert.equal(await ensureContainerCaddyfile(old.io), false, 'idempotent: the next start writes nothing');
+  assert.equal(old.writes.length, 1);
+  // A Caddyfile with the wrappers (deployed since 0.6.16) is left alone, whatever else it says.
+  const current = containerCaddyfile({ file: controlPanelCaddyfile('10.45.18.13:2019', '10.45.18.99') });
+  assert.equal(await ensureContainerCaddyfile(current.io), false);
+  assert.deepEqual(current.writes, []);
+  // No Caddyfile at all: written.
+  const missing = containerCaddyfile({ file: null });
+  assert.equal(await ensureContainerCaddyfile(missing.io), true);
+  assert.equal(missing.writes.length, 1);
+  // Before the first deploy there is no youeye-caddy: nothing is read or written.
+  const none = containerCaddyfile({ exists: false, file: null });
+  none.io.read = async () => { throw new Error('read before deploy'); };
+  assert.equal(await ensureContainerCaddyfile(none.io), false);
+  // Without the Control Panel's static address nothing is written (the deploy's name fallback may not resolve).
+  const noAddress = containerCaddyfile({ file: caddyfileBefore0616('10.45.18.13:2019', '10.45.18.16'), controlIP: null });
+  await assert.rejects(ensureContainerCaddyfile(noAddress.io), /no static address/);
+  assert.deepEqual(noAddress.writes, []);
+  // A write Caddy refuses (caddy adapt) keeps the old file and reports it.
+  const refused = containerCaddyfile({ file: caddyfileBefore0616('10.45.18.13:2019', '10.45.18.16'), writeFails: true });
+  await assert.rejects(ensureContainerCaddyfile(refused.io), /adapting config/);
+  assert.equal(refused.state.file, caddyfileBefore0616('10.45.18.13:2019', '10.45.18.16'));
+});
+
+test('the container Caddyfile is checked by Caddy before it replaces the old one, and Caddy is not reloaded', () => {
+  const source = readFileSync(join(process.env.CONTROL_PANEL_ROOT ?? process.cwd(), 'src/lib/caddy/caddyfile.ts'), 'utf8');
+  const write = source.slice(source.indexOf('write: async (caddyfile)'), source.indexOf('\n  },', source.indexOf('write: async (caddyfile)')));
+  assert.match(write, /base64 -d > \$\{next\} && caddy adapt --config \$\{next\} --adapter caddyfile > \/dev\/null `\s*\+ `&& mv -f \$\{next\} \$\{CONTAINER_CADDYFILE\} \|\| \{ rm -f \$\{next\}; exit 1; \}/);
+  assert.doesNotMatch(source.slice(source.indexOf('const runtimeIO')), /caddy reload/);
 });
 
 test('applyClientAddressListenerWrappers covers :80 and :443 only, keeps other wrappers where they were, and is idempotent', () => {
@@ -318,6 +392,8 @@ test('every Control Panel start, the infrastructure reconcile and the health mon
   const root = process.env.CONTROL_PANEL_ROOT ?? process.cwd();
   const startup = readFileSync(join(root, 'src/lib/incus/startup-reconciliation.ts'), 'utf8');
   assert.match(startup, /await \(await import\('@\/lib\/caddy\/client-address'\)\)\.ensureClientAddresses\(\)\n\s+\.catch/);
+  // The container Caddyfile at every start too (YE-140); its failure is only logged.
+  assert.match(startup, /await \(await import\('@\/lib\/caddy\/caddyfile'\)\)\.ensureContainerCaddyfile\(\)\n\s+\.then\([^\n]*\)\n\s+\.catch\(\(error: unknown\) => console\.warn/);
   assert.ok(startup.indexOf('ensureClientAddresses()') < startup.indexOf('reconcileManagedRoutes(raw.domain)')
     && startup.indexOf('reconcileManagedRoutes(raw.domain)') < startup.indexOf('if (clientAddressFailure) throw'),
   'the managed routes are repaired before a client address failure is thrown');

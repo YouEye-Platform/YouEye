@@ -76,8 +76,8 @@ export async function register() {
     try {
       const { reconcileAppUpdateOperations } = await import("@/lib/market/update-operations");
       await reconcileAppUpdateOperations();
-    } catch {
-      console.error("[instrumentation] app-update journals could not be inspected; platform reconciliation remains stopped");
+    } catch (error) {
+      console.error("[instrumentation] app-update journals could not be inspected; platform reconciliation remains stopped:", error);
       return;
     }
   

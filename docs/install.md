@@ -22,9 +22,13 @@ page. The owner then claims the box and runs the setup wizard in a browser.
 Run as root in the Proxmox host shell. `sudo` is not needed.
 
 ```sh
-curl -fsSL https://releases.youeye.me/install.sh | sh                        # stable
-curl -fsSL https://releases.youeye.me/install.sh | sh -s -- --channel beta   # beta
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh                    # stable
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh --channel beta     # beta
 ```
+
+Download first, then run: with `curl … | sh`, a `curl` that cannot reach the host (a typo, no DNS, offline) gives
+`sh` an empty script, which ends with exit 0 and nothing done. `curl -fsSLo` fails with its own exit code (6 for a
+host it cannot resolve, 22 for an HTTP error) and `&&` never runs `sh`.
 
 `install.sh` options (everything else is passed to the installer):
 
@@ -51,7 +55,7 @@ host. Nothing is signed: integrity comes from HTTPS and SHA-256 ([releases.md](r
 A development build installs from its own release, for example:
 
 ```sh
-curl -fsSL <repository>/releases/download/<tag>/install.sh | sh -s -- --repository <repository> --channel dev
+curl -fsSLo install.sh <repository>/releases/download/<tag>/install.sh && sh install.sh --repository <repository> --channel dev
 ```
 
 ### Proxmox mode
@@ -76,7 +80,7 @@ Installer flags for unattended runs (`installer/internal/installer/options.go`):
 Example unattended test install:
 
 ```sh
-curl -fsSL https://releases.youeye.me/install.sh | sh -s -- --channel beta --silent --yes \
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh --channel beta --silent --yes \
   --vmid 360 --target-storage local-lvm --iso-storage local --cpu 4 --memory 8192 --target-disk-gb 64
 ```
 
@@ -247,8 +251,10 @@ Open `https://<box IP>` (the certificate is self-signed at this point). On an IP
   creates that account in YouEye ID as the box owner (`POST /api/appliance/claim`).
 - Only one claim succeeds. Afterwards the page offers **resume**: the owner signs in again with that account to
   continue setup.
-- Claiming works only from an IP-address host, with a same-origin request and a CSRF cookie, and is rate-limited
-  (10 attempts per 5 minutes per client).
+- Claiming works only from an IP-address host, with a same-origin request and a CSRF cookie, and is limited like a
+  sign-in: 10 failures per username and 30 per client address in 15 minutes; a form error, a 409 (already
+  claimed, not yet claimed) or a server error counts against nothing
+  ([youeye-id.md](youeye-id.md)).
 
 ## Setup wizard
 

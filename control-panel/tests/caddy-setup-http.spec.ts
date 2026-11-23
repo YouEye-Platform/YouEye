@@ -172,7 +172,10 @@ test('the :80 setup server proxies the IP and youeye(-N).local to the Control Pa
     { header_regexp: { Host: { pattern: MDNS_HOST_PATTERN } } },
     { header_regexp: { Host: { pattern: IPV4_HOST_PATTERN } } },
   ]);
-  assert.deepEqual(local.handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: CONTROL_DIAL }] }]);
+  // A Control Panel restart is ridden out, not answered with 502 (YE-138).
+  assert.deepEqual(local.handle, [{
+    handler: 'reverse_proxy', upstreams: [{ dial: CONTROL_DIAL }], load_balancing: { try_duration: '10s', try_interval: '250ms' },
+  }]);
   assert.equal(local.terminal, true);
   assert.equal(redirect.match, undefined);
   assert.deepEqual(redirect.handle, [{

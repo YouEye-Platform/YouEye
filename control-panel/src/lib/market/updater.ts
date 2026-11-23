@@ -50,8 +50,8 @@ import { fetchDirectMarketAppUpdate, saveDirectMarketApp } from './direct-apps';
 import { readFrozenUpdateManifest } from './frozen-manifest';
 import { isMarketSourceConsentError, MarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID, setupFilesChanged } from './source';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
-import { acceptProductSequence, installedProductRelease, type VerifiedProductRelease } from '../releases/product-release';
-import { isInstalledNativeBuild } from './update-routing';
+import { acceptProductSequence, installedNativeKey, installedProductRelease, type VerifiedProductRelease } from '../releases/product-release';
+import { compareToInstalledNative } from './update-routing';
 import { updateIdenticalProductRelease } from './update-release-metadata';
 import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import type {
@@ -260,6 +260,8 @@ async function updateMarketAppLocked(
 
   let manifest: AppManifest;
   let productRelease: VerifiedProductRelease | null = null;
+  /** A native release against the installed build (compareToInstalledNative): 1 newer, 0 the same build. */
+  let buildOrder: number | null = null;
   let channelManifestReference: { path: string; repo: string; branch: string; digest: string } | null = null;
   if (routing?.kind === 'channel') {
     try {
@@ -268,6 +270,21 @@ async function updateMarketAppLocked(
       // No downgrade: an older channel head is rejected here (the box waits).
       acceptProductSequence(installMeta.productReleaseFloors, productRelease,
         installedProductRelease(installMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
+      // The same rule without a floor or a recorded release (installed or restored before 0.6.15, YE-141): only a
+      // build this box knows to be newer, or the installed one (up to date below), as projectUpdateAvailability offers.
+      buildOrder = compareToInstalledNative({
+        key: installedNativeKey(installMeta, appId), artifactSHA256: installMeta.nativeArtifacts?.map(a => a.sha256),
+        version: installedApp.installedVersion || installMeta.installedVersion, installedAt: installMeta.installedAt,
+      }, {
+        key: releaseKey(productRelease.release),
+        artifactSHA256: productRelease.build.assets.find(asset => asset.name === 'standalone.tar')?.sha256,
+      });
+      if (buildOrder === null || buildOrder < 0) {
+        const has = installedApp.installedVersion || installMeta.installedVersion || 'another build';
+        throw new Error(buildOrder === null
+          ? `The channel offers ${appId} ${productRelease.release.version}; this box has ${has}, installed without a recorded release, and can't tell that it is newer; waiting for a newer build`
+          : `The channel offers ${appId} ${productRelease.release.version}; this box has ${has}; waiting for the channel to catch up`);
+      }
       manifest = native.manifest;
       channelManifestReference = nativeManifestReference(productRelease, manifest);
     } catch (err) {
@@ -284,14 +301,9 @@ async function updateMarketAppLocked(
   if (productRelease) {
     // Only a newer build is an update (YE-139, as projectUpdateAvailability offers it): the installed build under
     // another release name (the box changed channel, or the build was promoted) is up to date and keeps its name.
-    // acceptProductSequence above already refused an older build and other contents under the same key. Without a
-    // recorded release, the same package is the same build.
-    const recorded = installedProductRelease(installMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId);
-    const installedBuild = isInstalledNativeBuild(
-      { key: recorded ? releaseKey(recorded.release) : null, artifactSHA256: installMeta.nativeArtifacts?.map(a => a.sha256) },
-      { key: releaseKey(productRelease.release), artifactSHA256: productRelease.build.assets.find(asset => asset.name === 'standalone.tar')?.sha256 },
-    );
-    if (installedBuild || installMeta.nativeArtifacts?.[0]?.productReleaseSHA256 === productRelease.manifestSHA256) {
+    // An older build, or other contents under the same key, were refused above. Without a recorded release, the same
+    // package is the same build.
+    if (buildOrder === 0 || installMeta.nativeArtifacts?.[0]?.productReleaseSHA256 === productRelease.manifestSHA256) {
       emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${installedVersion})`);
       return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
     }

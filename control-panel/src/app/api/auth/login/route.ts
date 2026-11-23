@@ -12,45 +12,17 @@ import {
   createSession,
   setSessionCookies,
   generateCSRFToken,
-  checkRateLimit,
-  resetRateLimit,
 } from '@/lib/auth';
-
-// Rate limiting configuration
-const LOGIN_MAX_ATTEMPTS = 20;
-const LOGIN_WINDOW_SECONDS = 300; // 5 minutes
+import { requestClientAddress } from '@/lib/auth/client-address';
+import { beginSignInAttempt, signInSucceeded } from '@/lib/identity/sign-in-limit';
 
 export async function POST(request: NextRequest) {
   try {
-    // Get client IP for rate limiting
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
-      || request.headers.get('x-real-ip') 
-      || 'unknown';
-    
-    // Check rate limit
-    const rateLimitKey = `login:${ip}`;
-    const rateLimit = checkRateLimit(rateLimitKey, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS);
-    
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { 
-          error: 'Too many login attempts. Please try again later.',
-          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
-        },
-        { 
-          status: 429,
-          headers: {
-            'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
-          },
-        }
-      );
-    }
-
     // Parse request body
     const body = await request.json();
     const { username, password } = body;
 
-    // Validate input
+    // Validate input (a form error is no guess and counts against nothing)
     if (!username || !password) {
       return NextResponse.json(
         { error: 'Username and password are required' },
@@ -65,17 +37,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Failures per username from any address, and per client address (the TCP peer; Caddy's X-Forwarded-For only
+    // from Caddy). Loopback and unknown are no client address, so nobody can lock everyone out (YE-136).
+    const ip = await requestClientAddress(request.headers);
+    const attempt = beginSignInAttempt(username, ip, 'cp-login');
+
+    if (!attempt.allowed) {
+      const retryAfter = Math.max(1, Math.ceil((attempt.retryAt - Date.now()) / 1000));
+      return NextResponse.json(
+        {
+          error: 'Too many login attempts. Please try again later.',
+          retryAfter,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(retryAfter),
+          },
+        }
+      );
+    }
+
     // Authenticate with PAM
     const authResult = await authenticatePAM(username, password);
 
     if (!authResult.success) {
       // Log failed attempt (in production, send to audit log)
-      console.warn(`Failed login attempt for user "${username}" from IP ${ip}`);
-      
+      console.warn(`Failed login attempt for user "${username}" from ${ip ?? 'a local or unknown address'}`);
+
       return NextResponse.json(
-        { 
+        {
           error: 'Invalid credentials',
-          remaining: rateLimit.remaining,
+          remaining: attempt.remaining,
         },
         { status: 401 }
       );
@@ -85,8 +78,8 @@ export async function POST(request: NextRequest) {
     const groups = authResult.groups || [];
     const admin = await isAdmin(username, groups);
 
-    // Reset rate limit on successful login
-    resetRateLimit(rateLimitKey);
+    // The username starts over, and the address gets its attempt back
+    signInSucceeded(attempt);
 
     // Create session token
     const sessionToken = await createSession(username, admin, groups, 'pam');
@@ -96,7 +89,7 @@ export async function POST(request: NextRequest) {
     await setSessionCookies(sessionToken, csrfToken, { request, maxAge: 86400 });
 
     // Log successful login
-    console.log(`Successful login for user "${username}" from IP ${ip}`);
+    console.log(`Successful login for user "${username}" from ${ip ?? 'a local or unknown address'}`);
 
     return NextResponse.json({
       success: true,

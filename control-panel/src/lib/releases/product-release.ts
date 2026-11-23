@@ -165,6 +165,21 @@ export function validProductFloor(floor: unknown): floor is ProductReleaseFloor 
   if (f.build !== undefined && (typeof f.build !== 'string' || !parseReleaseVersion(f.build))) return false;
   return keyed || f.build !== undefined;
 }
+/**
+ * Line and sequence of an installed native app: its recorded release, else its product floor's key (the last release
+ * the box accepted, never below the installed build); null when it has neither (an install or restore before 0.6.15,
+ * or a floor of the old shape).
+ */
+export function installedNativeKey(
+  record: {nativeArtifacts?: Array<{productRelease?: InstalledProductReceipt}>; productReleaseFloors?: ProductSequenceFloors} | null | undefined,
+  product: string,
+): ReleaseKey | null {
+  const installed = installedProductRelease(record?.nativeArtifacts?.find(a => a.productRelease)?.productRelease, product);
+  if (installed) return productReleaseKey(installed);
+  const floor = record?.productReleaseFloors?.[product];
+  return floor && validProductFloor(floor) && floor.line !== undefined && floor.sequence !== undefined
+    ? {line:floor.line,sequence:floor.sequence} : null;
+}
 /** The floor's key: recorded, or (an older floor) from the installed document it names; null when neither has one. */
 function floorKey(floor: ProductReleaseFloor, installed?: VerifiedProductRelease | null): ReleaseKey | null {
   if (floor.line !== undefined && floor.sequence !== undefined) return {line:floor.line,sequence:floor.sequence};

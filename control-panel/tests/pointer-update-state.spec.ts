@@ -32,13 +32,21 @@ test('Pointer updates are ordered by line and sequence, never by release name', 
   // Nothing on the channel; nothing installed yet; an install without a recorded release.
   assert.deepEqual(pointerUpdateState(installed, undefined), { appId: 'pointer', installedVersion: '0.6.1-dev.2', latestVersion: undefined, hasUpdate: false });
   assert.equal(pointerUpdateState(undefined, candidate('0.6.1-dev.1', 100)).hasUpdate, true);
-  assert.equal(pointerUpdateState({ version: '0.6.1-dev.9' }, candidate('0.6.1-dev.1', 100)).hasUpdate, true);
+  // An install without a recorded release is never offered a build it can't order (YE-141): dev.1 could be older.
+  assert.equal(pointerUpdateState({ version: '0.6.1-dev.9' }, candidate('0.6.1-dev.1', 100)).hasUpdate, false);
+  assert.equal(pointerUpdateState({ version: '0.6.1-dev.9' }, candidate('0.6.1-dev.1', 100)).behind, undefined);
+  // ... an older line is behind, a newer line is an update, and the same line published after the record was written is.
+  assert.equal(pointerUpdateState({ version: '0.6.2-dev.1' }, candidate('0.6.1', 100)).behind, true);
+  assert.equal(pointerUpdateState({ version: '0.6.0' }, candidate('0.6.1-dev.1', 100)).hasUpdate, true);
+  assert.equal(pointerUpdateState({ version: '0.6.1-dev.9', installedAt: new Date(150_000).toISOString() }, candidate('0.6.1-dev.1', 100)).hasUpdate, false);
+  assert.equal(pointerUpdateState({ version: '0.6.1-dev.9', installedAt: new Date(150_000).toISOString() }, candidate('0.6.1-dev.1', 200)).hasUpdate, true);
   // Without a recorded release the package decides when both are known: the same one is the same build.
   const pkg = 'c'.repeat(64);
   const samePackage = pointerUpdateState({ version: '0.6.1', artifactSHA256: pkg }, { ...candidate('0.6.1-alpha.1', 100), artifactSHA256: pkg });
   assert.equal(samePackage.hasUpdate, false);
   assert.equal(samePackage.behind, undefined);
-  assert.equal(pointerUpdateState({ version: '0.6.1', artifactSHA256: pkg }, { ...candidate('0.6.1-alpha.1', 100), artifactSHA256: 'd'.repeat(64) }).hasUpdate, true);
+  // Another package in the same line with nothing that orders it is not offered (YE-141).
+  assert.equal(pointerUpdateState({ version: '0.6.1', artifactSHA256: pkg }, { ...candidate('0.6.1-alpha.1', 100), artifactSHA256: 'd'.repeat(64) }).hasUpdate, false);
 });
 
 test('a Pointer check whose channel cannot be read keeps showing the installed version', async () => {

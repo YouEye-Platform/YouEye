@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { configureFreshUIDatabase, requiresFreshUIDatabase, type FreshUIIdentity, type FreshUIDatabaseOperations } from '../src/lib/infrastructure/fresh-ui-database';
+import { configureFreshUIDatabase, freshUIIdentity, requiresFreshUIDatabase, type FreshUIIdentity, type FreshUIDatabaseOperations } from '../src/lib/infrastructure/fresh-ui-database';
 
 const manifest = 'a'.repeat(64);
 const identity: FreshUIIdentity = { schema: 'youeye.core-component.v1', role: 'ui', requestId: `install-${manifest}`, manifestSHA256: manifest, artifactSHA256: 'b'.repeat(64) };
@@ -85,4 +85,32 @@ test('changed marker, unverified environment and invalid bindings never start UI
   const bad = fixture(); bad.ops.credentials = async () => ({ host: 'host\nBAD=1', port: '5432', user: 'youeye', password: 'private' });
   await assert.rejects(configureFreshUIDatabase(identity, bad.ops), /binding is invalid/);
   assert.equal(bad.state.created + bad.state.written + bad.state.started, 0);
+});
+
+test('the fresh UI identity comes from the selection, also after a promotion or a reused Control Panel (YE-42)', async () => {
+  const installed = 'c'.repeat(64), promoted = 'd'.repeat(64), cpArtifact = 'e'.repeat(64), uiArtifact = 'f'.repeat(64);
+  // The CP marker of the document the box was installed from (an earlier request), before setup.
+  const cp = { schema: 'youeye.core-component.v1', role: 'cp', requestId: `install-${installed}`, manifestSHA256: installed, artifactSHA256: cpArtifact };
+  assert.equal(requiresFreshUIDatabase(cp, false), true);
+  // The selection is the promoted document of the same build: the identity is the one the redeploy writes.
+  const fresh = freshUIIdentity(cp, { manifestSHA256: promoted, cpArtifactSHA256: cpArtifact, uiArtifactSHA256: uiArtifact });
+  assert.deepEqual(fresh, { schema: 'youeye.core-component.v1', role: 'ui', requestId: `install-${promoted}`, manifestSHA256: promoted, artifactSHA256: uiArtifact });
+  // It binds the database (configureFreshUIDatabase accepts exactly this shape).
+  const { state, ops } = fixture();
+  state.owner = 'youeye';
+  await configureFreshUIDatabase(fresh, ops);
+  assert.equal(state.started, 1);
+  // The unchanged document: the same identity as before the change.
+  assert.equal(freshUIIdentity(cp, { manifestSHA256: installed, cpArtifactSHA256: cpArtifact, uiArtifactSHA256: uiArtifact }).requestId, `install-${installed}`);
+  // A selection whose Control Panel is not the one running is refused.
+  assert.throws(() => freshUIIdentity(cp, { manifestSHA256: promoted, cpArtifactSHA256: 'a'.repeat(64), uiArtifactSHA256: uiArtifact }),
+    /not the installed Control Panel's release/);
+});
+
+test('the deployer builds the fresh identity from the selection, not from the Control Panel marker', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const deployer = readFileSync(join(process.env.CONTROL_PANEL_ROOT ?? process.cwd(), 'src/lib/infrastructure/deployer.ts'), 'utf8');
+  assert.doesNotMatch(deployer, /Fresh UI selection differs from Control Panel/);
+  assert.match(deployer, /freshIdentity = freshUIIdentity\(component!, \{ manifestSHA256: selected\.manifestSHA256,\s+cpArtifactSHA256: selectedCoreRole\('cp'\)\.member\.artifact\.sha256, uiArtifactSHA256: selected\.member\.artifact\.sha256 \}\);/);
 });

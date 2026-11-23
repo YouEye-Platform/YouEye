@@ -52,3 +52,73 @@ export function controlPanelCaddyfile(adminAddress: string, controlIP: string): 
     '',
   ].join('\n');
 }
+
+/** The Caddyfile in the `youeye-caddy` container: what Caddy loads when it starts without a saved config. */
+export const CONTAINER_CADDYFILE = '/etc/caddy/Caddyfile';
+
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+/**
+ * Whether a Caddyfile puts the PROXY protocol listener wrapper (allowing the proxy devices' source) before `tls` on
+ * every server, as `controlPanelCaddyfile` does. A Caddyfile written by a deploy before 0.6.16 has none.
+ */
+export function caddyfileReadsClientAddresses(caddyfile: string): boolean {
+  return new RegExp('(^|\\s)servers\\s*\\{\\s*listener_wrappers\\s*\\{\\s*proxy_protocol\\s*\\{[^}]*\\ballow\\s[^}\\n]*'
+    + `${escaped(PROXY_DEVICE_SOURCE)}(\\s[^}]*)?\\}\\s*tls\\s*\\}`).test(caddyfile);
+}
+
+export interface ContainerCaddyfileIO {
+  /** Whether the `youeye-caddy` container exists (not before the first deploy). */
+  exists(): Promise<boolean>;
+  /** The container's Caddyfile, or null when it has none. */
+  read(): Promise<string | null>;
+  /** Caddy's admin address and the Control Panel's static address (null when it has none). */
+  addresses(): Promise<{ adminAddress: string; controlIP: string | null }>;
+  /** Replace the container's Caddyfile, checked by Caddy before it takes the place of the old one. */
+  write(caddyfile: string): Promise<void>;
+}
+
+const runtimeIO: ContainerCaddyfileIO = {
+  exists: async () => (await import('../infrastructure/oci-deployer')).containerExists('youeye-caddy'),
+  read: async () => {
+    const { execShell } = await import('../incus/server');
+    const result = await execShell('youeye-caddy', `[ -e ${CONTAINER_CADDYFILE} ] || exit 3; cat ${CONTAINER_CADDYFILE}`, { timeout: 15000 });
+    if (result.exitCode === 3) return null;
+    if (result.exitCode !== 0) throw new Error(`Reading the Caddyfile failed (exit ${result.exitCode}): ${result.stderr}`);
+    return result.stdout;
+  },
+  addresses: async () => {
+    const { caddyAdminAddress } = await import('./client');
+    const { getSystemStaticIP } = await import('../incus/static-ips');
+    return { adminAddress: await caddyAdminAddress(), controlIP: await getSystemStaticIP('youeye-control') };
+  },
+  write: async (caddyfile) => {
+    const { execShell } = await import('../incus/server');
+    const next = `${CONTAINER_CADDYFILE}.youeye-new`;
+    const b64 = Buffer.from(caddyfile).toString('base64');
+    const result = await execShell('youeye-caddy',
+      `echo '${b64}' | base64 -d > ${next} && caddy adapt --config ${next} --adapter caddyfile > /dev/null `
+      + `&& mv -f ${next} ${CONTAINER_CADDYFILE} || { rm -f ${next}; exit 1; }`, { timeout: 15000 });
+    if (result.exitCode !== 0) throw new Error(`Writing the Caddyfile failed (exit ${result.exitCode}): ${result.stderr}`);
+  },
+};
+
+/**
+ * At every Control Panel start (YE-140): the container's Caddyfile gets the PROXY protocol listener wrappers when it
+ * lacks them (a box deployed before 0.6.16; only a deploy wrote it). Caddy runs its saved config (`--resume`,
+ * `autosave.json`), which the Control Panel keeps with the wrappers; the Caddyfile is what Caddy loads when that is
+ * lost or unreadable, and without the wrappers :443 and :80 would not answer the proxy devices' PROXY headers until
+ * the health monitor's next check turned them off. The file is replaced with the deploy's Caddyfile
+ * (`controlPanelCaddyfile`), checked by `caddy adapt` first; the running Caddy is not reloaded (its config stays). A
+ * Control Panel without its static address writes nothing (the deploy's name fallback may not resolve in Caddy).
+ * Returns whether it wrote.
+ */
+export async function ensureContainerCaddyfile(io: ContainerCaddyfileIO = runtimeIO): Promise<boolean> {
+  if (!await io.exists()) return false;
+  const current = await io.read();
+  if (current !== null && caddyfileReadsClientAddresses(current)) return false;
+  const { adminAddress, controlIP } = await io.addresses();
+  if (!controlIP) throw new Error('The Control Panel has no static address; the Caddyfile was left as it is');
+  await io.write(controlPanelCaddyfile(adminAddress, controlIP));
+  return true;
+}

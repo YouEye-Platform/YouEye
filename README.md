@@ -30,7 +30,7 @@ Proxmox mode create and install the VM.
 ### Proxmox
 
 ```bash
-curl -fsSL https://releases.youeye.me/install.sh | sh
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh
 ```
 
 Run this command from the Proxmox host's root shell; `sudo` is not required.
@@ -214,9 +214,9 @@ Use the same public bootstrap and explicitly select a credential-free HTTPS
 release source. For example:
 
 ```bash
-curl -fsSL https://releases.youeye.me/install.sh | \
-  sudo sh -s -- --repository https://code.example.test/example/YouEye \
-    --channel development
+curl -fsSLo install.sh https://releases.youeye.me/install.sh && \
+  sh install.sh --repository https://code.example.test/example/YouEye \
+    --channel dev
 ```
 
 Quick mode uses six focused pages: VM, resources, storage/network, read-only

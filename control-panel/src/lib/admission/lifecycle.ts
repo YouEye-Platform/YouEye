@@ -1,7 +1,8 @@
 import { ensureAppAdmission, getAdmissionPolicy, reserveAppUserData, saveResourceOwnership } from './store';
 import { ensureIdentitySchema, identityCommand as command, identityRows as rows, identitySql as sql } from '@/lib/identity/store';
 import { listInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
-import { getConfig, setConfig, buildForwardAuthHandler, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
+import { getConfig, setConfig, buildForwardAuthHandler, currentControlPanelDials, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
+import { applyControlPanelRetry, canonicalJSON } from '@/lib/caddy/servers';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { reconcileAdmissionProjections } from './projection';
@@ -151,6 +152,7 @@ export async function reconcileInstalledAdmission() {
   const installed = await listInstalledApps();
   const config = await getConfig();
   const gate = await admissionForwardAuth();
+  const controlDials = await currentControlPanelDials();
   let changed = false;
   const bindings: Array<{ metadata: InstallMetadata; routes: Array<{ host: string; pathPrefix: string }> }> = [];
   for (const metadata of installed) {
@@ -192,7 +194,10 @@ export async function reconcileInstalledAdmission() {
           { handler: 'headers', request: { delete: ['X-YouEye-App', 'X-YouEye-User', ...ADMISSION_HEADERS] } },
           buildForwardAuthHandler(gate.upstreamDial, gate.uri, gate.copyHeaders), ...applicationHandlers,
         ];
-        if (JSON.stringify(existing) !== JSON.stringify(handlers)) {
+        // Compared as Caddy keeps them: keys sorted, and the forward-auth check to YouEye ID with the retry every
+        // write gives it (`setConfig`, YE-138). Compared as built, they never matched and every start rewrote Caddy.
+        applyControlPanelRetry(handlers, controlDials);
+        if (canonicalJSON(existing) !== canonicalJSON(handlers)) {
           route.handle = handlers;
           changed = true;
         }

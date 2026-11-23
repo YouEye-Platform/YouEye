@@ -4,6 +4,7 @@
  */
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const SWEEP_SIZE = 10_000;
 
 /**
  * Check rate limit for an IP/action combination
@@ -16,8 +17,8 @@ export function checkRateLimit(
   const now = Date.now();
   const entry = rateLimitStore.get(key);
 
-  // Clean up expired entries periodically
-  if (Math.random() < 0.01) {
+  // Clean up expired entries now and then, and always once the store is large (keys made of random usernames).
+  if (Math.random() < 0.01 || rateLimitStore.size >= SWEEP_SIZE) {
     for (const [k, v] of rateLimitStore) {
       if (v.resetAt < now) {
         rateLimitStore.delete(k);

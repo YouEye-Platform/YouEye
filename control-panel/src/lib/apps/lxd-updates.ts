@@ -11,7 +11,8 @@
  * Results are cached in memory with a configurable TTL.
  */
 
-import { compareReleases, releaseKey, type ReleaseKey } from '@/lib/version';
+import { releaseKey, type ReleaseKey } from '@/lib/version';
+import { compareToInstalledNative } from '@/lib/market/update-routing';
 import { describeReleaseError, readChannelIndex, resolveChannelEntry } from '@/lib/releases/channel-index';
 import { loadSelectedCore } from '@/lib/releases/core-release';
 import { getCoreProvenance } from '@/lib/updates/provenance';
@@ -75,7 +76,7 @@ async function check(appDef: AppDefinition): Promise<LxdUpdateResult> {
   const installed: PointerInstalled | undefined = provenance
     ? {
       version: provenance.version, key: provenance.key ?? undefined, manifestSHA256: provenance.manifest_sha256 ?? undefined,
-      artifactSHA256: provenance.artifact_sha256 ?? undefined,
+      artifactSHA256: provenance.artifact_sha256 ?? undefined, installedAt: provenance.updated_at || undefined,
     } : undefined;
   try {
     const entry = (await readChannelIndex()).index.products.pointer;
@@ -95,7 +96,7 @@ async function check(appDef: AppDefinition): Promise<LxdUpdateResult> {
   }
 }
 
-type PointerInstalled = { version: string; key?: ReleaseKey; manifestSHA256?: string; artifactSHA256?: string };
+type PointerInstalled = { version: string; key?: ReleaseKey; manifestSHA256?: string; artifactSHA256?: string; installedAt?: string };
 type PointerCandidate = { version: string; tag: string; key: ReleaseKey; artifactSHA256?: string };
 
 /**
@@ -105,20 +106,24 @@ type PointerCandidate = { version: string; tag: string; key: ReleaseKey; artifac
  * or the build was promoted) is none: Pointer keeps showing the release it
  * installed until a newer build arrives (owner, 2026-11-23, YE-139); it is
  * never behind either. An install without a recorded release (an older
- * provenance record) is decided by its package when both are known (the same
- * package is the same build), else it is offered the channel's release.
+ * provenance record) is ordered by what the box sees of its build, like a
+ * native app's (compareToInstalledNative: the same package, the line, a release
+ * published after the record was written); one it can't order is not offered
+ * (YE-141).
  */
 export function pointerUpdateState(installed: PointerInstalled | undefined, candidate: PointerCandidate | undefined): LxdUpdateResult {
   if (!candidate) return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false };
-  const samePackage = !!installed?.artifactSHA256 && installed.artifactSHA256 === candidate.artifactSHA256;
-  const order = installed?.key ? compareReleases(candidate.key, installed.key) : samePackage ? 0 : 1;
+  const order = installed ? compareToInstalledNative({
+    key: installed.key, artifactSHA256: installed.artifactSHA256 ? [installed.artifactSHA256] : null,
+    version: installed.version, installedAt: installed.installedAt,
+  }, candidate) : 1;
   return {
     appId: 'pointer',
     installedVersion: installed?.version,
     latestVersion: candidate.version,
     latestTag: candidate.tag,
-    hasUpdate: order > 0,
-    behind: order < 0 || undefined,
+    hasUpdate: order !== null && order > 0,
+    behind: order !== null && order < 0 || undefined,
   };
 }
 

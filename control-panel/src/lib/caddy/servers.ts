@@ -158,7 +158,11 @@ export function setupHttpServer(controlDial: string): HTTPServer {
         { header_regexp: { Host: { pattern: MDNS_HOST_PATTERN } } },
         { header_regexp: { Host: { pattern: IPV4_HOST_PATTERN } } },
       ],
-      handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: controlDial }] }],
+      handle: [{
+        handler: 'reverse_proxy',
+        upstreams: [{ dial: controlDial }],
+        load_balancing: { try_duration: CONTROL_PANEL_TRY_DURATION, try_interval: CONTROL_PANEL_TRY_INTERVAL },
+      }],
       terminal: true,
     },
     {
@@ -187,6 +191,51 @@ export function applySetupHttpServer(config: CaddyConfig, controlDial: string): 
   }
   all[SETUP_HTTP_SERVER] = setupHttpServer(controlDial);
   return canonicalJSON(all) !== before;
+}
+
+/**
+ * How Caddy proxies to the Control Panel's container (YE-138). A Control Panel restart (the one setup asks for to
+ * load its sign-in settings, a URL change, a restore, an update) leaves its port closed for a moment, about 0.3 s
+ * on a test box: Caddy answered every request in that moment with 502. With `try_duration` Caddy keeps dialling,
+ * every `try_interval`, for up to that long, and the request reaches the new process instead. Caddy retries a
+ * request it could not deliver (the dial failed: it never reached the Control Panel, whatever its method) and a GET
+ * whose connection broke (a GET in flight when the old process stopped is sent again to the new one). A POST that
+ * reached the old process is never sent again. When the Control Panel's container is really down a request now waits
+ * that long before its 502, and so does a request to an app with sign-in, whose forward-auth check goes to YouEye ID.
+ */
+export const CONTROL_PANEL_TRY_DURATION = '10s';
+export const CONTROL_PANEL_TRY_INTERVAL = '250ms';
+
+/**
+ * Give every `reverse_proxy` handler whose upstreams are all `controlDials` (the Control Panel's container: its
+ * :3000 and YouEye ID's :3001, by address or by name) the retry above, wherever it is in `config` (routes,
+ * subroutes, forward-auth responses). Other handlers and the handler's other load-balancing settings stay as they
+ * are. Returns whether anything changed. `setConfig` runs it on every write and the managed-route reconcile at every
+ * Control Panel start, so a box updated from a release without it converges then.
+ */
+export function applyControlPanelRetry(config: unknown, controlDials: ReadonlySet<string>): boolean {
+  let changed = false;
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const upstreams = record.upstreams;
+    if (record.handler === 'reverse_proxy' && Array.isArray(upstreams) && upstreams.length > 0
+      && upstreams.every((upstream) => typeof upstream?.dial === 'string' && controlDials.has(upstream.dial))) {
+      const current = record.load_balancing && typeof record.load_balancing === 'object'
+        ? record.load_balancing as Record<string, unknown> : {};
+      if (current.try_duration !== CONTROL_PANEL_TRY_DURATION || current.try_interval !== CONTROL_PANEL_TRY_INTERVAL) {
+        record.load_balancing = { ...current, try_duration: CONTROL_PANEL_TRY_DURATION, try_interval: CONTROL_PANEL_TRY_INTERVAL };
+        changed = true;
+      }
+    }
+    Object.values(record).forEach(visit);
+  };
+  visit(config);
+  return changed;
 }
 
 /** JSON with object keys sorted, as Caddy returns its config (Go encodes maps sorted). */

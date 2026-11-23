@@ -6,6 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/auth';
+import { requestClientAddress } from '@/lib/auth/client-address';
 import { isLocalSetupHost } from '@/lib/auth/mode';
 import { resetOwnerPassword } from '@/lib/console-access/owner-reset';
 import { setPassword } from '@/lib/identity/provider';
@@ -14,15 +15,11 @@ import { spineClient } from '@/lib/spine/client';
 
 export const dynamic = 'force-dynamic';
 
-// Like the sign-in route: attempts per client address and window.
+// Attempts per client address and window: the TCP peer, Caddy's X-Forwarded-For only from Caddy (YE-136). Loopback
+// and unknown are no client address and get no limit here, so nobody can lock the owner out; the per-code limit is
+// Spine's (10 wrong codes pause the code for 15 minutes, `consoleaccess/reset.go`).
 const MAX_ATTEMPTS = 10;
 const WINDOW_SECONDS = 15 * 60;
-
-function requestIP(request: NextRequest): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || request.headers.get('x-real-ip')
-    || 'unknown';
-}
 
 /** A browser form on this host; refuses cross-site posts. */
 function sameOrigin(request: NextRequest): boolean {
@@ -42,8 +39,9 @@ export async function POST(request: NextRequest) {
   if (!isLocalSetupHost(request.headers.get('host') || '') || !sameOrigin(request)) {
     return NextResponse.json({ error: 'The password could not be reset. Try again.', code: 'unavailable' }, { status: 403 });
   }
-  const limit = checkRateLimit(`owner-reset:${requestIP(request)}`, MAX_ATTEMPTS, WINDOW_SECONDS);
-  if (!limit.allowed) {
+  const address = await requestClientAddress(request.headers);
+  const limit = address ? checkRateLimit(`owner-reset:${address}`, MAX_ATTEMPTS, WINDOW_SECONDS) : null;
+  if (limit && !limit.allowed) {
     return NextResponse.json(
       { error: 'Too many attempts. Try again in a few minutes.', code: 'rate_limited' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((limit.resetAt - Date.now()) / 1000)) } },

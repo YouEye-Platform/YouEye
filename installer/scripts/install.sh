@@ -2,10 +2,13 @@
 # YouEye Installer bootstrap for Proxmox VE.
 #
 # Latest Stable release from the official repository:
-#   curl -fsSL https://releases.youeye.me/install.sh | sh
+#   curl -fsSLo install.sh https://releases.youeye.me/install.sh && sh install.sh
 # Latest dev release of another repository:
-#   curl -fsSL https://releases.youeye.me/install.sh |
-#     sh -s -- --repository https://code.example.test/example/YouEye --channel dev
+#   curl -fsSLo install.sh https://releases.youeye.me/install.sh &&
+#     sh install.sh --repository https://code.example.test/example/YouEye --channel dev
+#
+# Download, then run: piped into sh (`curl … | sh`), a download that fails
+# hands sh an empty script, which exits 0 having done nothing.
 #
 # The bootstrap reads the channel index of the repository (a small file, never
 # a release-listing API), downloads that release's core-release.json and checks

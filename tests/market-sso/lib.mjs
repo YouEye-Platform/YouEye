@@ -1,9 +1,12 @@
 // Shared helpers for the YouEye ID sign-in tests (used by apps.spec.ts and probe.mjs).
 // No passwords anywhere: every browser context starts from a saved YouEye ID session (.auth/<who>.json).
 import { execFileSync } from 'node:child_process';
+import { request as httpsRequest } from 'node:https';
 
 export const DOMAIN = (process.env.BOX_DOMAIN || (() => { throw new Error('Set BOX_DOMAIN to the test box domain'); })());
-export const ID_HOST = `id.${DOMAIN}`;
+// YouEye ID's host. A box chooses its identity subdomain at setup (`subdomains.identity`, often `id`, sometimes
+// `login`), so read it from the box: its sign-in redirect names it. ID_HOST overrides; `id.<domain>` is the fallback.
+export const ID_HOST = process.env.ID_HOST || discoverIdHost() || `id.${DOMAIN}`;
 
 // The two test identities. Usernames can be overridden if the sessions were saved for other users.
 export const USERS = {
@@ -12,6 +15,65 @@ export const USERS = {
 };
 
 export const appUrl = (cfg) => `https://${cfg.sub}.${DOMAIN}`;
+
+// BOX_IP (optional): reach a box whose domain is not in DNS, e.g. a template clone on devvm.test. Chromium then maps
+// the domain and every subdomain to that address, and accepts the box's own (internal) TLS certificate.
+export const BOX_IP = process.env.BOX_IP ?? '';
+if (BOX_IP && !/^\d{1,3}(\.\d{1,3}){3}$/.test(BOX_IP)) throw new Error('BOX_IP must be an IPv4 address');
+
+// The sign-in redirect of the dashboard (`/api/auth/sso` → https://<identity host>/application/o/authorize) names the
+// identity host. One quick curl at load time; null when the box doesn't answer.
+function discoverIdHost() {
+  const ip = process.env.BOX_IP ?? '';
+  const args = ['-sk', '-o', '/dev/null', '-w', '%{redirect_url}', '--max-time', '10'];
+  if (ip) args.push('--resolve', `${DOMAIN}:443:${ip}`);
+  args.push(`https://${DOMAIN}/api/auth/sso?redirect=%2F`);
+  try {
+    const host = new URL(execFileSync('curl', args, { encoding: 'utf8' }).trim()).host;
+    return host.endsWith(`.${DOMAIN}`) ? host : null;
+  } catch {
+    return null;
+  }
+}
+export const launchOptions = BOX_IP ? { args: [`--host-resolver-rules=MAP ${DOMAIN} ${BOX_IP}, MAP *.${DOMAIN} ${BOX_IP}`] } : {};
+export const contextOptions = BOX_IP ? { ignoreHTTPSErrors: true } : {};
+
+/**
+ * One GET without following redirects, from Node (no browser), honouring BOX_IP: returns { status, location }
+ * (status 0 when nothing answers). Used by the spec's "is the app installed" check.
+ */
+export function probe(url, timeout = 20_000) {
+  const lookup = BOX_IP ? (_h, o, cb) => (o?.all ? cb(null, [{ address: BOX_IP, family: 4 }]) : cb(null, BOX_IP, 4)) : undefined;
+  return new Promise((resolve) => {
+    const req = httpsRequest(url, { method: 'GET', lookup, rejectUnauthorized: !BOX_IP, timeout }, (res) => {
+      res.resume();
+      resolve({ status: res.statusCode ?? 0, location: res.headers.location ?? '' });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', () => resolve({ status: 0, location: '' }));
+    req.end();
+  });
+}
+
+/**
+ * Complete the Control Panel sign-in from the context's YouEye ID session and return its user
+ * ({ username, isAdmin, … }), or null after `tries` seconds. Asks from inside the page (not context.request), so
+ * BOX_IP's address mapping applies.
+ */
+export async function controlPanelSession(page, base = `https://${DOMAIN}`, tries = 30) {
+  await page.goto(base + '/settings', { timeout: 60_000 }).catch(() => {});
+  for (let i = 0; i < tries; i++) {
+    if (new URL(page.url()).origin === new URL(base).origin) {
+      const r = await page.evaluate(async () => {
+        const res = await fetch('/settings/api/auth/session', { credentials: 'include', redirect: 'manual' });
+        return res.status === 200 ? (await res.json()).user ?? null : null;
+      }).catch(() => null);
+      if (r) return r;
+    }
+    await page.waitForTimeout(1000);
+  }
+  return null;
+}
 
 // Server-side checks run a command on the box as root over SSH. BOX_SSH is the ssh command line without the
 // remote command, e.g. "ssh -i ~/.ssh/key -o BatchMode=yes root@<box-ip>". Without it, checks that need the

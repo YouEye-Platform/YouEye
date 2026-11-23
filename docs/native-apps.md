@@ -198,11 +198,23 @@ Updates compare releases by line, then the build's `sequence`, never by name
 build under another release name (the box changed channel, or the build was promoted) is no update (since 0.6.17,
 YE-139): Settings, the Market, the dashboard and `youeye app check-updates`/`info` offer nothing, `youeye app update`
 answers "already up to date", and the app keeps the name it was installed with until a newer build arrives, which
-brings its own. An app without a recorded release (installed or restored before 0.6.15) is the same build when its
-installed `standalone.tar` is the release's; when that is not known, a release under another name is offered as
-before, and the update still refuses an older build. Pointer follows the same rule. An update stops the app, replaces `/opt/app` with the new
-package, writes the env again, starts it and waits for its health check; a failure restores the checkpoint (see
-[market.md](market.md)).
+brings its own. An older release is never offered or applied (the box waits for its channel to catch up).
+
+The installed key is the app's recorded release, or else its product floor (the last release the box accepted). An app
+with neither (installed or restored before 0.6.15) is never offered or given a build that could be older (since
+0.6.18, YE-141). The box orders the release by what it can see of the installed build
+(`compareToInstalledNative` in `update-routing.ts`):
+- the same installed `standalone.tar` is the same build: no update;
+- another line is older or newer by its line, as the key would order it;
+- in the same line, a release whose `sequence` (its publish time) is after the install record was created
+  (`installedAt`) is newer, because the installed build was published before it was installed or restored;
+- anything else can't be ordered: it is not offered, and `youeye app update` refuses it with "can't tell that it is
+  newer; waiting for a newer build". The app takes the next build published after it was installed, or the next
+  line, and records its release from then on.
+
+Pointer follows the same rules, with its provenance record's time in place of `installedAt`. An update stops the
+app, replaces `/opt/app` with the new package, writes the env again, starts it and waits for its health check; a
+failure restores the checkpoint (see [market.md](market.md)).
 
 ## A new app from Canvas
 

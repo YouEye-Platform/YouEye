@@ -5,7 +5,9 @@ Browser tests that sign in to installed apps with YouEye ID, once as a YouEye **
 Expected: admin → admin in the app; standard user → signed in, not admin. Apps with a known gap record
 it in `apps.config.mjs` as `expect`, so a fix shows up as a failing test.
 
-No passwords are used anywhere. Every browser starts from a saved YouEye ID session.
+The tests use no passwords: every browser starts from a saved YouEye ID session (`.auth/admin.json`,
+`.auth/user.json`). On test boxes `login.mjs` makes those sessions from the standard test accounts, which it gets from
+the environment only (no password is kept in this repository).
 
 ## Files
 
@@ -16,8 +18,9 @@ No passwords are used anywhere. Every browser starts from a saved YouEye ID sess
 | `apps.spec.ts`, `playwright.config.ts` | The suite: per app, `admin` and `user` tests. Apps that are not installed are skipped |
 | `probe.mjs` | Same flow for one app, printed (for exploring a new app): `node probe.mjs <app> [admin\|user]` |
 | `explore.mjs` | Open a URL with a session, list buttons/links, screenshot |
-| `save-session.mjs` | Opens a browser window; a person signs in to YouEye ID; the session goes to `.auth/<name>.json` |
-| `warm-sessions.mjs` | Re-establishes the Control Panel sessions from the saved YouEye ID sessions |
+| `login.mjs` | Test boxes: signs the admin and the standard user in to YouEye ID with the accounts from the environment, saves `.auth/admin.json` and `.auth/user.json`, checks `admin=true` / `admin=false`. Run through `Tools/box/test-login` |
+| `save-session.mjs` | Opens a browser window; a person signs in to YouEye ID; the session goes to `.auth/<name>.json` (boxes without test accounts) |
+| `warm-sessions.mjs` | Re-establishes the Control Panel sessions from the saved YouEye ID sessions and prints `admin=` for each (the session check) |
 | `set-access.mjs` | `node set-access.mjs <app> all_users`: admit standard users (new apps are owner-only) |
 | `app-round.sh` | Install / restart / remove harness for one app on the test box |
 | `install-api.mjs` | Install an app through the Control Panel API as the admin, AI Settings off |
@@ -29,15 +32,32 @@ No passwords are used anywhere. Every browser starts from a saved YouEye ID sess
 
 - Node 24 (`~/.cache/youeye-build/node-24.22.0/bin` first on `PATH`), then `npm ci` and
   `npx playwright install chromium` once.
-- A test box. Set `BOX_DOMAIN` to its domain (e.g. `export BOX_DOMAIN=<name>.ui.bingo`).
+- A test box. Set `BOX_DOMAIN` to its domain (e.g. `export BOX_DOMAIN=<name>.ui.bingo`). For a domain that is not
+  in DNS, such as `devvm.test` on a clone of the template VM, also set `BOX_IP` to the box's address: every script
+  and the suite then map the domain and its subdomains to it and accept the box's internal TLS certificate. Always set
+  it on a clone: the LAN's DNS may answer `devvm.test` with another box.
 - Two YouEye ID users: an admin (default username `tester`, override `ADMIN_USERNAME`) and a standard user
   (`tester2`, override `USER_USERNAME`).
-- Saved sessions (git-ignored, `.auth/`). A person makes them once per box:
+- Saved sessions (git-ignored, `.auth/`, files mode 0600; never print or commit them). On a test box an agent makes
+  them with the YouEye Tools wrapper, which holds the standard test accounts (`tester` admin, `tester2` standard) and
+  sets the variables:
+
+  ```sh
+  Tools/box/test-login <box-ip|domain> [--vm <id>] [--domain <d>]   # e.g. 192.168.31.57 --vm 161 (a template clone)
+  ```
+
+  It runs `node login.mjs` here with `YOUEYE_TEST_ADMIN_USER`/`_PASS` and `YOUEYE_TEST_USER_USER`/`_PASS`, one
+  attempt per account (YouEye ID locks a username for 15 minutes after 10 failed sign-ins: never loop it), and
+  prints `admin tester admin=true` and `user tester2 admin=false`.
+
+  **Rules:** test boxes only (Andrew's VM 156, template clones, agent test VMs), YouEye ID test accounts only. An
+  app's own generated admin password stays off-limits. Never on the owner's box: the wrapper refuses it by name and
+  address. On a box without the test accounts a person signs in by hand instead:
 
   ```sh
   node save-session.mjs admin https://$BOX_DOMAIN   # sign in as the admin, close the window
   node save-session.mjs user  https://$BOX_DOMAIN   # sign in as the standard user
-  node warm-sessions.mjs                                    # optional: Control Panel sessions too
+  node warm-sessions.mjs                                    # Control Panel sessions too, and the admin= check
   ```
 
 - Optional `BOX_SSH` for apps whose check runs on the box (FreshRSS): the ssh command without the remote command,
