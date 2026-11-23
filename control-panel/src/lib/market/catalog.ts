@@ -52,6 +52,8 @@ export interface ManifestReference {
   digest: string;
   /** Native channel products only: the release's line and sequence (orders updates). */
   key?: ReleaseKey;
+  /** Native channel products only: SHA-256 of the release's app package (`standalone.tar`), the build it names. */
+  artifactSHA256?: string;
 }
 
 export interface ManifestFetchResult {
@@ -210,7 +212,10 @@ async function nativeManifest(id: string): Promise<ManifestFetchResult> {
   const { selected, manifest } = await nativeListing(id);
   return {
     manifest,
-    reference: { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest, key: releaseKey(selected.release) },
+    reference: {
+      path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest,
+      key: releaseKey(selected.release), artifactSHA256: selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256,
+    },
   };
 }
 

@@ -35,8 +35,8 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
 - The sign-in page is `/identity/login`. Failed sign-ins are limited (`lib/identity/sign-in-limit.ts`, in memory, a
   Control Panel restart clears them): 10 per username in 15 minutes from any address, which locks that username
   until the window ends, and 30 per client address in 15 minutes across usernames. Loopback is not a client address:
-  until Caddy's proxy devices send the real client ([architecture.md](architecture.md#networks)), every client is
-  `127.0.0.1`, and a limit on it would lock everyone out. A success clears the username's count and gives the
+  before Caddy's proxy devices sent the real client (0.6.17, [architecture.md](architecture.md#networks)) every client
+  was `127.0.0.1`, and a limit on it would lock everyone out. A success clears the username's count and gives the
   address its attempt back; a refused attempt counts against nothing. The address is the first `X-Forwarded-For`
   entry: through Caddy that is the client, but an app calling YouEye ID through its doorway can send any value, so
   only the per-username limit holds against an app. Unknown usernames are limited and answered

@@ -85,9 +85,9 @@ to the system services: `:3001` the UI, `:3002` YouEye ID, `:3003` Pointer infer
   `app_network.pools` / `YOUEYE_APP_NETWORK_POOLS`, default `10.76.0.0/16`, or the first of `10.76`–`10.83.0.0/16`
   that overlaps no host or Incus network). Caddy's NIC on the app's bridge has an address in it, so an app that must
   trust its reverse proxy (Navidrome's `ND_REVERSEPROXYWHITELIST`, Nextcloud's `trusted_proxies`) can name this
-  network instead of a hard-coded range. Such an app takes the client's address from Caddy's `X-Forwarded-For`; up to
-  0.6.16 that is `127.0.0.1` for every client that comes in through the box's ports 80 and 443, and from the release
-  after it the real client ([architecture.md](architecture.md#networks), "Client addresses"). An installation keeps its
+  network instead of a hard-coded range. Such an app takes the client's address from Caddy's `X-Forwarded-For`: the
+  real client from 0.6.17; up to 0.6.16 `127.0.0.1` for every client that comes in through the box's ports 80 and
+  443 ([architecture.md](architecture.md#networks), "Client addresses"). An installation keeps its
   lease; a reinstall or restore gets a new one and renders everything again. When the lease is unknown (an app
   without its own bridge, or a lookup that failed) it is never rendered empty: the install, update or render fails
   with `Unresolved variable: ${app.network_cidr}: the app network lease was not found`.

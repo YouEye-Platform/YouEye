@@ -44,6 +44,8 @@ export interface UpdateCandidate {
   tag: string;
   /** Line and sequence of a channel release; channel candidates are ordered by it. */
   key?: ReleaseKey;
+  /** SHA-256 of the release's app package (`standalone.tar`): the build, whatever release names it. */
+  artifactSHA256?: string;
 }
 
 export interface UpdateAvailability {
@@ -164,18 +166,39 @@ export function classifyAppUpdateRouting(input: {
   return { kind: 'catalog', reason: 'default-catalog' };
 }
 
+/** True when every installed app package is the candidate's package: the same build. False when either is unknown. */
+export function sameBuild(installed: readonly string[] | null | undefined, candidate: string | null | undefined): boolean {
+  return !!candidate && !!installed?.length && installed.every((sha256) => sha256 === candidate);
+}
+
 /**
- * Shared update projection used by Settings, Market, and UI bridge data. A
- * native app's channel candidate is ordered by line and sequence, never by
- * release name: an older release is never offered (the box waits for its
- * channel to catch up); the same build under another release name is a
- * metadata-only update.
+ * Whether a native app's channel release is the build it runs (YE-139): the same line and sequence as its recorded
+ * release, or, without one, the same package. The update then has nothing to do and the installed name stays.
+ */
+export function isInstalledNativeBuild(
+  installed: { key?: ReleaseKey | null; artifactSHA256?: readonly string[] | null },
+  candidate: { key: ReleaseKey; artifactSHA256?: string | null },
+): boolean {
+  return installed.key ? compareReleases(candidate.key, installed.key) === 0 : sameBuild(installed.artifactSHA256, candidate.artifactSHA256);
+}
+
+/**
+ * Shared update projection used by Settings, Market, the UI bridge and the
+ * CLI (`youeye app check-updates`, `info`). A native app's channel candidate is
+ * ordered by line and sequence, never by release name: an older release is
+ * never offered (the box waits for its channel to catch up), and the same build
+ * under another release name (the box changed channel, or the build was
+ * promoted) is no update either: the app keeps showing the release it
+ * installed until a newer build arrives, which brings its own name (owner,
+ * 2026-11-23, YE-139).
  */
 export function projectUpdateAvailability(input: {
   routing: UpdateRoutingDecision;
   installedVersion: string | null | undefined;
   /** Line and sequence of the installed native release, when known. */
   installedKey?: ReleaseKey | null;
+  /** SHA-256 of each installed app package (install.json `nativeArtifacts`), for an install without a recorded release. */
+  installedArtifactSHA256?: readonly string[] | null;
   catalogVersion: string | null;
   candidate?: UpdateCandidate | null;
 }): UpdateAvailability {
@@ -188,12 +211,16 @@ export function projectUpdateAvailability(input: {
       if (!candidate) {
         updateAvailable = !installedVersion || isNewer(version, installedVersion);
       } else if (!input.installedKey) {
-        // No recorded release (not installed from a product release): offer the channel's release, unless it is
-        // the release the app already shows (one name is one release on a channel).
-        updateAvailable = version !== installedVersion;
+        // No recorded release (an older install, or an app restored before 0.6.15): the build decides when it is
+        // known. The same package as the installed one is the same build under whatever name. Another package can't
+        // be ordered without a release key, so it is offered as before (the update itself still refuses an older
+        // build by the product's floor), as is any release when the packages aren't known; never the release the
+        // app already shows (one name is one release on a channel).
+        updateAvailable = !sameBuild(input.installedArtifactSHA256, candidate.artifactSHA256)
+          && version !== installedVersion;
       } else if (candidate.key) {
-        const order = compareReleases(candidate.key, input.installedKey);
-        updateAvailable = order > 0 || order === 0 && version !== installedVersion;
+        // Only a newer build is an update; the same build under another name is not (YE-139).
+        updateAvailable = compareReleases(candidate.key, input.installedKey) > 0;
       }
     } catch {
       updateAvailable = false;

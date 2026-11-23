@@ -22,10 +22,10 @@ import type { CaddyConfig } from './types';
 export const CADDY_CONTAINER = 'youeye-caddy';
 
 /**
- * Whether this release has the proxy devices send PROXY headers. False in 0.6.16 (release N: the wrappers only, and
- * the self-heal); true from the release whose minimum release is 0.6.16.
+ * Whether this release has the proxy devices send PROXY headers: true from the release whose minimum release is
+ * 0.6.16 (0.6.16 brought the wrappers and the self-heal, and never set the flag).
  */
-export const PROXY_DEVICES_SEND_CLIENT_ADDRESS = false;
+export const PROXY_DEVICES_SEND_CLIENT_ADDRESS = true;
 
 export type InstanceDevices = Record<string, Record<string, string>>;
 

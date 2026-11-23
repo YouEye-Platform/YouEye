@@ -22,16 +22,23 @@ test('Pointer updates are ordered by line and sequence, never by release name', 
   assert.equal(pointerUpdateState(installed, candidate('0.6.2-dev.1', 150)).hasUpdate, true);
   assert.equal(pointerUpdateState(installed, candidate('0.6.1-beta.9', 199)).behind, true);
 
-  // The same build: up to date under its own name, a label-only update under another name.
+  // The same build is no update under its own name or another (YE-139): the installed name stays.
   assert.equal(pointerUpdateState(installed, candidate('0.6.1-dev.2', 200)).hasUpdate, false);
   const renamed = pointerUpdateState(installedAt('0.6.1-alpha.1', 200), candidate('0.6.1-beta.1', 200));
-  assert.equal(renamed.hasUpdate, true);
+  assert.equal(renamed.hasUpdate, false);
   assert.equal(renamed.behind, undefined);
+  assert.equal(renamed.installedVersion, '0.6.1-alpha.1');
 
   // Nothing on the channel; nothing installed yet; an install without a recorded release.
   assert.deepEqual(pointerUpdateState(installed, undefined), { appId: 'pointer', installedVersion: '0.6.1-dev.2', latestVersion: undefined, hasUpdate: false });
   assert.equal(pointerUpdateState(undefined, candidate('0.6.1-dev.1', 100)).hasUpdate, true);
   assert.equal(pointerUpdateState({ version: '0.6.1-dev.9' }, candidate('0.6.1-dev.1', 100)).hasUpdate, true);
+  // Without a recorded release the package decides when both are known: the same one is the same build.
+  const pkg = 'c'.repeat(64);
+  const samePackage = pointerUpdateState({ version: '0.6.1', artifactSHA256: pkg }, { ...candidate('0.6.1-alpha.1', 100), artifactSHA256: pkg });
+  assert.equal(samePackage.hasUpdate, false);
+  assert.equal(samePackage.behind, undefined);
+  assert.equal(pointerUpdateState({ version: '0.6.1', artifactSHA256: pkg }, { ...candidate('0.6.1-alpha.1', 100), artifactSHA256: 'd'.repeat(64) }).hasUpdate, true);
 });
 
 test('a Pointer check whose channel cannot be read keeps showing the installed version', async () => {

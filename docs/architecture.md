@@ -144,15 +144,17 @@ and checks are in `control-panel/src/lib/incus/app-network-ipam.ts` and `app-net
 **Client addresses.** LAN and internet clients reach Caddy through `youeye-caddy`'s Incus proxy devices
 (`proxy0` `tcp:0.0.0.0:80`, `proxy1` `tcp:0.0.0.0:443`, both `connect tcp:127.0.0.1:<port>`), which open a new
 connection from inside the container. Without more, Caddy sees every such client as `127.0.0.1`, and so does every
-app and YouEye ID in `X-Forwarded-For`. The fix comes in two releases (YE-134):
+app and YouEye ID in `X-Forwarded-For`. The fix came in two releases (YE-134):
 
 - **0.6.16:** every Caddy server on :80 or :443 reads a PROXY protocol header first: listener wrappers
   `proxy_protocol` (allowed source `127.0.0.1/32` only) then `tls` (`clientAddressListenerWrappers` in
   `control-panel/src/lib/caddy/servers.ts`). The Control Panel puts them on every config write (`setConfig`), in the
   Caddyfile it deploys, and on the live config at every start (`ensureClientAddressListenerWrappers`). A connection
-  without a header is served as before, so nothing changes for clients yet.
-- **The next release** (its minimum release is 0.6.16) sets `proxy_protocol: "true"` on both devices: Incus then
-  sends the real client in a PROXY header, and Caddy passes it on in `X-Forwarded-For`.
+  without a header is served as before.
+- **0.6.17** (minimum release 0.6.16, so no box gets it without the wrappers) sets `proxy_protocol: "true"` on both
+  devices (`PROXY_DEVICES_SEND_CLIENT_ADDRESS`): at every Control Panel start and after the deployer has loaded
+  Caddy's config, never when it creates the instance (the image's stock Caddyfile has no wrappers). Incus then sends
+  the real client in a PROXY header, and Caddy passes it on in `X-Forwarded-For`.
 - **Never a header without the wrapper:** that would stop all HTTPS. At every Control Panel start (after the
   wrappers), in the infrastructure reconcile and every minute in the health monitor, `reconcileClientAddressDevices`
   (`lib/caddy/client-address.ts`) removes the flag from a device whose port has no server with the wrappers

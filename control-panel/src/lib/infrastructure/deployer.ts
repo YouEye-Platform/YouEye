@@ -428,6 +428,9 @@ async function _deployInfrastructureInner(
     await setDefaultRoute('youeye-control', 3000);
     await ensurePingRoute('youeye-control', 3000);
     await ensureHeaderStrippingRoute();
+    // The proxy devices send the client's address only now that Caddy runs our config with the wrappers (the
+    // image's stock Caddyfile has none), so they are not created with the flag.
+    await ensureClientAddresses().catch(warnClientAddresses);
     emit(onEvent, 2, 'success', 'Caddy deployed and required routes verified');
   } catch (err) {
     if (err instanceof ReportedDeploymentError) throw err;
@@ -642,6 +645,7 @@ export async function reconcileInfrastructure(
       await setDefaultRoute('youeye-control', 3000);
       await ensurePingRoute('youeye-control', 3000);
       await ensureHeaderStrippingRoute();
+      await ensureClientAddresses().catch(warnClientAddresses);
       remit(3, 'success', 'Caddy deployed and configured');
     } catch (err) {
       if (err instanceof ReportedDeploymentError) throw err;

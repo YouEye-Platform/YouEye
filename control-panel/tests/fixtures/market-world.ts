@@ -109,7 +109,7 @@ export function marketWorld(sites: Record<string, Map<string, Buffer>>, options:
         if (!manifest) throw new Error(`This channel has no ${id} release yet`);
         return {
           manifest: structuredClone(manifest),
-          selected: { repository: `https://git.example.test/owner/${id}`, release: { tag: `v${manifest.version}`, version: manifest.version, sequence: 1762950000 }, build: {} },
+          selected: { repository: `https://git.example.test/owner/${id}`, release: { tag: `v${manifest.version}`, version: manifest.version, sequence: 1762950000 }, build: { assets: [{ name: 'standalone.tar', sha256: 'a'.repeat(64), size_bytes: 1 }] } },
         };
       },
     },
