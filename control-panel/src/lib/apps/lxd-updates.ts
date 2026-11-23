@@ -73,40 +73,51 @@ async function check(appDef: AppDefinition): Promise<LxdUpdateResult> {
   }
   const provenance = await getCoreProvenance('app:pointer');
   const installed: PointerInstalled | undefined = provenance
-    ? { version: provenance.version, key: provenance.key ?? undefined, manifestSHA256: provenance.manifest_sha256 ?? undefined } : undefined;
+    ? {
+      version: provenance.version, key: provenance.key ?? undefined, manifestSHA256: provenance.manifest_sha256 ?? undefined,
+      artifactSHA256: provenance.artifact_sha256 ?? undefined,
+    } : undefined;
   try {
     const entry = (await readChannelIndex()).index.products.pointer;
     if (!entry) return pointerUpdateState(installed, undefined);
-    // The installed document needs no download; any other is read for its line and sequence.
-    const key = installed?.key && entry.sha256 === installed.manifestSHA256
-      ? installed.key : releaseKey((await resolveChannelEntry('pointer', entry)).release);
-    return pointerUpdateState(installed, { version: entry.version, tag: entry.tag, key });
+    // The installed document needs no download; any other is read for its line, sequence and package.
+    if (installed?.key && entry.sha256 === installed.manifestSHA256) {
+      return pointerUpdateState(installed, { version: entry.version, tag: entry.tag, key: installed.key });
+    }
+    const selected = await resolveChannelEntry('pointer', entry);
+    return pointerUpdateState(installed, {
+      version: entry.version, tag: entry.tag, key: releaseKey(selected.release),
+      artifactSHA256: selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256,
+    });
   } catch (error) {
     // The channel could not be read: Pointer still shows what is installed.
     return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false, error: describeReleaseError(error) };
   }
 }
 
-type PointerInstalled = { version: string; key?: ReleaseKey; manifestSHA256?: string };
-type PointerCandidate = { version: string; tag: string; key: ReleaseKey };
+type PointerInstalled = { version: string; key?: ReleaseKey; manifestSHA256?: string; artifactSHA256?: string };
+type PointerCandidate = { version: string; tag: string; key: ReleaseKey; artifactSHA256?: string };
 
 /**
  * Pointer's update state from its installed release and the channel's.
- * Releases are ordered by line and sequence. The same build under another
- * release name (the box changed channel, or the build was promoted) is a
- * metadata-only update that renames the installed release; it is never
- * behind. An install without a recorded release (an older provenance record)
- * is offered the channel's release.
+ * Releases are ordered by line and sequence, and only a newer build is an
+ * update. The same build under another release name (the box changed channel,
+ * or the build was promoted) is none: Pointer keeps showing the release it
+ * installed until a newer build arrives (owner, 2026-11-23, YE-139); it is
+ * never behind either. An install without a recorded release (an older
+ * provenance record) is decided by its package when both are known (the same
+ * package is the same build), else it is offered the channel's release.
  */
 export function pointerUpdateState(installed: PointerInstalled | undefined, candidate: PointerCandidate | undefined): LxdUpdateResult {
   if (!candidate) return { appId: 'pointer', installedVersion: installed?.version, latestVersion: undefined, hasUpdate: false };
-  const order = installed?.key ? compareReleases(candidate.key, installed.key) : 1;
+  const samePackage = !!installed?.artifactSHA256 && installed.artifactSHA256 === candidate.artifactSHA256;
+  const order = installed?.key ? compareReleases(candidate.key, installed.key) : samePackage ? 0 : 1;
   return {
     appId: 'pointer',
     installedVersion: installed?.version,
     latestVersion: candidate.version,
     latestTag: candidate.tag,
-    hasUpdate: order > 0 || order === 0 && candidate.version !== installed?.version,
+    hasUpdate: order > 0,
     behind: order < 0 || undefined,
   };
 }

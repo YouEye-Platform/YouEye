@@ -85,6 +85,10 @@ Settings → Apps, backups), the CLI (`youeye version`, `youeye status`, `youeye
 console, the dashboard (from `/etc/youeye/release.json`, [control-panel.md](control-panel.md#the-installed-release)),
 the heartbeat to the YouEye Names broker and the platform context apps get (`requires.youeye` checks it too).
 
+Native apps and Pointer keep the name of the release they installed: the same build under another channel's name
+is not offered as an update and not applied, so after a channel switch Notes still shows `0.6.4` where alpha calls
+that build `0.6.4-alpha.1`, until a newer build arrives (since 0.6.17, [native-apps.md](native-apps.md)).
+
 For support, a details line gives the git tree: About shows `0.6.13 · b39fe307` (version · short tree) with a Copy
 button, and `youeye version --verbose` lists the release tree and each part's tree and SHA-256
 ([spine.md](spine.md#commands)). Neither shows a build name.
@@ -272,6 +276,15 @@ read a document without `build`, so it reaches 0.6.13 through 0.6.12, on every c
   stones stay in the indexes, and State and Data records are written in both shapes
   ([development.md](development.md#compatibility-rules-for-later-changes)). All of it is deleted before the Release
   (Backlog), and only once it is shown that no supported release (stable 0.6.15 or later) needs it.
+
+**0.6.17 needs 0.6.16** (`.youeye/minimum-release`, YE-134): 0.6.17's Control Panel has Caddy's proxy devices send
+PROXY headers, which only a Caddy config with 0.6.16's listener wrappers can read
+([architecture.md](architecture.md#networks), "Client addresses"). A box below 0.6.16 takes 0.6.16 as a stepping
+stone first (`--stone-previous` when 0.6.17 is published and promoted, with 0.6.16 as the outgoing head), so no
+channel may get 0.6.17 before it holds 0.6.16. A rollback from 0.6.17 lands on 0.6.16 or later, which keeps the
+wrappers and keeps a device flag only where they are. Nothing may put a Control Panel older than 0.6.16 on a box that
+ran 0.6.17 (a recovery image included): 0.6.15 rewrites the :80 setup server without the wrappers while the devices
+still send headers.
 
 ## Patch releases
 

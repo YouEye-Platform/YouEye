@@ -31,7 +31,7 @@ The journal record's `operationKind` selects the recovery provider:
 | Kind | What it changes | Provider |
 |---|---|---|
 | `payload` (or absent) | containers, volumes, database, metadata | `IncusAppUpdateProvider` |
-| `release-metadata` | only the app's release registration, for the same build under a new release (e.g. a promotion) | `ReleaseMetadataUpdateProvider` (`update-release-metadata.ts`) |
+| `release-metadata` | only the app's release registration, for a newer release that carries the installed payload (the same build under another name is no update since 0.6.17, [native-apps.md](native-apps.md)) | `ReleaseMetadataUpdateProvider` (`update-release-metadata.ts`) |
 | `pointer-release-metadata` | the same for Pointer | `PointerReleaseMetadataProvider` (`lib/pointer/release-metadata.ts`) |
 
 A metadata operation reserves the app and its containers, checkpoints only the registration and leaves the app

@@ -39,7 +39,7 @@ import { assertYouEyeRequirement, buildCanonicalContext, generateAppToken } from
 import { withAppNetworkOperationLock } from '../incus/app-network';
 import { readAppSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
-import { isNewer } from '@/lib/version';
+import { isNewer, releaseKey } from '@/lib/version';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import {
   classifyAppUpdateRouting,
@@ -51,6 +51,7 @@ import { readFrozenUpdateManifest } from './frozen-manifest';
 import { isMarketSourceConsentError, MarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID, setupFilesChanged } from './source';
 import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import { acceptProductSequence, installedProductRelease, type VerifiedProductRelease } from '../releases/product-release';
+import { isInstalledNativeBuild } from './update-routing';
 import { updateIdenticalProductRelease } from './update-release-metadata';
 import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import type {
@@ -281,10 +282,17 @@ async function updateMarketAppLocked(
   const containerSpecs = manifest.containers || [];
   const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
   if (productRelease) {
-    // Only no-op when the exact release document is what's installed.
-    const installedRelease = installMeta.nativeArtifacts?.[0]?.productReleaseSHA256;
-    if (installedRelease === productRelease.manifestSHA256) {
-      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${productRelease.release.version})`);
+    // Only a newer build is an update (YE-139, as projectUpdateAvailability offers it): the installed build under
+    // another release name (the box changed channel, or the build was promoted) is up to date and keeps its name.
+    // acceptProductSequence above already refused an older build and other contents under the same key. Without a
+    // recorded release, the same package is the same build.
+    const recorded = installedProductRelease(installMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId);
+    const installedBuild = isInstalledNativeBuild(
+      { key: recorded ? releaseKey(recorded.release) : null, artifactSHA256: installMeta.nativeArtifacts?.map(a => a.sha256) },
+      { key: releaseKey(productRelease.release), artifactSHA256: productRelease.build.assets.find(asset => asset.name === 'standalone.tar')?.sha256 },
+    );
+    if (installedBuild || installMeta.nativeArtifacts?.[0]?.productReleaseSHA256 === productRelease.manifestSHA256) {
+      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${installedVersion})`);
       return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
     }
   } else if (!isNewer(targetVersion, installedVersion)) {

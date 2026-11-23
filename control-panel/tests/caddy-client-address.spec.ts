@@ -222,8 +222,8 @@ test('every device to a port is healed, and Incus booleans other than "true" cou
 });
 
 test('self-heal: a device flag without the wrapper on its port is removed; with the wrapper it stays', () => {
-  // Release N never sets the flag.
-  assert.equal(PROXY_DEVICES_SEND_CLIENT_ADDRESS, false);
+  // This release sends headers (0.6.16, its minimum release, brought the wrappers); 0.6.16 never set the flag.
+  assert.equal(PROXY_DEVICES_SEND_CLIENT_ADDRESS, true);
   assert.deepEqual(planClientAddressDevices(caddyDevices(), withWrappers(), false).changes, []);
 
   // Flags from a later release, wrappers in place (a Control Panel rolled back to this release): kept.
@@ -325,4 +325,10 @@ test('every Control Panel start, the infrastructure reconcile and the health mon
   assert.match(monitor, /checkClientAddressDevices\(\);/);
   const deployer = readFileSync(join(root, 'src/lib/infrastructure/deployer.ts'), 'utf8');
   assert.match(deployer, /await ensureSetupHttpServer\('youeye-control', 3000\);\n(\s+\/\/[^\n]*\n)+\s+await ensureClientAddresses\(\)\.catch\(warnClientAddresses\);/);
+  // Fresh deploy and redeploy: after Caddy runs the Control Panel's config, never at instance creation.
+  assert.equal(deployer.match(/await ensureHeaderStrippingRoute\(\);\n(\s+\/\/[^\n]*\n)*\s+await ensureClientAddresses\(\)\.catch\(warnClientAddresses\);/g)?.length, 2);
+  const oci = readFileSync(join(root, 'src/lib/infrastructure/oci-deployer.ts'), 'utf8');
+  assert.doesNotMatch(oci, /proxy_protocol/, 'devices are created without the flag');
+  const minimum = readFileSync(join(root, '../.youeye/minimum-release'), 'utf8').trim();
+  assert.equal(minimum, '0.6.16', 'no box reaches this release without the wrappers');
 });

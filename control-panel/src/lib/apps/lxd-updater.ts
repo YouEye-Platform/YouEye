@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { appUpdateJournalStore, withAppLifecycle } from '@/lib/market/update-admission';
 import { resolveNativeProduct, stageVerifiedProductArtifact } from '@/lib/market/native-artifact';
 import { acceptProductSequence, productReceipt } from '@/lib/releases/product-release';
+import { compareReleases } from '@/lib/version';
+import { getCoreProvenance } from '@/lib/updates/provenance';
 import { publishProductProjection, verifyProductProjection } from '@/lib/releases/product-projection';
 import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease } from '@/lib/pointer/release-metadata';
 import { execShell, incusUploadLocalFile } from '@/lib/incus/server';
@@ -88,6 +90,22 @@ async function updateLXDAppUnderLifecycle(appDef: AppDefinition, emit: EventEmit
     return;
   }
   acceptProductSequence(before.floors, selected, installed);
+  // Only a newer build is an update (YE-139, as pointerUpdateState offers it): the installed build under another
+  // release name keeps its name. acceptProductSequence above refused an older build and other contents under its key.
+  if (installed && compareReleases(selected.release, installed.release) === 0) {
+    emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${installed.release.version})`, progress: 100 });
+    return;
+  }
+  // Without a recorded release (an older provenance record), the same package is the same build, as pointerUpdateState
+  // decides it: nothing to install, and the name it was installed with stays.
+  if (!installed) {
+    const legacy = await getCoreProvenance('app:pointer');
+    const selectedPackage = selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256;
+    if (legacy?.artifact_sha256 && legacy.artifact_sha256 === selectedPackage) {
+      emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${legacy.version})`, progress: 100 });
+      return;
+    }
+  }
   // The update runs inside the container: a stopped Pointer is started first, and ends running and verified.
   if (await containerState(containerName) !== 'Running') {
     emit({ stage: 'starting', message: `Starting the stopped ${containerName} container`, container: containerName, progress: 2 });

@@ -58,7 +58,7 @@ test('an app is listed from its bundle, with pictures on this box and the record
   assert.deepEqual(resolved.manifest.frozen.setups, { 'setup/install.yaml': SETUP });
   const native = await world.catalog.resolveCatalogApp('notes');
   assert.deepEqual(native.entry, { id: 'notes', integration: 'native' });
-  assert.deepEqual(native.reference, { path: 'youeye-app.yaml', repo: 'https://git.example.test/owner/notes', branch: 'v0.6.3', digest: native.manifest.frozen.digest, key: { line: '0.6.3', sequence: 1762950000 } });
+  assert.deepEqual(native.reference, { path: 'youeye-app.yaml', repo: 'https://git.example.test/owner/notes', branch: 'v0.6.3', digest: native.manifest.frozen.digest, key: { line: '0.6.3', sequence: 1762950000 }, artifactSHA256: 'a'.repeat(64) });
   await assert.rejects(world.catalog.resolveCatalogApp('absent'), /App "absent" could not be resolved from Market source "official" \(app is not present\)/);
 
   // Callers may change what they get; the next reader is not affected.

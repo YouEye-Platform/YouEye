@@ -508,13 +508,17 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
 
     // A native app's catalog manifest is its release on the box's channel.
     const candidate = routing.kind === 'channel' && resolvedCatalog?.manifest.version
-      ? { version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch, key: resolvedCatalog.reference.key }
+      ? {
+        version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch, key: resolvedCatalog.reference.key,
+        artifactSHA256: resolvedCatalog.reference.artifactSHA256,
+      }
       : null;
 
     const availability = projectUpdateAvailability({
       routing,
       installedVersion: app.installedVersion,
       installedKey: routing.kind === 'channel' ? installedProductKey(app.appId, installMeta) : null,
+      installedArtifactSHA256: installMeta?.nativeArtifacts?.map((artifact) => artifact.sha256),
       catalogVersion,
       candidate,
     });

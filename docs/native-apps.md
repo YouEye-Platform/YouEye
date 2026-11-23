@@ -194,8 +194,13 @@ What the CP checks when it installs or updates a native app (`src/lib/market/nat
    hashed again right before it is deployed.
 
 Updates compare releases by line, then the build's `sequence`, never by name
-([releases.md](releases.md#ordering-line-then-sequence)): a release with a higher key is an update; the same build
-under a promoted name only updates the release record. An update stops the app, replaces `/opt/app` with the new
+([releases.md](releases.md#ordering-line-then-sequence)): only a release with a higher key is an update. The same
+build under another release name (the box changed channel, or the build was promoted) is no update (since 0.6.17,
+YE-139): Settings, the Market, the dashboard and `youeye app check-updates`/`info` offer nothing, `youeye app update`
+answers "already up to date", and the app keeps the name it was installed with until a newer build arrives, which
+brings its own. An app without a recorded release (installed or restored before 0.6.15) is the same build when its
+installed `standalone.tar` is the release's; when that is not known, a release under another name is offered as
+before, and the update still refuses an older build. Pointer follows the same rule. An update stops the app, replaces `/opt/app` with the new
 package, writes the env again, starts it and waits for its health check; a failure restores the checkpoint (see
 [market.md](market.md)).
 
