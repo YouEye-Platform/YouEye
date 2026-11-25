@@ -72,12 +72,17 @@ function fixture(options: { sourceExists: boolean; targetAddress?: string; targe
       cidrUsableAddresses: () => 30,
     },
   };
+  // The default-route guard (YE-198): called right after the NIC is brought up.
+  const repairs: string[][] = [];
+  mocks['./default-route-watch'] = {
+    defaultRouteGuard: async () => ({ repairNow: async (name: string, reason: string) => { repairs.push([name, reason]); return 'unchanged'; } }),
+  };
   const exports: Record<string, any> = {};
   vm.runInNewContext(ts.transpileModule(readFileSync('src/lib/incus/app-network.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
     exports, structuredClone, process: { env: {} }, console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout,
     require(name: string) { if (name in mocks) return mocks[name]; if (['crypto', 'path', 'node:async_hooks'].includes(name)) return require(name); return {}; },
   });
-  return { exports, acls, instances, writes, execs, target, addressLookups };
+  return { exports, acls, instances, writes, execs, target, addressLookups, repairs };
 }
 
 test('revoking a connection whose source container is already deleted still removes its ACL', async () => {
@@ -101,6 +106,7 @@ test('revoking a connection on a running source removes its NIC, then the ACL', 
 test('granting a connection allows only the target\'s main container, both ways, and brings the NIC up without systemd tools', async () => {
   const f = fixture({ sourceExists: true });
   await f.exports.grantBridgeAccess('app-sonarr', 'prowlarr', 'app-prowlarr');
+  assert.deepEqual(f.repairs, [['app-sonarr', 'connection activated']], 'default route checked after the NIC came up');
   const acl = f.acls['ye-grant-app-sonarr-to-prowlarr'];
   assert.ok(acl, 'integration ACL created');
   assert.deepEqual(acl.egress.map((rule: any) => [rule.action, rule.state, rule.destination]), [['allow', 'enabled', '10.76.0.5/32']]);

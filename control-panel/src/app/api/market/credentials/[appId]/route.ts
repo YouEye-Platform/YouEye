@@ -45,6 +45,14 @@ export async function POST(request: Request, { params }: Context) {
   }
   try {
     const { appId } = await params;
+    // A reconcile can't bring back a credential an unfinished removal revoked: say what finishes it (YE-225).
+    if (operation.action === 'reconcile' || operation.action === 'provision') {
+      const { readInstallMetadata } = await import('@/lib/market/metadata');
+      const { removalUnfinished, unfinishedRemovalMessage } = await import('@/lib/apps/unfinished-removal');
+      if (await removalUnfinished(await readInstallMetadata(appId))) {
+        return Response.json({ error: unfinishedRemovalMessage(appId), code: 'removal-unfinished' }, { status: 409 });
+      }
+    }
     return Response.json({ credential: await withUserOperationLockWait(() => operateAppCredential(appId, operation)) });
   } catch (error) {
     logOperationFailure(`App credential action ${operation.action}`, error);

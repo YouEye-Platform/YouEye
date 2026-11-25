@@ -50,9 +50,12 @@ repository, tag and version (`verifyChannelEntryDocument`); the entry's temporar
 
 ## Native apps in the Market
 
-The official Market's index names native apps by id only (`native: [notes, wiki, search, translate, weather,
-cinema]`; any other market's `native` list is ignored); the box resolves each one through its channel index and
-reads its listing and manifest from the release's `youeye-app.yaml`, cached by the entry's digest.
+Since 0.6.20 (YE-142) a box reads product release documents for Pointer only. A native app's release still carries
+`product-release.json`, but boxes install it from a market, whose manifest pins the release's `standalone.tar` by URL,
+SHA-256 and size (`source.package`, [native-apps.md](native-apps.md)); `Tools/market/native-pin` takes those from
+the document. Up to 0.6.19 the official Market's index named native apps by id (`native: [notes, …]`) and the box
+resolved each through its channel index; those entries are frozen for older boxes. Records of native apps installed
+that way keep their receipts and floors until they move to their market.
 
 The reader is `control-panel/src/lib/releases/product-release.ts`. Unknown fields and duplicate JSON keys are
 rejected.
@@ -60,8 +63,8 @@ rejected.
 ## Never older, never different
 
 The Control Panel keeps a floor per product (`acceptProductSequence`, `compareToProductFloor` in
-`product-release.ts`): in the Market install record of a native app (`productReleaseFloors`) and in Pointer's
-release state. It refuses a release with an older key, line then sequence ("The channel offers notes 0.6.4; this box
+`product-release.ts`) in Pointer's release state. (Install records of native apps from before 0.6.20 still hold
+`productReleaseFloors`; nothing reads them since.) It refuses a release with an older key, line then sequence ("The channel offers notes 0.6.4; this box
 has 0.6.5-dev.1; waiting for the channel to catch up"), and one with the same key but other contents. The same
 build under another channel's name only updates the release record. The update checks for native apps and Pointer
 and the provenance record (`lib/updates/provenance.ts`, `key`) use the same key.

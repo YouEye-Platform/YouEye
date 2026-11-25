@@ -15,6 +15,7 @@ import {
   setBridgeDirection,
 } from '@/lib/bridges/manager';
 import { getBridge } from '@/lib/bridges/store';
+import { suggestAgainAfterDisconnect } from '@/lib/bridges/suggestions';
 import { requireAdminCsrf, requireAdmin } from '@/lib/auth/rbac';
 
 export async function GET(
@@ -78,10 +79,20 @@ export async function DELETE(
   return userOperationResponse('Removing a connection', async () => {
 
     const { bridgeId } = await params;
+    const bridge = await getBridge(bridgeId);
     const deleted = await deleteBridge(bridgeId);
     if (!deleted) {
       return NextResponse.json({ error: 'not found' }, { status: 404 });
     }
-    return NextResponse.json({ ok: true });
+    // The connection can be approved again from the app's page (YE-227); the disconnect stands if this fails.
+    let suggested = false;
+    if (bridge) {
+      try {
+        suggested = await suggestAgainAfterDisconnect(bridge.from, bridge.to);
+      } catch (err) {
+        console.error(`[bridges] Could not suggest ${bridge.from} → ${bridge.to} again:`, err);
+      }
+    }
+    return NextResponse.json({ ok: true, suggested });
   });
 }

@@ -9,26 +9,7 @@ import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { getAppSurfaceDeclarations } from "@/lib/db/queries/app-management";
 import { evaluateUiUserAdmission } from '@/lib/admission/store';
-
-function publicBaseDomain(request: NextRequest, isServiceCall: boolean): string {
-  const uiExternalUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
-  if (isServiceCall && uiExternalUrl) {
-    try {
-      return new URL(uiExternalUrl).hostname;
-    } catch {
-      // Fall through to the request host below.
-    }
-  }
-  return (request.headers.get("host") ?? "").replace(/:\d+$/, "");
-}
-
-function publicAppUrl(
-  declaration: { subdomain: string | null; containerUrl: string | null },
-  baseDomain: string
-): string | null {
-  if (declaration.subdomain && baseDomain) return `https://${declaration.subdomain}.${baseDomain}`;
-  return declaration.containerUrl;
-}
+import { publicAppUrl, publicBaseDomain } from "@/lib/surfaces/app-url";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -41,7 +22,7 @@ export async function GET(request: NextRequest) {
   const decisions = await Promise.all(declarations.map(d =>
     evaluateUiUserAdmission(d.appId, (session?.userId ?? service?.id)!)));
   const admitted = declarations.filter((_, i) => decisions[i].allowed);
-  const baseDomain = publicBaseDomain(request, !!service);
+  const baseDomain = publicBaseDomain(request.headers.get("host"), !!service);
 
   return NextResponse.json({
     surfaces: admitted.flatMap((d) =>

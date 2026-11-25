@@ -1,0 +1,11 @@
+{
+  "schema": "youeye.product-release.v1",
+  "product": "notes",
+  "version": "0.6.4",
+  "tag": "v0.6.4",
+  "source_tree": "181cb2ec4e7845f9e43db252d3c1943743dbaed9",
+  "sequence": 1795082626,
+  "minimum_reader": 2,
+  "authority": "digest",
+  "build_manifest_base64": "eyJzY2hlbWEiOiJ5b3VleWUucHJvZHVjdC1idWlsZC52MSIsInByb2R1Y3QiOiJub3RlcyIsImtpbmQiOiJuYXRpdmUiLCJzb3VyY2VfdHJlZSI6IjE4MWNiMmVjNGU3ODQ1ZjllNDNkYjI1MmQzYzE5NDM3NDNkYmFlZDkiLCJpbnB1dF9zaGEyNTYiOiI5ZTY3NzIwMWY2MzgyZmFkNGIyNjcyNjgwNjA2YmNlYzY4Nzg5ZmQ0NDZiMTBkNmE2MDA5MmNkMmVkYzA0NDBiIiwiY29udHJhY3Rfc2hhMjU2IjoiYzc3NzdhY2M2MzNhOWI0MTM4M2I1YTI4NGU3ZWRhOTE3YjEyYjQ2ZTk1ZGMwOGZiMGY0NWJjY2VlMzgxZmIzMyIsInByaW1hcnkiOiJzdGFuZGFsb25lLnRhciIsImFzc2V0cyI6W3sibmFtZSI6InN0YW5kYWxvbmUudGFyIiwic2hhMjU2IjoiYTMyZTg3NDAzMzU0MTAwNjZhMTc1NjQ2ODU5OTZkNjhiMjk4OWM4MjU0NDU5MWFmNmVjNzNkMWNjNmU5NmNmZCIsInNpemVfYnl0ZXMiOjE5OTkzNjAwMH0seyJuYW1lIjoieW91ZXllLWFwcC55YW1sIiwic2hhMjU2IjoiYzc3NzdhY2M2MzNhOWI0MTM4M2I1YTI4NGU3ZWRhOTE3YjEyYjQ2ZTk1ZGMwOGZiMGY0NWJjY2VlMzgxZmIzMyIsInNpemVfYnl0ZXMiOjM0ODV9XX0="
+}

@@ -305,7 +305,8 @@ export default function AppDetailPage() {
   // may use it, are on its page in Settings).
   const ownAccountSignIn = app.supportsSSO || !!app.integrations?.some((integration) => integration.type === 'identity');
   const gate = app.forwardAuth !== 'disabled';
-  const everyone = !!app.publicAccess || (!ownAccountSignIn && !gate);
+  // Admission applies to every app; only public access (the "Only <site> users" switch off) opens one (YE-154).
+  const everyone = !!app.publicAccess && !app.gateOnly;
   const signIn = ownAccountSignIn ? market("facts.signInAccount", { site: siteName }) : gate ? market("facts.signInGate", { site: siteName }) : market("facts.signInOwn");
   const access = everyone ? market("facts.accessAnyone") : market("facts.accessUsers", { site: siteName });
   const facts = [

@@ -27,7 +27,7 @@ import SetupTls from '@/components/setup/SetupTls';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
 import { type IconConfig, DEFAULT_ICON_CONFIG } from '@/lib/icon-config';
 import { followSetupProgress, readSetupProgress, SetupProgressError } from '@/lib/setup/progress.mjs';
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -70,8 +70,7 @@ type WizardStep = -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 export default function SetupPage() {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const t = useTranslations('setup');
   const router = useRouter();
@@ -300,7 +299,7 @@ export default function SetupPage() {
       await delay(SETUP_READY_POLL_MS);
     }
     throw new Error(interfaceTranslationRef.current("mc71c1a0619bb"));
-  }, []);
+  }, [interfaceTranslationRef]);
 
   // After provisioning completes:
   // - LE/self-signed/YouEye Names: wait for CP's SSO restart, then show DNS explainer
@@ -319,7 +318,7 @@ export default function SetupPage() {
         setSetupError(cause instanceof Error ? cause.message : interfaceTranslationRef.current("mc71c1a0619bb"));
       });
     }
-  }, [tlsChoice, goToStep, router, waitForControlPanelReady]);
+  }, [tlsChoice, goToStep, router, waitForControlPanelReady, interfaceTranslationRef]);
 
   const setupProgressOptions = useCallback(() => ({
     messages: {
@@ -334,7 +333,7 @@ export default function SetupPage() {
           ? { ...item, status, ...(message ? { message } : {}) } : item));
       }
     },
-  }), [t]);
+  }), [interfaceTranslationRef, t]);
 
   const recordSetupFailure = useCallback((error: unknown) => {
     // A setup sign-in from before a reset (or an expired one): claim or sign in again.
@@ -342,7 +341,7 @@ export default function SetupPage() {
     setSetupComplete(false);
     setSetupStatusOnlyRetry(error instanceof SetupProgressError && error.readOnly);
     setSetupError(error instanceof Error ? error.message : interfaceTranslationRef.current("m54d466a16d84"));
-  }, []);
+  }, [interfaceTranslationRef]);
 
   const recordSetupCompletion = useCallback(() => {
     setSetupStatusOnlyRetry(false);

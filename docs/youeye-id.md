@@ -32,26 +32,62 @@ under `control-panel/src/app/{application,oauth,identity,forward-auth}/`.
   [app-admission.md](app-admission.md)). A refusal answers 409 `disposition_required` with its reason. Every user
   has a reserved data namespace in each app that declares per-user data (the six bundled apps do), so deleting one
   needs `youeye user delete <user> --retain-data` (`?retainData=true`), which retains that data first.
-- The sign-in page is `/identity/login`. Failed sign-ins are limited (`lib/identity/sign-in-limit.ts`, in memory, a
-  Control Panel restart clears them): 10 per username in 15 minutes from any address, which locks that username
-  until the window ends, and 30 per client address in 15 minutes across usernames. Loopback is not a client address:
-  before Caddy's proxy devices sent the real client (0.6.17, [architecture.md](architecture.md#networks)) every client
-  was `127.0.0.1`, and a limit on it would lock everyone out. A success clears the username's count and gives the
-  address its attempt back; a refused attempt counts against nothing. The address is the TCP peer
-  (`lib/auth/client-address.ts`, since 0.6.18, YE-136): through Caddy, the `X-Forwarded-For` entry Caddy wrote (the
-  client); through an app's doorway, the app's own address whatever headers the app sends, so an app can neither get
-  around the per-address limit nor reset it. Apps whose bridge NATs all arrive as the host's incusbr0 address, which
-  is no client address: for them, as for loopback, only the per-username limit applies
-  ([architecture.md](architecture.md#networks)). Unknown usernames are limited and answered exactly like real ones,
-  and cost the same password hash.
-- The same two limits, each with its own counts, guard the Control Panel's PAM login on a bare IP
-  (`/api/auth/login`, scope `cp-login`; it was 20 per client address in 5 minutes, and every client without a known
-  address shared one count) and the appliance claim (`/api/appliance/claim`, scope `appliance-claim`; a form error,
-  a 409 and a server error count against nothing). The per-username limit is the guard that no address change gets
-  around, so anyone who can reach a sign-in form can keep one username locked with 10 wrong passwords per 15 minutes.
-  The lock ends with the window, or at once when the processes restart (the counts are in memory):
-  `incus exec youeye-control -- systemctl restart youeye-control youeye-id` on the box. The owner reset (`/api/auth/reset-owner`) allows 10 tries per client address in 15
-  minutes; the code itself pauses 15 minutes after every 10 wrong tries (Spine, `consoleaccess/reset.go`).
+- The sign-in page is `/identity/login`. Failed sign-ins are limited so that nobody who can reach a sign-in form can
+  keep a user out (`lib/identity/sign-in-limit.ts`, since 0.6.19, YE-149). The counts are in memory, at most 50,000
+  entries; a Control Panel restart clears them.
+  - **Source.** A sign-in's source is its client address, the TCP peer (`lib/auth/client-address.ts`, since 0.6.18,
+    YE-136). Through Caddy it is the `X-Forwarded-For` entry Caddy wrote (the client). Through an app's doorway it is
+    the app's own address, whatever headers the app sends. An IPv6 address counts by its /64; IPv4 counts per
+    address. With no client address, the source is one shared source. That covers loopback, an unknown peer, and the
+    host's incusbr0 address, where every app whose bridge NATs arrives ([architecture.md](architecture.md#networks)).
+  - **Lock per (username, source):** 10 failures in 15 minutes lock that username from that address until the window
+    ends. The shared source is never locked.
+  - **Limit per source:** 30 failures in 15 minutes across usernames stop that address (password spraying). Not for
+    the shared source.
+  - **IPv6 networks:** an IPv6 address also counts toward its /56 (100 failures in 15 minutes) and its /48 (300). Past
+    either, that prefix gets 429 with `Retry-After` for every username, unchecked, without locking any username or
+    touching other prefixes. IPv4 has no wider limit, because many homes share one carrier-grade NAT range.
+  - **Slow-down per username, never a lock.** The username's first 5 failures in the window, from all sources, cost
+    nothing. After that, a source that has just failed on it waits before its next try is checked: 2^(n−5) seconds,
+    at most 60, where n is the username's failures. Early tries are answered "Too many sign-in attempts. Try again in
+    N seconds." with HTTP 429 and `Retry-After`; they are not checked and count against nothing.
+  - **The right password from somewhere else always works.** A source with no failure on the username is checked at
+    once. So 10 wrong passwords from one address, or failures from many addresses, never stop the owner signing in
+    from another address. Nobody can use up another source's turn, and after a typo the owner waits at most
+    60 seconds.
+  - **The shared source is one source.** Apps behind the shared NAT address, loopback callers and unknown peers get
+    the slow-down only, and one of them can take the turn of another for a username (a try every 60 seconds keeps it
+    waiting). No browser sign-in arrives there: browsers come through Caddy, also on the bare IP, and `port3000`
+    listens on the host's 127.0.0.1 only. If Caddy's addresses cannot be read from Incus, every sign-in is the shared
+    source until they can be read (the Control Panel logs a warning once a minute).
+  - **A success** clears its own (username, source) count and wait, and gives the address its attempt back. It does
+    not reset the username's count, so the owner signing in does not lift the slow-down for whoever is guessing.
+  - **No existence oracle.** Unknown usernames are counted, slowed down and answered exactly like real ones, and cost
+    the same password hash.
+  - **A full store** first drops expired entries, then the least recently used entries that have no effect. An entry
+    that locks a pair, stops an address or makes a source wait is never dropped, so a flood of random usernames
+    cannot free an attacker.
+    - Usernames and pairs may not use the last 5,000 entries. That reserve keeps the address limit on a new address
+      and the slow-down on the shared source.
+    - With no room for a username, a new pair waits the full 60 seconds.
+    - With no room even in the reserve, a source that would otherwise have no limit is refused for now: answered
+      "try again in 60 seconds", unchecked (fail closed).
+  - The counts end with their window, or at once when the processes restart (`incus exec youeye-control --
+    systemctl restart youeye-control youeye-id` on the box). `DELETE /api/auth/rate-limit` (an administrator) clears
+    the Control Panel process's counts.
+- The same limits, each scope with its own counts, guard:
+  - the Control Panel's PAM login on a bare IP (`/api/auth/login`, scope `cp-login`). Spine also limits PAM checks
+    (YE-164). When Spine refuses to check (429, its limit; 503, its PAM queue full), the login answers 429 "try again
+    in N seconds" with Spine's `Retry-After` (or reset time) as its own, never "Invalid credentials", and counts it
+    against nothing;
+  - the appliance claim and resume (`/api/appliance/claim`, scope `appliance-claim`), where a form error, a 409 and a
+    server error count against nothing;
+  - the owner reset (`/api/auth/reset-owner`, scope `owner-reset`). Its username is always the owner, so a wrong code
+    locks only its address after 10 tries, and every source is slowed down, loopback too. A password the form refuses
+    counts against nothing.
+
+  The reset code itself pauses for 15 minutes after every 10 wrong tries, box-wide (Spine, `consoleaccess/reset.go`;
+  YE-159 tracks making that per client).
 
 ## Clients
 
@@ -162,9 +198,11 @@ Each installed app has one admission policy (`shared/admission.ts`, `lib/admissi
 - **Mode:** `owner` (default for every new install), `all_users`, `groups` or `users`. The installing admin is the
   owner and is always admitted. Being an admin does not admit anyone by itself.
 - **Public access:** when on, Caddy lets anyone reach the app's URLs without a YouEye ID session. It is for apps
-  that protect themselves. A manifest from the official catalog can set `public_access: true`; the install then
-  shows it pre-selected and applies it once the app is healthy (audited as `public_access_at_install`). Apps from
-  added sources or URLs, and bundle members, install without it.
+  that protect themselves, and it is the "Only <site> users" switch turned off (install dialog and Access settings,
+  since 0.6.19). A manifest from the official catalog can set `public_access: true`; the install then starts with
+  the switch off and applies it once the app is healthy (audited as `public_access_at_install`). Apps from added
+  sources or URLs, and bundle members, start on. Apps with no sign-in of their own, or that trust the login header,
+  stay locked on ([app-admission.md](app-admission.md)).
 - Inactive or deleted users are always refused. Pending, quarantined, malformed or missing policies refuse.
 - Change it in Settings → Apps → the app → Who can use it, or with `GET`/`PUT /api/market/apps/<id>/access` (admin, CSRF, current
   revision). The old forward-auth toggle `POST /api/market/forward-auth` is refused (`409`).

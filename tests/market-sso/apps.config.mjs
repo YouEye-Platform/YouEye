@@ -31,6 +31,53 @@ export const apps = {
       return { username: r.body?.username, admin: ['root', 'admin'].includes(r.body?.type), type: r.body?.type, status: r.status };
     },
   },
+  donetick: {
+    sub: 'donetick',
+    // Donetick 0.1.89 (upstream default mode): no instance admin; every account gets its own circle and is its admin,
+    // so nobody is a Donetick "admin" in the suite's sense. circleRole is reported for the log.
+    expect: { admin: { admin: false } },
+    start: { path: '/login', click: / ID$/i },
+    settle: 4000,
+    whoami: async ({ page }) => {
+      const token = await page.evaluate(() => localStorage.getItem('token'));
+      if (!token) return { error: 'no token in localStorage' };
+      const headers = { Authorization: `Bearer ${token}` };
+      const me = await pageFetch(page, '/api/v1/users/profile', { headers });
+      const members = await pageFetch(page, '/api/v1/circles/members', { headers });
+      const mine = (members.body?.res ?? []).find((m) => m.userId === me.body?.res?.id);
+      return { username: me.body?.res?.username, circleRole: mine?.role, admin: false, status: me.status };
+    },
+  },
+  filebrowser: {
+    sub: 'filebrowser',
+    // FileBrowser Quantum 2.0.2: config.yaml OIDC with adminGroup (exact match on the groups claim). Admin is granted
+    // at sign-in but never taken away (internal/web/auth.go:121): a demoted YouEye admin stays FileBrowser admin.
+    start: { path: '/login', click: /^Sign in with /i },
+    settle: 3000,
+    // /api/users?username=self is the signed-in user (the OIDC callback set the session cookie).
+    whoami: async ({ page }) => {
+      const r = await pageFetch(page, '/api/users?username=self');
+      const u = r.body ?? {};
+      // Settings → Access (access rules and groups) is admin-only (withAdmin): 200 for admins, 403 for others.
+      const access = await pageFetch(page, '/api/access/groups');
+      return { username: u.username, admin: Boolean(u.permissions?.admin), loginMethod: u.loginMethod,
+        sources: (u.scopes ?? []).map((x) => x.name ?? x.path).join(','), adminSettings: access.status, status: r.status };
+    },
+  },
+  forgejo: {
+    sub: 'forgejo',
+    // Forgejo 17: the sign-in source "YouEye" (setup/sso.yaml) maps the groups claim's admin to site admin at every
+    // sign-in; accounts are created at the first sign-in (ENABLE_AUTO_REGISTRATION, USERNAME=preferred_username).
+    start: { path: '/user/login', click: /Sign in with YouEye/i },
+    // The API wants a token, not the web session: ask the web UI. The profile settings form holds the signed-in
+    // user's name; Site Administration (/admin) answers 200 only to site admins (403 to others).
+    whoami: async ({ page }) => {
+      const profile = await pageFetch(page, '/user/settings');
+      const username = String(profile.body).match(/<input name="name" value="([^"]*)"/)?.[1];
+      const site = await pageFetch(page, '/admin');
+      return { username, admin: site.status === 200, siteAdminStatus: site.status, status: profile.status };
+    },
+  },
   freshrss: {
     sub: 'freshrss',
     // is_admin is set when FreshRSS creates the user, from the per-app claim freshrss_role (admin | user).
@@ -60,6 +107,17 @@ export const apps = {
       if (!token) return { error: 'no Jellyfin token in localStorage' };
       const r = await pageFetch(page, '/Users/Me', { headers: { Authorization: `MediaBrowser Token="${token}"` } });
       return { username: r.body?.Name, admin: Boolean(r.body?.Policy?.IsAdministrator), status: r.status };
+    },
+  },
+  karakeep: {
+    sub: 'karakeep',
+    // Karakeep 0.35: env OIDC; YouEye ID admins are not mapped to Karakeep admins (the account the install creates is).
+    expect: { admin: { admin: false } },
+    start: { path: '/signin', click: / ID$/i },
+    whoami: async ({ page }) => {
+      const me = await pageFetch(page, '/api/auth/get-session');
+      const stats = await pageFetch(page, '/api/trpc/admin.stats');
+      return { username: me.body?.user?.email, role: me.body?.user?.role, admin: stats.status === 200, statsStatus: stats.status, status: me.status };
     },
   },
   linkwarden: {
@@ -190,6 +248,27 @@ export const apps = {
       return { username: rows[0]?.[0], name: r.body?.name, admin: false, status: r.status };
     },
   },
+  rallly: {
+    sub: 'rallly',
+    // Rallly 4.17 (better-auth): accounts are created at the first YouEye ID sign-in; no groups claim. Its only admin
+    // path is INITIAL_ADMIN_EMAIL, so the catalog's start command makes the earliest YouEye ID account admin while
+    // none exists (within about a minute): passes with admin first, like Linkwarden. A second account shows Rallly's
+    // licence reminder (free edition: one account; expected, not checked here).
+    start: { path: '/login', click: / ID$/ },
+    settle: 3000,
+    // get-session reads the user from the database (disableCookieCache skips the 5-minute cookie cache); the admin
+    // waits up to 150 s for the role the start command writes (it checks every 60 s).
+    whoami: async ({ page, who }) => {
+      let r;
+      for (let i = 0; i < 15; i++) {
+        r = await pageFetch(page, '/api/better-auth/get-session?disableCookieCache=true');
+        if (who !== 'admin' || r.body?.user?.role === 'admin') break;
+        await page.waitForTimeout(10000);
+      }
+      const u = r.body?.user ?? {};
+      return { username: u.email, name: u.name, role: u.role, admin: u.role === 'admin', status: r.status };
+    },
+  },
   mealie: {
     sub: 'mealie',
     // Password login is off, so the login page shows only the YouEye ID button. Its page script finishes the
@@ -242,6 +321,20 @@ export const apps = {
       return { username: r.body?.name, admin: (r.body?.role ?? 0) >= 4, role: r.body?.role, status: r.status };
     },
   },
+  romm: {
+    sub: 'romm',
+    // RomM 5.4: env OIDC; OIDC_CLAIM_ROLES=groups, OIDC_ROLE_ADMIN=admin, OIDC_ROLE_VIEWER=* (everyone else a user).
+    // The role is re-synced at every sign-in (handler/auth/base_handler.py). The login page's button is
+    // "Login with <identity name>" (OIDC_PROVIDER); it starts at /api/login/openid.
+    start: { path: '/login', click: /Login with /i },
+    settle: 3000,
+    // /api/users/me is the signed-in user (session cookie); role is "admin" or "user".
+    whoami: async ({ page }) => {
+      const r = await pageFetch(page, '/api/users/me');
+      const u = r.body ?? {};
+      return { username: u.username, admin: u.role === 'admin', role: u.role, status: r.status };
+    },
+  },
   trek: {
     sub: 'trek',
     // OIDC_ADMIN_CLAIM=groups / OIDC_ADMIN_VALUE=admin promote and demote at every sign-in.
@@ -277,6 +370,21 @@ export const apps = {
       const name = String(me.body).match(/id="top_user"[\s\S]*?<span class="hidden-sm">([^<]+)</)?.[1]?.trim();
       const adm = await pageFetch(page, '/admin/view');
       return { username: name, admin: adm.status === 200 && /admin/i.test(String(adm.body).slice(0, 4000)) && !/name="password"/.test(String(adm.body)), adminStatus: adm.status };
+    },
+  },
+  wallos: {
+    sub: 'wallos',
+    // Wallos 5.11: env OIDC with auto-create (sub, else verified email). Admin is only user id 1 (the install's
+    // "admin"); no claim is read, so YouEye ID admins are not Wallos admins.
+    expect: { admin: { admin: false } },
+    start: { path: '/login.php', click: /^Login with /i },
+    // The profile page holds the signed-in user's name. admin.php shows its settings form (#registrations) only to
+    // user 1; anyone else gets the page header and a redirect header PHP can no longer send (status 200, no form).
+    whoami: async ({ page }) => {
+      const profile = await pageFetch(page, '/profile.php', { redirect: 'manual' });
+      const username = String(profile.body).match(/id="username" name="username" value="([^"]*)"/)?.[1];
+      const admin = await pageFetch(page, '/admin.php', { redirect: 'manual' });
+      return { username, admin: admin.status === 200 && String(admin.body).includes('id="registrations"'), adminStatus: admin.status, status: profile.status };
     },
   },
   // Native apps (YouEye-Canvas): opening the app without a session redirects to /api/auth/sso and YouEye ID.

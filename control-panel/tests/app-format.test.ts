@@ -84,6 +84,34 @@ test('native apps take source.node from {22, 24}; there is no app_dir', () => {
   rejects(() => parseApp(stringify({ ...native, image: `x/y${PIN}` })), /exactly one of image .* or source/);
 });
 
+test('a native app names its package with source.package; a manifest from a market must (YE-142)', () => {
+  const pkg = { url: 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar', sha256: 'a'.repeat(64), size: 123456 };
+  const native = appDocument({ image: undefined, source: { node: '24', package: pkg } });
+  const manifest = loadApp({ manifest: stringify(native) }, { market: true });
+  assert.deepEqual(manifest.containers[0].source, { node: '24', package: pkg, artifactSHA256: pkg.sha256 });
+  // An app repository's own manifest (no package) still parses; from a market it is refused.
+  const bare = stringify(appDocument({ image: undefined, source: { node: '24' } }));
+  assert.equal(parseApp(bare).source?.package, undefined);
+  rejects(() => parseApp(bare, { market: true }), /source\.package: a native app from a market names its package/);
+  // A frozen copy from before the package existed still loads.
+  assert.equal(loadFrozenApp({ manifest: bare, setups: {} }).integration, 'native');
+  const withPackage = (changes: Record<string, unknown>) => stringify(appDocument({ image: undefined, source: { node: '24', package: { ...pkg, ...changes } } }));
+  rejects(() => parseApp(withPackage({ url: 'http://example.org/standalone.tar' })), /package url must be an exact https/);
+  rejects(() => parseApp(withPackage({ url: 'https://example.org/standalone.tar?token=1' })), /package url/);
+  rejects(() => parseApp(withPackage({ url: 'https://user:pw@example.org/standalone.tar' })), /package url/);
+  rejects(() => parseApp(withPackage({ url: 'https://example.org/standalone.tar#x' })), /package url/);
+  rejects(() => parseApp(withPackage({ url: 'https://example.org' })), /package url/);
+  rejects(() => parseApp(withPackage({ url: 'https://EXAMPLE.org/a/../standalone.tar' })), /package url/);
+  rejects(() => parseApp(withPackage({ sha256: 'A'.repeat(64) })), /package sha256 must be 64 lowercase hex/);
+  rejects(() => parseApp(withPackage({ sha256: 'a'.repeat(63) })), /package sha256/);
+  rejects(() => parseApp(withPackage({ size: 0 })), /source\.package\.size/);
+  rejects(() => parseApp(withPackage({ size: 1024 * 1024 * 1024 + 1 })), /package size must be at most 1 GiB/);
+  rejects(() => parseApp(withPackage({ size: 1.5 })), /source\.package\.size/);
+  rejects(() => parseApp(withPackage({ mirror: 'https://x.org/a.tar' })), /unknown field "mirror"/);
+  // A container app has no source and no package.
+  rejects(() => parseApp(stringify({ ...appDocument(), source: { node: '24', package: pkg } })), /exactly one of image .* or source/);
+});
+
 test('secret names are [a-z0-9_]{1,40}', () => {
   rejects(() => parseApp(appYAML({ secrets: { '../escape': {} } })), /secrets\.\.\.\/escape: Invalid key/);
   rejects(() => parseApp(appYAML({ env: { X: '${secret.Bad-Name}' } })), /unknown variable/);
@@ -389,27 +417,26 @@ test('the catalog app list is discovered from the folders', () => {
     schema: 'youeye.catalog.v1',
     categories: [{ id: 'media', label: 'Media', order: 2 }],
     curation: { spotlight: { apps: ['notes'] } },
-    native: ['notes', 'wiki'],
   });
   const catalog = catalogFromFiles(catalogYaml, [
     'catalog.yaml',
     'apps/sonarr/youeye-app.yaml', 'apps/sonarr/icon.svg', 'apps/sonarr/setup/connect-prowlarr.yaml',
-    'apps/mealie/youeye-app.yaml', 'apps/mealie/screenshots/a.png',
+    'apps/mealie/youeye-app.yaml', 'apps/mealie/screenshots/a.png', 'apps/notes/youeye-app.yaml',
     'apps/Bad/youeye-app.yaml', 'apps/stray.yaml',
     'bundles/media-automation/bundle.yaml',
     'system/caddy.yaml', 'system/postgresql.yaml',
   ]);
   assert.deepEqual(catalog.apps, [
     { id: 'mealie', integration: 'basic', path: 'apps/mealie' },
-    { id: 'notes', integration: 'native' },
+    { id: 'notes', integration: 'basic', path: 'apps/notes' },
     { id: 'sonarr', integration: 'basic', path: 'apps/sonarr' },
-    { id: 'wiki', integration: 'native' },
   ]);
   assert.deepEqual(catalog.bundles, ['media-automation']);
   // system/*.yaml files are not Market items: the core container images ship with the Control Panel.
   assert.deepEqual(Object.keys(catalog).sort(), ['apps', 'bundles', 'categories', 'curation']);
   assert.deepEqual(catalog.curation, { spotlight: { title: undefined, apps: ['notes'] }, collections: [] });
-  assert.throws(() => catalogFromFiles(stringify({ schema: 'youeye.catalog.v1', native: ['mealie'] }), ['apps/mealie/youeye-app.yaml']), /also has an app folder/);
+  // From 0.6.20 a native app is an app folder too (YE-142): a `native:` list is refused.
+  rejects(() => parseCatalog(stringify({ schema: 'youeye.catalog.v1', native: ['mealie'] })), /native: is gone; a native app is an apps\/<id>\/ folder/);
 });
 
 // ─── Gaps found by the catalog conversion ─────────────────

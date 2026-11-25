@@ -316,6 +316,39 @@ async function ensureAppStorageLocked(
   return planned;
 }
 
+/**
+ * This app's own volumes in every app storage location: kind `app` with `user.youeye.app_id` = `appId`, with the
+ * ownership tags they carry. Shared volumes are never listed. For finishing a removal whose install record is gone
+ * (YE-222) and for refusing a fresh install over an earlier installation's data.
+ */
+export async function findAppOwnedVolumes(appId: string): Promise<StorageVolumeMeta[]> {
+  const found: StorageVolumeMeta[] = [];
+  for (const location of await listStorageLocations()) {
+    const response = await incusRequest<IncusCustomVolume[]>('GET',
+      `/1.0/storage-pools/${encode(location.id)}/volumes/custom?recursion=1`);
+    if (response.type === 'error' || !Array.isArray(response.metadata)) throw new Error('Could not list app storage');
+    for (const volume of response.metadata) {
+      const config = volume.config ?? {};
+      if (volume.type !== 'custom' || config['user.youeye.kind'] !== 'app' || config['user.youeye.app_id'] !== appId) continue;
+      const type = config['user.youeye.volume_type'];
+      found.push({
+        appId,
+        pool: location.id,
+        name: volume.name,
+        installationId: config['user.youeye.installation_id'] || undefined,
+        dataOwnerId: config['user.youeye.data_owner_id'] || undefined,
+        logicalName: config['user.youeye.logical_name'] ?? '',
+        type: type === 'config' || type === 'media' ? type : 'data',
+        containerName: '',
+        containerPath: '',
+        readOnly: false,
+        backup: true,
+      });
+    }
+  }
+  return found;
+}
+
 /** Offline retained consumers still own shared data even with no mounted instance. */
 export async function hasOtherShareConsumers(volume: Pick<StorageVolumeMeta, 'appId' | 'shareId' | 'sharedGroup'>) {
   if (!volume.sharedGroup) return false;

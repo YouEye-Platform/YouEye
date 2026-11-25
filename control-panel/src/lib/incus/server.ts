@@ -49,6 +49,11 @@ function openIncus(onReady: () => void, socketPathOverride?: string): Socket | T
   return s;
 }
 
+/** A raw connection to Incus (its Unix socket, or HTTPS with the client certificate), for streams such as events. */
+export function openIncusConnection(onReady: () => void): Socket | TLSSocket {
+  return openIncus(onReady);
+}
+
 interface IncusResponse<T = unknown> {
   type: 'sync' | 'async' | 'error';
   status: string;
@@ -178,6 +183,29 @@ export async function incusDownloadFile(instanceName: string, remotePath: string
     `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`,
     'Incus file download failed',
   );
+}
+
+function incusInstanceFilePath(instanceName: string, remotePath: string): string {
+  return `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`;
+}
+
+/** The exact type of one path in an instance (a symlink is reported as one, not followed); null when absent. */
+export async function incusInspectInstanceFile(
+  instanceName: string,
+  remotePath: string,
+): Promise<'file' | 'directory' | 'symlink' | null> {
+  const response = await incusRawRequest('HEAD', incusInstanceFilePath(instanceName, remotePath));
+  if (response.statusCode === 404) return null;
+  if (response.statusCode < 200 || response.statusCode >= 300) throw new Error('Incus file inspection failed');
+  const type = response.headers['x-incus-type'];
+  if (type !== 'file' && type !== 'directory' && type !== 'symlink') throw new Error('Incus file metadata is invalid');
+  return type;
+}
+
+/** Delete one path in an instance (a symlink itself, never its target). */
+export async function incusDeleteInstanceFile(instanceName: string, remotePath: string): Promise<void> {
+  const response = await incusRawRequest('DELETE', incusInstanceFilePath(instanceName, remotePath));
+  if (response.statusCode < 200 || response.statusCode >= 300) throw new Error('Incus file deletion failed');
 }
 
 function incusVolumeFilePath(pool: string, volume: string, remotePath: string): string {
@@ -589,9 +617,47 @@ export async function execCommand(
   throw new Error(`Incus exec response for ${containerName} did not contain operation metadata`);
 }
 
+/** The directories a POSIX image keeps its tools in, searched after the image's own PATH (YE-221). */
+export const STANDARD_EXEC_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
 /**
- * Execute a simple shell command inside a container
- * Wraps execCommand with shell execution
+ * The PATH for an exec in `containerName`: the instance's own (`environment.PATH`, an OCI image's from its config),
+ * then the standard directories. Incus looks the command up through the exec's PATH, so a bare `sh` is found where
+ * the image keeps it (a Nix image has no /bin/sh) and in /bin when the image's PATH lacks it (YE-221). The image's
+ * own directories stay first. When the instance can't be read, the standard directories alone (the exec then
+ * reports the real error).
+ */
+export async function imageExecPath(containerName: string): Promise<string> {
+  try {
+    const response = await getInstance(containerName);
+    const config = (response.metadata as { expanded_config?: Record<string, string> } | undefined)?.expanded_config;
+    const own = (config?.['environment.PATH'] ?? '').split(':').filter(Boolean);
+    return [...own, ...STANDARD_EXEC_PATH.split(':').filter((directory) => !own.includes(directory))].join(':');
+  } catch {
+    return STANDARD_EXEC_PATH;
+  }
+}
+
+/**
+ * Run `command` in the container with the image's PATH followed by the standard directories (`imageExecPath`), so
+ * a tool is found whether the image's PATH has /bin or not. A PATH the caller passes is used as it is.
+ */
+export async function execInImagePath(
+  containerName: string,
+  command: string[],
+  options?: { environment?: Record<string, string>; timeout?: number; workingDir?: string }
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const environment = options?.environment?.PATH
+    ? options.environment
+    : { ...options?.environment, PATH: await imageExecPath(containerName) };
+  return execCommand(containerName, command, { ...options, environment });
+}
+
+/**
+ * Execute a simple shell command inside a container. `sh` and every command in the script are looked up through the
+ * image's PATH and then the standard directories (`execInImagePath`): an image whose PATH lacks /bin still has its
+ * shell, and an image that keeps `sh` outside /bin (Nix) too. Only an image with no `sh` at all answers 127, which
+ * the exec-ready probe reports as shell-less (YE-221).
  */
 export async function execShell(
   containerName: string,
@@ -602,5 +668,5 @@ export async function execShell(
     workingDir?: string;
   }
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return execCommand(containerName, ['sh', '-c', shellCommand], options);
+  return execInImagePath(containerName, ['sh', '-c', shellCommand], options);
 }

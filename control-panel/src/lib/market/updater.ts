@@ -2,7 +2,8 @@
  * Unified App Updater.
  *
  * Supports two update paths based on container.type:
- *   - LXD (container.type === 'lxd'): fetch tarball from the configured release source, extract, restart service
+ *   - LXD (container.type === 'lxd', a native app): download the package its manifest pins (`source.package`), extract,
+ *     restart service
  *   - OCI (container.type === 'oci'): stop → rebuild with new image → start
  *
  * Both paths support:
@@ -31,15 +32,17 @@ import { clearCatalogCache, isMarketAppUnavailable, resolveCatalogApp } from './
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import {
   getInstalledApp,
-  recordAppProvenance,
   recordCatalogAppUpdate,
 } from './installed-apps';
 import { getContainerName } from './engine-helpers';
 import { assertYouEyeRequirement, buildCanonicalContext, generateAppToken } from './platform-env';
 import { withAppNetworkOperationLock } from '../incus/app-network';
 import { readAppSecret } from '../infrastructure/secrets';
+import {
+  createMissingSecret, credentialRecords, generatedSecretStep, InstalledSecretMissingError, lostInstalledSecrets, missingSecrets,
+} from './manifest-secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
-import { isNewer, releaseKey } from '@/lib/version';
+import { isNewer } from '@/lib/version';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import {
   classifyAppUpdateRouting,
@@ -49,10 +52,9 @@ import {
 import { fetchDirectMarketAppUpdate, saveDirectMarketApp } from './direct-apps';
 import { readFrozenUpdateManifest } from './frozen-manifest';
 import { isMarketSourceConsentError, MarketSourceConsentError, OFFICIAL_MARKET_SOURCE_ID, setupFilesChanged } from './source';
-import { nativeManifestFromRelease, nativeManifestReference, resolveNativeProduct, stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
-import { acceptProductSequence, installedNativeKey, installedProductRelease, type VerifiedProductRelease } from '../releases/product-release';
-import { compareToInstalledNative } from './update-routing';
-import { updateIdenticalProductRelease } from './update-release-metadata';
+import { stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
+import { sameBuild } from './update-routing';
+import { adoptNativeMarketManifest, nativeManifestChanged, olderMarketVersion } from './update-release-metadata';
 import { isLifecycleBusy } from '@/lib/http/lifecycle-busy';
 import type {
   AppManifest,
@@ -75,6 +77,10 @@ export interface UpdateResult {
   migrationsRun: number;
   /** The installed version is already the one its source offers: nothing was changed. */
   unchanged?: boolean;
+  /** A native app installed from the channel moved to its market (record only; YE-142). */
+  moved?: boolean;
+  /** A native app took its market's new manifest for the package it runs (record only, no restart; YE-194). */
+  manifestUpdated?: boolean;
   /** Shared folders the app mounts (e.g. `media`): updated in place and never rolled back. */
   sharedFolders?: string[];
   error?: string;
@@ -142,7 +148,7 @@ async function updateLXDContainer(
   const resolvedDir = appDir;
 
   step++;
-  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (product release digest)`);
+  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (package digest)`);
 
   step++;
   emit(onEvent, step, totalSteps, 'running', `Staging preflighted v${artifact.version} bytes...`);
@@ -172,9 +178,6 @@ async function updateLXDContainer(
     throw new Error('Native artifact staging cleanup failed');
   }
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
-
-  const { publishProductProjection } = await import('../releases/product-projection');
-  artifact.runtimeUUID = await publishProductProjection(containerName,artifact.productRelease);
 
   return { step, version: artifact.version };
 }
@@ -237,6 +240,12 @@ async function updateMarketAppLocked(
         return { success: false, previousVersion: installedApp.installedVersion || '0.0.0', newVersion: err.version || '0.0.0',
           migrationsRun: 0, error: message, errorCode: 'requires-newer-youeye' };
       }
+      if (/\(app is not present\)$/.test(message)) {
+        const notListed = `No update source: ${appId} is not in ${recordedSourceId && recordedSourceId !== OFFICIAL_MARKET_SOURCE_ID ? `the Market source "${recordedSourceId}"` : 'the YouEye Market'}; it keeps running as it is`;
+        emit(onEvent, 1, 1, 'error', notListed);
+        return { success: false, previousVersion: installedApp.installedVersion || '0.0.0', newVersion: installedApp.installedVersion || '0.0.0',
+          migrationsRun: 0, error: notListed, errorCode: 'not-in-market' };
+      }
       throw new Error(`Failed to resolve Market source for "${appId}": ${message}`);
     }
     // The id may name another market address by now (a source re-pointed, or its id handed out again): the app
@@ -245,8 +254,8 @@ async function updateMarketAppLocked(
     if (change) throw new MarketSourceConsentError('source-changed', change.message);
   }
 
-  // Classify before any release lookup or runtime mutation. A native app's
-  // candidate is its product release on the box's channel index.
+  // Every app, native or container, updates from its market (YE-142): the candidate is the market's manifest. A native
+  // app's manifest pins its package (`source.package`); the same package under another version name is no update.
   const routing = resolvedCatalog ? classifyAppUpdateRouting({
     appId,
     installed: installedApp,
@@ -258,68 +267,46 @@ async function updateMarketAppLocked(
     },
   }) : null;
 
-  let manifest: AppManifest;
-  let productRelease: VerifiedProductRelease | null = null;
-  /** A native release against the installed build (compareToInstalledNative): 1 newer, 0 the same build. */
-  let buildOrder: number | null = null;
-  let channelManifestReference: { path: string; repo: string; branch: string; digest: string } | null = null;
-  if (routing?.kind === 'channel') {
-    try {
-      productRelease = await resolveNativeProduct(appId);
-      const native = await nativeManifestFromRelease(productRelease);
-      // No downgrade: an older channel head is rejected here (the box waits).
-      acceptProductSequence(installMeta.productReleaseFloors, productRelease,
-        installedProductRelease(installMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
-      // The same rule without a floor or a recorded release (installed or restored before 0.6.15, YE-141): only a
-      // build this box knows to be newer, or the installed one (up to date below), as projectUpdateAvailability offers.
-      buildOrder = compareToInstalledNative({
-        key: installedNativeKey(installMeta, appId), artifactSHA256: installMeta.nativeArtifacts?.map(a => a.sha256),
-        version: installedApp.installedVersion || installMeta.installedVersion, installedAt: installMeta.installedAt,
-      }, {
-        key: releaseKey(productRelease.release),
-        artifactSHA256: productRelease.build.assets.find(asset => asset.name === 'standalone.tar')?.sha256,
-      });
-      if (buildOrder === null || buildOrder < 0) {
-        const has = installedApp.installedVersion || installMeta.installedVersion || 'another build';
-        throw new Error(buildOrder === null
-          ? `The channel offers ${appId} ${productRelease.release.version}; this box has ${has}, installed without a recorded release, and can't tell that it is newer; waiting for a newer build`
-          : `The channel offers ${appId} ${productRelease.release.version}; this box has ${has}; waiting for the channel to catch up`);
-      }
-      manifest = native.manifest;
-      channelManifestReference = nativeManifestReference(productRelease, manifest);
-    } catch (err) {
-      throw new Error(`Failed to resolve the ${appId} release of this channel: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  } else {
-    manifest = directEntry?.manifest ?? resolvedCatalog!.manifest;
-  }
-
+  const manifest: AppManifest = directEntry?.manifest ?? resolvedCatalog!.manifest;
   const installedVersion = installedApp.installedVersion || '0.0.0';
-  const targetVersion = productRelease ? productRelease.release.version : (manifest.version || '0.0.0');
+  const targetVersion = manifest.version || '0.0.0';
   const containerSpecs = manifest.containers || [];
   const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
-  if (productRelease) {
-    // Only a newer build is an update (YE-139, as projectUpdateAvailability offers it): the installed build under
-    // another release name (the box changed channel, or the build was promoted) is up to date and keeps its name.
-    // An older build, or other contents under the same key, were refused above. Without a recorded release, the same
-    // package is the same build.
-    if (buildOrder === 0 || installMeta.nativeArtifacts?.[0]?.productReleaseSHA256 === productRelease.manifestSHA256) {
-      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${installedVersion})`);
-      return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
+  const candidatePackage = resolvedCatalog?.reference.artifactSHA256 ?? null;
+  const samePackage = sameBuild(installMeta.nativeArtifacts?.map((artifact) => artifact.sha256), candidatePackage);
+  // A native app whose record does not name its market's manifest takes it first when the market pins the very package
+  // it runs and the same runtime configuration: one metadata-only transaction, no download, no restart. That moves an
+  // app installed from the channel before 0.6.20 to its market (YE-142) and takes a new manifest the market published
+  // for the same package (YE-194). With another package it is an ordinary update by version below; with the same
+  // package and another runtime configuration, an ordinary update of that package (it restarts the app).
+  if (resolvedCatalog && nativeManifestChanged(installMeta, resolvedCatalog.reference.digest)) {
+    try {
+      const adopted = await adoptNativeMarketManifest(appUpdateJournalStore(), originalInstallMeta, installedApp, manifest, resolvedCatalog.reference);
+      if (adopted.moved) {
+        emit(onEvent, 1, 1, 'success', adopted.fromChannel
+          ? `${appId} now takes its updates from ${resolvedCatalog.source.name} (${adopted.version}); nothing was downloaded or restarted`
+          : `${appId} now runs ${resolvedCatalog.source.name}'s new manifest (${adopted.version}) for the same package; nothing was downloaded or restarted`);
+        return { success: true, previousVersion: adopted.previousVersion, newVersion: adopted.version, migrationsRun: 0,
+          unchanged: true, ...(adopted.fromChannel ? { moved: true } : { manifestUpdated: true }) };
+      }
+      if (adopted.reason !== 'package-differs') console.warn(`[Market] ${appId} keeps its recorded manifest for now: ${adopted.detail}`);
+    } catch (error) {
+      // An adoption that did not converge was rolled back (the journal says why); the update goes on as for any app.
+      logOperationFailure(`Taking the market manifest of ${appId}`, error);
     }
-  } else if (!isNewer(targetVersion, installedVersion)) {
+  }
+  // The same package: the manifest decides. The one the record names is up to date; another (a new runtime
+  // configuration, or a stopped app) is an ordinary update of the same package. A lower version name than a Market
+  // record's is never applied (YE-212), as for any app.
+  if (samePackage && (!nativeManifestChanged(installMeta, resolvedCatalog?.reference.digest) || olderMarketVersion(installMeta, targetVersion))) {
+    emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${installedVersion})`);
+    return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
+  }
+  if (!samePackage && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0, unchanged: true };
   }
 
-  if (productRelease && channelManifestReference) {
-    const adopted = await updateIdenticalProductRelease(appUpdateJournalStore(), originalInstallMeta,
-      installedApp, manifest, productRelease, channelManifestReference);
-    if (adopted) {
-      emit(onEvent, 1, 1, 'success', `Release ${targetVersion} adopted; existing payload remains running`);
-      return adopted;
-    }
-  }
   // An app added by URL whose new version changes its setup files asks again (decision 7). Compared with the installed
   // copy; nothing is written before the owner allows it.
   if (directEntry && !config.allowSetup) {
@@ -379,26 +366,30 @@ async function updateMarketAppLocked(
   const secretValues: Record<string, string> = {};
   ctx.secret = secretValues;
 
-  // Reload existing secrets
+  // Reload existing secrets. A missing one (null) is generated inside the transaction below; one that cannot be
+  // read safely is never replaced (the update then fails on it).
+  const unreadableSecrets = new Set<string>();
   for (const secret of manifest.secrets) {
     try {
       const value = await readAppSecret(appId, secret.name);
       if (value) secretValues[secret.name] = value;
-    } catch { /* secret may not exist */ }
+    } catch {
+      unreadableSecrets.add(secret.name);
+    }
   }
 
   emit(onEvent, step, totalSteps, 'success', 'Preflight checks passed');
 
-  const stagedNativeArtifacts = await stageMarketNativeArtifacts(
-    manifest,
-    { appId },
-    productRelease ? { selected: productRelease } : {},
-  );
+  const stagedNativeArtifacts = await stageMarketNativeArtifacts(manifest, { appId });
 
   let attemptedOperation: string | undefined;
   try {
     const preflight = await prepareIncusAppUpdate(originalInstallMeta, manifest);
     ctx = await preflight.provider.configurationContext(ctx);
+    // A secret the installed version already declared is never made again, also when it reads as missing or empty
+    // (an install before 0.6.3 kept it elsewhere): its data was made with the old value. Stop before any change (YE-217).
+    const lost = lostInstalledSecrets(manifest, preflight.old, ctx.secret ?? {});
+    if (lost.length) throw new InstalledSecretMissingError(appId, lost);
     const frozenOCI = new Map<string, Awaited<ReturnType<typeof freezeUpdateOCIImage>>>();
     for (const spec of ociContainers) {
       if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.name === spec.name)?.role === 'database') continue;
@@ -429,7 +420,7 @@ async function updateMarketAppLocked(
       }
 
       if (spec.type === 'lxd' && spec.source) {
-        // ── LXD path: fetch tarball from the configured release source, extract, restart service ──
+        // ── LXD path: the package the manifest pins, staged and checked above; extract, restart service ──
         const appDir = '/opt/app';
         const healthEndpoint = spec.healthCheck?.type === 'http' ? spec.healthCheck.path : '/api/health';
         const port = spec.port || 3000;
@@ -451,10 +442,25 @@ async function updateMarketAppLocked(
         emit(onEvent, step, totalSteps, 'running', `Rebuilding ${name} with ${spec.image}...`);
         const artifact = frozenOCI.get(spec.name);
         if (!artifact) throw new Error('OCI update artifact is not frozen');
-        await transaction.mutate(`oci-replace-${i}`, () => rebuildContainer(name, artifact.image));
+        await transaction.mutate(`oci-replace-${i}`, async () => {
+          await rebuildContainer(name, artifact.image);
+          // The new image may link the network files Incus mounts over (YE-215).
+          const { replaceSymlinkedNetworkFiles } = await import('@/lib/infrastructure/oci-network-files');
+          await replaceSymlinkedNetworkFiles(name);
+        });
         emit(onEvent, step, totalSteps, 'success', `${name} rebuilt`);
 
       }
+    }
+    // A secret new in this release (the installed version never declared it; say its new admin password) is generated
+    // now, before the configuration is rendered: one journaled step each, so a rollback deletes only these (YE-208).
+    for (const secret of missingSecrets(manifest, preflight.old, ctx.secret ?? {}, unreadableSecrets)) {
+      // Checked again before the journal names it: a rollback deletes what a generate step names, so never one
+      // that exists.
+      if (await readAppSecret(appId, secret.name) !== null) throw new Error(`The secret ${secret.name} of ${appId} appeared during the update`);
+      const value = await transaction.mutate(generatedSecretStep(secret.name), () => createMissingSecret(appId, secret));
+      ctx = { ...ctx, secret: { ...ctx.secret, [secret.name]: value } };
+      emit(onEvent, step, totalSteps, 'success', `Generated the new secret ${secret.name}`);
     }
     await transaction.mutate('apply-generated-configuration', () => preflight.provider.applyConfiguration(transaction.record(), manifest, ctx));
     // Start order: the app's database and caches are ready before its workers and the app itself start.
@@ -502,8 +508,10 @@ async function updateMarketAppLocked(
     // What the app offers and asks of other apps is the new release's (the suggestions follow after the commit).
     installMeta.provides = manifest.provides?.length ? manifest.provides : undefined;
     installMeta.wants = manifest.wants?.length ? manifest.wants : undefined;
-    if (productRelease) installMeta.productReleaseFloors = acceptProductSequence(installMeta.productReleaseFloors,productRelease,
-      installedProductRelease(originalInstallMeta.nativeArtifacts?.find(a => a.productRelease)?.productRelease, appId));
+    // The sign-in details Settings → Apps shows are the new release's (an app that gains its own login lists them;
+    // one that drops `credentials:` lists none). A rollback restores the previous ones.
+    installMeta.credentials = credentialRecords(manifest);
+    // productReleaseFloors are not written for native apps any more (YE-142); a record's old floors stay, unread.
     installMeta.catalogKey = `${sourceId}:app:${appId}`;
     installMeta.itemKind = 'app';
     installMeta.sourceId = sourceId;
@@ -513,20 +521,13 @@ async function updateMarketAppLocked(
     if (directEntry) {
       installMeta.manifestPath = directEntry.manifestUrl;
       installMeta.manifestDigest = directEntry.manifestDigest;
-    } else if (channelManifestReference) {
-      installMeta.manifestPath = channelManifestReference.path;
-      installMeta.manifestRepo = channelManifestReference.repo;
-      installMeta.manifestBranch = channelManifestReference.branch;
-      installMeta.manifestDigest = channelManifestReference.digest;
-    } else if (routing?.kind === 'catalog') {
+    } else if (routing) {
       installMeta.manifestPath = resolvedCatalog!.reference.path;
       installMeta.manifestRepo = resolvedCatalog!.reference.repo;
       installMeta.manifestBranch = resolvedCatalog!.reference.branch;
       installMeta.manifestDigest = resolvedCatalog!.reference.digest;
     }
     installMeta.nativeArtifacts = [...stagedNativeArtifacts.byContainerName.values()].map((artifact) => ({
-      productRelease: artifact.productRelease,
-      runtimeUUID: artifact.runtimeUUID,
       containerName: artifact.containerName,
       sourceRepo: artifact.sourceRepo,
       releaseTag: artifact.tag,
@@ -535,7 +536,6 @@ async function updateMarketAppLocked(
       sha256: artifact.artifactSHA256,
       bytes: artifact.artifactBytes,
       verification: artifact.verification.status,
-      productReleaseSHA256: artifact.verification.releaseSHA256,
     }));
     installMeta.containers = installMeta.containers.map((container) => {
       const spec = containerSpecs.find((candidate) => candidate.name === container.name);
@@ -553,18 +553,8 @@ async function updateMarketAppLocked(
       };
     });
     await transaction.mutate('publish-install-metadata', () => saveInstallMetadata(installMeta));
-    // Provenance: what tag/branch/source is actually installed now.
-    if (productRelease) {
-      const selected = productRelease;
-      await transaction.mutate('publish-provenance', () => recordAppProvenance(appId, {
-        version: selected.release.version,
-        tag: selected.release.tag,
-        branch: null,
-        source: selected.repository,
-      }));
-    } else {
-      await transaction.mutate('publish-provenance', () => recordCatalogAppUpdate(appId, targetVersion));
-    }
+    // Provenance: the market version installed now (a native app's channel release tag and repository are cleared).
+    await transaction.mutate('publish-provenance', () => recordCatalogAppUpdate(appId, targetVersion));
     emit(onEvent, step, totalSteps, 'success', 'Version updated');
 
     const saved = await readInstallMetadata(appId);
@@ -653,7 +643,7 @@ async function verifyConnections(appId: string, containerNames: string[]): Promi
  * One app update at a time on the box. Updates no longer reserve shared resources (a stuck one must not block other
  * apps), so this in-process queue keeps two from racing each other's Caddy fence writes and free-space checks.
  */
-const updateQueue = globalThis as typeof globalThis & { __youeyeAppUpdateTail?: Promise<void> };
+const updateQueue = globalThis as typeof globalThis & { __youeyeAppUpdateTail?: Promise<void>; __youeyeAppUpdateRunning?: number };
 async function oneUpdateAtATime<T>(work: () => Promise<T>): Promise<T> {
   const previous = updateQueue.__youeyeAppUpdateTail ?? Promise.resolve();
   let release!: () => void;
@@ -677,7 +667,85 @@ async function oneUpdateAtATime<T>(work: () => Promise<T>): Promise<T> {
   } else {
     await previous.catch(() => undefined);
   }
-  try { return await work(); } finally { release(); }
+  updateQueue.__youeyeAppUpdateRunning = (updateQueue.__youeyeAppUpdateRunning ?? 0) + 1;
+  try { return await work(); } finally {
+    updateQueue.__youeyeAppUpdateRunning = Math.max(0, (updateQueue.__youeyeAppUpdateRunning ?? 1) - 1);
+    release();
+  }
+}
+
+/**
+ * Re-record every native app whose market pins the very package it runs under another manifest, metadata only
+ * (`adoptNativeMarketManifest`): one installed from the channel before 0.6.20 moves to its market (YE-142), a Market one
+ * takes its market's new manifest (YE-194). The update check runs it first (so also once right after the Control Panel
+ * starts). The digests are compared without any lock, and only an app whose market manifest changed is re-recorded,
+ * under the same exclusion as its update (YE-210, `native-adoption.ts`). A failure only leaves that app on its record
+ * (another runtime configuration stays offered as an ordinary update).
+ */
+export async function adoptNativeMarketManifests(): Promise<string[]> {
+  const { getAllInstalledApps } = await import('./installed-apps');
+  const { adoptChangedNativeManifests } = await import('./native-adoption');
+  return adoptChangedNativeManifests({
+    appIds: async () => (await getAllInstalledApps()).map(app => app.appId),
+    updateRunning: () => Boolean(updateQueue.__youeyeAppUpdateRunning),
+    eligible: async (appId) => {
+      const meta = await readInstallMetadata(appId);
+      return meta?.integration === 'native' && meta.serviceCredentialState === 'ready';
+    },
+    plan: nativeAdoptionPlan,
+    locked: (appId, work) => oneUpdateAtATime(() => withAppLifecycle(appId, () => withAppNetworkOperationLock(appId, 'update', work))),
+    adopt: async (appId, plan) => {
+      try {
+        const outcome = await adoptNativeMarketManifest(appUpdateJournalStore(), plan.before, plan.installed, plan.resolved.manifest, plan.resolved.reference);
+        if (!outcome.moved && outcome.reason !== 'stopped') moveAttempts().set(appId, plan.attempt);
+        return outcome;
+      } catch (error) {
+        moveAttempts().set(appId, plan.attempt);
+        throw error;
+      }
+    },
+    report: (appId, outcome) => {
+      if (outcome.moved) {
+        moveAttempts().delete(appId);
+        console.log(outcome.fromChannel
+          ? `[Market] ${appId} moved to its market at ${outcome.version} (no download, no restart)`
+          : `[Market] ${appId} took its market's new manifest at ${outcome.version} for the same package (no download, no restart)`);
+      } else if (outcome.reason !== 'package-differs') {
+        console.warn(`[Market] ${appId} keeps its recorded manifest for now: ${outcome.detail}`);
+      }
+    },
+    failed: (appId, error) => logOperationFailure(`Taking the market manifest of ${appId}`, error),
+  });
+}
+
+/**
+ * Read-only: the market manifest a native app would take, or null when its record already has it, the app follows a
+ * URL, its market can't be read, or this record and manifest were tried already without taking.
+ */
+async function nativeAdoptionPlan(appId: string) {
+  const before = await readInstallMetadata(appId);
+  const installed = await getInstalledApp(appId);
+  if (!before || !installed || before.integration !== 'native') return null;
+  const sourceId = recordedCatalogSourceIds(installed, before)[0];
+  // An app added by URL re-reads its URL only when the owner updates it.
+  if (sourceId?.startsWith('direct:')) return null;
+  const resolved = await resolveCatalogApp(appId, sourceId).catch(() => null);
+  if (!resolved || !nativeManifestChanged(before, resolved.reference.digest)) return null;
+  // An app that could not take it is tried again only once its record, its market's manifest or this box's YouEye
+  // version changed (a stopped app every time: it takes it once it runs). The version is part of it because a
+  // manifest that needs a newer YouEye waits for the box's update (YE-212), and an unknown version ("0.0.0" while
+  // Spine does not answer) must not hold the app back once Spine says which it is.
+  const platform = await import('./platform-env').then(m => m.getPlatformContext()).then(c => c.version, () => '');
+  const attempt = `${updateDigest(JSON.stringify(before))}\0${resolved.reference.repo}\0${resolved.reference.digest}\0${platform}`;
+  if (moveAttempts().get(appId) === attempt) return null;
+  return { before, installed, resolved, attempt };
+}
+
+/** The last adoption tried per app that did not take (record digest, market address, manifest digest, YouEye version). */
+function moveAttempts(): Map<string, string> {
+  const registry = globalThis as typeof globalThis & { __youeyeNativeMoveAttempts?: Map<string, string> };
+  registry.__youeyeNativeMoveAttempts ??= new Map();
+  return registry.__youeyeNativeMoveAttempts;
 }
 
 export async function updateMarketApp(config: UpdateConfig, onEvent: InstallEventCallback): Promise<UpdateResult> {

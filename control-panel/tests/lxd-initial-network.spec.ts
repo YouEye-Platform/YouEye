@@ -64,7 +64,7 @@ function fixture(mode = 'normal', system = true) {
   return { effects, get instance() { return instance; }, get watchdogStarts() { return watchdogStarts; },
     run: () => api.deployLXDContainer({ name: system ? 'pointer' : 'example', containerName: name, volumes: [
       { kind: 'custom', pool: 'data', source: 'retained', container: '/data' },
-    ] }, {},
+    ] },
     system ? undefined : { eth0: { type: 'nic', network: 'app-bridge', name: 'eth0' } }),
   };
 }

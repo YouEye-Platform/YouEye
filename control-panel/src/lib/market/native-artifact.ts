@@ -1,41 +1,45 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { isDeepStrictEqual, promisify } from 'node:util';
+import { promisify } from 'node:util';
 
-import {
-  channelProductEntry, downloadProductAsset, downloadProductAssetTo, readChannelIndex, resolveChannelEntry, resolveChannelProduct,
-  verifyChannelEntryDocument, type BoxChannelIndex, type ChannelEntry,
-} from '@/lib/releases/channel-index';
+import { downloadProductAsset, downloadProductAssetTo, downloadReleaseFileTo, resolveChannelProduct } from '@/lib/releases/channel-index';
 import { productReceipt, verifyInstalledProductReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
-import { marketStateDir } from './source';
-import type { AppManifest, InstallConfig, InstallMetadata } from './types';
+import { MAX_NATIVE_PACKAGE_BYTES } from './app-format/schema';
+import type { AppManifest, InstallConfig, InstallMetadata, NativePackageSpec } from './types';
 
 const execFileAsync = promisify(execFile);
-/** Largest native app package (standalone.tar). It is streamed to disk and to
- * the container, never held in memory, so this bounds disk use and time only. */
-export const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
+/** Largest native app package (standalone.tar), the manifest's `source.package.size` limit. It is streamed to disk
+ * and to the container, never held in memory, so this bounds disk use and time only. */
+export const MAX_ARTIFACT_BYTES = MAX_NATIVE_PACKAGE_BYTES;
 const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_ARCHIVE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
 
-/** Native archives are always bound by their product release digests. */
-export type MarketNativeVerification = { status: 'product-release'; releaseSHA256: string };
+/**
+ * What binds a staged package. A native Market app (0.6.20, YE-142): `manifest`, its manifest's `source.package`
+ * (SHA-256 and size). Pointer, and native apps installed before 0.6.20: `product-release`, the digests of a product
+ * release document from the box's channel index.
+ */
+export type MarketNativeVerification = { status: 'product-release'; releaseSHA256: string } | { status: 'manifest' };
 
 export interface StagedMarketNativeArtifact {
   containerName: string;
   path: string;
+  /** The release tag (Pointer); for a Market app, its version. */
   tag: string;
   version: string;
+  /** Where the package came from: Pointer's release repository; a Market app's package URL. */
   sourceRepo: string;
   artifactName: 'standalone.tar';
   artifactSHA256: string;
   artifactBytes: number;
   verification: MarketNativeVerification;
-  productRelease: InstalledProductReceipt;
+  /** Pointer only: the product release receipt (a Market app has none). */
+  productRelease?: InstalledProductReceipt;
   runtimeUUID?: string;
 }
 
@@ -45,16 +49,16 @@ export interface StagedMarketNativeArtifacts {
 }
 
 export interface MarketNativeStageOptions {
-  /** The exact release an update already selected; otherwise the channel index is read. */
-  selected?: VerifiedProductRelease;
   skipContainerNames?: string[];
+  /** Tests: the download (the release-download rules: HTTPS only, redirects checked, 403/429 back-off). */
+  download?: typeof downloadReleaseFileTo;
 }
 
 export class MarketNativeArtifactPolicyError extends Error {
   override name = 'MarketNativeArtifactPolicyError';
 }
 
-/** The native app of the box's channel: its product release from the channel index. */
+/** Pointer, the System's own native product: its product release from the box's channel index. */
 export async function resolveNativeProduct(product: string): Promise<VerifiedProductRelease> {
   const selected = await resolveChannelProduct(product);
   if (!selected) throw new MarketNativeArtifactPolicyError(`This channel has no ${product} release yet`);
@@ -62,161 +66,10 @@ export async function resolveNativeProduct(product: string): Promise<VerifiedPro
   return selected;
 }
 
-/**
- * The installer contract (`youeye-app.yaml`) of a native product release, as the Market
- * presents it: digest-checked against the build, parsed strictly, and versioned by the release.
- * Native releases carry no setup files and no listing images (relative files have no host).
- */
-export async function nativeManifestFromContract(contract: Buffer, selected: VerifiedProductRelease): Promise<AppManifest> {
-  if (createHash('sha256').update(contract).digest('hex') !== selected.build.contract_sha256) {
-    throw new MarketNativeArtifactPolicyError('Product installer contract digest differs');
-  }
-  const { loadApp } = await import('./app-format/compile');
-  let manifest: AppManifest;
-  try {
-    manifest = loadApp({ manifest: contract.toString('utf8') });
-  } catch (error) {
-    throw new MarketNativeArtifactPolicyError(`Product installer contract is invalid: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (manifest.metadata.id !== selected.release.product || manifest.integration !== 'native') {
-    throw new MarketNativeArtifactPolicyError('Product installer contract names another app');
-  }
-  manifest.version = selected.release.version;
-  if (manifest.frozen) manifest.frozen.version = selected.release.version;
-  return withoutListingFiles(manifest);
-}
-
-/**
- * A copy of a manifest without its listing's files (the icon file and the screenshots). A native release presents
- * none, but its `frozen` source still names them, so an installed copy rebuilt from that source has them back.
- * Comparing a release's manifest with an installed copy takes both through here. Nothing else is left out: every
- * other field, and the whole source text in `frozen`, stays.
- */
-export function withoutListingFiles(manifest: AppManifest): AppManifest {
-  return {
-    ...manifest,
-    metadata: { ...manifest.metadata, iconUrl: undefined },
-    ...(manifest.detail ? { detail: { ...manifest.detail, screenshots: [] } } : {}),
-  };
-}
-
-export async function nativeManifestFromRelease(selected: VerifiedProductRelease): Promise<{ manifest: AppManifest; contract: Buffer }> {
-  const contract = await downloadProductAsset(selected, 'youeye-app.yaml');
-  return { manifest: await nativeManifestFromContract(contract, selected), contract };
-}
-
-// ─── The Market's listing of a native app ─────────────────
-
-/**
- * A native app as the Market lists it: its release on the box's channel and the manifest of that release.
- *
- * Kept by the digest of the app's entry in the channel index (the SHA-256 of its `product-release.json`), in memory
- * and in `/var/lib/youeye/markets/_native/<product>.json`, so listing the Market does not download the release
- * document and `youeye-app.yaml` again while the channel still names the same release. The kept copy is the two
- * downloaded files; reading it back checks the document against the index entry and the manifest against the
- * document, exactly as after a download. Installs and updates do not use it: they resolve the release themselves.
- */
-export interface NativeListing {
-  selected: VerifiedProductRelease;
-  manifest: AppManifest;
-}
-
-const NATIVE_LISTING_SCHEMA = 'youeye.native-listing.v1';
-/** The channel index is asked once for a whole listing (it has one entry per native app). */
-const INDEX_MEMO_MS = 10_000;
-const NATIVE_LISTINGS = Symbol.for('youeye.market-native-listings');
-const nativeHolder = globalThis as typeof globalThis & { [NATIVE_LISTINGS]?: {
-  listings: Map<string, { sha256: string; listing: NativeListing }>;
-  index: { at: number; value: Promise<BoxChannelIndex> } | null;
-} };
-const nativeListings = nativeHolder[NATIVE_LISTINGS] ??= { listings: new Map(), index: null };
-
-export function resetNativeListings(): void {
-  nativeListings.listings.clear();
-  nativeListings.index = null;
-}
-
-export interface NativeListingDeps {
-  index?: () => Promise<BoxChannelIndex>;
-  fetch?: typeof fetch;
-  now?: () => number;
-}
-
-function memoizedIndex(deps: NativeListingDeps): Promise<BoxChannelIndex> {
-  if (deps.index) return deps.index();
-  const now = (deps.now ?? Date.now)();
-  if (!nativeListings.index || now - nativeListings.index.at > INDEX_MEMO_MS) {
-    const value = readChannelIndex();
-    nativeListings.index = { at: now, value };
-    value.catch(() => { if (nativeListings.index?.value === value) nativeListings.index = null; });
-  }
-  return nativeListings.index.value;
-}
-
-const nativeListingFile = (product: string) => join(marketStateDir(), 'markets', '_native', `${product}.json`);
-
-async function storedNativeListing(product: string, entry: ChannelEntry): Promise<NativeListing | null> {
-  try {
-    const saved = JSON.parse(await readFile(nativeListingFile(product), 'utf8')) as { schema?: string; entry_sha256?: string; document_base64?: string; contract_base64?: string };
-    if (saved.schema !== NATIVE_LISTING_SCHEMA || saved.entry_sha256 !== entry.sha256
-      || typeof saved.document_base64 !== 'string' || typeof saved.contract_base64 !== 'string') return null;
-    const selected = verifyChannelEntryDocument(product, entry, Buffer.from(saved.document_base64, 'base64'));
-    if (selected.build.kind !== 'native') return null;
-    return { selected, manifest: await nativeManifestFromContract(Buffer.from(saved.contract_base64, 'base64'), selected) };
-  } catch {
-    return null;
-  }
-}
-
-async function keepNativeListing(product: string, entry: ChannelEntry, selected: VerifiedProductRelease, contract: Buffer): Promise<void> {
-  const file = nativeListingFile(product);
-  const temporary = `${file}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
-  try {
-    await mkdir(join(marketStateDir(), 'markets', '_native'), { recursive: true, mode: 0o700 });
-    await writeFile(temporary, `${JSON.stringify({
-      schema: NATIVE_LISTING_SCHEMA, entry_sha256: entry.sha256,
-      document_base64: selected.raw.toString('base64'), contract_base64: contract.toString('base64'),
-    })}\n`, { mode: 0o600 });
-    await rename(temporary, file);
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    console.warn(`[market] Could not keep the listing of ${product}:`, error);
-  }
-}
-
-/** The Market's listing of a native app on the box's channel (see `NativeListing`). */
-export async function nativeListing(product: string, deps: NativeListingDeps = {}): Promise<NativeListing> {
-  const entry = await channelProductEntry(product, { index: () => memoizedIndex(deps) });
-  if (!entry) throw new MarketNativeArtifactPolicyError(`This channel has no ${product} release yet`);
-  const copy = (listing: NativeListing): NativeListing => ({ selected: listing.selected, manifest: structuredClone(listing.manifest) });
-  const cached = nativeListings.listings.get(product);
-  if (cached?.sha256 === entry.sha256) return copy(cached.listing);
-  let listing = await storedNativeListing(product, entry);
-  if (!listing) {
-    const selected = await resolveChannelEntry(product, entry, deps.fetch);
-    if (selected.build.kind !== 'native') throw new MarketNativeArtifactPolicyError(`${product} release is not a native app`);
-    const contract = await downloadProductAsset(selected, 'youeye-app.yaml', undefined, deps.fetch);
-    listing = { selected, manifest: await nativeManifestFromContract(contract, selected) };
-    await keepNativeListing(product, entry, selected, contract);
-  }
-  nativeListings.listings.set(product, { sha256: entry.sha256, listing });
-  return copy(listing);
-}
-
-/**
- * The install record's manifest reference for a native release. Its digest is the manifest's
- * canonical frozen digest, the same value an install records, so the frozen copy keeps matching.
- */
-export function nativeManifestReference(selected: Pick<VerifiedProductRelease, 'repository' | 'release'>, manifest: AppManifest) {
-  if (!manifest.frozen?.digest) throw new MarketNativeArtifactPolicyError('Product installer contract has no frozen digest');
-  return { path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen.digest };
-}
-
-/** The manifest an install or update uses must be exactly the release's contract. */
-export async function verifyMarketProductInstallContract(contract: Buffer, selected: VerifiedProductRelease, manifest: AppManifest): Promise<void> {
-  if (!isDeepStrictEqual(await nativeManifestFromContract(contract, selected), manifest)) {
-    throw new MarketNativeArtifactPolicyError('Selected application manifest differs from the product contract');
-  }
+/** The package a native app's manifest names (`source.package`), or null (a frozen copy from before 0.6.20). */
+export function nativePackageOf(manifest: Pick<AppManifest, 'containers'>): NativePackageSpec | null {
+  const lxd = manifest.containers.filter((container) => container.type === 'lxd');
+  return lxd.length === 1 ? lxd[0].source?.package ?? null : null;
 }
 
 function safeArchivePath(value: string): boolean {
@@ -281,7 +134,7 @@ export async function inspectMarketNativeArchive(path: string, requiredEntrypoin
   }
 }
 
-/** Shared digest-bound native archive staging for Market apps and managed Pointer. */
+/** Digest-bound native archive staging of a product release: managed Pointer. */
 export async function stageVerifiedProductArtifact(directory: string, containerName: string, assembly: VerifiedProductRelease, expectedDigest?: string): Promise<StagedMarketNativeArtifact> {
   if (assembly.build.kind !== 'native' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(containerName)) throw new MarketNativeArtifactPolicyError('Invalid native product staging identity');
   if (assembly.release.product === 'pointer') {
@@ -304,9 +157,42 @@ export async function stageVerifiedProductArtifact(directory: string, containerN
 }
 
 /**
- * Stage the native archive of an app. A native app is one product: its single
- * LXD container runs that product's `standalone.tar`, found through the box's
- * channel index (or the exact release an update already selected).
+ * Stage a native Market app's package (`source.package`) into `directory`: download it from its URL by the
+ * release-download rules, then check its size and SHA-256 against the manifest and that the archive is a safe app
+ * tree with a `server.js`. Nothing else is trusted: any market, official or custom, may name any HTTPS host.
+ */
+export async function stageMarketPackage(
+  directory: string,
+  containerName: string,
+  pkg: NativePackageSpec,
+  version: string,
+  download: typeof downloadReleaseFileTo = downloadReleaseFileTo,
+): Promise<StagedMarketNativeArtifact> {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(containerName)) throw new MarketNativeArtifactPolicyError('Invalid native app staging identity');
+  if (!Number.isSafeInteger(pkg.size) || pkg.size <= 0 || pkg.size > MAX_ARTIFACT_BYTES || !/^[0-9a-f]{64}$/.test(pkg.sha256)) {
+    throw new MarketNativeArtifactPolicyError('The app package is not pinned by size and SHA-256');
+  }
+  const artifactPath = join(directory, `${containerName}.standalone.tar`);
+  let written: { bytes: number; sha256: string };
+  try {
+    written = await download(pkg.url, artifactPath, pkg.size);
+  } catch (error) {
+    throw new MarketNativeArtifactPolicyError(`The app package could not be downloaded from ${pkg.url}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (written.bytes !== pkg.size || written.sha256 !== pkg.sha256) {
+    throw new MarketNativeArtifactPolicyError(`The app package from ${pkg.url} is not the one the manifest names (size or SHA-256 differs)`);
+  }
+  await inspectMarketNativeArchive(artifactPath, 'server.js');
+  return {
+    containerName, path: artifactPath, tag: version, version, sourceRepo: pkg.url, artifactName: 'standalone.tar',
+    artifactSHA256: written.sha256, artifactBytes: written.bytes, verification: { status: 'manifest' },
+  };
+}
+
+/**
+ * Stage the package of a native app (its single LXD container) from the manifest's `source.package`. A manifest
+ * without one (a frozen copy from before 0.6.20) cannot be installed again from it: the app is reinstalled or updated
+ * from its market, which names the package.
  */
 export async function stageMarketNativeArtifacts(
   manifest: AppManifest,
@@ -319,15 +205,16 @@ export async function stageMarketNativeArtifacts(
   const byContainerName = new Map<string, StagedMarketNativeArtifact>();
   if (nativeContainers.length === 0) return { byContainerName, cleanup: async () => undefined };
   if (lxd.length !== 1) throw new MarketNativeArtifactPolicyError('A native app has exactly one LXD container');
-  const product = config.appId;
-  const selected = options.selected ?? await resolveNativeProduct(product);
-  if (selected.release.product !== product) throw new MarketNativeArtifactPolicyError('Selected release belongs to another app');
-
+  if (manifest.metadata.id !== config.appId) throw new MarketNativeArtifactPolicyError('The manifest belongs to another app');
+  const container = nativeContainers[0];
+  const pkg = container.source?.package;
+  if (!pkg) {
+    throw new MarketNativeArtifactPolicyError(`${config.appId} ${manifest.version} names no package (source.package); `
+      + 'update YouEye\'s Market first, then try again');
+  }
   const directory = await mkdtemp(join(tmpdir(), 'youeye-market-native-'));
   try {
-    const container = nativeContainers[0];
-    const staged = await stageVerifiedProductArtifact(directory, container.name, selected, container.source?.artifactSHA256?.toLowerCase());
-    byContainerName.set(container.name, staged);
+    byContainerName.set(container.name, await stageMarketPackage(directory, container.name, pkg, manifest.version, options.download));
     return {
       byContainerName,
       cleanup: () => rm(directory, { recursive: true, force: true }),
@@ -339,11 +226,13 @@ export async function stageMarketNativeArtifacts(
 }
 
 /**
- * The release records of the native runtimes a restore (or a retained-data adoption) brings back instead of
- * installing them, taken from the earlier install record: the app keeps the release it runs, so it is not offered
- * that same release as an update, and keeps its sequence floor. A record that does not verify for this app, its
- * manifest version and a recovered container is dropped (the app then has no recorded release). `runtimeUUID` is
- * left out: the recovered instance is a new runtime, and its projection is published again once it exists.
+ * The package records of the native runtimes a restore (or a retained-data adoption) brings back instead of installing
+ * them, taken from the earlier install record: the app keeps the package it runs, so it is not offered that same
+ * package as an update. Two kinds are kept for this app, its manifest version and a recovered container:
+ * - `manifest` (a native Market app, 0.6.20 on): its package SHA-256 and size, as recorded;
+ * - `product-release` (installed from the channel before 0.6.20): only when its release receipt still verifies; the
+ *   digest and size come from the receipt. Such a record moves to its market at the next update check (YE-142).
+ * Anything else is dropped. `runtimeUUID` is left out: the recovered instance is a new runtime.
  */
 export function recoveredNativeArtifacts(
   appId: string,
@@ -354,9 +243,18 @@ export function recoveredNativeArtifacts(
   if (!Array.isArray(recorded) || !version) return [];
   const artifacts: NonNullable<InstallMetadata['nativeArtifacts']> = [];
   for (const entry of recorded as Array<Partial<NonNullable<InstallMetadata['nativeArtifacts']>[number]>>) {
-    if (!entry || typeof entry !== 'object' || !entry.productRelease || typeof entry.containerName !== 'string'
+    if (!entry || typeof entry !== 'object' || typeof entry.containerName !== 'string'
       || !recoveredContainerNames.includes(entry.containerName)
       || artifacts.some((artifact) => artifact.containerName === entry.containerName)) continue;
+    if (entry.verification === 'manifest' && !entry.productRelease) {
+      if (entry.version !== version || entry.artifactName !== 'standalone.tar' || typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)
+        || !Number.isSafeInteger(entry.bytes) || (entry.bytes as number) <= 0 || (entry.bytes as number) > MAX_ARTIFACT_BYTES
+        || typeof entry.sourceRepo !== 'string' || typeof entry.releaseTag !== 'string') continue;
+      artifacts.push({ containerName: entry.containerName, sourceRepo: entry.sourceRepo, releaseTag: entry.releaseTag, version,
+        artifactName: 'standalone.tar', sha256: entry.sha256, bytes: entry.bytes as number, verification: 'manifest' });
+      continue;
+    }
+    if (!entry.productRelease) continue;
     let selected: VerifiedProductRelease;
     try { selected = verifyInstalledProductReceipt(entry.productRelease, { product: appId }); } catch { continue; }
     const primary = selected.build.kind === 'native' ? selected.build.assets.find((asset) => asset.name === 'standalone.tar') : undefined;

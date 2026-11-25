@@ -270,7 +270,7 @@ function DnsPanel() {
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{list.comment || list.address}</div>
               <div className="truncate text-xs tabular-nums text-muted-foreground">
-                {(list.number ?? 0).toLocaleString(locale)} {translateInterface("m1b0ec1954eec")}{list.enabled ? "" : translateInterface("m62a5b50f644f")}
+                {translateInterface("m1da897576823", {count: list.number ?? 0})}{list.enabled ? "" : translateInterface("m62a5b50f644f")}
               </div>
             </div>
             <div className="shrink-0">
@@ -997,7 +997,7 @@ function stepLabel(step: string): string {
                 <input type="checkbox" checked={namesNoticeAccepted} onChange={(event) => setNamesNoticeAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-input accent-primary" />
                 <span>{translateInterface("m5a9d2532161c")}</span>
               </label>
-              <p className="mt-2 text-xs text-muted-foreground">{translateInterface("mc6ed61c15986")}{names.currentTerms.version}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{translateInterface("mdcb91ff99eb6", {version: names.currentTerms.version})}</p>
             </div>
           )}
           {names.state.status !== "released" && (

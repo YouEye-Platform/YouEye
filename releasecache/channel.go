@@ -32,10 +32,12 @@ func ValidChannel(channel string) bool {
 	return false
 }
 
-// Product ids this reader takes from an index. An index may still carry a
-// frozen "market" entry for boxes up to 0.6.10 (the Market is read from its
-// own address since 0.6.11); like any product not listed here, it is skipped.
-var Products = []string{"youeye", "pointer", "notes", "wiki", "search", "translate", "weather", "cinema"}
+// Product ids this reader takes from an index: the System and Pointer. An index
+// may still carry a frozen "market" entry for boxes up to 0.6.10 (the Market is
+// read from its own address since 0.6.11) and frozen native app entries for
+// boxes up to 0.6.19 (native apps are Market apps since 0.6.20, YE-142); like
+// any product not listed here, they are skipped.
+var Products = []string{"youeye", "pointer"}
 
 // ChannelIndex is read leniently, so a later publisher can extend it without
 // cutting older boxes off: unknown keys are ignored, unknown products are

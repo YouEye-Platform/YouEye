@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
@@ -317,6 +318,9 @@ var appRemoveCmd = &cobra.Command{
 			return err
 		}
 		output.Success(message)
+		for _, line := range appRemoveConnectionsLeft(args[0], result) {
+			output.Warn(line)
+		}
 		return nil
 	},
 }
@@ -333,6 +337,48 @@ func appRemoveMessage(appName string, result map[string]interface{}) (string, er
 		return msg, nil
 	}
 	return appName + " removed", nil
+}
+
+// appRemoveConnectionsLeftMax matches the Control Panel's list (uninstall-notice.ts).
+const appRemoveConnectionsLeftMax = 20
+
+// appRemoveConnectionsLeft names the apps that may still list the removed one, because a connection's remove: steps
+// did not run (the uninstall's connectionsLeft, YE-199): one line per app, in the Control Panel's words, printed
+// after the success line. An entry without appId means "a connected app". Older Control Panels send no
+// connectionsLeft: nothing is printed.
+func appRemoveConnectionsLeft(appName string, result map[string]interface{}) []string {
+	list, ok := result["connectionsLeft"].([]interface{})
+	if !ok {
+		return nil
+	}
+	app := terminalText(appName, false)
+	var lines []string
+	seen := map[string]bool{}
+	for _, item := range list {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		appID, _ := entry["appId"].(string)
+		appID = strings.TrimSpace(terminalText(appID, false))
+		if seen[appID] {
+			continue
+		}
+		seen[appID] = true
+		if appID == "" {
+			lines = append(lines, "A connected app may still list "+app+": remove it in that app's settings.")
+		} else {
+			other := appID
+			if name, ok := entry["name"].(string); ok && strings.TrimSpace(terminalText(name, false)) != "" {
+				other = strings.TrimSpace(terminalText(name, false))
+			}
+			lines = append(lines, other+" may still list "+app+": remove it in "+other+"'s settings.")
+		}
+		if len(lines) == appRemoveConnectionsLeftMax {
+			break
+		}
+	}
+	return lines
 }
 
 func newAppControlCmd(action string) *cobra.Command {

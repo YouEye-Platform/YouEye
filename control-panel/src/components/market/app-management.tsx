@@ -21,6 +21,7 @@ import { UninstallDialog } from '@/components/market/uninstall-dialog';
 import { UpdateBlockedNote, installBlockedLabel } from '@/components/market/update-blocked';
 import { authenticatedFetch } from '@/lib/api-client';
 import type { MarketApp, MarketAppInstalledSource, MarketAppVariant } from '@/lib/market/types';
+import { connectionsLeftFrom, type ConnectionLeft } from '@/lib/market/uninstall-notice';
 
 interface MarketAppState {
   app: MarketApp | null;
@@ -296,6 +297,8 @@ export function AppUninstall({ appId, appName }: { appId: string; appName: strin
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the app is uninstalled but a connected app may still list it (YE-199): shown before leaving the page.
+  const [connectionsLeft, setConnectionsLeft] = useState<ConnectionLeft[] | null>(null);
 
   // Shown at once, without waiting for the market listing. The dialog needs the id, the name and whether the app
   // signs in with YouEye ID; until the listing is there (or when its market is gone or no longer has it) the
@@ -318,12 +321,42 @@ export function AppUninstall({ appId, appName }: { appId: string; appName: strin
         const reasons = Array.isArray(data.errors) ? data.errors.filter((e: unknown) => typeof e === 'string' && e) : [];
         throw new Error(reasons.join('; ') || data.error || `HTTP ${res.status}`);
       }
+      const left = connectionsLeftFrom(await res.json().catch(() => null));
+      if (left.length > 0) {
+        setConnectionsLeft(left);
+        setPending(false);
+        return;
+      }
       router.push('/settings/apps');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPending(false);
     }
   };
+
+  if (connectionsLeft) {
+    return (
+      <AppSection id="uninstall" title={translateInterface('mfe199528850a')}>
+        <div className={groupClass}>
+          <div className={rowClass} role="status">
+            <div className="min-w-0 space-y-1 text-sm">
+              <p className="font-medium">{t('uninstall.done', { app: app.name })}</p>
+              {connectionsLeft.map((left) => (
+                <p key={left.appId ?? ''} className="text-muted-foreground">
+                  {left.appId
+                    ? t('uninstall.leftIn', { app: app.name, other: left.name ?? left.appId })
+                    : t('uninstall.leftSomewhere', { app: app.name })}
+                </p>
+              ))}
+            </div>
+            <Button variant="outline" size="sm" className="shrink-0" asChild>
+              <Link href="/settings/apps">{t('uninstall.backToApps')}</Link>
+            </Button>
+          </div>
+        </div>
+      </AppSection>
+    );
+  }
 
   return (
     <AppSection id="uninstall" title={translateInterface('mfe199528850a')}>

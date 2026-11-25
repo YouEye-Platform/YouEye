@@ -158,6 +158,8 @@ export function loadUpdateProvider(incus: ReturnType<typeof fakeIncus>, stubs: R
     '@/lib/apps/container-readiness': loadSource('lib/apps/container-readiness.ts', () => ({})),
     './update-journal': journal,
     './update-inventory': loadSource('lib/market/update-inventory.ts', () => journal),
+    // A rollback deletes the secrets its update generated (YE-208); none here unless a test stubs it.
+    './manifest-secrets': { removeGeneratedSecrets: async () => [] },
   };
   return loadSource('lib/market/update-provider.ts', (name) => stubs[name] ?? real[name] ?? {});
 }

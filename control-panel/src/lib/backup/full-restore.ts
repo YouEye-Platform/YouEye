@@ -351,8 +351,19 @@ async function writeKeptAppClients(clients: IdentityClient[], apps: InstallMetad
   }
 }
 
+/**
+ * A server restore clears an app the backup does not keep with delete-data. It stops (nothing of the app deleted) on
+ * an app whose keep-data removal started but did not finish: kept data is never deleted this way (YE-222); the owner
+ * finishes that removal (`youeye app remove <id> --keep-data`) and restores again.
+ */
 async function removeCurrentApp(appId: string): Promise<void> {
-  const result = await uninstallApp(appId, { keepData: false });
+  let result;
+  try {
+    result = await uninstallApp(appId, { keepData: false });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not clear the current ${appId} installation before server restore: ${reason}`);
+  }
   if (!result.success) throw new Error(`Could not clear the current ${appId} installation before server restore`);
 }
 

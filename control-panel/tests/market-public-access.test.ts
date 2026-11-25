@@ -15,5 +15,8 @@ test('install public access: an explicit choice wins, else only the official cat
   assert.equal(installWantsPublicAccess(silent, { sourceId: official }), false);
   // The installing administrator's explicit choice.
   assert.equal(installWantsPublicAccess(declares, { sourceId: official, publicAccess: false }), false);
-  assert.equal(installWantsPublicAccess(silent, { sourceId: 'direct:abc', publicAccess: true }), true);
+  assert.equal(installWantsPublicAccess({ ...silent, credentials: [{ label: 'Admin', username: 'admin', passwordSecret: 'admin_password' }] },
+    { sourceId: 'direct:abc', publicAccess: true }), true);
+  // An app with no sign-in of its own stays for users only, whatever the choice (YE-154, only-users-switch.spec.ts).
+  assert.equal(installWantsPublicAccess(silent, { sourceId: 'direct:abc', publicAccess: true }), false);
 });

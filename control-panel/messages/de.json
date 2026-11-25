@@ -1245,6 +1245,7 @@
     "m1b3650fe2b8f": "Ein anderer Browser wendet gerade Einrichtungsänderungen an.",
     "m47bdd7fe238a": "Bitte Benutzernamen und Passwort eingeben",
     "m5a96e8452f1e": "Anmeldung fehlgeschlagen",
+    "m1a403ef0db2d": "{seconds, plural, one {Zu viele Versuche. Versuchen Sie es in # Sekunde erneut.} other {Zu viele Versuche. Versuchen Sie es in # Sekunden erneut.}}",
     "m9ff8cfaf7d94": "Netzwerkfehler. Versuche es erneut.",
     "ma32fb655eebd": "Gespeicherte Servervorlagen",
     "mae45ee9018ae": "+ Aktuellen speichern",
@@ -1429,6 +1430,7 @@
     "m442c4b893915": "Status aktualisieren",
     "m950e51efd783": "Vorherige Version wiederhergestellt und Wiederherstellung geprüft.",
     "m2ca13025d60c": "Update abgeschlossen",
+    "m3211e08d269c": "Update abgeschlossen: v{version}",
     "meccb6abcf328": "Von YouEye verwaltete Kerndienste und Infrastruktur.",
     "m2786efec8c30": "Keine URL für App-Einstellungen verfügbar.",
     "mf8a9594de662": "App-Einstellungen werden geladen",
@@ -1437,7 +1439,7 @@
     "m283317ddeb03": "Der Eigentümer dieser Verbindung ist nicht verfügbar. Ein anderer Administrator kann sie ausdrücklich übernehmen.",
     "m26f9ccc0629f": "Einige Routen benötigen eine Anbieterverbindung.",
     "m8d2a4592acd4": "Standardmodell-Alias:",
-    "m0eba3d4ee43f": "Eigentümer",
+    "m7f013bd610dc": "Eigentümer: {name}",
     "mc13dc9685345": "ein anderer Administrator",
     "m615937f6702b": "Nach der Übernahme wird künftige KI-Nutzung deinem Konto zugeordnet.",
     "m3213cd836138": "KI-Verbindung übernehmen",
@@ -1571,7 +1573,7 @@
     "m7460797e6c6d": "Bestehende App-Vorgänge werden beendet. Neue App-Änderungen pausieren, während das Update wartet.",
     "m2708962963e3": "Beende offene App-Updates, Containervorgänge oder Sicherungen und prüfe die Zugriffsrichtlinie vor einem erneuten Versuch.",
     "mfa12e6c66819": "Die Wartezeit endete vor dem nächsten Updateschritt. Beende aktive App-Vorgänge und versuche es erneut.",
-    "m159713231bf6": "Neu starten und installieren",
+    "m0bf8bea46557": "Neu starten und {version} installieren",
     "me5013ddb039e": "Vorbereitung abbrechen",
     "md29ed82b9eeb": "Update erneut versuchen",
     "m5aff816e24b2": "Prüfungen fortsetzen",
@@ -1681,7 +1683,7 @@
     "m3b546dc70b11": "Die letzte Lebenszyklusprüfung erfordert Aufmerksamkeit.",
     "m5cdb07c69226": "Zertifikats- und Datenschutzhinweis",
     "m5a9d2532161c": "Ich verstehe, dass diese Adresse und ihre Zertifikate in öffentlichen Certificate-Transparency-Protokollen erscheinen.",
-    "mc6ed61c15986": "Zertifikatsbedingungen",
+    "mdcb91ff99eb6": "Zertifikatsbedingungen {version}",
     "m8839f06e85b7": "Aktuellen Hinweis prüfen und akzeptieren",
     "m3af396c523a5": "Wiederherstellungspaket",
     "m128e4d5fada6": "Dienstdaten",
@@ -1947,6 +1949,7 @@
     "m6973dddd3ef9": "blockiert",
     "meabc01f12ec3": "erlaubt",
     "m1b0ec1954eec": "Domains",
+    "m1da897576823": "{count, plural, one {# Domain} other {# Domains}}",
     "m42d58222b328": "regulärer Ausdruck",
     "m8e7f7b6938c5": "Sperrliste",
     "mabc12f8d6665": "abonniert",
@@ -2615,7 +2618,23 @@
     "m2c0729afc9a9": "Updates von",
     "mdcc839a4015c": "Ansehen",
     "m9bf2d11af31a": "{count, plural, =0 {keine davon führt Setup-Schritte aus} one {# davon führt Setup-Schritte in ihren Containern aus} other {# davon führen Setup-Schritte in ihren Containern aus}}",
-    "m3fdd7247b42c": "{source} hat Version {version}"
+    "m3fdd7247b42c": "{source} hat Version {version}",
+    "m176648d8341c": "Das Entfernen dieser App wurde nicht abgeschlossen, und ihr Dienstzugriff ist bereits widerrufen. Entferne sie unten erneut, um das Entfernen abzuschließen.",
+    "mdc273117482b": "Verbindungen",
+    "m0c420ea290e0": "Apps, mit denen {app} zusammenarbeitet. Eine Verbindung lässt eine App die andere auf diesem Server nutzen.",
+    "m7b0526da26e5": "{from} kann {to} nutzen",
+    "m8c8eb54074f4": "Vorgeschlagen. Beim Genehmigen werden sie verbunden, und die Einrichtung von {from} für diese Verbindung wird ausgeführt.",
+    "me1d37689abed": "Installiere zuerst {to}, um sie zu verbinden.",
+    "m6007acbe30b2": "Genehmigen",
+    "m7b02fe45a8ef": "{from} nutzt {to}",
+    "ma812e71f3ba9": "Die Einrichtung läuft erneut, sobald beide Apps laufen.",
+    "m5e27a7a74502": "Wartet auf {to}",
+    "mbc3c7686445c": "Keine Verbindungen. Wenn {app} eine andere installierte App nutzen kann, wird das hier vorgeschlagen.",
+    "m5b2cc4b8f41d": "Die Verbindung konnte nicht geändert werden. Versuche es erneut.",
+    "m78148aaa805a": "{from} von {to} trennen?",
+    "mf69084b4e263": "{count, plural, one {# Verbindung zu genehmigen} other {# Verbindungen zu genehmigen}}",
+    "mb9db095f614a": "Die Verbindungen konnten nicht geladen werden. Versuche es später erneut.",
+    "m6e6e13ff28bc": "{from} nutzt {to} nicht mehr. Die für diese Verbindung vorgenommene Einrichtung wird entfernt; beide Apps behalten ihre Daten, und die Verbindung bleibt hier zum erneuten Verbinden vorgeschlagen."
   },
   "settingsNavigation": {
     "profile": "Profil",
@@ -2748,9 +2767,34 @@
       "opensAt": "Öffnet unter {address}",
       "access": "Wer sie nutzen kann",
       "uses": "Was sie nutzen darf",
-      "options": "Name, Adresse und mehr"
+      "options": "Name, Adresse und mehr",
+      "onlyUsersOn": "Nur Sie können sie öffnen. Wer sonst, legen Sie unter {app} → Zugriff fest.",
+      "onlyUsersOnEveryone": "Alle in Ihrem Haushalt können sie öffnen, sonst niemand. Wer genau, legen Sie unter {app} → Zugriff fest.",
+      "onlyUsersOnKept": "Sie behält, wer sie bisher öffnen durfte. Ändern Sie das unter {app} → Zugriff.",
+      "accessLabel": "Wer im Haushalt sie nutzen darf",
+      "accessEveryone": "Alle",
+      "accessOnlyMe": "Nur ich",
+      "accessHint": "Sie können das später unter {app} → Zugriff ändern.",
+      "onlyUsersOff": "Wer {host} erreicht, sieht die eigene Anmeldeseite von {app}.",
+      "onlyUsersOffSignIn": "Konten von {site} melden sich weiterhin mit {site} ID an.",
+      "onlyUsersLockedNoSignIn": "{app} hat keine eigene Anmeldung und bleibt deshalb nur für Benutzer von {site}.",
+      "onlyUsersLockedHeader": "{app} übernimmt die Anmeldung von {site} ID und bleibt deshalb nur für Benutzer von {site}.",
+      "nativeTitle": "Eine native App wird Teil deines Dashboards",
+      "nativeIntro": "{name} kommt von {market}, nicht aus dem YouEye-eigenen Market. Zusätzlich zu dem, was eine Container-App bekommt, erhält sie:",
+      "nativeGateway": "Einen Schlüssel für die App-API von YouEye, um für die Menschen, die sie nutzen, Dinge anzuzeigen und zu lesen",
+      "nativeSurfaces": "Plätze im Dashboard: {surfaces}",
+      "nativeNotifications": "Benachrichtigungen an die Menschen, die sie nutzen",
+      "nativeProxy": "Aufrufe dieser Seiten über YouEye, sobald jede Person sie erlaubt: {hosts}"
     },
-    "seeAll": "Alle zeigen"
+    "seeAll": "Alle zeigen",
+    "sources": {
+      "officialLane": "Offizieller Market: Spur {lane}",
+      "laneChange": "Ändern…",
+      "laneHint": "Die Spur main hat die veröffentlichten Apps, die Spur dev Apps in Erprobung. Der Release-Kanal von YouEye ändert sie nicht. Apps aus der anderen Spur behalten ihre Version und werden aktualisiert, sobald diese Spur eine neuere hat.",
+      "laneMain": "main: veröffentlichte Apps",
+      "laneDev": "dev: Apps in Erprobung",
+      "laneFailed": "Die Spur konnte nicht geändert werden."
+    }
   },
   "systemPages": {
     "services": {
@@ -2890,7 +2934,13 @@
       "customiseTitleHint": "Schrift, Farben und ein Zeichen im Titelstudio."
     },
     "access": {
-      "title": "Wer sie nutzen darf"
+      "title": "Wer sie nutzen darf",
+      "onlyUsersOn": "Nur die unten gewählten Personen können sie öffnen.",
+      "whoPublic": "Legt auch fest, auf wessen Dashboard {app} erscheint und wer sich mit {site} ID anmelden kann.",
+      "opening": "Wird für alle geöffnet…",
+      "notOpen": "{app} ist noch nicht für alle offen: {error}",
+      "stillPending": "die Änderung ist gespeichert, aber noch nicht angewendet",
+      "retry": "Erneut versuchen"
     },
     "defaultSignIn": {
       "title": "Anmeldedaten aus der Installation"
@@ -2903,7 +2953,11 @@
     },
     "uninstall": {
       "hint": "Entfernt {app} von diesem Server. Du entscheidest, ob die Daten erhalten bleiben.",
-      "action": "Deinstallieren …"
+      "action": "Deinstallieren …",
+      "done": "{app} ist deinstalliert.",
+      "leftIn": "{other} führt {app} vielleicht noch: Entferne es in den Einstellungen von {other}.",
+      "leftSomewhere": "Eine verbundene App führt {app} vielleicht noch: Entferne es in den Einstellungen dieser App.",
+      "backToApps": "Zurück zu den Apps"
     },
     "title": {
       "heading": "Dein Titel für {app}",

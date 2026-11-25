@@ -1,6 +1,6 @@
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { randomUUID } from 'crypto';
-import type { AppManifest, InstallConfig, InstallMetadata } from './types';
+import type { AppManifest, InstallConfig, InstallMetadata, StorageVolumeMeta } from './types';
 import { readInstalledAppManifest } from './frozen-manifest';
 import { buildCanonicalContext, resolveEnvMapping } from './platform-env';
 import { enforceConfigFilePermissions, writeConfigFileToStorage } from './config-writer';
@@ -177,7 +177,11 @@ async function applyAIEnvironment(
     }
   }
 
-  const updatedConfigFiles: Array<{ containerName: string; configFile: AppManifest['configFiles'][number] }> = [];
+  const updatedConfigFiles: Array<{
+    containerName: string;
+    configFile: AppManifest['configFiles'][number];
+    volumes?: StorageVolumeMeta[];
+  }> = [];
   for (const configFile of manifest.configFiles.filter((file) =>
     file.path.includes('${ai.') || file.template.includes('${ai.')
   )) {
@@ -191,7 +195,13 @@ async function applyAIEnvironment(
         ? meta.storageVolumes?.filter((volume) => volume.containerName === target.containerName)
         : undefined,
     );
-    updatedConfigFiles.push({ containerName: target.containerName, configFile });
+    updatedConfigFiles.push({
+      containerName: target.containerName,
+      configFile,
+      volumes: target.type === 'oci'
+        ? meta.storageVolumes?.filter((volume) => volume.containerName === target.containerName)
+        : undefined,
+    });
   }
 
   if (meta.desiredState !== 'stopped' && meta.enabled !== false) {
@@ -199,7 +209,7 @@ async function applyAIEnvironment(
       await restartContainerAndWait(container.containerName, 60, { role: containerRole(meta.containers, container.containerName) });
     }
     for (const configFile of updatedConfigFiles) {
-      await enforceConfigFilePermissions(configFile.containerName, configFile.configFile, context);
+      await enforceConfigFilePermissions(configFile.containerName, configFile.configFile, context, configFile.volumes);
     }
   }
 }

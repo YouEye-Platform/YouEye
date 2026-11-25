@@ -17,8 +17,10 @@ test('explicit integration lifecycle is locked, sensitivity-safe, and read-back 
   assert.match(manager, /export async function activateBridge[\s\S]*?runConnectionWiring\(bridge\.from, bridge\.to\)/);
   // ...under the connection's admission, so a busy lock never leaves it unwired but recorded active.
   assert.match(manager, /export async function deactivateBridge\(bridgeId: string\)[^{]*\{[\s\S]*?withBridgeAdmission[^\n]*'bridge-deactivate'[^\n]*async \(\) => \{\s*await unwireBridge\(bridgeId\);/);
-  assert.match(manager, /export async function deleteBridge\(bridgeId: string\)[^{]*\{\s*return withBridgeAdmission\(bridgeId, 'bridge-delete', false, async \(\) => \{\s*await unwireBridge\(bridgeId\);/);
-  assert.match(manager, /runConnectionWiring\(bridge\.from, bridge\.to, undefined, \{ remove: true \}\)/);
+  // An uninstall has already run the remove: steps (unwireAppConnections, before the app stops): `unwired` skips them.
+  assert.match(manager, /export async function deleteBridge\(bridgeId: string, options: \{ unwired\?: boolean \} = \{\}\)[^{]*\{\s*return withBridgeAdmission\(bridgeId, 'bridge-delete', false, async \(\) => \{\s*if \(!options\.unwired\) await unwireBridge\(bridgeId\);/);
+  assert.match(manager, /export async function unwireAppConnections[\s\S]*?withBridgeAdmission\(bridge\.id, 'bridge-unwire'/);
+  assert.match(manager, /runConnectionWiring\(bridge\.from, bridge\.to, undefined, \{ remove: true, leaving \}\)/);
   assert.match(manager, /withAppLifecycle\(appIds\[index\]/);
   assert.match(manager, /incusDownloadFile\(fromContainer/);
   assert.match(manager, /writeContainerFileExact/);

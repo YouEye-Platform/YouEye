@@ -1245,6 +1245,7 @@
     "m1b3650fe2b8f": "Another browser is currently applying setup changes.",
     "m47bdd7fe238a": "Please enter both username and password",
     "m5a96e8452f1e": "Login failed",
+    "m1a403ef0db2d": "{seconds, plural, one {Too many attempts. Try again in # second.} other {Too many attempts. Try again in # seconds.}}",
     "m9ff8cfaf7d94": "Network error. Please try again.",
     "ma32fb655eebd": "Saved Server Presets",
     "mae45ee9018ae": "+ Save Current",
@@ -1429,6 +1430,7 @@
     "m442c4b893915": "Refresh status",
     "m950e51efd783": "Previous version restored and recovery verified.",
     "m2ca13025d60c": "Update complete",
+    "m3211e08d269c": "Update complete: v{version}",
     "meccb6abcf328": "Core services and infrastructure managed by YouEye.",
     "m2786efec8c30": "No app settings URL is available.",
     "mf8a9594de662": "Loading app settings",
@@ -1437,7 +1439,7 @@
     "m283317ddeb03": "This connection needs attention because its owner is unavailable. Another administrator can take it over explicitly.",
     "m26f9ccc0629f": "Some routes need a provider connection.",
     "m8d2a4592acd4": "Default model alias:",
-    "m0eba3d4ee43f": "Owned by",
+    "m7f013bd610dc": "Owned by {name}",
     "mc13dc9685345": "another administrator",
     "m615937f6702b": "Future AI provider usage will belong to your account after takeover.",
     "m3213cd836138": "Take over AI connection",
@@ -1571,7 +1573,7 @@
     "m7460797e6c6d": "Existing app operations are finishing. New app changes are paused while the update waits.",
     "m2708962963e3": "Resolve unfinished app updates, container operations or backups and check current access policy before retrying.",
     "mfa12e6c66819": "The wait ended before the next update step started. Finish any active app operations, then retry.",
-    "m159713231bf6": "Restart and install",
+    "m0bf8bea46557": "Restart and install {version}",
     "me5013ddb039e": "Cancel preparation",
     "md29ed82b9eeb": "Retry update",
     "m5aff816e24b2": "Resume checks",
@@ -1681,7 +1683,7 @@
     "m3b546dc70b11": "The latest lifecycle check needs attention.",
     "m5cdb07c69226": "Certificate and privacy notice",
     "m5a9d2532161c": "I understand that this address and its certificates appear in public Certificate Transparency logs.",
-    "mc6ed61c15986": "Certificate terms",
+    "mdcb91ff99eb6": "Certificate terms {version}",
     "m8839f06e85b7": "Review and accept current notice",
     "m3af396c523a5": "Recovery bundle",
     "m128e4d5fada6": "Service data",
@@ -1947,6 +1949,7 @@
     "m6973dddd3ef9": "blocked",
     "meabc01f12ec3": "allowed",
     "m1b0ec1954eec": "domains",
+    "m1da897576823": "{count, plural, one {# domain} other {# domains}}",
     "m42d58222b328": "regex",
     "m8e7f7b6938c5": "blocklist",
     "mabc12f8d6665": "subscribed",
@@ -2615,7 +2618,23 @@
     "m2c0729afc9a9": "Updates from",
     "mdcc839a4015c": "View",
     "m9bf2d11af31a": "{count, plural, =0 {none of them runs setup steps} one {# of them runs setup steps inside its containers} other {# of them run setup steps inside their containers}}",
-    "m3fdd7247b42c": "{source} has version {version}"
+    "m3fdd7247b42c": "{source} has version {version}",
+    "m176648d8341c": "The removal of this app did not finish, and its service access is already revoked. Remove it again below to finish.",
+    "mdc273117482b": "Connections",
+    "m0c420ea290e0": "Apps {app} works with. A connection lets one app use the other on this server.",
+    "m7b0526da26e5": "{from} can use {to}",
+    "m8c8eb54074f4": "Suggested. Approving connects them and runs {from}’s setup for this connection.",
+    "me1d37689abed": "Install {to} first to connect them.",
+    "m6007acbe30b2": "Approve",
+    "m7b02fe45a8ef": "{from} uses {to}",
+    "ma812e71f3ba9": "Its setup runs again when both apps run.",
+    "m5e27a7a74502": "Waiting for {to}",
+    "mbc3c7686445c": "No connections. When {app} can use another installed app, it is suggested here.",
+    "m5b2cc4b8f41d": "The connection could not be changed. Try again.",
+    "m78148aaa805a": "Disconnect {from} from {to}?",
+    "mf69084b4e263": "{count, plural, one {# connection to approve} other {# connections to approve}}",
+    "mb9db095f614a": "Connections could not be loaded. Try again later.",
+    "m6e6e13ff28bc": "{from} stops using {to}. The setup made for this connection is removed; both apps keep their data, and it stays suggested here to connect again."
   },
   "settingsNavigation": {
     "profile": "Profile",
@@ -2748,9 +2767,34 @@
       "opensAt": "Opens at {address}",
       "access": "Who can use it",
       "uses": "What it can use",
-      "options": "Name, address and more"
+      "options": "Name, address and more",
+      "onlyUsersOn": "Only you can open it. Choose who in {app} → Access.",
+      "onlyUsersOnEveryone": "Everyone in your household can open it, nobody else. Choose who in {app} → Access.",
+      "onlyUsersOnKept": "It keeps who could open it before. Change it in {app} → Access.",
+      "accessLabel": "Who in the household can use it",
+      "accessEveryone": "Everyone",
+      "accessOnlyMe": "Only me",
+      "accessHint": "You can change it later in {app} → Access.",
+      "onlyUsersOff": "Anyone who can reach {host} gets {app}’s own sign-in page.",
+      "onlyUsersOffSignIn": "{site} accounts still sign in with {site} ID.",
+      "onlyUsersLockedNoSignIn": "{app} has no sign-in of its own, so it stays for {site} users only.",
+      "onlyUsersLockedHeader": "{app} takes who is signed in from {site} ID, so it stays for {site} users only.",
+      "nativeTitle": "A native app joins your dashboard",
+      "nativeIntro": "{name} comes from {market}, not from YouEye's own Market. Beyond what a container app gets, it gets:",
+      "nativeGateway": "A key to YouEye's app API, to show and read things for the people who use it",
+      "nativeSurfaces": "Places on the dashboard: {surfaces}",
+      "nativeNotifications": "Notifications to the people who use it",
+      "nativeProxy": "Calls to these sites through YouEye, once each person allows them: {hosts}"
     },
-    "seeAll": "See all"
+    "seeAll": "See all",
+    "sources": {
+      "officialLane": "Official Market: {lane} lane",
+      "laneChange": "Change…",
+      "laneHint": "The main lane has the released apps; the dev lane has apps being tried. YouEye's release channel does not change it. Apps from the other lane keep their versions and update when this lane has a newer one.",
+      "laneMain": "main: released apps",
+      "laneDev": "dev: apps being tried",
+      "laneFailed": "The lane could not be changed."
+    }
   },
   "systemPages": {
     "services": {
@@ -2890,7 +2934,13 @@
       "customiseTitleHint": "Lettering, colours and a mark, in the title studio."
     },
     "access": {
-      "title": "Who can use it"
+      "title": "Who can use it",
+      "onlyUsersOn": "Only the people chosen below can open it.",
+      "whoPublic": "Also decides whose dashboard shows {app} and who can sign in to it with {site} ID.",
+      "opening": "Opening to everyone…",
+      "notOpen": "{app} is not open to everyone yet: {error}",
+      "stillPending": "the change is saved but not applied yet",
+      "retry": "Try again"
     },
     "defaultSignIn": {
       "title": "Sign-in it was installed with"
@@ -2903,7 +2953,11 @@
     },
     "uninstall": {
       "hint": "Removes {app} from this server. You choose whether to keep its data.",
-      "action": "Uninstall…"
+      "action": "Uninstall…",
+      "done": "{app} is uninstalled.",
+      "leftIn": "{other} may still list {app}: remove it in {other}'s settings.",
+      "leftSomewhere": "A connected app may still list {app}: remove it in that app's settings.",
+      "backToApps": "Back to apps"
     },
     "title": {
       "heading": "Your title for {app}",

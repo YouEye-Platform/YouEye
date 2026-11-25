@@ -6,6 +6,7 @@ import {
   applyObservation,
   applyResolution,
   findOpenCriticalIssue,
+  INSTALL_GATE_IGNORED_ISSUES,
   issueAppId,
   type IssueStore,
 } from '../src/lib/health/issues';
@@ -78,4 +79,21 @@ test('an app\'s own critical issues gate only that app; box issues gate every in
   const issues = Object.values(store.issues);
   assert.equal(findOpenCriticalIssue(issues, 'memos'), null);
   assert.equal(findOpenCriticalIssue(issues, 'bazarr')?.id, 'app.bazarr.install-record');
+});
+
+test('YouEye AI being down does not refuse an app install; any other critical box issue still does (YE-219)', () => {
+  const store = emptyStore();
+  // What the health monitor raises while Pointer is still starting after a fresh install's first boot.
+  applyObservation(store, { ...input, id: 'service.pointer.down', title: 'YouEye AI is down', debounce: 1 },
+    '2026-11-24T16:40:00.000Z');
+  let issues = Object.values(store.issues);
+  assert.deepEqual([...INSTALL_GATE_IGNORED_ISSUES], ['service.pointer.down']);
+  assert.equal(findOpenCriticalIssue(issues, 'sonarr', INSTALL_GATE_IGNORED_ISSUES), null, 'the install goes ahead');
+  // It stays a critical issue: Health shows it, and system and pool operations still wait for it.
+  assert.equal(findOpenCriticalIssue(issues)?.id, 'service.pointer.down');
+  // A real box-level fault still blocks the install, next to the Pointer one.
+  applyObservation(store, { ...input, id: 'service.postgres.down', title: 'PostgreSQL is down', debounce: 1 },
+    '2026-11-24T16:41:00.000Z');
+  issues = Object.values(store.issues);
+  assert.equal(findOpenCriticalIssue(issues, 'sonarr', INSTALL_GATE_IGNORED_ISSUES)?.id, 'service.postgres.down');
 });

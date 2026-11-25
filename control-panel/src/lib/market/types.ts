@@ -7,6 +7,7 @@
  */
 
 import type { SetupStep } from './app-format/schema';
+import type { GateOnlyReason } from './public-access';
 
 // ─── Internal app model ────────────────────────────────────
 
@@ -56,9 +57,19 @@ export interface VolumeSpec {
   sourcePath?: string;
 }
 
+/** A native app's package (`source.package`): its `standalone.tar` by address, SHA-256 and size. */
+export interface NativePackageSpec {
+  url: string;
+  sha256: string;
+  size: number;
+}
+
 export interface ContainerSource {
   /** Node.js major version of a native app runtime. The app dir is always /opt/app. */
   node: '22' | '24';
+  /** The package the box installs (manifests from a market always name one; older frozen copies have none). */
+  package?: NativePackageSpec;
+  /** SHA-256 of the package (`package.sha256`). */
   artifactSHA256?: string;
 }
 
@@ -371,7 +382,9 @@ export interface InstallConfig {
   /** User's install-time choice for platform account-login protection */
   protectWithAccountLogin?: boolean;
   /**
-   * Explicit install-time choice for the forward-auth proxy gate, kept SEPARATE from
+   * Before 0.6.19: the install dialog's extra gate for apps with their own YouEye ID login. Still accepted:
+   * `true` means "Only <site> users" (public access off); `false` is no choice (YE-154, `public-access.ts`).
+   * Older meaning: explicit install-time choice for the forward-auth proxy gate, kept SEPARATE from
    * `protectWithAccountLogin`. For apps that do their own YouEye ID login (native SSO or
    * an identity integration), `protectWithAccountLogin` controls that login/integration —
    * the forward-auth gate is an optional extra gate the owner can turn on here (default
@@ -380,10 +393,16 @@ export interface InstallConfig {
    */
   forwardAuthGate?: boolean;
   /**
-   * The installing administrator's public-access choice. Undefined = the manifest's `public_access` default
+   * The installing administrator's public-access choice: the "Only <site> users" switch inverted (YE-154).
+   * Undefined = the manifest's `public_access` default
    * (Market installs); URL installs set it to false unless the administrator chose public access.
    */
   publicAccess?: boolean;
+  /**
+   * Who in the household may use a newly installed app (YE-232): `all_users` (the default) or `owner` ("Only me").
+   * Applies only when the app's access policy is created; a reinstall that kept a policy keeps it.
+   */
+  accessMode?: 'all_users' | 'owner';
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
   /**
@@ -671,7 +690,7 @@ export interface AppStatusInfo {
 
 /** Why an installed app gets no updates (`InstalledApp.updateBlocked`). `message` is safe to show. */
 export interface UpdateBlocked {
-  code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye';
+  code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye' | 'not-in-market';
   message: string;
 }
 
@@ -836,6 +855,8 @@ export interface MarketApp {
   forwardAuth?: 'default' | 'enabled' | 'disabled';
   /** Manifest `public_access: true`: the app protects itself, so installs default to public access. */
   publicAccess?: true;
+  /** Set when the app must stay for the site's users only ("Only <site> users" locked on, YE-154), with the reason. */
+  gateOnly?: GateOnlyReason;
   /** The app's source is a custom one the owner has not accepted: listed, but refused for install. */
   sourceNotAccepted?: true;
   /**
@@ -856,6 +877,13 @@ export interface MarketApp {
     link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
   };
   surfaces?: SurfaceSpec[];
+  /**
+   * A native app: what it gets beyond a container app, for the install screen (shown for a native app from any market
+   * other than the official one; YE-142). `surfaces`: names of its dashboard surfaces; `gatewayToken`: it holds a
+   * YouEye UI gateway token (it calls the dashboard's app API); `notifications`: it may send notifications;
+   * `proxyHosts`: outside hosts it may call through the UI gateway (each person grants them).
+   */
+  nativeAccess?: { surfaces: string[]; gatewayToken: true; notifications: boolean; proxyHosts: string[] };
 }
 
 // ─── Restore Options ─────────────────────────────────────

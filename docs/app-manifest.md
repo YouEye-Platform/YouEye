@@ -79,7 +79,9 @@ secrets:                         # optional; any ${secret.<name>} used is genera
                                  # password: `length` URL-safe base64 characters; key: `length` random bytes
                                  # as standard base64 (about 4/3 × length characters, may hold + / =);
                                  # hex: `length` random bytes as hex (2 × length characters)
-credentials:                     # default accounts shown to the admin
+                                 # an update generates one its release adds (since 0.6.20); one the installed
+                                 # version declared is never made again (a missing one stops the update)
+credentials:                     # default accounts shown to the admin; an update shows the new release's
   - { label: Admin Account, username: changeme@example.com, password: admin_password }
 
 files:                           # files written into a container before it starts; the path must lie inside one
@@ -116,11 +118,12 @@ smtp:                            # the app sends mail with the box's mail settin
   env:
     SMTP_HOST: ${smtp.host}
     SMTP_PORT: ${smtp.port}
-forward_auth: false              # the account-login gate in front of the app: false = off and not offered at install
-                                 # (default: on unless the app has `sso:`); YouEye ID's access check always applies
-public_access: true              # the app protects itself (its own password, PINs, accounts): install with public
-                                 # access on (shown pre-selected; the owner can decline). Read only from the official
-                                 # Market catalog; added sources and URL apps install household-only
+forward_auth: false              # only the install record's old gate flag; YouEye ID's access check always applies
+public_access: true              # the app protects itself (its own password, PINs, accounts): "Only <site> users"
+                                 # starts off at install (the owner can turn it on). Read only from the official
+                                 # Market catalog; added sources and URL apps start on. An app with no `sso:`, no
+                                 # `credentials:` and no `public_access`, or whose env names an X-YouEye-* header,
+                                 # stays locked on (app-admission.md)
 
 sidecars:                        # extra containers of the same app
   - name: redis                  # [a-z0-9-]; `main` is reserved for the app itself
@@ -186,7 +189,12 @@ A native app has `source:` instead of `image:` (exactly one of the two) and no s
 surfaces and reach the platform through the UI gateway:
 
 ```yaml
-source: { node: "24" }           # node: 22 | 24; a Debian 12 system container, the app in /opt/app
+source:
+  node: "24"                     # node: 22 | 24; a Debian 12 system container, the app in /opt/app
+  package:                       # in a market (0.6.20 on): the app's standalone.tar, pinned like an image digest
+    url: https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar
+    sha256: a32e8740335410066a17564685996d68b2989c82544591af6ec73d1cc6e96cfd
+    size: 199936000              # bytes, at most 1 GiB
 data_ownership: { per_user: identity_uuid }
 capabilities: { widgets: true, settings_panel: true, notifications: true }
 surfaces:                        # kind: widget | info-card | timeline-card | notification | settings-panel
@@ -198,6 +206,12 @@ proxy:                           # outside HTTPS hosts the app may reach through
   - { host: "*.wikipedia.org", paths: [/w/api.php*] }   # one leading wildcard label is allowed
 link_handlers: [{ type: note, description: Open a note, endpoint: /n, triggers: [note] }]   # endpoint default /
 ```
+
+`source.package` names the file the box installs and updates the app from: an exact `https` URL (no credentials,
+query or fragment), its SHA-256 (64 lowercase hex) and size in bytes. It is required in a market (and for an app
+added by URL), where it needs `requires: { youeye: ">=0.6.20" }`; an app repository's own `youeye-app.yaml` has
+none, and `Tools/market/native-pin` adds it from a release. The box downloads the file by the release-download rules
+and refuses it unless both size and SHA-256 match.
 
 Surfaces also take `description`, `permissions`, `settings` (fields `{ key, type, label, … }`) and `triggers`;
 `capabilities` takes `widgets`, `settings_panel`, `notifications` (`true` | `push`), `info_cards` and `events`
@@ -312,8 +326,12 @@ remove:                          # optional: undo steps, run when the feature is
 - A `connect:<app>` file runs each time the connection is activated (approved from a suggestion, by a bundle,
   when the target of a waiting bundle connection is installed, or through `/api/bridges`), with both apps' frozen
   installed manifests. Its `remove:` steps run before the connection is deactivated or deleted. Uninstalling either
-  app deletes its connections after stopping that app, so then only steps that neither run in nor call the
-  uninstalled app can succeed. Failures are logged and never undo the connection change.
+  app runs them first, while both apps still run and before anything is deleted (since 0.6.20). A step may also
+  run with one app stopped: that app's `${self.host}`/`${peer.host}` and `url` are then missing, so only a step
+  that needs them fails. Failures are logged and never undo the connection change; an uninstall reports them in
+  its `warnings`. A `remove:` step with `allow_failure` that fails does not stop the others, but it is still
+  reported (on a disconnect in the log, on an uninstall in `warnings`), unless it ran against the app being
+  uninstalled: what it should have undone may still be in the other app.
   It sees only `${app.*}`, `${secret.*}`, `${self.*}` and `${peer.*}`.
 
 ## Fields newer than the format
@@ -328,6 +346,7 @@ that reads it:
 | setup file | `steps[].http.form` | 0.6.9 |
 | setup file | `remove[].http.form` | 0.6.9 |
 | `youeye-app.yaml` | `sidecars[].data[].from` | 0.6.9 |
+| `youeye-app.yaml` | `source.package` | 0.6.20 |
 
 (`public_access` is 0.6.4: stable 0.6.3 is build 0.6.3-dev.20, made before the field.)
 
@@ -351,15 +370,49 @@ Variables work the same way (`VARIABLES_SINCE`): an older box refuses an unknown
 ## Other kinds
 - **Bundle** (`bundles/<id>/bundle.yaml`, `youeye.bundle.v1`): `id`, `name`, `description`, `icon`, `category`,
   `summary`, `members` (install order), `connections` (`{from, to, scope}`), `shared` (groups).
-- **Catalog** (`catalog.yaml`, `youeye.catalog.v1`): `categories`, `curation` (`spotlight`, `collections`) and
-  `native: [ids]` (the native apps the Market shows, read from the official Market only; each comes from its own
-  product release). Container apps and
+- **Catalog** (`catalog.yaml`, `youeye.catalog.v1`): `categories` and `curation` (`spotlight`, `collections`). A
+  `native:` list is refused since 0.6.20: native apps are app folders too. Apps (container and native) and
   bundles are discovered from the folders `apps/<id>/youeye-app.yaml` and `bundles/<id>/bundle.yaml`; there is no
   hand-written app list. With `store.yaml` (the market's name and publisher) this is what the generator turns into
   a published market ([market-format.md](market-format.md)).
 - **No system apps.** The images of Caddy, PostgreSQL and Pi-hole are pinned in the Control Panel
   (`control-panel/src/lib/infrastructure/system-images.ts`) and change only with a System release. No market
   carries them.
+
+## Images without a shell
+
+An app container may come from an image with no shell or coreutils, a single static binary such as `dxflrs/garage`
+(YE-216, YouEye 0.6.20). Install, start, update and rollback don't need anything inside the image.
+- **Readiness:** after a start the Control Panel waits (at most 30 s) until Incus can run a command in the container,
+  because right after Incus reports it Running an exec can still fail. Its probe is `sh -c 'echo ready'`. Incus looks
+  the command up through the exec's `PATH`, and the Control Panel's shell commands (the probe, its own `sh -c` steps)
+  and the post-start `chmod`/`stat` pass the image's own `PATH` followed by the standard directories
+  (`/usr/local/sbin` … `/bin`; `setups:` commands still use the image's `PATH` alone): an image whose `PATH` lacks `/bin`,
+  or that keeps `sh` outside `/bin` (a Nix image), still counts as having a shell (YE-221). An image without `sh`
+  answers "command not found" (127), which shows the container is ready and has no shell. The app's own health check
+  (`health:`) still decides whether it works.
+- **`files:`:** written on the container's volume from the host side before the first start, with their `mode` and
+  `dir_mode`, as for every OCI app. After the start, a container with a shell gets both modes re-applied (`chmod`) and
+  read back (`stat`), because entrypoints often change them; both are found the same way, through the image's `PATH`
+  and then the standard directories. A container without a shell has them read back from the
+  volume on the host side, and the install fails on any difference. The one allowance: when the file sits directly
+  in the volume's root, which nothing can `chmod` without a shell, the root may carry extra traverse (`x`) bits beyond
+  `dir_mode`, never read or write bits and never fewer bits than `dir_mode` (a new volume root is 0711, the default
+  `dir_mode` 0700; a `dir_mode` of 0755 there fails). The file's own mode is always exact.
+- **Still need tools in the image** (they run there by nature):
+  - `setups:` exec steps run their own argv;
+  - a container that consumes a connection needs `ip` and `udhcpc` (or `dhclient`) to bring its connection
+    interface up;
+  - a `{ postgres: … }` health check needs `pg_isready`;
+  - the default-route guard needs `ip`, else it leaves the container alone with one log line.
+
+## Images that link their network files
+
+Incus 7.0.1 cannot start a container whose `/etc/hosts`, `/etc/resolv.conf` or `/etc/hostname` is a symlink (lxc/incus#4427;
+a Nix-based image links them into `/nix/store`). Before an app's OCI container first starts, each of these that is a
+symlink is replaced by an empty regular file, which Incus then mounts its own over (YE-215): after it is created, after
+an update rebuilds it, and after a restore adopts a retained runtime (YE-221). The read-only checks are retried (3
+tries, 1 s apart); a failed delete or write fails the install, update or restore.
 
 ## Installed resources
 - Every Incus instance, custom volume and network an install creates carries

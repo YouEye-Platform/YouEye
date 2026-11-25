@@ -23,20 +23,21 @@ Every market, the official one included, is a folder of static files at an HTTPS
 ([market-format.md](market-format.md)). There are no Market releases, versions or promotions, and the Market is not
 a product of the channel index.
 
-- **The official Market** (source id `official`) follows the box's channel, which the CP asks Spine for
-  (`GET /api/releases/channel`): dev and alpha read `https://market.youeye.me/dev/` (branch `dev` of the catalog),
-  beta and stable read `https://market.youeye.me/` (branch `main`). When Spine cannot be asked or names an unknown
-  channel, the lane last used stays; with none, the `main` lane. Its address is not stored in the source list.
+- **The official Market** (source id `official`) reads its lane: `https://market.youeye.me/` (`main`, branch `main` of
+  the catalog) on every box, or `https://market.youeye.me/dev/` (branch `dev`) when the owner chose it. The lane is the
+  box's own setting since 0.6.20 (YE-142): `lane` on the official entry of `market-sources.json`, missing means `main`
+  whatever the release channel. Set it with `youeye market official-lane main|dev`, `PATCH /api/market/source`
+  `{official_lane}` or "Change…" on the sources page. Before 0.6.20 the lane followed the channel (dev and alpha read
+  `/dev/`). Test boxes that test `/dev/` set the lane after updating to 0.6.20.
 - **Custom markets** (`kind: url`) are addresses the owner added (see [Markets and consent](#markets-and-consent)).
-- **Native apps** are listed when the official Market's index names their id in `native` (`nativeIdsOf` in
-  `catalog.ts`); a custom market's `native` list is ignored, so it neither lists nor installs them. Their manifest,
-  listing and files always come from their own product release on the box's channel
-  ([native-apps.md](native-apps.md)); the listing is cached by the channel index entry's digest, so a page view
-  downloads nothing.
+- **Native apps** are Market apps (0.6.20, YE-142): index entries of kind `native` whose manifest pins the app's
+  `standalone.tar` (`source.package`), in any market, official or custom ([native-apps.md](native-apps.md)). A
+  `native` id list an older index still carries is ignored. Pointer is not a Market app: it stays on the box's release
+  channel.
 - **Apps added by URL** are their own source (`direct:<hash>`; see Installing).
 
 **What is in the official catalog.** `store.yaml` (the market's name, publisher and homepage), `catalog.yaml`
-(`youeye.catalog.v1`: categories, curation (`spotlight`, `collections`) and `native: [ids]`), container apps in
+(`youeye.catalog.v1`: categories and curation (`spotlight`, `collections`)), apps (container and native) in
 `apps/<id>/youeye-app.yaml` (`youeye.app.v1`) with `setup/*.yaml`, icon and screenshots, and bundles in
 `bundles/<id>/bundle.yaml` (`youeye.bundle.v1`). The generator finds apps and bundles from the folders and checks
 every one with the CP's parser; how the official Market is published is in
@@ -89,7 +90,7 @@ The box keeps an accepted copy of each market in `/var/lib/youeye/markets/<sourc
   `refresh.json`, shown on the sources page ("Last refreshed …" and the error) and by `youeye market list`. A store
   that cannot be read at all never breaks the source list: that source is listed with `market: null` and the reason
   in `refresh_error`, so it can still be turned off or removed.
-- **Address changes.** When a source's address changes (the official Market after a channel change, a custom
+- **Address changes.** When a source's address changes (the official Market after a lane change, a custom
   market whose address was edited), the store's state no longer counts for it; the next successful accept starts a
   new `sequence` floor and replaces the store. A removed source's store is deleted.
 - **Files of the old catalog.** Once the official store has an accepted index, the CP deletes
@@ -124,7 +125,7 @@ official Market).
 - **Listing.** Cards of apps that are not from the official Market show the source's name ("Added" for an app added
   by URL). A bundle id found in several markets is shown once, the official Market's first.
 - **Who may read it.** Any signed-in user, standard users included, may read the Market APIs: `GET /api/market`,
-  `/api/market/catalog`, `/api/market/app/<id>` (and its `connections` and `provider-options`), `/api/market/status`,
+  `/api/market/catalog`, `/api/market/app/<id>` (and its `connections`), `/api/market/status`,
   `/api/market/install-status`, `/api/market/providers`, `/api/market/updates` and `/api/market/validate-subdomain`.
   Everything that changes the box stays admin-only: install, update, uninstall, recovery, sources, sign-in and access
   settings, AI Settings, credentials, and starting a version check (`POST /api/market/updates`,
@@ -169,9 +170,9 @@ take updates again, add the market's address (if its publisher has one), which g
 
 | Call | Does |
 |---|---|
-| `GET /api/market/source` | `{ sources, removed_sources }`. Each source: `id, name, kind, url, enabled, priority, accepted_at`, `address` (where its copy was read from; the official Market's lane), `market` (`{address, name, publisher, homepage?, commit?, sequence, sequence_date, apps, apps_with_setup, native, bundles}`, null while the box has no copy or cannot read it), `accepted_market_at`, `refreshed_at`, `checked_at`, `refresh_error`. `apps` counts container apps; `native` is 0 for any market but the official one; `sequence_date` is an empty string when `sequence` is no time |
+| `GET /api/market/source` | `{ sources, removed_sources }`. Each source: `id, name, kind, url, enabled, priority, accepted_at`, `lane` (the official Market only: `main` or `dev`; absent means `main`), `address` (where its copy was read from; the official Market's lane), `market` (`{address, name, publisher, homepage?, commit?, sequence, sequence_date, apps, apps_with_setup, native, bundles}`, null while the box has no copy or cannot read it), `accepted_market_at`, `refreshed_at`, `checked_at`, `refresh_error`. `apps` counts every app; `native` counts those of kind `native`, in any market; `sequence_date` is an empty string when `sequence` is no time |
 | `POST /api/market/source` | `{ url, name?, id?, acceptRisk: true }` reads the market first (20 s at most; an address that is not a market adds nothing, 400), then adds it, accepted, and waits up to 20 s for its first copy; a larger or slower market is read on in the background, so the new source may answer with `market: null`. Without `acceptRisk: true` the answer is 400 `source-not-accepted` |
-| `PATCH /api/market/source` | `{ active_sources: [{id, name?, url?, enabled?, priority?}] }` turns markets on or off, renames, reorders, re-points and removes them; it cannot add one or set `accepted_at`, and a changed `url` clears it. `{ dismiss_removed_sources: true }` clears the note about removed git sources |
+| `PATCH /api/market/source` | `{ active_sources: [{id, name?, url?, enabled?, priority?}] }` turns markets on or off, renames, reorders, re-points and removes them; it cannot add one or set `accepted_at`, and a changed `url` clears it. `{ dismiss_removed_sources: true }` clears the note about removed git sources; `{ official_lane: "main" | "dev" }` sets the official Market's lane (YE-142, `youeye market official-lane`) |
 | `POST /api/market/source/accept` | `{ id }` accepts an existing custom market (404 when there is none) |
 | `POST /api/market/source/refresh` | `{ id? }` asks that market (or every enabled one) now and waits up to 20 s: `{ results: [{id, ok, sequence?, commit?, error?}], sources, removed_sources }`. A market not done by then is `ok: false` with "The market is still being read; …", and the box reads on in the background |
 | `POST /api/market/add/preview` | `?market=<address>` or `?app=<manifest URL>`, no body: what an "Add to YouEye" link would add; writes nothing; at most two at once (429 otherwise) ([market-format.md](market-format.md#add-to-youeye-links)) |
@@ -237,8 +238,8 @@ stale offer. Settings → Apps (the list and the app's Updates section) and the 
 **The source changed.** An app records the market address of its source at install (custom markets only). A source
 id can come to name another address: a removed market's id taken again, or a market's address edited. The app
 follows the address it recorded, never just the id: its update is refused with `source-changed` (the message names
-both addresses) and the update check stores `updateBlocked` as above. The official Market's address follows the
-channel and is never "changed". The remedy is an explicit switch on the app's page in Settings → Apps
+both addresses) and the update check stores `updateBlocked` as above. The official Market's address is its lane's,
+is not recorded per app and is never "changed": after a lane change apps compare their versions with the new lane. The remedy is an explicit switch on the app's page in Settings → Apps
 (`PATCH /api/market/app/<id>/source`), which records the new address.
 
 **What can install, update or re-point an app, and how it is guarded**
@@ -304,12 +305,33 @@ gate held by a waiting System update is waited for up to 30 s (then 409 `operati
   custom market must be accepted (see [Markets and consent](#markets-and-consent)). The CP sets the
   record's source, catalog key and manifest fields itself, and fills in the subdomain (the manifest's `subdomain:`,
   else the id). The domain is always the box's own; a client value is ignored. An install is refused (HTTP 423) while Health has a critical issue about that app (or about the box,
-  such as the app-network or install-state issues); another app's critical issue doesn't block it. Each critical
+  such as the app-network or install-state issues); another app's critical issue doesn't block it, and neither does
+  "YouEye AI is down" (`service.pointer.down`, e.g. while Pointer is still starting after a fresh install): an app
+  that uses AI asks Pointer before anything is created and is refused there (YE-219). Each critical
   issue names its cause and the command or Fix for it (`youeye doctor` lists them).
 - **A failed install** whose rollback couldn't finish is cleaned up by the reconciler (back-off between tries), or
   by `youeye app remove <id>`. `youeye app remove <id> --force` is for a broken or unfinished install only (still
   installing, cleanup pending, or a recorded container gone; an intact app is refused with 409): it skips the
-  data-ownership check, removes what carries the app's id and installation id, and never deletes a shared folder. `youeye app recover <id>` finishes an interrupted app update.
+  data-ownership check, removes what carries the app's id and installation id, and never deletes a shared folder.
+  Without an install record (a removal that half finished on 0.6.20-alpha.4 or earlier) it rebuilds the map from
+  what Incus holds with the app's tags, its instances (never a `ye-retained-*` kept copy) and its own volumes, all of
+  one installation, else it refuses (YE-222). It refuses an app still listed as installed.
+- **Kept data is never deleted by a forced or delete-data removal** (YE-222), with or without an install record: when
+  the app has `retained.json`, or its admission policy is `retained` or `quarantined` (or either cannot be read), every
+  `--force`, every delete-data uninstall and every delete-data cleanup (also the reconcile pass) refuses before it
+  changes anything: "its data is kept (a removal with keep-data started or finished) … Finish that removal with
+  youeye app remove <id> --keep-data, or install <id> again to take the data back". Before 0.6.20 a keep-data removal
+  that stopped partway, followed by `--force`, deleted the kept data. An `adopted` `retained.json` (left when the
+  cleanup after an adoption failed) is not kept data: its data lives in the installed app.
+- **A keep-data removal deletes a container only with its verified kept copy** (YE-222): when the scan cleanup (the
+  reconcile pass, `--force --keep-data`) finishes a keep-data removal, each container goes only after its
+  `ye-retained-*` copy is verified at that moment (`retained.json` ready, the copy present, tagged, stopped and
+  isolated); otherwise the container is kept and the cleanup reports it. Since 0.6.18 a keep-data finish could delete
+  a root whose copy was never made.
+- **`--force` records its mode first and is checked under the lock**: whether `--force` applies (unfinished install,
+  removal pending, a container gone, no record) is decided inside the app's lifecycle lock, after its mode is written
+  on a pending lease.
+- **A URL install that adopted kept data rolls back keeping it** (before 0.6.20 the rollback deleted it). `youeye app recover <id>` finishes an interrupted app update.
 - **`youeye app install <id> [--source <id>] [--public-access[=false]]`** sends `{ appId }` (plus `sourceId` with
   `--source`, and `publicAccess` when that flag is given) to the same endpoint. Without `--source` the app comes
   from the official Market; the ids are in `youeye market list`. The CLI has no YouEye ID user, so AI
@@ -344,7 +366,8 @@ on, a failure rolls the install back (`rollbackInstall`).
    app's owner adopts it (`adoptRetainedData: true`).
 3. **Admission record.** The app's access policy is created (or the existing one reused). It holds the
    **installation id** (a UUID) and the owner: the admin who installs it, or the box owner for CLI installs.
-4. **Native packages** (native apps only) are staged from the app's product release and checked against it.
+4. **Native packages** (native apps only) are downloaded from the manifest's `source.package` and checked against
+   its size and SHA-256 (and that the archive is a safe app tree with a `server.js`).
 5. **Network.** The app gets its own Incus bridge `yeapp<N>` with a /27 subnet, NAT on for the install, and an
    egress ACL. Custom volumes are created. `install.json` is written now as the recovery map.
 6. **Secrets** are generated and stored in `/var/lib/youeye/app-<id>/secrets/<name>` (directory 0700, files 0600).
@@ -399,14 +422,19 @@ admins and `default_value` to everyone else, in both the ID token and userinfo.
 
 ## Who may open an app
 
-Every new app starts **owner-only**: only the admission owner is admitted, and being a YouEye admin alone does not
-admit anyone. An admin can change the policy to all users, selected users or selected groups (in the app's Market
-settings, or `GET`/`PUT /api/market/apps/<id>/access`). YouEye ID enforces it at sign-in, token use and Caddy
+Every new app is for **all active household users** (since 0.6.20, YE-232); the installing admin can choose
+"Only me" under the install dialog's "Name, address and more" (`accessMode: "owner"`), and then only the admission
+owner is admitted. Being a YouEye admin alone does not admit anyone. A reinstall keeps the policy it had; apps
+installed before 0.6.20 stay owner-only until an admin changes them. An admin can change the policy to owner only,
+all users, selected users or selected groups (in the app's Market settings, or `GET`/`PUT
+/api/market/apps/<id>/access`); "Who may enter" also decides the dashboard and YouEye ID sign-in of a public app. YouEye ID enforces it at sign-in, token use and Caddy
 forward-auth; see [app-admission.md](app-admission.md).
 
-**Public access.** An app whose manifest sets `public_access: true` protects itself (its own password, PINs or
-accounts). Installed from the official catalog, it gets public access on by default (shown pre-selected; the
-installer can turn it off; `--public-access=false` on the CLI). Then Caddy's forward-auth check lets every request
+**Public access.** The "Only <site> users" switch (install dialog and Access settings) is the one control: off is
+public access (YE-154, [app-admission.md](app-admission.md)). An app whose manifest sets `public_access: true`
+protects itself (its own password, PINs or accounts). Installed from the official catalog, it starts with the switch
+off (the installer can turn it on; `--public-access=false` on the CLI). Apps without a sign-in of their own, or that
+trust the YouEye sign-in header, stay locked on. Then Caddy's forward-auth check lets every request
 through to the app (`src/lib/identity/forward-auth.ts`). Added sources and URL installs never take this default
 from the manifest. It is applied after the app is installed and healthy; if that fails, the app stays
 household-only. An admin can change it later in the app's access settings.
@@ -422,7 +450,9 @@ permissions.
 - **Suggestions.** After an install, the CP suggests connections both ways: from the new app to installed apps it
   wants, and from installed apps that want the new one. A suggestion whose target is not installed waits.
   `GET /api/suggestions` lists them; `POST /api/suggestions` with `{ action: approve | dismiss | remove, id }` acts.
-  From the box: `youeye app suggestions` lists them and `youeye app connect <from> <to>` approves one.
+  An admin approves or dismisses them in Settings → Apps → either app → Connections (the app's row in the list
+  says how many wait); from the box, `youeye app suggestions` lists them and `youeye app connect <from> <to>`
+  approves one.
   Uninstalling an app drops its suggestions and marks suggestions pointing at it as waiting again.
   An update drops the suggestions its new release no longer asks for and adds the new ones, and each start of
   the CP drops what installed apps no longer ask for (`dropSuggestionsOfDroppedWants`; an update before 0.6.15
@@ -432,6 +462,10 @@ permissions.
   store (`/var/lib/youeye/bridges/suggestions.json`) is a read, an edit and a write, and they run one at a time
   (a queue in the CP process, `lib/bridges/suggestions.ts`), so the cleanup at start and an install or a
   dismissal at the same moment do not undo each other.
+- **Disconnecting** (Disconnect in the Connections section, `DELETE /api/bridges/<id>`) unwires the connection and
+  removes its record; while the consumer still asks for the target and both are installed, its suggestion comes back
+  (`suggestAgainAfterDisconnect`, also when it had been dismissed earlier), so it can be approved again. Otherwise
+  a dismissed suggestion stays dismissed.
 - **Approval** creates a connection record and activates it: the consumer gets a second network interface on the
   peer's app bridge, or, for a `proxy:` connection, a scoped grant through the UI gateway. That interface's ACL
   allows traffic only to and from the peer's main container address (so the peer can call the consumer back on
@@ -442,6 +476,52 @@ permissions.
   network, not its gateway. A connection to a stopped peer uses the peer's reserved address. Incus keeps that
   address while the peer's NIC exists; when the peer is recreated, its connections are pointed at the new address
   when it starts and on every reconcile pass (and when the connection is activated again).
+- **The default route stays on the app's own network** (`lib/incus/default-route-guard.ts`, YE-198). A connection
+  interface sits on the peer's bridge, and Caddy has one interface on each app's bridge. Each of those bridges' DHCP
+  leases carries its own gateway.
+  - When an OCI container starts, Incus runs its DHCP client on every interface at once. Each client lists the
+    default routes and then replaces the default with its own gateway, unless an interface with a smaller name holds
+    it (`installDefaultRouteV4` in Incus's `forknet`). Side interfaces are named `eth-…`, which sorts before `eth0`,
+    so a side lease that lands after eth0's takes the default. When two leases land together, both see no default
+    and the last one wins. Until 0.6.20 a connected app's default route went through the peer's bridge after many
+    restarts and reboots (3 of 7 on a test box), and so did Caddy's.
+  - Renaming the interfaces is no fix because of that race: with names that sort after `eth0`, 5 of 8 restarts
+    still went wrong.
+  - The Control Panel watches Incus's lifecycle events (`lib/incus/incus-events.ts`, `default-route-watch.ts`).
+    After each `instance-started` or `instance-restarted` of a container with side interfaces, it waits until
+    `eth0` and each side interface hold an address, at most 40 s, and a side interface at most 10 s after `eth0`
+    (one that gets no lease carries no default route; the later repair covers a late lease, YE-223). Then it repairs
+    the routes, and once more 15 s later; when a side interface still had no lease, once more 30 s after that,
+    past the 30 s Incus's DHCP clients try (YE-224). Two repairs of one start racing to add the `eth0` default are
+    not a failure (only a default through `eth0` counts as added). Side interfaces are connection NICs with their grant's ACL, and Caddy's app NICs (`CADDY_APP_ACL`).
+  - The repair removes any default route through a side interface. When none is left, it adds one through `eth0`, via
+    the gateway of the container's own bridge. It never touches a route through `eth0`, and on a container whose routes
+    are right it changes nothing. It acts only while `eth0` holds an address and the gateway is reached through `eth0`
+    (`ip route get`: not so when the app's bridge was recreated on another subnet while the container keeps an old
+    lease; then it changes nothing, says so once and tries again at the next start, YE-211), so it never leaves a
+    container without the default route it had; a repair that fails is tried again three times, 30 s apart, and at the
+    next sweep. A container without `ip` (or a shell) is skipped with one log line. While an operation of the Control
+    Panel holds the container's app (an install, a restart, an update finished or rolled back at start), the guard
+    waits, polling every 2 s, and repairs once the operation ends. It never acts on a container being replaced.
+  - Incus's DHCP renewals never touch routes again, so one repair holds until the next start.
+  - Each time the event stream opens (at every Control Panel start, and after a reboot, where Incus starts the apps
+    first), a sweep repairs every running container that started since its last repair, and so do sweeps 5, 15 and 30 s
+    later and then one every minute while the stream is up (YE-214). Since YE-207 the stream opens while Incus is still
+    starting the apps: one that is not running yet at the first sweep, and whose start event came before the
+    subscription was live, is caught by a later sweep, within a minute at most. A sweep acts only on a container whose
+    start it has not repaired yet, so the later sweeps cost a list and a state read. The watch is the first thing the
+    Control Panel starts. While the stream is down, the sweep runs every 30 s. A stream quiet for 5 minutes is pinged,
+    and one that doesn't answer is reopened. A newly connected interface is checked right after it comes up.
+  - An app operation's own starts are repaired by the operation itself (YE-220): an update's first start, a rollback's
+    and a recovery's restart (`update-provider.ts` `startRuntime`, `verifyRestored`) call `repairAfterOperationStart`
+    right after the container starts and before any readiness or health wait. The operation holds the app, and the
+    event-driven repair waits for that hold to end, so before 0.6.20 a connected app whose start needs the internet
+    (Bazarr, with Sonarr and Radarr) failed its health on the connection NIC's default route and rolled back. The repair
+    is the same as every other start (leases waited for, eth0 never touched); its late check runs only while the
+    container still runs that start, and a failure is logged without failing the operation. Starts and restarts outside
+    an update (`youeye app start|restart`) return right after the start, and the event-driven repair follows when the
+    lock is released.
+  - Installed boxes heal with the update alone: at the first start of the new Control Panel. No device changes.
 - **What each side's dashboard row lists** (`pushConnectionsToUI`, `lib/bridges/manager.ts`; the UI keeps it in
   `apps.connections`, read by the gateway's proxy route and `my-connections`). A connection appears on its consumer's
   row (the `from` app), with the managed-proxy transport for a `proxy:` connection. It appears on the provider's row
@@ -457,9 +537,10 @@ permissions.
   connection installed later, or `/api/bridges`), the consumer's `connects[].setup` file (`for: connect:<app>`) runs
   with `${peer.*}` and `${self.*}` values. Its `target: peer` steps call the peer's main container. A failure is
   logged and does not undo the approval. Deactivating or deleting a connection first runs the file's `remove:`
-  steps; a failure there is logged as well. Uninstalling an app also deletes its connections (before its
-  containers), but uninstall stops the app's containers first, so only `remove:` steps that run in the other app
-  (not in the uninstalled one, and not calling it as the peer) can still succeed.
+  steps; a failure there is logged as well. Uninstalling an app runs the `remove:` steps of all its connections
+  (the app as the consumer, and as the app another one connects to) before it stops the app, so they can reach
+  both apps and read both apps' secrets; it then deletes the connections before the containers. Before 0.6.20
+  the app was stopped first, so the steps failed (SABnzbd stayed in Sonarr's download clients, YE-199).
 - **Bundles.** `POST /api/market/bundles/<id>/install[?source=<id>]` installs the missing members in the listed
   order, then approves and wires the bundle's `connections`. The bundle comes from the named source, else the
   official Market; a custom source must be accepted. Every member installs from the bundle's source and is recorded
@@ -501,14 +582,15 @@ stream's "<name> installed successfully!"; `--url` installs are not followed (th
 Control Panel reads).
 
 - The new manifest comes from the app's recorded source, else the official Market (never another source): the same
-  market, which must still be on and accepted and is refreshed first; the URL of an Added app; or the native app's
-  product release on the box's channel. The update check asks the same source and never re-points an app (see
+  market, which must still be on and accepted and is refreshed first; or the URL of an Added app. Native apps are no
+  exception (0.6.20). The update check asks the same source and never re-points an app (see
   [Markets and consent](#markets-and-consent)). Apps added by URL get update offers too.
 - **An app whose source id now names another market address** than it recorded is not updated: the answer is 403
   `source-changed` (JSON) or an SSE `failed` event with `code: "source-changed"`, and the update check offers
   nothing and stores `updateBlocked { code, message }` on the installed-app record. Only an explicit switch in
   Settings → Apps → the app moves it to that source. An app whose market is gone gets `updateBlocked` `source-unavailable` ("no
-  update source") the same way.
+  update source") the same way, and a native app installed from the channel whose market does not list it gets
+  `not-in-market` ("No update source: <id> is not in the YouEye Market"; an update answers 409); it keeps running.
 - **An app added by URL whose setup files changed** is not updated without `allowSetup: true` (`--allow-setup`; the
   update panel says "Setup steps changed" and asks). Nothing is changed before that: the answer is 409
   `setup-changed` (JSON) or an SSE `failed` event with `code: "setup-changed"`, both listing `setups`. The Added
@@ -523,15 +605,33 @@ Control Panel reads).
   the checkpoint. Database migrations are the app's own, on first start.
 - Refused: a changed container set (sidecars added, removed or renamed), changed storage (a `data:` path added or
   removed) and a changed database mode or name (`update-inventory.ts`). An update also fails when a new env value
-  needs something the install never created: a new `${secret.<name>}`, or a new `${database|sso|identity|youeye|ai}.*`
-  mapping that resolves empty (`update-configuration.ts`).
-- Setup files do not run. Secrets, volumes, the YouEye ID client and the Pointer key are kept. A database
+  needs something the install never created: a new `${database|sso|identity|youeye|ai}.*` mapping that resolves
+  empty (`update-configuration.ts`).
+- **A secret new in the release** (in its `secrets:`, never declared by the installed version) is generated during
+  the update (since 0.6.20, YE-208), per its spec, just before the configuration is written, so a new
+  `${secret.<name>}` (say the admin password of an app moving to its own login) resolves. Each is one journal step
+  (`generate-secret-<name>`); a rollback, also one resumed after a restart, deletes exactly those, never a secret the
+  app had.
+- **A secret the installed version already declared is never made again** (YE-217), also when it reads as missing,
+  empty, whitespace only or unreadable: the app's data (an encryption key, a session secret) was made with the old
+  value. An app installed before 0.6.3 kept its secrets at `app-<id>/<file>`, which the store
+  (`app-<id>/secrets/<name>`) does not read. The update stops before changing anything:
+  `installed-secret-missing`, naming the secret, never its value ("Restore the secret file, then update again").
+- **The shown credentials are the new release's:** the install record's `credentials` is written from the new
+  manifest's `credentials:` (Settings → Apps → Credentials, `GET /api/market/credentials`), and cleared when it has
+  none; a rollback puts the previous ones back.
+- Setup files do not run. Existing secrets, volumes, the YouEye ID client and the Pointer key are kept. A database
   sidecar keeps its running PostgreSQL (it is not rebuilt). The new manifest becomes the frozen copy, so changed
   setup files run later, from that copy: when sign-in is turned on or off, after an address change, and when a
   connection is activated.
-- A native app is updated by **build**: the channel's release must be a newer build (`X.Y.Z-dev.N`); the same
-  build under a promoted name (`-alpha.N`, `-beta.N`, `X.Y.Z`) only updates the release record. Its new
-  `standalone.tar` replaces `/opt/app` (see [native-apps.md](native-apps.md)).
+- A native app is updated by version like any app, and by package: with the same `source.package.sha256` as the
+  installed `standalone.tar` its manifest decides, not the version name. The same manifest is no update ("already up
+  to date"); a new one that configures the app the same way (a new version name or `requires`) is taken record only,
+  no download or restart (YE-194), once this box meets its `requires.youeye` and unless its version name is lower
+  than the installed one (YE-212); one that configures it differently is an ordinary update of the same package. A
+  new `standalone.tar` replaces `/opt/app` (see [native-apps.md](native-apps.md)). A native app installed from the
+  channel before 0.6.20 first moves to its market the same way, record only, when the market pins the package it runs
+  (the update check, 45 s after every start, and `youeye app update` do both).
 
 ## Start, stop and restart
 
@@ -544,10 +644,31 @@ containers and record the wanted state, so a stopped app stays stopped. Shared s
 app its market no longer lists). **The API keeps data by default; the CLI
 `youeye app remove <id>` deletes it unless `--keep-data` is given.**
 
-The uninstaller decides only from `install.json`. It stops the app's containers, deletes its connections (attempting
-connect files' `remove:` steps, see above), then deletes containers by their recorded names and only when they carry this installation's tag, routes
+The uninstaller decides only from `install.json`. It first runs its connections' `remove:` steps while the app
+still runs (see above; a failure never blocks the uninstall, also one of a step with `allow_failure` against the
+other app, e.g. Sonarr stopped: it is returned in `warnings`, and `connectionsLeft`
+`[{appId, name}]` names the apps that may still list it; Settings → Apps shows them after the uninstall, e.g.
+"Sonarr may still list SABnzbd: remove it in Sonarr's settings.", and `youeye app remove` prints the same lines
+after its success line, with the app's id for the removed app; YE-200), then stops the app's
+containers, deletes its connections, then deletes containers by their recorded names and only when they carry this
+installation's tag, routes
 by exact host name, the OAuth client, DNS entries,
 the CA directory, the dashboard registration and, last, the app network. Nothing is matched by name prefix.
+An uninstall that does not complete after the `remove:` steps ran (for example the credential revocation fails, and
+the app stays installed and stopped) marks its remaining active network connections `rewirePending` in the
+connection record: they are still recorded active, but their wiring was undone. The periodic reconcile pass
+(every 30 s, started and not awaited, one at a time) runs their connect files again and clears the mark once both
+apps of a connection run, which also covers an app that came up by Incus autostart or kept running (YE-218). Each
+re-wiring holds both apps' lifecycle locks and the bridge lock, like activation, so it never runs beside the peer's
+uninstall or update; inside them it checks again that both apps run, reads the mark again and clears it only while
+it is still set. The connect file gets at most 20 s there (its `wait:` steps included), so an app that runs but
+doesn't answer holds the two apps for 20 s at most (YE-223). A busy app keeps the mark for the next pass; a wiring
+that fails keeps it and is tried again after 30 s, then 1, 2, 4, 8, 16 min, then every 30 min. An app's start or
+restart doesn't wire inline: it clears its connections' back-off and asks the re-wire watch (every 5 s, started at
+Control Panel start apart from the reconcile round, which can return early) to start a pass, so they are wired within
+seconds. The back-off and the requests are one state per process (`Symbol.for('youeye.bridge-rewire')` on
+`globalThis`: Next bundles the module more than once), and a start during a failing try wins over that try's back-off
+(YE-224). Retrying the uninstall deletes them as usual.
 
 - **Delete data:** also removes the volumes, the secrets and `/var/lib/youeye/app-<id>/`, and drops the shared
   database and role, but only if this installation created them.
@@ -559,7 +680,44 @@ Left behind on purpose: the app's revoked gateway credential in `/var/lib/youeye
 `/var/lib/youeye/networks/operations/<id>.json` (pruned 24 hours after the operation ends).
 
 If any step fails, `install.json` stays with `cleanupPending: true`, the network lease is kept, and the next uninstall
-or cleanup retries.
+or cleanup retries. Since 0.6.20 (YE-222):
+- each container delete waits for the delete operation's own result (`metadata.status`, not just the reply), tries a
+  failed attempt again (3 attempts in all) and gives a finished delete a few seconds to read back absent;
+- the data (volumes), and with them the secrets, and the app's own shared database go only after every container is
+  confirmed gone, and never while an instance uses a volume;
+- the requested mode (keep-data or delete-data) is recorded on the network lease (its failure stage,
+  `uninstall-keep-data` / `uninstall-delete-data`), at the start of every attempt on a lease an earlier attempt left
+  pending and again when an attempt fails; the background network cleanup and Health's Fix finish the removal in
+  that mode (a delete-data finish still refuses kept data). A `--keep-data` request records keep before it waits for
+  the app's locks, and every mode write reads the lease inside the network write lock, so a keep asked last is never
+  turned back into delete. The background cleanup reads the mode only once it holds the locks, and leaves the app
+  alone while a removal request for it is running or waiting. A delete-data finish also removes the leftover
+  `ye-retained-*` copies of an adopted keep-data reinstall. A container delete still running after its bounded waits
+  is not sent again: the attempt ends unconfirmed and the next attempt retries. A `--keep-data` retry after a
+  delete-data attempt that already deleted the containers has no copy of them to keep: it keeps the volumes and
+  answers "The containers of <id> are already gone …; finish the removal with: youeye app remove <id> --force
+  --keep-data" (the background cleanup leaves it the same way). One without a recorded mode (failed before this) is never finished on its own: it is left
+  for `youeye app remove <id>` (with `--keep-data` to keep its data). Until it finishes, an install of that app is
+  refused ("The removal of <id> did not finish; finish it first: …", the command following the mode);
+- a fresh install refuses when this app's own volumes of an earlier installation are still there (and it is not a
+  retained, keep-data app): "Data of an earlier <id> installation is still on this box (…); finish its removal
+  first: youeye app remove <id> --force (deletes it)". It never takes such data over.
+
+**A removal that stops after the revocation** (YE-225): the uninstall marks the record's service credential pending,
+stops the app and revokes its credential before it deletes anything, so a failure from there on (the dashboard down, so
+the revocation can't be published; a connection or container that won't go) leaves the app installed, stopped, with a
+revoked credential. Revocation is final: a credential reconcile can't bring it back, and a new generation would need the
+very dashboard publication that failed. Running the removal again finishes it, so that is what the app says: a start
+answers "The removal of <id> did not finish and its service access is already revoked: remove it again to finish: youeye
+app remove <id> --keep-data if you chose to keep its data, youeye app remove <id> to delete it (or Remove in Settings,
+which asks)"; both forms, because the CLI deletes the data unless `--keep-data` is given and the stopped removal may
+have kept it, the credential reconcile (`POST /api/market/credentials/<id>` with `reconcile` or `provision`) answers 409
+`removal-unfinished` with the same text, and Settings shows that state instead of the Reconcile button (the Remove
+section stays). It is recognised as the record pending while the store's credential was revoked by a revocation
+(`operationKind` `revoke`, `lib/apps/unfinished-removal.ts`, read without the store's lock): only the uninstall and an
+install's rollback leave that pair. A failed server restore also leaves a pending record with a revoked credential, but
+its fence is `operationKind` `restore` and Reconcile recovers it, so it gets the ordinary Reconcile; a deliberate revoke
+records `revoked`.
 
 ## When something fails
 
@@ -604,14 +762,15 @@ app archive, as before.
     address and accepted after an address change, an unreachable market keeps its state, a changed app fetches one
     bundle, refresh timing), `pinned-https.spec.ts` (public addresses, pinned DNS, no redirects, size limits);
   - `market-catalog.spec.ts` (the reader: too-new and unknown-kind entries listed, strict parse errors),
-    `market-native-listing.spec.ts`, `channel-index.spec.ts`, `product-release.spec.ts`;
+    `market-native-package.spec.ts` (a native app's package: size, SHA-256, archive), `update-native-move.spec.ts`
+    (the move of 0.6.15/0.6.17 records), `channel-index.spec.ts`, `product-release.spec.ts`;
   - `market-image-proxy.spec.ts` (only named pictures, no fetch for anything else, headers and types);
   - `market-source-consent.spec.ts` (acceptance, the list edit, official by default, bundles, the source switch, the
     update check, removed sources and "no update source", URL apps' changed setup files),
     `market-update-routing.spec.ts`, `market-detail-sources.spec.ts` (the app page's variants and installed source);
   - `market-store-hardening.spec.ts` (the refresh deadline and the reader's wait, refreshes by source and address,
     nothing left behind by a failed attempt, `sequence` bounds and a wrong clock, picture fetch limits),
-    `market-reader-hardening.spec.ts` (manifest id per entry, a custom market's `native` list ignored, official
+    `market-reader-hardening.spec.ts` (manifest id per entry, native apps from any market, the official lane setting, official
     lanes refused as custom markets, a store that cannot be shown, deadlines of apps added by URL);
   - `market-add-link.spec.ts` (the preview is a POST with the CSRF token, writes nothing and refuses non-admins;
     adding needs an admin session and the origin check; bad and over-long links; the sign-in redirect and its

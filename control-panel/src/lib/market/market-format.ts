@@ -38,8 +38,12 @@ export const MARKET_LIMITS = {
   file: 5 * 1024 * 1024,
 } as const;
 
-/** The app kind this reader installs. Any other kind is "needs a newer YouEye". */
-export const MARKET_APP_KINDS = ['container'] as const;
+/**
+ * The app kinds this reader installs: `container` (OCI images pinned by digest) and, from 0.6.20, `native` (a
+ * Node.js app whose `standalone.tar` the manifest pins by `source.package`). Any other kind is "needs a newer YouEye";
+ * so is `native` on boxes before 0.6.20, which is why every native entry also says `requires.youeye: ">=0.6.20"`.
+ */
+export const MARKET_APP_KINDS = ['container', 'native'] as const;
 
 export const MARKET_IMAGE_TYPES: Record<string, string> = {
   svg: 'image/svg+xml',
@@ -157,14 +161,13 @@ const Curation = z.object({
 
 /**
  * `apps` and `bundles` are read entry by entry (`readMarketIndex`): one entry this reader
- * cannot parse must not take the others with it.
+ * cannot parse must not take the others with it. (Indexes before 0.6.20 also carried `native`, the ids of native
+ * apps of the box's channel; native apps are `apps` entries of kind `native` now, and the key is ignored.)
  */
 export const MarketIndexSchema = z.object({
   schema: z.literal(MARKET_INDEX_SCHEMA),
   categories: z.array(Category).optional(),
   curation: Curation.optional(),
-  /** Ids of native apps. Their manifests come from the channel index, not from the market. */
-  native: z.array(z.string().regex(APP_ID)).optional(),
   /** Each is the text of a `bundles/<id>/bundle.yaml`; the reader parses it with the bundle parser. */
   bundles: z.array(z.unknown()).optional(),
   apps: z.array(z.unknown()),
@@ -178,7 +181,6 @@ export const MarketIndexBundleSchema = z.object({
 export interface MarketIndex {
   categories: z.infer<typeof Category>[];
   curation?: z.infer<typeof Curation>;
-  native: string[];
   bundles: z.infer<typeof MarketIndexBundleSchema>[];
   apps: MarketIndexEntry[];
   /** One line per entry that was skipped, for the log and the sources page. */
@@ -230,7 +232,6 @@ export function readMarketIndex(bytes: Uint8Array | string): MarketIndex {
   return {
     categories: parsed.data.categories ?? [],
     curation: parsed.data.curation,
-    native: parsed.data.native ?? [],
     bundles,
     apps,
     warnings,

@@ -306,7 +306,8 @@ export async function fetchUrlApp(manifestUrl: string, deps: UrlFetchDeps = defa
   const manifest = await fetchText(manifestUrl, true, deps, deadlineAt);
   if (!manifest) throw new UrlAppError('The app manifest is empty');
   try {
-    return await fetchApp(manifest, (name) => fetchText(new URL(name, manifestUrl).toString(), false, deps, deadlineAt));
+    // Read as a market's manifest: a native app added by URL must pin its package (source.package), YE-142.
+    return await fetchApp(manifest, (name) => fetchText(new URL(name, manifestUrl).toString(), false, deps, deadlineAt), { market: true });
   } catch (error) {
     if (error instanceof UrlAppError) throw error;
     const issues = (error as { issues?: string[] }).issues;

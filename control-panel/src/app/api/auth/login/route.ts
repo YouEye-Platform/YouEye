@@ -9,14 +9,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   authenticatePAM,
   isAdmin,
+  isValidPAMUsername,
   createSession,
   setSessionCookies,
   generateCSRFToken,
 } from '@/lib/auth';
 import { requestClientAddress } from '@/lib/auth/client-address';
-import { beginSignInAttempt, signInSucceeded } from '@/lib/identity/sign-in-limit';
+import { beginSignInAttempt, signInNotCounted, signInRetryAfterSeconds, signInSucceeded, type SignInAttempt } from '@/lib/identity/sign-in-limit';
 
 export async function POST(request: NextRequest) {
+  let attempt: SignInAttempt | null = null;
   try {
     // Parse request body
     const body = await request.json();
@@ -37,16 +39,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Failures per username from any address, and per client address (the TCP peer; Caddy's X-Forwarded-For only
-    // from Caddy). Loopback and unknown are no client address, so nobody can lock everyone out (YE-136).
+    // No account can have such a name (YE-169: at most 32 characters, no leading `-`): a form error, counted nowhere.
+    if (!isValidPAMUsername(username)) {
+      return NextResponse.json({ error: 'Invalid username format' }, { status: 400 });
+    }
+
+    // Failures per (username, client address) and per client address lock; per username they only slow down
+    // (`sign-in-limit.ts`, YE-149). The client address is the TCP peer, Caddy's X-Forwarded-For only from Caddy.
     const ip = await requestClientAddress(request.headers);
-    const attempt = beginSignInAttempt(username, ip, 'cp-login');
+    attempt = beginSignInAttempt(username, ip, 'cp-login');
 
     if (!attempt.allowed) {
-      const retryAfter = Math.max(1, Math.ceil((attempt.retryAt - Date.now()) / 1000));
+      const retryAfter = signInRetryAfterSeconds(attempt);
       return NextResponse.json(
         {
-          error: 'Too many login attempts. Please try again later.',
+          error: attempt.refusal === 'wait'
+            ? `Too many login attempts. Please try again in ${retryAfter} seconds.`
+            : 'Too many login attempts. Please try again later.',
           retryAfter,
         },
         {
@@ -60,6 +69,18 @@ export async function POST(request: NextRequest) {
 
     // Authenticate with PAM
     const authResult = await authenticatePAM(username, password);
+
+    // Spine refused to check the password (YE-164): its own limit (429) or a full PAM queue (503). That is no guess
+    // and no answer about the password, so it counts nothing here and says when to try again, never "Invalid
+    // credentials".
+    if (authResult.rateLimited) {
+      signInNotCounted(attempt);
+      const retryAfter = authResult.retryAfter ?? 300;
+      return NextResponse.json(
+        { error: `Too many login attempts. Please try again in ${retryAfter} seconds.`, retryAfter },
+        { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+      );
+    }
 
     if (!authResult.success) {
       // Log failed attempt (in production, send to audit log)
@@ -101,6 +122,8 @@ export async function POST(request: NextRequest) {
       csrfToken,
     });
   } catch (error) {
+    // A failure of ours is no guess: it counts against nothing (a settled attempt stays settled).
+    if (attempt) signInNotCounted(attempt);
     console.error('Login error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

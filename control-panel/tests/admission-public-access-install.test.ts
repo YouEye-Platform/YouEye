@@ -38,10 +38,10 @@ test('install-time public access: manifest default only until an administrator d
     assert.equal(await applyInstallPublicAccess({ appId: 'quiz', actorId: owner, explicit: false }), true);
     const quiz = (await getAdmissionPolicy('quiz'))!;
     assert.equal(quiz.publicAccess, true);
-    assert.equal(quiz.mode, 'owner');
+    assert.equal(quiz.mode, 'all_users', 'a new install is for the whole household (YE-232)');
     const audit = await identityRows<{ action: string; source: string }>(`SELECT action, details->>'source' AS source
       FROM admission_audit a JOIN admission_policies p USING (installation_id) WHERE p.app_id = 'quiz' ORDER BY a.id`);
-    assert.deepEqual(audit.map((row) => row.action), ['owner_only_baseline', 'public_access_at_install']);
+    assert.deepEqual(audit.map((row) => row.action), ['install_baseline', 'public_access_at_install']);
     assert.equal(audit[1].source, 'manifest');
     // Applying again is a no-op that still reports the current state.
     assert.equal(await applyInstallPublicAccess({ appId: 'quiz', actorId: owner, explicit: false }), true);
@@ -58,6 +58,26 @@ test('install-time public access: manifest default only until an administrator d
     const reopened = (await getAdmissionPolicy('game'))!;
     assert.equal(reopened.publicAccess, true);
     assert.deepEqual(reopened.userIds, [member], 'public access leaves the chosen users in place');
+
+    // "Only me": owner-only; a reinstall keeps the policy it had, whatever the new choice says.
+    await ensureAppAdmission({ appId: 'diary', actorId: owner, mode: 'owner', routes: [{ host: 'diary.example.test' }] });
+    const diary = (await getAdmissionPolicy('diary'))!;
+    assert.equal(diary.mode, 'owner');
+    const [diaryBaseline] = await identityRows<{ action: string; mode: string }>(`SELECT action, details->>'mode' AS mode
+      FROM admission_audit WHERE installation_id = '${diary.installationId}' ORDER BY id LIMIT 1`);
+    assert.deepEqual({ ...diaryBaseline }, { action: 'install_baseline', mode: 'owner' });
+    await ensureAppAdmission({ appId: 'diary', actorId: owner, mode: 'all_users', routes: [{ host: 'diary.example.test' }] });
+    assert.equal((await getAdmissionPolicy('diary'))!.mode, 'owner');
+    assert.equal((await getAdmissionPolicy('diary'))!.revision, diary.revision);
+    await ensureAppAdmission({ appId: 'quiz', actorId: owner, mode: 'owner', routes: [{ host: 'quiz.example.test' }] });
+    assert.equal((await getAdmissionPolicy('quiz'))!.mode, 'all_users');
+    // A policy created for an app that is already installed (a recovery path) stays owner-only, as before.
+    await ensureAppAdmission({ appId: 'legacy', installed: true, routes: [{ host: 'legacy.example.test' }] });
+    assert.equal((await getAdmissionPolicy('legacy'))!.mode, 'owner');
+    // An invalid mode is refused before anything is written.
+    await assert.rejects(() => ensureAppAdmission({ appId: 'bad', actorId: owner,
+      mode: 'everyone' as unknown as 'owner', routes: [{ host: 'bad.example.test' }] }), /Invalid install access mode/);
+    assert.equal(await getAdmissionPolicy('bad'), null);
 
     // Only an active administrator can apply it.
     await ensureAppAdmission({ appId: 'notes', actorId: owner, routes: [{ host: 'notes.example.test' }] });

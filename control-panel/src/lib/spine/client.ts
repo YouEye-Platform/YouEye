@@ -269,6 +269,8 @@ export class SpineAPIError extends Error {
     public readonly statusCode: number,
     public readonly code?: string,
     public readonly response?: Record<string, unknown>,
+    /** The answer's headers (Spine's rate limits put their reset time there). */
+    public readonly headers?: Record<string, string | string[] | undefined>,
   ) {
     super(message);
     this.name = 'SpineAPIError';
@@ -374,6 +376,7 @@ export class SpineClient {
                 res.statusCode,
                 parsed.code,
                 parsed as Record<string, unknown>,
+                res.headers,
               ));
             } else {
               resolve(parsed as T);

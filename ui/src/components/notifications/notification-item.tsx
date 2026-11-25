@@ -46,6 +46,7 @@ export interface NotificationData {
     embed_path: string;
     name: string | null;
     description: string | null;
+    app_url?: string | null;
   };
 }
 

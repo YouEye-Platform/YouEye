@@ -31,8 +31,10 @@ const SETUP = stringify({ schema: 'youeye.setup.v1', for: 'install', steps: [{ w
 function marketWithHomepage(homepage: string | undefined) {
   const built = buildFixtureMarket({
     name: 'Friend’s <b>Market</b>', publisher: 'Friend', sequence: 1795000000, commit: 'abc12345',
-    apps: [{ id: 'demo', version: '2.0.0', setups: { 'install.yaml': SETUP } }, { id: 'plain', version: '1.0.0' }],
-    native: ['notes', 'wiki'],
+    apps: [{ id: 'demo', version: '2.0.0', setups: { 'install.yaml': SETUP } }, { id: 'plain', version: '1.0.0' },
+      { id: 'journal', version: '1.2.0', native: true }],
+    // An index from before 0.6.20 named native apps of the channel: ignored, never counted.
+    legacyNative: ['notes', 'wiki'],
   });
   const pointer = JSON.parse(built.files.get('market.json')!.toString('utf8'));
   if (homepage) pointer.homepage = homepage;
@@ -237,8 +239,8 @@ test('a market preview shows the market’s own words and counts, and writes not
   assert.equal(answer.status, 200);
   assert.deepEqual(await answer.json(), {
     kind: 'market', address: MARKET, name: 'Friend’s <b>Market</b>', publisher: 'Friend',
-    homepage: 'https://friend.example.org/about', apps: 2, apps_with_setup: 1, already_added: null,
-  }, 'container apps only (its two native ids are not counted), and no native count for a market that is not the box\'s own official one');
+    homepage: 'https://friend.example.org/about', apps: 3, apps_with_setup: 1, native: 1, already_added: null,
+  }, 'every app, its native one too (any market may offer native apps, YE-142); the old native ids are not counted');
   assert.deepEqual(snapshot(directory), before, 'no source list, no market store');
   assert.equal(existsSync(path.join(directory, 'market-sources.json')), false);
   assert.equal(existsSync(path.join(directory, 'markets')), false);
@@ -247,12 +249,12 @@ test('a market preview shows the market’s own words and counts, and writes not
   assert.equal(paths[0], 'market.json');
   assert.deepEqual(paths.slice(1).map((requested) => requested.replace(/[0-9a-f]{64}/, '<sha>')), ['h/index/<sha>.json']);
 
-  // The official Market (the box's lane) is always on the box; only there are YouEye's own apps counted, apart.
+  // The official Market (the box's lane) is always on the box; it is counted the same way.
   const official = await (await preview(f, q('market', OFFICIAL_MARKET_ADDRESSES.main))).json();
   assert.equal(official.already_added, 'official');
   assert.equal('homepage' in official, false);
-  assert.equal(official.apps, 2, 'container apps, as `youeye market list` counts them');
-  assert.equal(official.native, 2);
+  assert.equal(official.apps, 3, 'every app, as `youeye market list` counts them');
+  assert.equal(official.native, 1);
   rmSync(f.directDirectory, { recursive: true, force: true });
 }));
 

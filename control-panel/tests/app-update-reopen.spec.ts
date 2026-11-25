@@ -41,6 +41,10 @@ function fixture(mode: 'own' | 'shared' = 'own', desired = true, healthy = true)
       waitForRunning: async (name: string) => { assert.equal(states.get(name), 'Running'); },
       waitForContainerExec: async () => {},
     };
+    // The route repair of an operation's own start (YE-220): nothing to repair in this fixture.
+    if (name === '@/lib/incus/default-route-watch') return {
+      defaultRouteGuard: async () => ({ repairAfterOperationStart: async () => 'skipped' }),
+    };
     if (name === './health') return {
       waitForPostgresHealth: async (name: string, user: string) => {
         events.push(`ready:${name}:${user}`);

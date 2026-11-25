@@ -13,15 +13,18 @@ import { getRoutes, removeRoute } from '../caddy/client';
 import { readInstallMetadata, saveInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from './metadata';
 import { getInstalledApp, removeInstalledApp } from './installed-apps';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
-import { cleanupAppByScan, isAppRegisteredWithUI } from './reconciler';
+import { cleanupAppByScan, isAppRegisteredWithUI, keptDataRefusal } from './reconciler';
 import type { StorageVolumeMeta, UninstallVerification } from './types';
 import {
   deleteAppNetwork,
   getAppNetworkLease,
   markAppNetworkCleanupPending,
+  recordRemovalMode,
+  removalStage,
   removeCaddyFromAppNetwork,
   removeSystemProxyDevices,
   withAppNetworkOperationLock,
+  withRemovalRequest,
 } from '../incus/app-network';
 import { archivePointerManagedAppIfPresent, readPointerManagedApp } from '@/lib/pointer/managed-apps';
 import { deleteAllAppSecrets, readAppSecret } from '@/lib/infrastructure/secrets';
@@ -39,9 +42,11 @@ const POSTGRES_CONTAINER = 'youeye-postgres';
 
 /**
  * Fully uninstall any app (Market-installed or native):
- * 0. Stop its containers (credential revocation comes before anything else)
- * 1. Delete its connections (connect files' `remove:` steps are attempted first; see below), then
- *    delete its containers (exact recorded names, installation-tagged only)
+ * 0. Undo its connections while it still runs (the connect files' `remove:` steps, both ways; a failure is
+ *    logged and reported in `warnings`, never blocks), then stop its containers (credential revocation comes
+ *    before any deletion)
+ * 1. Delete its connections (their `remove:` steps already ran), then delete its containers (exact recorded
+ *    names, installation-tagged only)
  * 2. Remove Caddy routes (exact hostname / upstream)
  * 3. Clean up SSO (identity provider + application)
  * 4. Remove Pi-Hole DNS entries
@@ -50,6 +55,19 @@ const POSTGRES_CONTAINER = 'youeye-postgres';
  * 7. Remove install metadata (kept with cleanupPending when anything failed)
  * 8. Post-uninstall verification
  */
+/**
+ * `errors`: what failed to clean up (the uninstall is not complete). `warnings`: what did not stop it, such as a
+ * connection whose `remove:` steps failed. `connectionsLeft`: the apps that may still list this one (one entry per
+ * app; no `appId` when the connections could not be read), shown after the uninstall (YE-199).
+ */
+export interface UninstallResult {
+  success: boolean;
+  errors: string[];
+  warnings: string[];
+  connectionsLeft: { appId?: string; name?: string }[];
+  verification: UninstallVerification;
+}
+
 /** A cleanup or verification step failed: the result keeps the fixed message, the journal gets the cause chain. */
 function cleanupFailure(appId: string, message: string, error: unknown): string {
   console.error(`[Market] Uninstall of ${appId}: ${message}: ${describeErrorChainForLog(error)}`);
@@ -64,21 +82,60 @@ export async function uninstallApp(
     /** Internal paired restore only; validated before any runtime deletion. */
     preserveManagedAI?: RestoredManagedAI;
   } = {}
-): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
-  return withAppInventory(() => withAppLifecycle(appId, () =>
-    withAppNetworkOperationLock(appId, 'remove', () => uninstallAppLocked(appId, options))));
+): Promise<UninstallResult> {
+  // A keep-data request records its mode before it waits for the locks: even when it is refused (the app is busy),
+  // the reconcile pass must not finish an earlier attempt as delete-data. A delete-data request records its mode only
+  // once admitted, under the lock (uninstallAppLocked). While the request runs or waits, the pass leaves the removal
+  // to it (withRemovalRequest). YE-222.
+  return withRemovalRequest(appId, async () => {
+    if ((options.keepData ?? true) && !options.preserveAdmission) await recordRemovalMode(appId, true).catch(() => undefined);
+    return withAppInventory(() => withAppLifecycle(appId, () =>
+      withAppNetworkOperationLock(appId, 'remove', () => uninstallAppLocked(appId, options))));
+  });
 }
 
-async function uninstallAppLocked(
+type UninstallOptions = {
+  keepData?: boolean;
+  preserveAdmission?: boolean;
+  preserveManagedAI?: RestoredManagedAI;
+};
+
+/**
+ * Once the connections' `remove:` steps ran, an uninstall that does not complete (it throws, e.g. the credential
+ * revocation fails, or it returns with errors) leaves the app installed with connections recorded active whose
+ * wiring was undone: mark them for re-wiring, so the app's next start wires them again (YE-209).
+ */
+async function uninstallAppLocked(appId: string, options: UninstallOptions): Promise<UninstallResult> {
+  const progress = { unwired: false };
+  let result: UninstallResult;
+  try {
+    result = await uninstallAppSteps(appId, options, progress);
+  } catch (error) {
+    if (progress.unwired) await markForRewire(appId);
+    throw error;
+  }
+  if (progress.unwired && !result.success) await markForRewire(appId);
+  return result;
+}
+
+async function markForRewire(appId: string): Promise<void> {
+  try {
+    const { markConnectionsForRewire } = await import('../bridges/manager');
+    await markConnectionsForRewire(appId);
+  } catch (error) {
+    console.error(`[Market] Uninstall of ${appId}: its connections could not be marked for re-wiring: ${describeErrorChainForLog(error)}`);
+  }
+}
+
+async function uninstallAppSteps(
   appId: string,
-  options: {
-    keepData?: boolean;
-    preserveAdmission?: boolean;
-    preserveManagedAI?: RestoredManagedAI;
-  },
-): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
+  options: UninstallOptions,
+  progress: { unwired: boolean },
+): Promise<UninstallResult> {
   // Revocation must be acknowledged before deleting runtime/registration.
   // Failure keeps the operation recoverable under the app lifecycle lock.
+  const warnings: string[] = [];
+  const connectionsLeft: UninstallResult['connectionsLeft'] = [];
   const metadata = await readInstallMetadata(appId);
   const aiExternalInstallationId = metadata?.aiConnection?.externalInstallationId
     || metadata?.aiConnectionPending?.externalInstallationId;
@@ -91,15 +148,41 @@ async function uninstallAppLocked(
       await readPointerManagedApp(aiExternalInstallationId), await readAppSecret(appId, 'pointer_api_key'));
   }
   const keepData = options.keepData ?? true;
+  // A keep request records keep again first thing once admitted: the one before the locks found nothing to record on
+  // when a first attempt was still running (its lease active), and that attempt's failure wrote delete-data (YE-222,
+  // Iris's batch-1 review). A delete-data request records only after the kept-data refusal below.
+  if (keepData && !options.preserveAdmission) await recordRemovalMode(appId, true);
   // Delete-data removes the shared-Postgres database and role only when this installation
   // created them (a database it found, or one another installation made, is never dropped).
   const dropDb = !keepData && metadata?.databaseMode === 'shared' && metadata.sharedDatabaseCreated === true;
   if (metadata) {
     // Every check that can refuse runs before anything changes: a refused uninstall leaves the app running, enabled
     // and with a valid credential.
+    // Delete-data never runs on kept data (YE-222): a keep-data removal that started (a retained policy, retained.json)
+    // is finished with --keep-data. A restore replacing the app owns its data and is not refused here. First, so a
+    // refused delete-data request changes nothing, not even the recorded mode.
+    if (!keepData && !options.preserveAdmission) {
+      const kept = await keptDataRefusal(appId);
+      if (kept) throw new Error(kept.replace(/^ownership:[^:]+:/, `${appId}: `));
+    }
+    // This attempt's mode goes on a lease an earlier attempt left pending, before the other checks: even a request
+    // refused below (a keep-data retry whose containers are gone) is the user's latest, so the reconcile pass never
+    // finishes the removal in an earlier attempt's mode (YE-222, seen live). An active lease is not touched.
+    if (!keepData || options.preserveAdmission) await recordRemovalMode(appId, keepData);
     const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
     await verifyAdmissionCleanup(metadata, keepData, options.preserveAdmission === true);
     if (keepData && dropDb) throw new Error('Keep-data uninstall cannot drop the app database');
+    // The connect files' `remove:` steps call the other app with both apps' secrets and addresses: they run now,
+    // while this app still runs and before anything is deleted (both ways: this app as the consumer, and as the app
+    // another one connects to). A failure never blocks the uninstall; it is logged and reported in `warnings`.
+    const { unwireAppConnections } = await import('../bridges/manager');
+    progress.unwired = true;
+    for (const leftover of await unwireAppConnections(appId)) {
+      warnings.push(leftover.message);
+      if (!connectionsLeft.some((left) => left.appId === leftover.appId)) {
+        connectionsLeft.push(leftover.appId ? { appId: leftover.appId, name: leftover.name } : {});
+      }
+    }
     metadata.serviceCredentialState = 'pending';
     metadata.enabled = false;
     metadata.desiredState = 'stopped';
@@ -132,6 +215,8 @@ async function uninstallAppLocked(
     return {
       success,
       errors: success ? [] : [`No install metadata found for app: ${appId}`, ...scanned.unresolved],
+      warnings,
+      connectionsLeft,
       verification,
     };
   }
@@ -161,16 +246,14 @@ async function uninstallAppLocked(
   const containerNames = containers.map((c) => c.containerName);
   const owner = metadata.installationId ? { appId, installationId: metadata.installationId } : undefined;
 
-  // 1. Delete the app's connections before its containers: deleting one attempts the consumer's
-  // connect file `remove:` steps (non-fatal), then removes the scoped secondary NIC grants, which
-  // must go before the target primary bridge can be deleted. This app's containers were stopped at
-  // the start (credential quiescence), so steps that run in it or call it fail and are logged;
-  // steps that run in the other app still do.
+  // 1. Delete the app's connections before its containers: this removes the scoped secondary NIC
+  // grants, which must go before the target primary bridge can be deleted. Their `remove:` steps
+  // already ran at the start, before the app was stopped, so they are not run again.
   try {
     const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
     const bridges = await getBridgesForApp(appId);
     for (const bridge of bridges) {
-      await deleteBridge(bridge.id);
+      await deleteBridge(bridge.id, { unwired: true });
     }
     if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
   } catch (error) {
@@ -183,11 +266,14 @@ async function uninstallAppLocked(
     console.warn(`[Market] Connection suggestions for ${appId} could not be cleared: ${describeErrorChainForLog(error)}`);
   }
 
-  // 1b. Stop and delete the recorded containers, only when tagged with this installation.
+  // 1b. Stop and delete the recorded containers, only when tagged with this installation. deleteOwnedInstance waits
+  // for each delete's real outcome (YE-222); the data below goes only once every container is confirmed gone.
+  let containersGone = true;
   for (const c of containers) {
     try {
       await deleteOwnedInstance(c.containerName, owner);
     } catch (error) {
+      containersGone = false;
       errors.push(cleanupFailure(appId, `Container ${c.containerName} cleanup or verification failed`, error));
     }
   }
@@ -273,8 +359,12 @@ async function uninstallAppLocked(
     errors.push(cleanupFailure(appId, 'Generated CA directory cleanup failed', error));
   }
 
-  // 5b. Drop the app's own shared database and role (delete-data only)
-  if (dropDb) {
+  // 5b. Drop the app's own shared database and role (delete-data only), like the volumes only once every container
+  // is confirmed gone (YE-222 review).
+  if (dropDb && !containersGone) {
+    errors.push(cleanupFailure(appId, 'Shared database cleanup or verification failed',
+      new Error('its database is kept until its containers are gone; remove it again to finish')));
+  } else if (dropDb) {
     try {
       await dropSharedPostgresDatabase(
         metadata.databaseName || appId,
@@ -288,14 +378,23 @@ async function uninstallAppLocked(
   // 6. Remove volume data and secrets if not keeping
   if (!keepData) {
     try {
+      if (!containersGone) throw new Error('its data is kept until its containers are gone; remove it again to finish');
       await deleteAppStorage(metadata.storageVolumes ?? []);
+      // The secrets go with the data, never before it: kept data with new secrets would not match (YE-222).
+      try {
+        await deleteAllAppSecrets(appId);
+      } catch (error) {
+        errors.push(cleanupFailure(appId, 'App secrets cleanup failed', error));
+      }
     } catch (error) {
       errors.push(cleanupFailure(appId, 'App data cleanup or verification failed', error));
     }
+    // Stale copies of an earlier adoption go too, before the app directory (with their record) is removed.
     try {
-      await deleteAllAppSecrets(appId);
+      const { cleanupAdoptedRetainedCopies } = await import('@/lib/admission/retained-data');
+      await cleanupAdoptedRetainedCopies(appId);
     } catch (error) {
-      errors.push(cleanupFailure(appId, 'App secrets cleanup failed', error));
+      errors.push(cleanupFailure(appId, 'Stale kept-data copy cleanup failed', error));
     }
   }
 
@@ -324,9 +423,12 @@ async function uninstallAppLocked(
       await deleteAppNetwork(appId);
     } catch (error) {
       errors.push(cleanupFailure(appId, 'App network cleanup or verification failed', error));
+      // A failed network delete leaves the lease pending under its own stage: put the requested mode back (YE-222).
+      await markAppNetworkCleanupPending(appId, removalStage('uninstall', keepData), error).catch(() => undefined);
     }
   } else {
-    await markAppNetworkCleanupPending(appId, 'uninstall', errors.join('; ')).catch((error) => {
+    // The requested mode goes with the lease, so the reconcile pass (or Health's Fix) finishes it as asked (YE-222).
+    await markAppNetworkCleanupPending(appId, removalStage('uninstall', keepData), errors.join('; ')).catch((error) => {
       errors.push(cleanupFailure(appId, 'Failed to persist cleanup_pending lease', error));
     });
   }
@@ -342,7 +444,7 @@ async function uninstallAppLocked(
       else await removeInstallMetadata(appId);
     } catch (error) {
       errors.push('Install metadata cleanup or verification failed');
-      await markAppNetworkCleanupPending(appId, 'uninstall-metadata', error).catch(() => undefined);
+      await markAppNetworkCleanupPending(appId, removalStage('uninstall-metadata', keepData), error).catch(() => undefined);
     }
   }
 
@@ -375,6 +477,8 @@ async function uninstallAppLocked(
   return {
     success: errors.length === 0,
     errors,
+    warnings,
+    connectionsLeft,
     verification,
   };
 }

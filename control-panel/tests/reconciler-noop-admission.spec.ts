@@ -41,7 +41,7 @@ function fixture() {
       incusRequest: async () => ({ metadata: metadata.flatMap(m => m.containers.map(name => ({ name }))) }),
       execCommand: async () => ({ exitCode: 0, stdout: JSON.stringify([...registrations].map(([id, connections]) => ({ id, connections }))) }),
     },
-    '../bridges/manager': { UIProjectionDriftError, refreshConnectionGrants: async () => [], pushConnectionsToUI: async (id: string, options: any) => {
+    '../bridges/manager': { UIProjectionDriftError, refreshConnectionGrants: async () => [], startRewirePass: async () => [], pushConnectionsToUI: async (id: string, options: any) => {
       if (auditFailure && id === 'example0' && options.auditOnly) throw auditFailure;
       if (drift && id === 'example0') {
         if (options.auditOnly) throw new UIProjectionDriftError('projection requires repair');

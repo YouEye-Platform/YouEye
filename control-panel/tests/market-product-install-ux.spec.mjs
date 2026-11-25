@@ -51,20 +51,18 @@ test('install dialog submits an immediate manifest-defaulted account-login choic
   const types = read('src/lib/market/types.ts');
   const engine = read('src/lib/market/engine.ts');
 
-  // The switch starts at the manifest's default and is locked where the manifest decides (YE-65's meaning unchanged).
+  // The YouEye ID sign-in row starts at the manifest's default and is locked where the manifest decides (YE-65's
+  // meaning unchanged); since YE-154 it shows only for apps with their own login, and "Only <site> users" is the gate.
   assert.match(dialog, /useState\(\(\) => defaultAccountLogin\(app\)\)/);
-  assert.match(dialog, /const accountLoginLocked = app\.supportsSSO \|\| loginIntegration\?\.required \|\| \(!loginIntegration && app\.forwardAuth === 'disabled'\)/);
-  assert.match(dialog, /row\('account', accountLoginLabel, accountLoginHint, protectWithAccountLogin, \(\) => toggleAccountLogin\(\), !!accountLoginLocked\)/);
+  assert.match(dialog, /const accountLoginLocked = app\.supportsSSO \|\| loginIntegration\?\.required;/);
+  assert.match(dialog, /appHasOwnLogin && row\('account', accountLoginLabel, accountLoginHint, protectWithAccountLogin, \(\) => toggleAccountLogin\(\), !!accountLoginLocked\)/);
   assert.match(dialog, /Sign in with YouEye ID/);
-  assert.match(dialog, /protectWithAccountLogin,/);
+  assert.match(dialog, /installAccessFields\(app, \{ onlyUsers, youEyeSignIn: protectWithAccountLogin, existing: existingAccess \}\)/);
   assert.match(dialog, /type="submit"/);
   assert.match(types, /protectWithAccountLogin\?: boolean/);
-  // The account-login gate is driven by config.protectWithAccountLogin. The engine
-  // was refactored to name the derived inputs (hasOwnAccountLogin = ssoEnabled ||
-  // nativeIdentityIntegrationPlanned; forwardAuthChoice = protectWithAccountLogin
-  // when the app has no own login) — assert that contract via those pieces.
+  // The record's gate flag: apps with their own login keep the old optional flag; the others follow the switch.
   assert.match(engine, /const hasOwnAccountLogin = ssoEnabled \|\| nativeIdentityIntegrationPlanned/);
-  assert.match(engine, /config\.protectWithAccountLogin/);
+  assert.match(engine, /: !installWantsPublicAccess\(manifest, config\);/);
   assert.match(engine, /resolveForwardAuth\(\s*manifest,\s*hasOwnAccountLogin,\s*forwardAuthChoice/s);
 });
 

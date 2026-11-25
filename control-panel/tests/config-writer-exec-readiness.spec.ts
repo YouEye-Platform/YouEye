@@ -17,7 +17,8 @@ function fixture(failure?: 'readiness' | 'permissions' | 'readback') {
       calls.push(`ready:${name}`);
       if (failure === 'readiness') throw new Error('Container did not become exec-ready');
     } };
-    if (name === '../incus/server') return { execCommand: async (_name: string, command: string[]) => {
+    // chmod and stat run with the image's PATH and then the standard directories (YE-221).
+    if (name === '../incus/server') return { execInImagePath: async (_name: string, command: string[]) => {
       calls.push(command.join(' '));
       if (failure === 'permissions' && command[0] === 'chmod') return { exitCode: 1, stdout: '' };
       return { exitCode: 0, stdout: command[0] === 'stat'

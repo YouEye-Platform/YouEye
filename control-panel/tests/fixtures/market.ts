@@ -7,7 +7,7 @@ import {
   MARKET_INDEX_SCHEMA, MARKET_POINTER_FILE, MARKET_SCHEMA, bundlePath, filePath, indexPath, sha256Hex,
 } from '../../src/lib/market/market-format';
 import type { MarketFetchDeps, MarketGet } from '../../src/lib/market/market-fetch';
-import { appYAML } from './app-format';
+import { appYAML, marketNativeYAML } from './app-format';
 
 export const PUBLIC_ADDRESS = '93.184.216.34';
 const json = (value: unknown) => Buffer.from(`${JSON.stringify(value)}\n`, 'utf8');
@@ -27,6 +27,8 @@ export interface FixtureApp {
   entry?: Record<string, unknown>;
   /** Replace the whole bundle document (a bundle this reader may not understand). */
   bundle?: unknown;
+  /** A native app (kind `native`, `source.package`, `requires.youeye: ">=0.6.20"`; YE-142). */
+  native?: boolean;
 }
 
 export interface FixtureMarket {
@@ -35,7 +37,8 @@ export interface FixtureMarket {
   sequence: number;
   commit?: string;
   apps: FixtureApp[];
-  native?: string[];
+  /** The `native` id list indexes carried before 0.6.20 (this reader ignores it). */
+  legacyNative?: string[];
   bundles?: Array<{ id: string; members: string[] }>;
   categories?: Array<{ id: string; label: string; order?: number }>;
   /** Raw entries appended to the index's `apps` (malformed ones, to be skipped by the reader). */
@@ -69,14 +72,15 @@ export function buildFixtureMarket(market: FixtureMarket): BuiltFixture {
     const listing = { description: `${app.id} app`, category: 'utilities', icon: 'box', ...(pictures['icon.svg'] ? { icon_file: 'icon.svg' } : {}),
       ...(Object.keys(pictures).some((name) => name.startsWith('screenshots/'))
         ? { screenshots: Object.keys(pictures).filter((name) => name.startsWith('screenshots/')).map((path) => ({ path })) } : {}) };
-    const manifest = app.manifest ?? appYAML({ id: app.id, name: app.id, version: app.version ?? '1.0.0', listing, ...app.changes });
+    const manifest = app.manifest ?? (app.native ? marketNativeYAML : appYAML)({ id: app.id, name: app.id, version: app.version ?? '1.0.0', listing, ...app.changes });
     manifests[app.id] = manifest;
     const bundle = json(app.bundle ?? { manifest, setups: app.setups ?? {}, files: pictures });
     const bundleSha = sha256Hex(bundle);
     bundlePaths[app.id] = bundlePath(app.id, bundleSha);
     files.set(bundlePaths[app.id], bundle);
     const entry: Record<string, unknown> = {
-      id: app.id, kind: 'container', name: app.id, version: app.version ?? '1.0.0', description: `${app.id} app`, category: 'utilities',
+      id: app.id, kind: app.native ? 'native' : 'container', name: app.id, version: app.version ?? '1.0.0', description: `${app.id} app`, category: 'utilities',
+      ...(app.native ? { requires: { youeye: '>=0.6.20' } } : {}),
       ...(pictures['icon.svg'] ? { icon: pictures['icon.svg'] } : {}),
       runs_setup: Object.keys(app.setups ?? {}).length > 0,
       bundle: { path: bundlePaths[app.id], sha256: bundleSha, size: bundle.length },
@@ -88,7 +92,7 @@ export function buildFixtureMarket(market: FixtureMarket): BuiltFixture {
   const index = json({
     schema: MARKET_INDEX_SCHEMA,
     categories: market.categories ?? [{ id: 'utilities', label: 'Utilities', order: 1 }],
-    native: market.native ?? [],
+    ...(market.legacyNative ? { native: market.legacyNative } : {}),
     bundles: (market.bundles ?? []).map((bundle) => ({
       id: bundle.id,
       definition: stringify({ schema: 'youeye.bundle.v1', id: bundle.id, name: bundle.id, description: 'd', members: bundle.members }),

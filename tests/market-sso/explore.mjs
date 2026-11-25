@@ -1,9 +1,10 @@
 // Exploration helper: open a URL with a saved session, print hops, visible buttons/links and save a screenshot.
-// Usage: node explore.mjs <admin|user> <url> [clickRegex] [waitMs]
+// Usage: node explore.mjs <admin|user> <url> [clickRegex] [waitMs]   (BOX_DOMAIN, and BOX_IP on a clone, as for the suite)
 import { chromium } from '@playwright/test';
+import { launchOptions, contextOptions } from './lib.mjs';
 const [who, url, click, wait = '6000'] = process.argv.slice(2);
-const browser = await chromium.launch();
-const ctx = await browser.newContext({ storageState: `.auth/${who}.json`, ignoreHTTPSErrors: false });
+const browser = await chromium.launch(launchOptions);
+const ctx = await browser.newContext({ ...contextOptions, storageState: `.auth/${who}.json` });
 const page = await ctx.newPage();
 const hops = [];
 page.on('response', r => { if (r.request().isNavigationRequest()) hops.push(`${r.status()} ${r.url().slice(0, 140)}`); });

@@ -61,6 +61,26 @@ export function isRelativeFile(value: string): boolean {
   return /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(value) && !value.split('/').some((part) => part === '..' || part === '.');
 }
 const RelativeFile = z.string().refine(isRelativeFile, 'must be a file path next to the manifest');
+
+/** Largest native app package (`standalone.tar`): 1 GiB. The box streams it to disk, never into memory. */
+export const MAX_NATIVE_PACKAGE_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * A native app package's address: an exact HTTPS URL without credentials, query or fragment. The box downloads it as
+ * named (redirects are followed by the release-download rules) and checks its size and SHA-256.
+ */
+export function isPackageURL(value: string): boolean {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
+    && !value.includes('?') && !value.includes('#') && url.href === value && url.pathname.length > 1;
+}
+/** `source.package`: the native app's `standalone.tar`, pinned as a container image is pinned by digest. */
+const NativePackage = xobject({
+  url: z.string().max(2000).refine(isPackageURL, 'package url must be an exact https:// URL without credentials, query or fragment'),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/, 'package sha256 must be 64 lowercase hex characters'),
+  size: z.number().int().positive().max(MAX_NATIVE_PACKAGE_BYTES, 'package size must be at most 1 GiB (1073741824 bytes)'),
+});
 const SetupRef = z.string().regex(/^setup\/[a-z0-9][a-z0-9-]{0,62}\.yaml$/, 'must name a file setup/<name>.yaml');
 
 const Seconds = z.number().int().positive().max(3600);
@@ -200,7 +220,8 @@ export const AppSchema = xobject({
   listing: Listing.optional(),
 
   image: ImageRef.optional(),
-  source: xobject({ node: z.enum(['22', '24']) }).optional(),
+  /** A native app: its Node.js runtime and, from a market, its package (`source.package`, required there). */
+  source: xobject({ node: z.enum(['22', '24']), package: NativePackage.optional() }).optional(),
   port: Port,
   health: Health.optional(),
   command: Argv.optional(),
@@ -435,7 +456,12 @@ export const CatalogSchema = xobject({
     spotlight: xobject({ title: z.string().optional(), apps: z.array(AppId) }).optional(),
     collections: z.array(xobject({ id: Text, label: Text, apps: z.array(AppId) })).optional(),
   }).optional(),
-  native: z.array(AppId).optional(),
+  /** Gone in 0.6.20 (YE-142): a native app is an app folder like any other, with `source.package`. */
+  native: z.unknown().optional(),
+}).superRefine((catalog, ctx) => {
+  if (catalog.native !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['native'], message: 'native: is gone; a native app is an apps/<id>/ folder whose manifest has source.package' });
+  }
 });
 
 export type CatalogDocument = z.infer<typeof CatalogSchema>;

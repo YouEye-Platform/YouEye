@@ -36,6 +36,10 @@ the environment only (no password is kept in this repository).
   in DNS, such as `devvm.test` on a clone of the template VM, also set `BOX_IP` to the box's address: every script
   and the suite then map the domain and its subdomains to it and accept the box's internal TLS certificate. Always set
   it on a clone: the LAN's DNS may answer `devvm.test` with another box.
+  A new script must do the same: `chromium.launch(launchOptions)`, `browser.newContext({ ...contextOptions, … })`
+  (both from `lib.mjs`), and every request to the box from inside a page (`page.evaluate(fetch)`, `pageFetch`,
+  `openControlPanel`) or with `lib.mjs`'s `probe()`. Playwright's Node-side `context.request` ignores the mapping: on a
+  clone it would ask the LAN's DNS and send the saved session cookies to whichever box answers.
 - Two YouEye ID users: an admin (default username `tester`, override `ADMIN_USERNAME`) and a standard user
   (`tester2`, override `USER_USERNAME`).
 - Saved sessions (git-ignored, `.auth/`, files mode 0600; never print or commit them). On a test box an agent makes

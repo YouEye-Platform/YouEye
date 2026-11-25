@@ -1,8 +1,9 @@
 import { chromium } from '@playwright/test';
-const base = `https://mealie.${(process.env.BOX_DOMAIN || (() => { throw new Error('Set BOX_DOMAIN to the test box domain'); })())}`;
-const browser = await chromium.launch();
+import { DOMAIN, launchOptions, contextOptions } from './lib.mjs';
+const base = `https://mealie.${DOMAIN}`;
+const browser = await chromium.launch(launchOptions);
 for (const who of (process.argv[2] ? [process.argv[2]] : ['admin', 'user'])) {
-  const ctx = await browser.newContext({ storageState: `.auth/${who}.json` });
+  const ctx = await browser.newContext({ ...contextOptions, storageState: `.auth/${who}.json` });
   const page = await ctx.newPage();
   const hops = [];
   page.on('response', r => { if (r.request().isNavigationRequest()) hops.push(`${r.status()} ${new URL(r.url()).host.split('.')[0]}${new URL(r.url()).pathname}`); });

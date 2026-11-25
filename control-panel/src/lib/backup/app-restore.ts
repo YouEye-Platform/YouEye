@@ -337,6 +337,9 @@ async function restoreAppOnce(
 
     // ── Step 6: Reinstall app ──────────────────────────────
     emit('reinstall', `Reinstalling ${appId} from manifest...`);
+    // A native runtime the backup does not carry is installed again from the package its manifest pins. A manifest
+    // from before 0.6.20 (installed from the channel) pins none, and the channel is no source any more (YE-142).
+    assertNativeRestorable(manifest, appId, runtimeInstances);
 
     // Build install config from backed-up metadata
     const subdomain = (backedUpInstallMeta?.subdomain as string) || appId;
@@ -360,7 +363,9 @@ async function restoreAppOnce(
       ...(typeof backedUpInstallMeta?.protectWithAccountLogin === 'boolean'
         ? { protectWithAccountLogin: backedUpInstallMeta.protectWithAccountLogin }
         : {}),
-      ...(typeof backedUpInstallMeta?.forwardAuthEnabled === 'boolean'
+      // Only apps with their own YouEye ID login recorded the optional extra gate here; for the others the flag was
+      // the gate itself, which the restored admission policy (or the manifest default) decides (YE-154).
+      ...(typeof backedUpInstallMeta?.forwardAuthEnabled === 'boolean' && backedUpInstallMeta?.enableSSO === true
         ? { forwardAuthGate: backedUpInstallMeta.forwardAuthEnabled }
         : {}),
       ...(typeof backedUpAI?.modelGroupId === 'string'
@@ -628,4 +633,20 @@ async function restoreSharedDatabase(
 export function restoredBackupContainers(value: unknown): string[] {
   return (Array.isArray(value) ? value : [])
     .filter((name: unknown): name is string => typeof name === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(name));
+}
+
+/**
+ * Refuse, before anything is reinstalled, a restore that would need a native app's package again (its runtime is not
+ * in the backup) from a manifest that names none: a backup made before 0.6.20 of an app installed from the channel.
+ */
+export function assertNativeRestorable(
+  manifest: Pick<AppManifest, 'containers' | 'version'>, appId: string, runtimeInstances: Record<string, unknown>,
+): void {
+  for (const container of manifest.containers) {
+    if (container.type !== 'lxd') continue;
+    const name = getContainerName(appId, container.name, manifest.containers.length);
+    if (runtimeInstances[name] || container.source?.package) continue;
+    throw new Error(`The backup of ${appId} ${manifest.version} has no app runtime, and its manifest names no package to install `
+      + 'it from (it was installed from the release channel before YouEye 0.6.20). Update YouEye\'s Market first, then restore.');
+  }
 }

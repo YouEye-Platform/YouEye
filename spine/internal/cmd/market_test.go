@@ -112,7 +112,7 @@ func TestMarketListRows(t *testing.T) {
 
 // The command tree has one spelling of each thing; the git-era commands are gone.
 func TestMarketCommandTree(t *testing.T) {
-	for _, name := range []string{"list", "add", "remove", "accept", "refresh", "search", "info"} {
+	for _, name := range []string{"list", "add", "remove", "accept", "refresh", "search", "info", "official-lane"} {
 		if c, _, err := rootCmd.Find([]string{"market", name}); err != nil || c.Name() != name {
 			t.Errorf("youeye market %s is missing", name)
 		}
@@ -126,8 +126,37 @@ func TestMarketCommandTree(t *testing.T) {
 	for _, c := range marketCmd.Commands() {
 		got = append(got, c.Name())
 	}
-	if strings.Join(got, " ") != "accept add info list refresh remove search" {
+	if strings.Join(got, " ") != "accept add info list official-lane refresh remove search" {
 		t.Errorf("market subcommands: %v", got)
+	}
+}
+
+// The official Market's lane (YE-142): main or dev, read from the official source; no lane is main.
+func TestMarketOfficialLane(t *testing.T) {
+	for _, lane := range []string{"main", "dev"} {
+		if err := validateOfficialLane(lane); err != nil {
+			t.Errorf("%s refused: %v", lane, err)
+		}
+	}
+	for _, lane := range []string{"", "stable", "alpha", "test/native", "Main"} {
+		if validateOfficialLane(lane) == nil {
+			t.Errorf("%q accepted", lane)
+		}
+	}
+	list := func(official map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{"sources": []interface{}{official, map[string]interface{}{"id": "custom-1", "kind": "url", "lane": "dev"}}}
+	}
+	if got := officialLaneOf(list(map[string]interface{}{"id": "official", "kind": "official"})); got != "main" {
+		t.Errorf("no lane read as %s", got)
+	}
+	if got := officialLaneOf(list(map[string]interface{}{"id": "official", "kind": "official", "lane": "dev"})); got != "dev" {
+		t.Errorf("dev read as %s", got)
+	}
+	if officialLaneAddress("dev") != "https://market.youeye.me/dev/" || officialLaneAddress("main") != "https://market.youeye.me/" {
+		t.Error("lane addresses")
+	}
+	if c, _, err := rootCmd.Find([]string{"market", "official-lane"}); err != nil || c.Args(c, []string{"main", "dev"}) == nil {
+		t.Error("official-lane takes at most one lane")
 	}
 }
 

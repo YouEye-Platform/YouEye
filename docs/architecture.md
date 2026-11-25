@@ -182,9 +182,10 @@ app and YouEye ID in `X-Forwarded-For`. The fix came in two releases (YE-134):
   - loopback (the Control Panel, Spine's `port3000` device, health checks), no peer, or Caddy's addresses unreadable
     from Incus: no client. Keying an unknown peer on itself would put every browser behind Caddy into one count.
 
-  YouEye ID's sign-in, the Control Panel's PAM login, the appliance claim and the owner reset key their per-address
-  limits on it; without a client only the per-username limits apply ([youeye-id.md](youeye-id.md)). So an app's
-  doorway can neither dodge nor reset them, and nothing can lock everyone out. A Control Panel rollback brings back
+  YouEye ID's sign-in, the Control Panel's PAM login, the appliance claim and the owner reset key their locks per
+  (username, client address) and their per-address limits on it, an IPv6 client by its /64. Without a client the
+  attempt has one shared source, which is only slowed down, never locked ([youeye-id.md](youeye-id.md), YE-149). So an
+  app's doorway can neither dodge nor reset them, and nothing can lock everyone out, or one user out. A Control Panel rollback brings back
   the older launcher together with the older
   code, which never reads the header.
 - Pi-hole's DNS devices (TCP and UDP 53) are unchanged: Pi-hole sees every LAN client as one (`127.0.0.1`), and
@@ -226,7 +227,10 @@ The variables apps get for these are in [app-environment.md](app-environment.md)
   for the Control Panel. The Control Panel can read the box's channel and ask to switch channel, but never changes
   the repository.
 - **Control Panel → Incus:** the Incus HTTPS API on the host (`:8443`, `INCUS_HTTPS_URL`), with a client
-  certificate.
+  certificate. Incus listens on `incusbr0`'s own address only, and at boot it binds that address before it has
+  created the bridge; the image sets `net.ipv4.ip_nonlocal_bind=1` (`/etc/sysctl.d/60-youeye-incus-listener.conf`)
+  so that first bind succeeds. Without it Incus retries only 30 s later and every Control Panel call to Incus waits
+  for it after each boot (YE-207).
 - **Control Panel → UI:** the Control Panel pushes app, connection and settings state to the UI's `/api/ui-bridge`
   routes with a shared bridge token. The UI does not call the Control Panel.
 - **Control Panel → Caddy:** Caddy's admin API on `.13:2019`. App egress refuses that address.

@@ -516,6 +516,26 @@ test('a setup file has one deadline for all its steps', async () => {
   assert.deepEqual(fake.sleeps, [600_000]);
 });
 
+test('a shorter deadline bounds the whole file, its wait: steps included (YE-223, the periodic re-wire)', async () => {
+  // Bazarr's connect file starts with `wait: /api/system/ping, timeout 180`; an app that runs but does not answer.
+  const { fake, clock } = clockedTransport(() => ({ status: 503 }), 1_000);
+  const started = clock.now;
+  await assert.rejects(runSetup(manifestWith([{ wait: { http: '/api/system/ping', timeout: 180 } }, { http: { path: '/next' } }]),
+    'sso', { ...context(fake), deadlineMs: 20_000 }),
+  (error: unknown) => error instanceof SetupStepError && error.step === 1 && /not ready in time|longer than 20 seconds/.test(error.message));
+  assert.ok(clock.now - started <= 20_000, `the run ended after ${clock.now - started} ms`);
+  assert.ok(!fake.http.some((call) => call.path === '/next'));
+  // Without it, the same wait takes its own 180 s.
+  const full = clockedTransport(() => ({ status: 503 }), 1_000);
+  const fullStart = full.clock.now;
+  await assert.rejects(runSetup(manifestWith([{ wait: { http: '/api/system/ping', timeout: 180 } }]), 'sso', context(full.fake)));
+  assert.ok(full.clock.now - fullStart >= 180_000);
+  // It can only shorten the file limit, never lengthen it.
+  const capped = clockedTransport();
+  await assert.rejects(runSetup(manifestWith([{ sleep: 600 }, { sleep: 600 }, { sleep: 600 }]), 'sso',
+    { ...context(capped.fake), deadlineMs: 60 * 60_000 }), /longer than 20 minutes/);
+});
+
 test('allow_failure never skips the deadline; requests get only the time left', async () => {
   const { fake, timeouts } = clockedTransport(undefined, 21 * 60_000);
   await assert.rejects(deadlineRun([{ http: { path: '/slow', allow_failure: true } }, { http: { path: '/never' } }], fake),
@@ -665,6 +685,78 @@ test('removing a connection runs the consumer\'s connect file remove: steps', as
   assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true }), { ran: true });
   assert.deepEqual(transport.http.map((call) => `${call.method} ${call.url}`), ['DELETE http://10.20.0.2:9696/api/v1/applications/7']);
   assert.equal(transport.http[0].headers['X-Api-Key'], 'peer-key');
+});
+
+test('a stopped consumer\'s remove: steps still run when they only call the connected app (YE-199)', async () => {
+  // SABnzbd's connect-sonarr remove: only calls Sonarr; SABnzbd itself may already be stopped (no address).
+  const { deps, transport } = wiringFixture(true);
+  const address = transport.address.bind(transport);
+  transport.address = async (container, network, iface) => {
+    if (container === 'app-demo') throw new Error('app-demo is not running or has no eth0');
+    return address(container, network, iface);
+  };
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true }), { ran: true });
+  assert.deepEqual(transport.http.map((call) => `${call.method} ${call.url}`), ['DELETE http://10.20.0.2:9696/api/v1/applications/7']);
+  // Wiring a new connection still needs both addresses.
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps), { ran: false, error: 'Could not wire demo → peer' });
+});
+
+test('a remove: step that needs a stopped app\'s address fails cleanly, never with a blank address (YE-199)', async () => {
+  const { deps, transport } = wiringFixture(true);
+  const manifest = await deps.readManifest('demo');
+  const file = manifest.setups.find((setup) => setup.for === 'connect:peer')!;
+  file.remove = [{ http: { method: 'DELETE', path: '/clients/${self.host}', target: 'peer' } }] as SetupStep[];
+  transport.address = async (container) => {
+    if (container === 'app-demo') throw new Error('app-demo is not running or has no eth0');
+    return '10.20.0.2';
+  };
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true }), { ran: false, error: 'Could not unwire demo → peer' });
+  assert.equal(transport.http.length, 0);
+});
+
+test('a remove: step that failed with allow_failure against the other app is reported, not hidden (YE-199)', async () => {
+  // Live on 0.6.20: Sonarr was stopped while SABnzbd was uninstalled; its DELETE failed (allowed), and the
+  // uninstall said nothing while Sonarr kept listing SABnzbd.
+  const { deps, transport } = wiringFixture(true);
+  const manifest = await deps.readManifest('demo');
+  const file = manifest.setups.find((setup) => setup.for === 'connect:peer')!;
+  file.remove = [
+    { http: { method: 'DELETE', path: '/api/v1/applications/7', target: 'peer', allow_failure: true } },
+    { http: { method: 'DELETE', path: '/api/v3/downloadclient/1', allow_failure: true } },
+  ] as SetupStep[];
+  transport.address = async (container) => {
+    if (container === 'app-peer') throw new Error('app-peer is not running or has no eth0');
+    return '10.10.0.2';
+  };
+  // demo is being uninstalled: the failure against peer is what may be left.
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true, leaving: 'demo' }),
+    { ran: true, error: 'Remove steps of demo → peer failed against peer' });
+  assert.deepEqual(transport.http.map((call) => `${call.method} ${call.url}`), ['DELETE http://10.10.0.2:8080/api/v3/downloadclient/1']);
+  // peer is being uninstalled: a step against the leaving app is moot, nothing to report.
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true, leaving: 'peer' }), { ran: true });
+  // A plain disconnect (nobody leaving) reports it too; wiring (steps:) keeps allow_failure silent.
+  assert.deepEqual(await runConnectionWiring('demo', 'peer', deps, { remove: true }),
+    { ran: true, error: 'Remove steps of demo → peer failed against peer' });
+});
+
+test('an allowed step failure is passed to onAllowedFailure with the app it ran against', async () => {
+  const { deps, transport } = wiringFixture(true);
+  const manifest = await deps.readManifest('demo');
+  const file = manifest.setups.find((setup) => setup.for === 'connect:peer')!;
+  file.remove = [
+    { http: { method: 'DELETE', path: '/a', target: 'peer', allow_failure: true } },
+    { http: { method: 'DELETE', path: '/b', allow_failure: true } },
+  ] as SetupStep[];
+  transport.fetch = async () => { throw new Error('connect ECONNREFUSED'); };
+  const failures: unknown[] = [];
+  const ran = await runSetup(manifest, 'connect:peer', {
+    appId: 'demo', containers: { main: 'app-demo' }, variables: {}, remove: true, transport,
+    peer: { appId: 'peer', container: 'app-peer', port: 9696 },
+    onAllowedFailure: (failure) => failures.push(failure),
+  });
+  assert.equal(ran, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(failures)).map((f: { step: number; appId: string }) => [f.step, f.appId]),
+    [[1, 'peer'], [2, 'demo']]);
 });
 
 test('a wiring failure is reported without its details', async () => {

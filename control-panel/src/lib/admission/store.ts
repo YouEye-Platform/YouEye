@@ -97,31 +97,41 @@ export async function reserveAppUserData(installationId: string, declare = true)
     COMMIT;`);
 }
 
+/** Who a newly created policy admits: the household (the default for a new install, YE-232) or the owner only. */
+export type InstallAccessMode = 'all_users' | 'owner';
+export const isInstallAccessMode = (value: unknown): value is InstallAccessMode =>
+  value === 'all_users' || value === 'owner';
+
 /**
  * Explicit baseline/adoption; no first-user fallback. Existing policy survives
  * updates/reinstalls. Retained data may only be reopened by its active owner.
+ * `mode` applies only when the policy is created: a new install defaults to the whole household; a policy created
+ * for an app that is already installed (`installed`, a recovery path) stays owner-only, as before YE-232.
  */
 export async function ensureAppAdmission(input: {
   appId: string; actorId?: string; clientId?: string; installed?: boolean;
   adoptRetainedData?: boolean;
+  mode?: InstallAccessMode;
   /** Internal backup recovery; validated immutable bindings, never request input. */
   restoredIdentity?: { installationId: string; ownerId: string };
   routes: Array<{ host: string; pathPrefix?: string }>;
 }): Promise<AdmissionPolicy> {
   if (!isAppId(input.appId) || (input.actorId && !isUuid(input.actorId))) throw new Error('Invalid installation principal');
+  if (input.mode !== undefined && !isInstallAccessMode(input.mode)) throw new Error('Invalid install access mode');
+  const mode: InstallAccessMode = input.mode ?? (input.installed ? 'owner' : 'all_users');
   await ensureIdentitySchema();
   if (input.restoredIdentity) {
     assertRestoredAdmission(await getAdmissionPolicy(input.appId), input.restoredIdentity);
   }
   await command(`BEGIN;
     SELECT pg_advisory_xact_lock(hashtext('youeye-admission-lifecycle'));
-    WITH inserted AS (INSERT INTO admission_policies (app_id, owner_id, state)
-    SELECT ${sql(input.appId)}, u.id, 'ready' FROM identity_users u
+    WITH inserted AS (INSERT INTO admission_policies (app_id, owner_id, state, mode)
+    SELECT ${sql(input.appId)}, u.id, 'ready', ${sql(mode)} FROM identity_users u
     WHERE u.is_active AND u.id = ${input.actorId ? `${sql(input.actorId)}::uuid`
       : '(SELECT owner_user_id FROM identity_appliance_claim WHERE singleton)'}
     ON CONFLICT (app_id) DO NOTHING RETURNING installation_id, owner_id, revision)
     INSERT INTO admission_audit (installation_id, actor_id, action, revision, details)
-    SELECT installation_id, owner_id, 'owner_only_baseline', revision, '{"mode":"owner"}'::jsonb FROM inserted;
+    SELECT installation_id, owner_id, 'install_baseline', revision, ${json({ mode })} FROM inserted;
     COMMIT;`);
   const policy = await getAdmissionPolicy(input.appId);
   if (!isAdmissionPolicy(policy)) throw new Error('Application needs owner resolution');
@@ -283,38 +293,40 @@ async function updateAdmissionPolicyUnderLifecycle(input: {
   return (await getAdmissionPolicy(p.appId))!;
 }
 /**
- * Install-time public access, called by the install that holds the app's lifecycle. The manifest default
- * (`explicit: false`) applies only while no administrator has changed this installation's policy, so a reinstall
- * never overrides an earlier decision; an explicit choice by the installing administrator always applies. Returns
- * whether public access is now on.
+ * Install-time public access, called by the install that holds the app's lifecycle. `publicAccess` is the result the
+ * install asks for (default true: open). The manifest default (`explicit: false`) applies only while no
+ * administrator has changed this installation's policy, so a reinstall never overrides an earlier decision; an
+ * explicit choice by the installing administrator always applies: its "Only <site> users" switch on closes a policy
+ * a reinstall kept open (YE-154). Returns whether public access is now on.
  */
 export async function applyInstallPublicAccess(input: {
-  appId: string; actorId: string; explicit: boolean;
+  appId: string; actorId: string; explicit: boolean; publicAccess?: boolean;
 }): Promise<boolean> {
   if (!isAppId(input.appId) || !isUuid(input.actorId)) throw new Error('Invalid installation principal');
+  const target = input.publicAccess ?? true;
   await ensureIdentitySchema();
   const changed = await statementRows<{ installation_id: string }>(`
     actor AS (
       SELECT id FROM identity_users WHERE id = ${sql(input.actorId)}::uuid AND is_admin AND is_active FOR UPDATE
     ), eligible AS (
       SELECT p.installation_id FROM admission_policies p WHERE p.app_id = ${sql(input.appId)}
-        AND p.state = 'ready' AND NOT p.public_access AND EXISTS (SELECT 1 FROM actor)
+        AND p.state = 'ready' AND p.public_access <> ${sql(target)} AND EXISTS (SELECT 1 FROM actor)
         ${input.explicit ? '' : `AND NOT EXISTS (SELECT 1 FROM admission_audit a
           WHERE a.installation_id = p.installation_id AND a.action = 'policy_changed')`}
       FOR UPDATE
     ), changed AS (
-      UPDATE admission_policies SET public_access = true, revision = revision + 1, updated_at = now()
+      UPDATE admission_policies SET public_access = ${sql(target)}, revision = revision + 1, updated_at = now()
       WHERE installation_id IN (SELECT installation_id FROM eligible)
       RETURNING installation_id, revision
     ), audited AS (
       INSERT INTO admission_audit (installation_id, actor_id, action, revision, details)
       SELECT installation_id, ${sql(input.actorId)}::uuid, 'public_access_at_install', revision,
-        ${json({ publicAccess: true, source: input.explicit ? 'administrator' : 'manifest' })}
+        ${json({ publicAccess: target, source: input.explicit ? 'administrator' : 'manifest' })}
       FROM changed
     )`, 'SELECT installation_id::text FROM changed');
   clearForwardAuthCaches();
   const policy = await getAdmissionPolicy(input.appId);
-  return changed.length > 0 || policy?.publicAccess === true;
+  return target ? changed.length > 0 || policy?.publicAccess === true : policy?.publicAccess === true;
 }
 
 export async function saveResourceOwnership(resource: ResourceOwnership): Promise<void> {

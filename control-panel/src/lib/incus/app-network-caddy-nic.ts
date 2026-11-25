@@ -67,6 +67,14 @@ function dhcpPidFile(ifName: string, runDir: string): string {
 }
 
 /**
+ * Stop the DHCP client named in "$PID" for "$IF", only if that process still is our udhcpc for that interface. The
+ * PID file can outlive a restart of the container (`/tmp` on its root file system), and the number may then belong
+ * to one of the app's own processes (YE-198 review).
+ */
+const KILL_OUR_DHCP_CLIENT =
+  '[ -f "$PID" ] && pid=$(cat "$PID") && tr \'\\000\' \' \' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "udhcpc -i $IF " && kill "$pid" 2>/dev/null';
+
+/**
  * Bring up a NIC hot-plugged onto the running Caddy (OCI) container.
  *
  * Incus runs its DHCP client for an OCI container only for the NICs present at
@@ -93,7 +101,7 @@ export function caddyAppNICActivationScript(ifName: string, runDir = RUN_DIR): s
     'ip link set "$IF" up || exit 4',
     'ip -4 addr show dev "$IF" | grep -q inet && exit 0',
     `printf '%s\\n' ${hook.map(line => `'${line.replace(/'/g, `'\\''`)}'`).join(' ')} > "$HOOK" && chmod 700 "$HOOK" || exit 5`,
-    '[ -f "$PID" ] && kill "$(cat "$PID")" 2>/dev/null; rm -f "$PID"',
+    `${KILL_OUR_DHCP_CLIENT}; rm -f "$PID"`,
     'udhcpc -i "$IF" -s "$HOOK" -p "$PID" -R -n -t 5 -T 2 >/dev/null 2>&1 || exit 6',
     'ip -4 addr show dev "$IF" | grep -q inet || exit 7',
   ].join('\n');
@@ -103,8 +111,8 @@ export function caddyAppNICActivationScript(ifName: string, runDir = RUN_DIR): s
 export function caddyAppNICReleaseScript(ifName: string, runDir = RUN_DIR): string {
   assertInterfaceName(ifName);
   return [
-    `PID='${dhcpPidFile(ifName, runDir)}'`,
-    '[ -f "$PID" ] && kill "$(cat "$PID")" 2>/dev/null',
+    `IF='${ifName}'; PID='${dhcpPidFile(ifName, runDir)}'`,
+    KILL_OUR_DHCP_CLIENT,
     'rm -f "$PID"',
     'exit 0',
   ].join('\n');

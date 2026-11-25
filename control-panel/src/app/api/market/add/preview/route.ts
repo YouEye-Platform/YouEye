@@ -10,9 +10,9 @@
  * Adding is the existing guarded calls (`POST /api/market/source`, `POST /api/market/validate-url`).
  *
  * Answers (what a market or app says about itself is its own words, plain text):
- * - market: { kind: 'market', address, name, publisher, homepage? (only an https address), apps (its container apps, the
- *   count `youeye market list` shows), apps_with_setup, native? (YouEye's own apps it names; only for the box's own
- *   official Market), already_added: <source id> | null }
+ * - market: { kind: 'market', address, name, publisher, homepage? (only an https address), apps (its apps, the count
+ *   `youeye market list` shows), apps_with_setup, native (how many of them are native apps: they join the dashboard,
+ *   YE-142), already_added: <source id> | null }
  * - app: { kind: 'app', url, host, id, name, version, images: [...], setups: [file names], already_added: <source id> | null }
  * - a bad link: 400 { error }; a market or app that cannot be read: 502 { error, details? }.
  */
@@ -86,7 +86,7 @@ async function previewOf(parameter: AddLinkParameter): Promise<Response> {
       ...(homepage ? { homepage } : {}),
       apps: summary.apps,
       apps_with_setup: summary.apps_with_setup,
-      ...(official ? { native: summary.native } : {}),
+      native: summary.native,
       already_added: existing,
     });
   }

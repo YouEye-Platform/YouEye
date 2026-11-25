@@ -1,0 +1,89 @@
+{
+  "schema": "youeye.install.v1",
+  "appId": "notes",
+  "installationId": "e1562f67-69c9-4762-8e4b-d860f47ca66b",
+  "lifecycleState": "active",
+  "recoveryPreserveData": false,
+  "storageVolumes": [],
+  "catalogKey": "official:app:notes",
+  "itemKind": "app",
+  "sourceId": "official",
+  "sourceName": "Official YouEye Market",
+  "manifestPath": "youeye-app.yaml",
+  "manifestRepo": "https://github.com/YouEye-Platform/Notes",
+  "manifestBranch": "v0.6.4",
+  "manifestDigest": "sha256:1eab3206f79c0b02bed81271fdc981e7f1a59ec869010c96029b910211fe3c37",
+  "nativeArtifacts": [
+    {
+      "productRelease": {
+        "manifestBase64": "ewogICJzY2hlbWEiOiAieW91ZXllLnByb2R1Y3QtcmVsZWFzZS52MSIsCiAgInByb2R1Y3QiOiAibm90ZXMiLAogICJ2ZXJzaW9uIjogIjAuNi40IiwKICAidGFnIjogInYwLjYuNCIsCiAgInNvdXJjZV90cmVlIjogIjE4MWNiMmVjNGU3ODQ1ZjllNDNkYjI1MmQzYzE5NDM3NDNkYmFlZDkiLAogICJzZXF1ZW5jZSI6IDE3OTUwODI2MjYsCiAgIm1pbmltdW1fcmVhZGVyIjogMiwKICAiYXV0aG9yaXR5IjogImRpZ2VzdCIsCiAgImJ1aWxkX21hbmlmZXN0X2Jhc2U2NCI6ICJleUp6WTJobGJXRWlPaUo1YjNWbGVXVXVjSEp2WkhWamRDMWlkV2xzWkM1Mk1TSXNJbkJ5YjJSMVkzUWlPaUp1YjNSbGN5SXNJbXRwYm1RaU9pSnVZWFJwZG1VaUxDSnpiM1Z5WTJWZmRISmxaU0k2SWpFNE1XTmlNbVZqTkdVM09EUTFaamxsTkROa1lqSTFNbVF6WXpFNU5ETTNORE5rWW1GbFpEa2lMQ0pwYm5CMWRGOXphR0V5TlRZaU9pSTVaVFkzTnpJd01XWTJNemd5Wm1Ga05HSXlOamN5Tmpnd05qQTJZbU5sWXpZNE56ZzVabVEwTkRaaU1UQmtObUUyTURBNU1tTmtNbVZrWXpBME5EQmlJaXdpWTI5dWRISmhZM1JmYzJoaE1qVTJJam9pWXpjM056ZGhZMk0yTXpOaE9XSTBNVE00TTJJMVlUSTROR1UzWldSaE9URTNZakV5WWpRMlpUazFaR013T0daaU1HWTBOV0pqWTJWbE16Z3habUl6TXlJc0luQnlhVzFoY25raU9pSnpkR0Z1WkdGc2IyNWxMblJoY2lJc0ltRnpjMlYwY3lJNlczc2libUZ0WlNJNkluTjBZVzVrWVd4dmJtVXVkR0Z5SWl3aWMyaGhNalUySWpvaVlUTXlaVGczTkRBek16VTBNVEF3TmpaaE1UYzFOalEyT0RVNU9UWmtOamhpTWprNE9XTTRNalUwTkRVNU1XRm1ObVZqTnpOa01XTmpObVU1Tm1ObVpDSXNJbk5wZW1WZllubDBaWE1pT2pFNU9Ua3pOakF3TUgwc2V5SnVZVzFsSWpvaWVXOTFaWGxsTFdGd2NDNTVZVzFzSWl3aWMyaGhNalUySWpvaVl6YzNOemRoWTJNMk16TmhPV0kwTVRNNE0ySTFZVEk0TkdVM1pXUmhPVEUzWWpFeVlqUTJaVGsxWkdNd09HWmlNR1kwTldKalkyVmxNemd4Wm1Jek15SXNJbk5wZW1WZllubDBaWE1pT2pNME9EVjlYWDA9Igp9Cg==",
+        "manifestSHA256": "5359b7260b9339530867e9fc89ed41c723bce63c5954d13cc254cfb9a741938a",
+        "repository": "https://github.com/YouEye-Platform/Notes"
+      },
+      "runtimeUUID": "e6f34ce2-8b0f-4cb1-a5c1-62e49036646d",
+      "containerName": "main",
+      "sourceRepo": "https://github.com/YouEye-Platform/Notes",
+      "releaseTag": "v0.6.4",
+      "version": "0.6.4",
+      "artifactName": "standalone.tar",
+      "sha256": "a32e8740335410066a17564685996d68b2989c82544591af6ec73d1cc6e96cfd",
+      "bytes": 199936000,
+      "verification": "product-release",
+      "productReleaseSHA256": "5359b7260b9339530867e9fc89ed41c723bce63c5954d13cc254cfb9a741938a"
+    }
+  ],
+  "integration": "native",
+  "perUserData": "identity_uuid",
+  "subdomain": "notes",
+  "domain": "azure-delta.ui.bingo",
+  "enableSSO": true,
+  "forwardAuthEnabled": false,
+  "protectWithAccountLogin": true,
+  "installedAt": "2026-11-24T00:35:34.708Z",
+  "installedVersion": "0.6.4",
+  "catalogVersion": "0.6.4",
+  "enabled": true,
+  "desiredState": "running",
+  "autoRestart": true,
+  "containers": [
+    {
+      "name": "main",
+      "containerName": "app-notes",
+      "type": "lxd",
+      "primary": true,
+      "network": "isolated",
+      "port": 3000,
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "timeout": 120000,
+        "retries": 3,
+        "startPeriod": 0,
+        "autoRestart": true
+      }
+    }
+  ],
+  "ssoSlug": "youeye-app-notes",
+  "ssoClientId": "youeye-app-notes",
+  "manifestSource": "market",
+  "selectedIntegrations": [],
+  "databaseMode": "shared",
+  "databaseName": "ye_notes",
+  "databaseUser": "ye_notes",
+  "databasePasswordFile": "secrets/db_password",
+  "sharedDatabaseCreated": true,
+  "hasSSO": true,
+  "usePerAppBridge": true,
+  "productReleaseFloors": {
+    "notes": {
+      "line": "0.6.4",
+      "sequence": 1795082626,
+      "build": "0.6.4",
+      "buildSHA256": "4151d5fa671c1272d25de57c44eca2ae9b4b58a25bdf8ef915ab0c41d6099f0d",
+      "manifestSHA256": "5359b7260b9339530867e9fc89ed41c723bce63c5954d13cc254cfb9a741938a"
+    }
+  },
+  "updatedAt": "2026-11-24T00:36:17.364Z",
+  "serviceCredentialState": "ready",
+  "admissionOwnerId": "8d29a2e6-b00e-4608-8d3c-e708e76e97b6"
+}

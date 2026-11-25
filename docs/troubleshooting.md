@@ -215,6 +215,10 @@ person (YE-42).
   with backoff. GitHub allows 60 anonymous API requests per hour per IP, which is why boxes read only the channel
   index and release assets.
 - After a reboot, `youeye-core-update.service` continues a retained request by itself (`resume --boot`).
+- **Ready to restart** (`awaiting-restart`): the update is staged and nothing runs until the owner restarts.
+  Settings → System shows the button "Restart and install" with the version (for example "Restart and install
+  0.6.19") and, while only preparation ran, Cancel. No step is shown as in progress, and "Resume checks" is not
+  offered: resuming stops at the same place, because the recovery point is saved only after the restart is requested.
 - **A step failed.** Settings → System shows "This step failed: …", the reason (the step's `evidence` from the
   status API) and, while only preparation ran, Cancel. "Resume checks" is not offered for a failed step: a failed
   step is never run again, so resuming only records the same failure. Cancel, then check for updates again; after
@@ -291,9 +295,10 @@ person (YE-42).
 ## Waiting for the channel to catch up
 
 `youeye update core check` answers `"behind": true` with a message such as `channel stable offers 0.6.13; this box
-has 0.6.13-dev.7; waiting for it to catch up`, and Settings → System shows that message instead of an update. A
-native app or Pointer says "The channel offers <app> <version>; this box has <version>; waiting for the channel to
-catch up".
+has 0.6.13-dev.7; waiting for it to catch up`, and Settings → System shows that message instead of an update.
+Pointer says "The channel offers pointer <version>; this box has <version>; waiting for the channel to catch up".
+(Native apps come from their market since 0.6.20 and never wait for a channel: an older version there is simply not
+offered.)
 
 It means the box already runs a newer release than its channel offers. Releases are ordered by line, then by the
 build's sequence, never by name ([releases.md](releases.md#ordering-line-then-sequence)), and a box never installs
@@ -338,7 +343,8 @@ After a switch:
 - The installed release's files (a Control Panel redeploy, a Spine repair) and those of an update already under
   way still come from the repository they were published in: the switch records that address for their tags in
   `/var/lib/youeye-state/core-update/download-bases.json`. Everything newer comes from the new repository.
-- Native apps and Pointer follow the new repository too: the Control Panel reads them from the box's channel index.
+- Pointer follows the new repository too: the Control Panel reads it from the box's channel index. Native apps do
+  not: they come from their market (since 0.6.20).
 
 Before 0.6.16 there is no command. Edit `/var/lib/youeye-state/bootstrap/release-policy.json` as root with an
 atomic write (write a copy, `mv` it over; keep every other field), set `repository` to the canonical URL, then
@@ -560,8 +566,11 @@ Market → Sources shows the same ("Last refreshed …", the error, Refresh now)
   box already has; the box keeps its copy. The publisher fixes it with a new commit.
 - **"… is not the file its hash names"**: the market's files do not match each other (an interrupted upload, a
   cache serving an old file). The box keeps its copy; the next refresh tries again.
-- **The official Market shows the wrong lane:** it follows the box's channel (`youeye channel get`): dev and alpha
-  read `/dev/`, beta and stable read `/`. Boxes up to 0.6.10 do not read `market.youeye.me` at all, and since 0.6.13
+- **The official Market shows the wrong lane:** since 0.6.20 the lane is the box's own setting, `main` (`/`) unless
+  the owner chose `dev` (`/dev/`), whatever the release channel. `youeye market official-lane` shows it,
+  `youeye market official-lane main|dev` sets it (or Change… on the sources page). A box that read `/dev/` because
+  of its alpha or dev channel reads `/` after the update to 0.6.20 until its owner sets `dev`. Before 0.6.20 the lane
+  followed the channel (`youeye channel get`): dev and alpha read `/dev/`, beta and stable `/`. Boxes up to 0.6.10 do not read `market.youeye.me` at all, and since 0.6.13
   no channel index carries their old Market entry: they have no Market until they update YouEye.
 
 ## An app says it has no update source
@@ -574,6 +583,26 @@ To take updates again: turn the market back on, or add a market that has the app
 `youeye app source <app> <market id>`. Either records the new market; the installed version stays until the next
 update. A market that was removed and added again has a new id, so its apps must be pointed at it this way.
 `youeye app check-updates` names every app in this state.
+
+"No update source: <id> is not in the YouEye Market" (`updateBlocked` `not-in-market`): a native app installed from
+the release channel before 0.6.20 whose market does not list it (YE-142). The app keeps running, with its data. It
+takes updates again once its market lists it; the next update check then moves it to the market by itself (a record
+change only, no download or restart) when the market pins the very package it runs.
+
+## A native app still shows its channel release after the update to 0.6.20
+
+Up to 0.6.19 native apps came from the channel index; on 0.6.20 the update check (45 s after the Control Panel
+starts, then every 6 hours, or `youeye app check-updates` / `youeye app update <id>`) moves each to its market:
+`youeye app info <id>` then names the market, the version is the market's, and `installed-apps.json` has
+`installedTag: null`. An app that has not moved says why in the Control Panel log (`stays on its channel record for
+now: …`): it is stopped (it moves once it runs), its market offers another package (then it is an ordinary update by
+version), or the market's manifest configures it differently. None of these stop the app or its data.
+
+## On 0.6.15 to 0.6.19: native apps say they need a newer YouEye
+
+Once the Market carries native apps as Market apps (`kind: native`), a box before 0.6.20 lists them, installed ones
+included, as "Needs YouEye 0.6.20 or newer", and offers no update for them. They keep running. Update YouEye; the
+update itself is unchanged.
 
 ## An app says it needs a newer YouEye
 
@@ -668,6 +697,11 @@ Panel's log (`youeye logs control`) has the details.
   Before 0.6.13 this state could also come from the watchdog starting Caddy or the dashboard in the middle of a
   restore (log: "[watchdog] youeye-caddy should be running but is Stopped — starting"), and the message was
   "Server restore failed; retained app maintenance requires reconciliation" instead of the real error.
+- **"Could not clear the current `<app>` installation before server restore: …"** (0.6.20, YE-222): the restore
+  replaces that app and removes the current installation first (deleting its data), but the app has an unfinished
+  `--keep-data` removal (an earlier `youeye app remove <app> --keep-data` stopped part way). The restore does not
+  turn a removal the owner asked to keep into a delete: the restore fails at that step and rolls back as above.
+  Finish the removal first (`youeye app remove <app> --keep-data`), then restore again.
 - **Before 0.6.13** a platform restore with apps failed in two ways, and its rollback removed every app:
   "Container maintenance already active for an update target" (step `reconcile-apps`, when any installed app was
   not being restored), and "App `<id>` already owns `yeapp<N>` (…) in active state" when an app was reinstalled.

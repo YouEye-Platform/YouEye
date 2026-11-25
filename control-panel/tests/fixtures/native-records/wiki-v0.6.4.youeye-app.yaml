@@ -1,0 +1,98 @@
+schema: youeye.app.v1
+id: wiki
+version: 0.6.4
+name: Wiki
+listing:
+  description: Privacy-friendly Wikipedia reader. Browse articles, search, and discover featured content — all proxied through
+    your server.
+  long_description: |
+    Wiki is a privacy-friendly Wikipedia reader that proxies all requests through your YouEye server.
+    Browse articles, search across 300+ Wikipedia languages, and discover featured content without
+    exposing your reading habits to third parties. Supports dark mode and integrates with YouEye SSO.
+  category: productivity
+  tags: [wikipedia, privacy, reading, native]
+  icon: book-open
+  screenshots:
+    - {path: assets/screenshots/1.png, caption: Article view with dark mode}
+    - {path: assets/screenshots/2.png, caption: Search across Wikipedia languages}
+  website: https://github.com/YouEye-Platform/Wiki
+source: {node: '24'}
+port: 3000
+health: /api/health
+env:
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  WIKI_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: default-notification
+    kind: notification
+    placement: notification-center
+    name: Wiki notification
+    description: Rich Wiki notification body
+    embed: /embed/notification/default
+    permissions: ['notifications:send']
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: featured-article
+    kind: widget
+    placement: dashboard
+    name: Featured Article
+    description: Today's featured Wikipedia article
+    embed: /embed/widget/featured-article
+    size: {default: [25, 28], min: [18, 20], max: [45, 50]}
+    refresh: 86400
+  - id: today-in-history
+    kind: widget
+    placement: dashboard
+    name: Today in History
+    description: Historical events that happened on this day
+    embed: /embed/widget/today-in-history
+    size: {default: [25, 28], min: [18, 20], max: [45, 50]}
+    refresh: 86400
+  - id: article-summary
+    kind: info-card
+    placement: timeline
+    name: Article summary
+    description: Wikipedia article summary card
+    embed: /embed/card/article
+    triggers: [wikipedia.org]
+  - id: wiki-article-read
+    kind: timeline-card
+    placement: timeline
+    name: Article read
+    description: Wikipedia article read
+    embed: /embed/timeline/article
+    permissions: ['timeline:write']
+    triggers: [wiki-article-read]
+  - id: wiki-article-edit
+    kind: timeline-card
+    placement: timeline
+    name: Article edited
+    description: Wikipedia article edited
+    embed: /embed/timeline/article
+    permissions: ['timeline:write']
+    triggers: [wiki-article-edit]
+proxy:
+  - {host: '*.wikipedia.org', paths: [/api/rest_v1/*, /w/api.php*], methods: [GET]}
+  - {host: upload.wikimedia.org, paths: [/*], methods: [GET]}

@@ -6,7 +6,7 @@ import {
   setSessionCookies,
 } from '@/lib/auth';
 import { requestClientAddress } from '@/lib/auth/client-address';
-import { beginSignInAttempt, signInNotCounted, signInSucceeded } from '@/lib/identity/sign-in-limit';
+import { beginSignInAttempt, signInNotCounted, signInRetryAfterSeconds, signInSucceeded } from '@/lib/identity/sign-in-limit';
 import { isLocalSetupHost, secureCookieFor } from '@/lib/auth/mode';
 import {
   claimApplianceOwner,
@@ -104,17 +104,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'The owner account could not be prepared. Try again.' }, { status: 400 });
   }
   const action = body.action === 'resume' ? 'resume' : 'claim';
-  // Failures per username (resume checks the owner's password) from any address, and per client address (the TCP
-  // peer; Caddy's X-Forwarded-For only from Caddy). Loopback and unknown are no client address (YE-136).
+  // Resume checks the owner's password: failures per (username, client address) and per client address lock, per
+  // username they only slow down (`sign-in-limit.ts`, YE-149).
   const attempt = beginSignInAttempt(
     typeof body.username === 'string' ? body.username : '',
     await requestClientAddress(request.headers),
     'appliance-claim',
   );
   if (!attempt.allowed) {
+    const retryAfter = signInRetryAfterSeconds(attempt);
     return NextResponse.json(
-      { error: 'Too many attempts. Try again in a few minutes.' },
-      { status: 429, headers: { 'Retry-After': String(Math.max(1, Math.ceil((attempt.retryAt - Date.now()) / 1000))) } }
+      { error: attempt.refusal === 'wait' ? `Too many attempts. Try again in ${retryAfter} seconds.` : 'Too many attempts. Try again in a few minutes.' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } }
     );
   }
 

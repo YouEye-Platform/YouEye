@@ -15,10 +15,6 @@ export function catalogFromFiles(catalogYaml: string, files: Iterable<string>): 
     match = /^bundles\/([a-z][a-z0-9-]{0,31})\/bundle\.yaml$/.exec(file);
     if (match) bundles.push(match[1]);
   }
-  for (const id of document.native ?? []) {
-    if (apps.some((app) => app.id === id)) throw new Error(`catalog.yaml lists native app "${id}" that also has an app folder`);
-    apps.push({ id, integration: 'native' });
-  }
   const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
   return {
     apps: apps.sort(byId),

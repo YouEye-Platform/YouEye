@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 
 	"strings"
 	"sync"
@@ -30,87 +32,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// authAttempt tracks authentication attempts for rate limiting
-type authAttempt struct {
-	attempts []time.Time
-}
-
-// authRateLimiter manages rate limiting for authentication
-type authRateLimiter struct {
-	mu            sync.Mutex
-	attempts      map[string]*authAttempt
-	maxAttempts   int
-	windowMinutes int
-}
-
-func newAuthRateLimiter(cfg *config.Config) *authRateLimiter {
-	return &authRateLimiter{
-		attempts:      make(map[string]*authAttempt),
-		maxAttempts:   cfg.API.Auth.MaxAttempts,
-		windowMinutes: cfg.API.Auth.WindowMinutes,
-	}
-}
-
-// checkRateLimit returns true if the request should be allowed, false if rate limited
-func (l *authRateLimiter) checkRateLimit(username string) (bool, int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	windowDuration := time.Duration(l.windowMinutes) * time.Minute
-	cutoff := now.Add(-windowDuration)
-
-	// Get or create attempt record
-	record, exists := l.attempts[username]
-	if !exists {
-		record = &authAttempt{}
-		l.attempts[username] = record
-	}
-
-	// Filter out old attempts
-	validAttempts := make([]time.Time, 0, len(record.attempts))
-	for _, t := range record.attempts {
-		if t.After(cutoff) {
-			validAttempts = append(validAttempts, t)
-		}
-	}
-	record.attempts = validAttempts
-
-	// Check if under limit
-	remaining := l.maxAttempts - len(record.attempts)
-	if remaining <= 0 {
-		return false, 0
-	}
-
-	// Record this attempt
-	record.attempts = append(record.attempts, now)
-	return true, remaining - 1
-}
-
-// cleanup removes expired entries (called periodically)
-func (l *authRateLimiter) cleanup() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	windowDuration := time.Duration(l.windowMinutes) * time.Minute
-	cutoff := now.Add(-windowDuration)
-
-	for username, record := range l.attempts {
-		// Remove entries with no recent attempts
-		hasRecent := false
-		for _, t := range record.attempts {
-			if t.After(cutoff) {
-				hasRecent = true
-				break
-			}
-		}
-		if !hasRecent {
-			delete(l.attempts, username)
-		}
-	}
-}
-
 type Server struct {
 	coreUpdateOperations CoreUpdateOperations
 	coreStatePath        string
@@ -122,7 +43,7 @@ type Server struct {
 	socketPath              string
 	mux                     *http.ServeMux
 	cfg                     *config.Config
-	authLimiter             *authRateLimiter
+	pamGate                 *pamGate
 	runtimeDetect           func() (appliance.RuntimeStatus, *appliance.Manifest, error)
 	systemUpdate            systemUpdateService
 	remoteAccess            remoteAccessService
@@ -152,7 +73,7 @@ func NewServer(version string, cfg *config.Config) *Server {
 		socketPath:    cfg.API.SocketPath,
 		mux:           http.NewServeMux(),
 		cfg:           cfg,
-		authLimiter:   newAuthRateLimiter(cfg),
+		pamGate:       newPAMGate(cfg),
 		runtimeDetect: appliance.Detect,
 		systemUpdate:  systemupdate.NewDefault(),
 		remoteAccess:  remoteaccess.NewDefault(),
@@ -297,13 +218,13 @@ func (s *Server) ListenAndServe() error {
 		fmt.Printf("Warning: could not set socket permissions: %v\n", err)
 	}
 
-	// Start rate limiter cleanup goroutine
+	// Forget sign-in failures past their window (YE-164: memory only)
 	cleanupInterval := time.Duration(s.cfg.API.Auth.CleanupIntervalMinutes) * time.Minute
 	go func() {
 		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			s.authLimiter.cleanup()
+			s.pamGate.cleanup()
 		}
 	}()
 
@@ -462,6 +383,14 @@ func getAppContainerStatus(containerName string) string {
 	return strings.ToLower(status)
 }
 
+// usernamePattern is a sign-in username (YE-169), the Control Panel's rule (`PAM_USERNAME`): at most 32 characters
+// (the Linux limit) and never a leading `-`, which pamtester and id would read as an option. Console access makes
+// host accounts with a narrower rule (consoleaccess, `^[a-z_][a-z0-9_-]{0,31}$`).
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$`)
+
+// authVerifyMaxBody bounds a password check's body: a username, a password and the JSON around them.
+const authVerifyMaxBody = 4 * 1024
+
 func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -473,7 +402,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, authVerifyMaxBody)).Decode(&req); err != nil {
 		errorResponse(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -482,19 +411,26 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "username and password required", http.StatusBadRequest)
 		return
 	}
-
-	// Rate limiting check
-	windowDuration := time.Duration(s.cfg.API.Auth.WindowMinutes) * time.Minute
-	allowed, remaining := s.authLimiter.checkRateLimit(req.Username)
-	if !allowed {
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(windowDuration).Unix()))
-		errorResponse(w, fmt.Sprintf("too many authentication attempts, please wait %d minutes", s.cfg.API.Auth.WindowMinutes), http.StatusTooManyRequests)
+	// No account has such a name: refused before the gate, so it keys nothing there and reaches no command line.
+	if !usernamePattern.MatchString(req.Username) {
+		errorResponse(w, "invalid username", http.StatusBadRequest)
 		return
 	}
 
-	// Authenticate using PAM
-	authenticated := verifyPAM(req.Username, req.Password)
+	// The backstop behind the Control Panel's sign-in limits (YE-164): never a username lock, never 429. A full
+	// queue or a long wait answers 503 with Retry-After; wrong passwords past the threshold are answered slowly.
+	authenticated, remaining, err := s.pamGate.verify(r.Context(), req.Username, req.Password)
+	if err != nil {
+		var busy errPAMBusy
+		if errors.As(err, &busy) {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(busy.retryAfter.Seconds())))
+			errorResponse(w, "too many sign-in checks at once, try again shortly", http.StatusServiceUnavailable)
+			return
+		}
+		// The caller went away while waiting; nobody reads this answer.
+		errorResponse(w, "request canceled", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Get user groups if authenticated
 	var groups []string
@@ -502,7 +438,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		groups = getUserGroups(req.Username)
 	}
 
-	// Set rate limit headers
+	// Failures the username has left before its wrong answers are held (kept for older readers)
 	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 
 	jsonResponse(w, map[string]interface{}{
@@ -569,17 +505,17 @@ func (s *Server) handlePostgresCredentials(w http.ResponseWriter, r *http.Reques
 }
 
 // Helper functions
-func verifyPAM(username, password string) bool {
-	// Authenticate against HOST system PAM (not container)
-	// This uses the real Linux system users/passwords
-	cmd := exec.Command("pamtester", "login", username, "authenticate")
+// verifyPAMContext checks a password against the HOST's PAM (the real Linux users), not a container's. The process
+// ends with the request.
+func verifyPAMContext(ctx context.Context, username, password string) bool {
+	cmd := exec.CommandContext(ctx, "pamtester", "login", username, "authenticate")
 	cmd.Stdin = strings.NewReader(password + "\n")
 	err := cmd.Run()
 	return err == nil
 }
 
 func getUserGroups(username string) []string {
-	out, err := exec.Command("id", "-Gn", username).Output()
+	out, err := exec.Command("id", "-Gn", "--", username).Output()
 	if err != nil {
 		return []string{}
 	}

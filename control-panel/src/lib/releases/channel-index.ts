@@ -12,7 +12,7 @@ import { loadProductBlob, productBlobWithinLimit, productAssetURL, verifyProduct
 /**
  * The box's channel index (`youeye.channel.v1`) names the current release of
  * every product on its channel. The Control Panel gets it from Spine (which
- * downloads and caches it) and resolves native apps and Pointer through it
+ * downloads and caches it) and resolves Pointer through it
  * (the Market is not a product: boxes read it from its own address, see
  * lib/market/market-store.ts). Documents and assets are then plain HTTPS
  * downloads (`releaseAssetURL`: the entry's download base when it names one,
@@ -28,7 +28,11 @@ export type ReleaseChannelName = (typeof RELEASE_CHANNELS)[number];
 export const isReleaseChannel = (value: unknown): value is ReleaseChannelName =>
   typeof value === 'string' && (RELEASE_CHANNELS as readonly string[]).includes(value);
 
-export const INDEX_PRODUCTS = ['youeye', 'pointer', 'notes', 'wiki', 'search', 'translate', 'weather', 'cinema'] as const;
+/**
+ * The products this reader takes from an index: the System and Pointer. Native apps are Market apps since 0.6.20
+ * (YE-142); their entries, frozen for boxes up to 0.6.19, are skipped like any other product.
+ */
+export const INDEX_PRODUCTS = ['youeye', 'pointer'] as const;
 
 /**
  * `version` is the release name (display and tag). An entry says nothing

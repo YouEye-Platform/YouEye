@@ -28,7 +28,7 @@ import type { SessionPayload } from '@/lib/auth/session';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
 import { settingsService } from '@/lib/settings';
-import { hasOpenCriticalIssue } from '@/lib/health/issues';
+import { hasOpenCriticalIssue, INSTALL_GATE_IGNORED_ISSUES } from '@/lib/health/issues';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { verifyCSRFToken } from '@/lib/auth/session';
 import { admissionAdministrator } from '@/lib/admission/management';
@@ -94,10 +94,12 @@ async function admittedInstall(
     });
   }
 
-  // Box-level critical issues, or one of this same app, block the install; another app's never does.
+  // Box-level critical issues, or one of this same app, block the install; another app's never does, and YouEye AI
+  // being down does not either (YE-219: an app that uses it is refused by its own AI preflight).
   let blocking;
   try {
-    blocking = await hasOpenCriticalIssue(typeof config?.appId === 'string' ? config.appId : undefined);
+    blocking = await hasOpenCriticalIssue(typeof config?.appId === 'string' ? config.appId : undefined,
+      INSTALL_GATE_IGNORED_ISSUES);
   } catch (err) {
     logOperationFailure('Reading health issues before an install', err);
     return Response.json({ error: 'Health status is unavailable; try again shortly' }, { status: 503 });
@@ -119,6 +121,9 @@ async function admittedInstall(
   }
   if (config.publicAccess !== undefined && typeof config.publicAccess !== 'boolean') {
     return Response.json({ error: 'Invalid public access choice' }, { status: 400 });
+  }
+  if (config.accessMode !== undefined && config.accessMode !== 'all_users' && config.accessMode !== 'owner') {
+    return Response.json({ error: 'Invalid access choice: use all_users or owner' }, { status: 400 });
   }
 
   if (!config.appId) {

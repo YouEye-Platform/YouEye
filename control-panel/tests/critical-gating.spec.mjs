@@ -115,3 +115,34 @@ test('the System release parts and Incus have no app update: refused before any 
   assert.deepEqual(route.updates, []);
   assert.deepEqual(route.statuses, []);
 });
+
+test('the install gates ignore only YouEye AI being down (YE-219)', () => {
+  const route = fs.readFileSync(path.join(root, 'src/app/api/market/install/route.ts'), 'utf8');
+  assert.match(route, /hasOpenCriticalIssue\([^;]*INSTALL_GATE_IGNORED_ISSUES\)/);
+  const network = fs.readFileSync(path.join(root, 'src/lib/incus/app-network.ts'), 'utf8');
+  assert.equal(network.match(/assertNoCriticalIssues\(`Install \$\{appId\}`, appId, INSTALL_GATE_IGNORED_ISSUES\)/g)?.length, 2);
+  // System and pool operations keep the full gate.
+  for (const relative of ['src/lib/apps/system-container-update.ts', 'src/app/api/deploy/infrastructure/system-updates/route.ts']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, relative), 'utf8'), /INSTALL_GATE_IGNORED_ISSUES/, relative);
+  }
+  const issues = fs.readFileSync(path.join(root, 'src/lib/health/issues.ts'), 'utf8');
+  assert.match(issues, /export const INSTALL_GATE_IGNORED_ISSUES: readonly string\[\] = \['service\.pointer\.down'\];/);
+  // The AI preflight that refuses an AI-using install while Pointer is down runs before anything is created.
+  const engine = fs.readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
+  assert.ok(engine.indexOf('await preflightManagedAISelection(manifest, config);') < engine.indexOf('await preflightAppNetwork(appId'));
+});
+
+test('an AI app adopting retained data while YouEye AI is down is refused before anything is created (YE-223 nit, YE-219)', () => {
+  const engine = fs.readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
+  const install = engine.slice(engine.indexOf('export async function installApp('));
+  const prepare = install.indexOf('restoreOptions = await prepareRetainedAdoption(manifest, config);');
+  const ai = install.indexOf('await preflightManagedAISelection(manifest, config);');
+  const admission = install.indexOf('await ensureAppAdmission(');
+  const network = install.indexOf('await preflightAppNetwork(appId');
+  assert.ok(prepare > 0 && ai > prepare && network > ai && admission > ai, 'the AI refusal comes before any admission or network change');
+  // The adoption prep only reads and checks (record, ownership, storage, the shared database): nothing to undo.
+  const retained = fs.readFileSync(path.join(root, 'src/lib/admission/retained-data.ts'), 'utf8');
+  const prep = retained.slice(retained.indexOf('export async function prepareRetainedAdoption('), retained.indexOf('async function cleanupAdoptedRoots('));
+  assert.doesNotMatch(prep, /\b(write|save|delete|remove|retain|mark|update|create)[A-Z][A-Za-z]*\(/);
+  assert.match(prep, /config\.storage = \{ placements \};/);
+});

@@ -8,6 +8,7 @@ import { bindVerifiedSetupChannel, requestVerifiedSetupChallenge } from '@/lib/y
 import type { VerifiedSetupChallenge } from '@/lib/youeye-names/verified-setup-contract';
 import { runNamesEnrollment } from '@/lib/youeye-names/popup';
 import { randomBrowserUUID } from '@/lib/browser-random';
+import { useLatestRef } from '@/lib/use-latest-ref';
 
 export default function SetupNamesVerification({
   name,
@@ -41,8 +42,7 @@ export default function SetupNamesVerification({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const verification = useRef<AbortController | null>(null);
-  const verifiedCallback=useRef(onVerified);
-  verifiedCallback.current=onVerified;
+  const verifiedCallback=useLatestRef(onVerified);
   useEffect(() => { setChallenge(null);setPasted('');setError('');setLoading(false);return () => { verification.current?.abort();channel.current?.dispose(); }; }, [name, fqdn,useVerifiedSetup]);
   useEffect(()=>{
     if(!challenge || !verification.current || verification.current.signal.aborted)return;
@@ -52,7 +52,7 @@ export default function SetupNamesVerification({
       channel.current=bound;
       return ()=>{bound.dispose();if(channel.current===bound)channel.current=null;};
     } catch { setChannelState("expired"); }
-  },[challenge]);
+  },[challenge, verifiedCallback]);
 
   const verify = async () => {
     if (verification.current) { if(!useVerifiedSetup || loading)return; verification.current.abort();channel.current?.dispose();setChallenge(null); }

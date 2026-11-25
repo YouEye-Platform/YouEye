@@ -30,6 +30,10 @@ export async function waitForAppHealth(
         const resp = await fetch(`http://${ip}:${port}${path}`, {
           signal: AbortSignal.timeout(3000),
         });
+        // Only the status counts: the body is let go at once. Left unread, each probe kept its connection with a
+        // paused body, and when the app stopped (an update rolling back) Node's HTTP client hit an internal assertion
+        // (`assert(!this.paused)`, an uncaught exception in the Control Panel).
+        await resp.body?.cancel().catch(() => undefined);
         if ((resp.status >= 200 && resp.status < 400) || resp.status === 401 || resp.status === 403) return true;
       } catch {
         // Not ready yet

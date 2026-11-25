@@ -44,7 +44,8 @@ import {
   removeInstallMetadataRecord,
   readInstallMetadata,
 } from './metadata';
-import { getInstalledApp, upsertInstalledApp, removeInstalledApp } from './installed-apps';
+import { getInstalledApp, upsertInstalledApp, removeInstalledApp, updateForwardAuthEnabled } from './installed-apps';
+import { explicitInstallPublicAccess, gateOnlyReason } from './public-access';
 import { deployOCIContainer, startOCIContainer } from '../infrastructure/oci-deployer';
 import { adoptRestoredLXDContainer, deployMarketLXDContainer } from '../infrastructure/lxd-deployer';
 import { execCommand, incusRequest, incusUploadFile, incusDownloadFile } from '../incus/server';
@@ -53,12 +54,11 @@ import { execShell } from '../incus/server';
 import {
   getOrCreateAppSecret,
   generatePassword,
-  generateSecretKey,
-  generateHexToken,
   readAppSecret,
   writeAppSecret,
   deleteAllAppSecrets,
 } from '../infrastructure/secrets';
+import { credentialRecords, secretGenerator } from './manifest-secrets';
 import { addRoute, getRoutes, removeRoute, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { installSetupPlan, runSetup, setupFor } from './setup-runner';
@@ -110,7 +110,6 @@ import {
   stageMarketNativeArtifacts,
   type StagedMarketNativeArtifacts,
 } from './native-artifact';
-import { publishProductProjection } from '../releases/product-projection';
 import {
   acknowledgePointerCredential,
   archivePointerManagedApp,
@@ -119,7 +118,7 @@ import {
   readPointerManagedApp,
   type PointerManagedInstallation,
 } from '@/lib/pointer/managed-apps';
-import { deleteAppStorage, ensureAppStorage, volumesForContainer } from './storage';
+import { deleteAppStorage, ensureAppStorage, findAppOwnedVolumes, volumesForContainer } from './storage';
 import { spineClient } from '../spine/client';
 import { appServiceCredentials } from '../apps/service-credential-store';
 import { prepareCredentialForAppInstall } from '../apps/service-credential-lifecycle';
@@ -182,7 +181,18 @@ async function rollbackInstall(
     try { await revokeAppCredential(ctx.appId); } catch (error) { recordFailure('service credential', error); }
   }
 
-  // 1. Remove containers: the exact names this install created, and only when they carry
+  // 1. Remove the connections first (a waiting one may have been activated and wired), while the
+  // containers and secrets still exist: deleting one runs its connect file's `remove:` steps
+  // (non-fatal) and removes its secondary NIC grants, which must go before the primary bridge.
+  try {
+    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
+    for (const bridge of await getBridgesForApp(ctx.appId)) await deleteBridge(bridge.id);
+    if ((await getBridgesForApp(ctx.appId)).length > 0) throw new Error('integration records remain');
+  } catch (err) {
+    recordFailure('integration grants', err);
+  }
+
+  // 1b. Remove containers: the exact names this install created, and only when they carry
   // this installation's tag. A same-name instance owned by anything else stays untouched.
   for (const name of ctx.containerNames) {
     try {
@@ -329,15 +339,6 @@ async function rollbackInstall(
     } catch (err) {
       recordFailure('Incus app storage', err);
     }
-  }
-
-  // 6. Remove explicit integration NICs before the primary bridge.
-  try {
-    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
-    for (const bridge of await getBridgesForApp(ctx.appId)) await deleteBridge(bridge.id);
-    if ((await getBridgesForApp(ctx.appId)).length > 0) throw new Error('integration records remain');
-  } catch (err) {
-    recordFailure('integration grants', err);
   }
 
   // 6b. Remove any late dashboard registration before releasing recovery
@@ -667,10 +668,13 @@ function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean, expli
  * reviewed). URL installs arrive with an explicit choice (false unless chosen).
  */
 export function installWantsPublicAccess(
-  manifest: Pick<AppManifest, 'publicAccess'>,
-  config: Pick<InstallConfig, 'publicAccess' | 'sourceId'>,
+  manifest: Pick<AppManifest, 'publicAccess' | 'sso' | 'credentials' | 'env_mapping' | 'containers'>,
+  config: Pick<InstallConfig, 'publicAccess' | 'forwardAuthGate' | 'sourceId'>,
 ): boolean {
-  return config.publicAccess ?? (manifest.publicAccess === true && config.sourceId === OFFICIAL_MARKET_SOURCE_ID);
+  const official = config.sourceId === OFFICIAL_MARKET_SOURCE_ID;
+  // An app without a sign-in of its own (or one that trusts the gate's login header) stays for users only (YE-154).
+  if (gateOnlyReason(manifest, official)) return false;
+  return explicitInstallPublicAccess(config) ?? (manifest.publicAccess === true && official);
 }
 
 /**
@@ -708,16 +712,6 @@ function describeContainers(manifest: AppManifest): ContainerMeta[] {
   }));
 }
 
-/** A recovered runtime is a new instance: record its release again under its own runtime identity. */
-async function publishRecoveredProjection(
-  recovered: NonNullable<InstallMetadata['nativeArtifacts']>,
-  specName: string,
-  containerName: string,
-): Promise<void> {
-  const artifact = recovered.find((item) => item.containerName === specName);
-  if (artifact?.productRelease) artifact.runtimeUUID = await publishProductProjection(containerName, artifact.productRelease);
-}
-
 /** The install record's native releases: the staged ones, then those recovered runtimes still run. */
 function describeNativeArtifacts(
   staged: StagedMarketNativeArtifacts,
@@ -734,7 +728,7 @@ function describeNativeArtifacts(
     sha256: artifact.artifactSHA256,
     bytes: artifact.artifactBytes,
     verification: artifact.verification.status,
-    productReleaseSHA256: artifact.verification.releaseSHA256,
+    productReleaseSHA256: artifact.verification.status === 'product-release' ? artifact.verification.releaseSHA256 : undefined,
   })), ...recovered.map((artifact) => ({ ...artifact }))];
   return artifacts.length > 0 ? artifacts : undefined;
 }
@@ -747,7 +741,7 @@ function buildInstallRecoveryMetadata(
   restoreOptions?: RestoreOptions,
 ): InstallMetadata {
   const hasOwnAccountLogin = ssoEnabled;
-  const forwardAuthChoice = hasOwnAccountLogin ? config.forwardAuthGate : config.protectWithAccountLogin;
+  const forwardAuthChoice = hasOwnAccountLogin ? config.forwardAuthGate : !installWantsPublicAccess(manifest, config);
   const forwardAuthEnabled = resolveForwardAuth(manifest, hasOwnAccountLogin, forwardAuthChoice);
   const ssoSlug = ssoEnabled ? `youeye-app-${manifest.metadata.id}` : undefined;
   const installedVersion = manifest.version ?? '';
@@ -785,13 +779,7 @@ function buildInstallRecoveryMetadata(
     ssoClientId: ssoSlug,
     forwardAuthSlug: forwardAuthEnabled ? `youeye-fa-${manifest.metadata.id}` : undefined,
     manifestSource: config.sourceRepoUrl || 'market',
-    credentials: manifest.credentials?.length
-      ? manifest.credentials.map((credential) => ({
-        label: credential.label,
-        username: credential.username,
-        passwordSecret: credential.passwordSecret,
-      }))
-      : undefined,
+    credentials: credentialRecords(manifest),
     selectedIntegrations,
     databaseMode: manifest.database?.mode ?? 'none',
     databaseName: manifest.database?.mode === 'shared' ? manifest.database.name : undefined,
@@ -865,7 +853,17 @@ async function preflightInstallResources(
 ): Promise<void> {
   const appId = manifest.metadata.id;
   const durableApps = await listInstalledApps();
-  if (durableApps.some((metadata) => metadata.appId === appId)) {
+  const durable = durableApps.find((metadata) => metadata.appId === appId);
+  if (durable?.cleanupPending) {
+    // The hint follows the mode the removal was asked with (recorded on its lease), so it never deletes kept data.
+    const { getAppNetworkLease, removalModeOf } = await import('../incus/app-network');
+    const mode = removalModeOf((await getAppNetworkLease(appId).catch(() => null))?.failure?.stage);
+    throw new AppNetworkOperationConflictError(`The removal of ${appId} did not finish; finish it first: `
+      + (mode === 'keep-data' ? `youeye app remove ${appId} --keep-data`
+        : mode === 'delete-data' ? `youeye app remove ${appId}`
+          : `youeye app remove ${appId} (add --keep-data to keep its data)`));
+  }
+  if (durable) {
     throw new AppNetworkOperationConflictError(`App ${appId} already has durable install metadata`);
   }
   if (await getInstalledApp(appId)) {
@@ -930,6 +928,18 @@ async function preflightInstallResources(
   }
 
   if (!restoreOptions) {
+    // A fresh install never takes over an earlier installation's volumes (YE-222): a removal that did not finish left
+    // them, and the new install would start on the old data with new secrets. Checked first, so its --force hint is
+    // what such a box shows. Retained data (keep-data) keeps its adoption path, which refuses a plain install itself.
+    if (!(await listRetainedApps()).some((retained) => retained.appId === appId)) {
+      const leftovers = await findAppOwnedVolumes(appId);
+      if (leftovers.length) {
+        throw new AppNetworkOperationConflictError(
+          `Data of an earlier ${appId} installation is still on this box (${leftovers.map((volume) => volume.name).join(', ')}); `
+          + `a new install would take it over. Finish its removal first: youeye app remove ${appId} --force (deletes it)`,
+        );
+      }
+    }
     // The app directory (install.json, secrets) and the generated CA directory; uninstall with
     // delete-data removes both, so a reinstall passes.
     const orphanPath = leftoverAppPaths(appId)[0];
@@ -1180,17 +1190,6 @@ async function setupSharedPostgres(
   });
 }
 
-// ─── Secret Generator ─────────────────────────────────────
-
-function getGenerator(type: string, length: number): () => string {
-  switch (type) {
-    case 'password': return () => generatePassword(length);
-    case 'secretKey': return () => generateSecretKey(length);
-    case 'hexToken': return () => generateHexToken(length);
-    default: return () => generatePassword(length);
-  }
-}
-
 // ─── OCI Manifest Builder ─────────────────────────────────
 
 function buildOCIManifest(
@@ -1289,6 +1288,8 @@ export async function installApp(
     await preflightAppNetwork(appId, { requiredAddresses });
     const { ensureAppAdmission, getAdmissionResourceOwners } = await import('@/lib/admission/store');
     const admission = await ensureAppAdmission({ appId, actorId: config.admissionActorId,
+      // Only when the policy is created: a reinstall keeps the policy it had (YE-232).
+      mode: config.accessMode ?? 'all_users',
       restoredIdentity: restoreOptions?.restoredIdentity,
       adoptRetainedData: Boolean(restoreOptions?.retainedRuntimes), routes: [
       { host: `${config.subdomain}.${config.domain}` },
@@ -1310,18 +1311,7 @@ export async function installApp(
       appId, manifest.version, restoreOptions?.recoveredNativeArtifacts, recoveredNativeContainers);
 
     try {
-      const products = [...stagedNativeArtifacts.byContainerName.values()];
-      if (products.length) {
-        // The manifest of a native app is its release's installer contract.
-        const { verifyMarketProductInstallContract } = await import('./native-artifact');
-        const { downloadProductAsset } = await import('../releases/channel-index');
-        const { verifyInstalledProductReceipt } = await import('../releases/product-release');
-        for (const artifact of products) {
-          const selected = verifyInstalledProductReceipt(artifact.productRelease,{product:appId});
-          const contract = await downloadProductAsset(selected,'youeye-app.yaml');
-          await verifyMarketProductInstallContract(contract, selected, manifest);
-        }
-      }
+      // A native app's package was checked against its manifest's source.package (size and SHA-256) when it was staged.
       try {
         onEvent({ step: 0, totalSteps, status: 'running', message: 'Reserving isolated /27 app network...' });
         const network = await createAppNetwork(appId, {
@@ -1451,7 +1441,7 @@ async function installAppLocked(
   } else {
     emit(onEvent, step, totalSteps, 'running', 'Generating secrets...');
     for (const secret of manifest.secrets) {
-      const generator = getGenerator(secret.generator, secret.length);
+      const generator = secretGenerator(secret.generator, secret.length);
       secrets[secret.name] = await getOrCreateAppSecret(appId, secret.name, generator);
     }
     emit(onEvent, step, totalSteps, 'success', 'Secrets generated');
@@ -1562,15 +1552,13 @@ async function installAppLocked(
   // mark it for a YouEye ID forward-auth handler when Caddy is configured.
 
   let forwardAuthEnabled = false;
-  // Apps that do their own YouEye ID login (native SSO or a planned identity integration)
-  // take the forward-auth gate from the SEPARATE `forwardAuthGate` choice — an optional extra
-  // gate the owner can turn on (default off). Apps with no login of their own take it from
-  // `protectWithAccountLogin` (the gate IS their login). This stops the OIDC-login choice and
-  // the proxy-gate choice from being conflated.
+  // The record's `forwardAuthEnabled` keeps its 0.6.18 meaning for older readers (YE-154): for apps with no login of
+  // their own it is the "Only <site> users" switch (not public access); apps that do their own YouEye ID login keep the
+  // old optional `forwardAuthGate` flag. The gate itself is decided by the admission policy (`publicAccess`).
   const hasOwnAccountLogin = ssoEnabled || nativeIdentityIntegrationPlanned;
   const forwardAuthChoice = hasOwnAccountLogin
     ? config.forwardAuthGate
-    : config.protectWithAccountLogin;
+    : !installWantsPublicAccess(manifest, config);
   const useForwardAuth = resolveForwardAuth(
     manifest,
     hasOwnAccountLogin,
@@ -1684,7 +1672,6 @@ async function installAppLocked(
               ownerId: retainedRuntime.ownerId, sourceName: containerName,
               retainedName: retainedRuntime.name, pool: retainedRuntime.pool });
             await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
-            await publishRecoveredProjection(recoveredArtifacts, containerSpec.name, containerName);
           } else if (recoveredRuntime) {
             const recoveryNetwork = appNIC?.eth0?.network;
             if (!recoveryNetwork) throw new Error('Recovered native runtime has no target app network');
@@ -1695,10 +1682,9 @@ async function installAppLocked(
               network: recoveryNetwork,
             });
             await adoptRestoredLXDContainer(lxdSpec, appNIC, owner);
-            await publishRecoveredProjection(recoveredArtifacts, containerSpec.name, containerName);
           } else {
             if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${containerSpec.name}`);
-            await deployMarketLXDContainer(lxdSpec, {}, stagedArtifact, appNIC, owner);
+            await deployMarketLXDContainer(lxdSpec, stagedArtifact, appNIC, owner);
           }
 
           // Write env file to LXD container
@@ -1784,7 +1770,8 @@ async function installAppLocked(
         }
 
         if (containerConfigFiles.length > 0 && !restoreOptions?.skipConfigFiles) {
-          await enforceAllConfigFilePermissions(manifest.configFiles, containerSpec.name, containerName, ctx);
+          await enforceAllConfigFilePermissions(manifest.configFiles, containerSpec.name, containerName, ctx,
+            containerSpec.type === 'oci' ? volumesForContainer(storageVolumes, containerName) : undefined);
         }
 
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
@@ -2033,9 +2020,7 @@ async function installAppLocked(
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
     manifestSource: config.sourceRepoUrl || 'market',
-    credentials: manifest.credentials?.length
-      ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
-      : undefined,
+    credentials: credentialRecords(manifest),
     selectedIntegrations,
     ssoEntryUrl: manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
@@ -2051,12 +2036,7 @@ async function installAppLocked(
     aiConnection,
     usePerAppBridge: !!appBridgeName,
   };
-  for (const artifact of meta.nativeArtifacts ?? []) {
-    if (!artifact.productRelease) continue;
-    const { acceptProductSequence, verifyInstalledProductReceipt } = await import('../releases/product-release');
-    const accepted = verifyInstalledProductReceipt(artifact.productRelease, {product:appId});
-    meta.productReleaseFloors = acceptProductSequence(meta.productReleaseFloors, accepted, accepted);
-  }
+  // Native apps are Market apps (YE-142): no product release sequence floor is written for them any more.
   await saveInstallMetadata(meta);
   finalMetadata = meta;
 
@@ -2169,19 +2149,37 @@ async function installAppLocked(
     await bindInstalledAdmission(finalMetadata, config.admissionActorId);
     // A backup restore (restoredIdentity) brings back the app's own access policy; retained-data adoption is a normal
     // install, so the administrator's choice or the manifest default applies.
-    if (!restoreOptions?.restoredIdentity && config.admissionActorId && installWantsPublicAccess(manifest, config)) {
+    // The "Only <site> users" switch (YE-154): off opens the app, on keeps (or, on a reinstall that kept an open
+    // policy, makes) it for users only. The manifest default never overrides an administrator's earlier change.
+    const wantsPublicAccess = installWantsPublicAccess(manifest, config);
+    const accessChoice = explicitInstallPublicAccess(config);
+    if (!restoreOptions?.restoredIdentity && config.admissionActorId && accessChoice === true && !wantsPublicAccess) {
+      emit(onEvent, step, totalSteps, 'warning',
+        `${manifest.metadata.name} has no sign-in of its own (or trusts the YouEye sign-in), so it stays for users only`);
+    }
+    if (!restoreOptions?.restoredIdentity && config.admissionActorId && (wantsPublicAccess || accessChoice === false)) {
       // After the route exists and the app is healthy. A failure leaves the app household-only (the safe side).
+      let publicNow = false;
       try {
         const { applyInstallPublicAccess } = await import('@/lib/admission/store');
-        const publicNow = await applyInstallPublicAccess({
-          appId, actorId: config.admissionActorId, explicit: config.publicAccess === true,
+        publicNow = await applyInstallPublicAccess({
+          appId, actorId: config.admissionActorId, explicit: accessChoice !== undefined, publicAccess: wantsPublicAccess,
         });
-        emit(onEvent, step, totalSteps, publicNow ? 'success' : 'warning', publicNow
+        if (wantsPublicAccess) emit(onEvent, step, totalSteps, publicNow ? 'success' : 'warning', publicNow
           ? 'Public access on: anyone who can reach the address can open the app; it protects itself'
           : 'Public access not changed: an administrator already set who may open this app');
       } catch (error) {
         console.warn(`[Market] Public access for ${appId} was not applied: ${error instanceof Error ? error.message : String(error)}`);
-        emit(onEvent, step, totalSteps, 'warning', 'Public access was not applied; the app is household-only. Change it in the app\'s access settings.');
+        emit(onEvent, step, totalSteps, 'warning', wantsPublicAccess
+          ? 'Public access was not applied; the app is household-only. Change it in the app\'s access settings.'
+          : 'Access was not changed; check who can open the app in its access settings.');
+      }
+      // The record follows what was applied (older readers; apps with their own login keep their own flag).
+      if (!hasOwnAccountLogin && manifest.forwardAuth !== 'disabled' && finalMetadata.forwardAuthEnabled !== !publicNow) {
+        finalMetadata.forwardAuthEnabled = !publicNow;
+        finalMetadata.protectWithAccountLogin = !publicNow;
+        await saveInstallMetadata(finalMetadata);
+        await updateForwardAuthEnabled(appId, !publicNow);
       }
     }
     await pushConnectionsToUI(appId);

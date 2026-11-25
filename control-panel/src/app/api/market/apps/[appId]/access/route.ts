@@ -7,6 +7,7 @@ import { verifyCSRFToken } from '@/lib/auth/session';
 import { getAdmissionPolicy, updateAdmissionPolicy } from '@/lib/admission/store';
 import { admissionAdministrator, admissionManagementData, quarantineAdmissionData } from '@/lib/admission/management';
 import { reconcileAdmissionProjections, admissionReconciliationState } from '@/lib/admission/projection';
+import { installedAccessFacts, installedGateOnlyReason, recordOnlyUsers } from '@/lib/market/access-switch';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ appId: string }> };
@@ -17,6 +18,7 @@ export async function GET(_request: NextRequest, context: Context) {
   const { appId } = await context.params;
   return NextResponse.json({ policy: await getAdmissionPolicy(appId),
     reconciliation: await admissionReconciliationState(appId),
+    ...await installedAccessFacts(appId),
     ...await admissionManagementData(appId) }, { headers: { 'Cache-Control': 'no-store' } });
 }
 export async function PUT(request: NextRequest, context: Context) {
@@ -34,11 +36,23 @@ export async function PUT(request: NextRequest, context: Context) {
       await withUserOperationLockWait(() => quarantineAdmissionData({ appId, actorId, principalId: body.principalId, expectedRevision: body.expectedRevision }));
     } else {
       if (body.policy?.appId !== appId) return NextResponse.json({ error: 'Application mismatch' }, { status: 400 });
+      // "Only <site> users" stays on for an app without a sign-in of its own (YE-154): opening it is refused.
+      const gateOnly = body.policy?.publicAccess === true && !(await getAdmissionPolicy(appId))?.publicAccess
+        ? await installedGateOnlyReason(appId) : null;
+      if (gateOnly) {
+        return NextResponse.json({ error: gateOnly === 'login-header'
+          ? 'This app trusts the YouEye sign-in, so it stays for users only.'
+          : 'This app has no sign-in of its own, so it stays for users only.', gateOnly }, { status: 409 });
+      }
       await withUserOperationLockWait(() => updateAdmissionPolicy({ actorId, policy: body.policy, expectedRevision: body.expectedRevision }));
+      // The install record's flag follows the switch for older readers; the policy above is what decides.
+      await recordOnlyUsers(appId, body.policy.publicAccess !== true)
+        .catch(error => logOperationFailure(`Access record of ${appId}`, error));
     }
     await reconcileAdmissionProjections().catch(error => logOperationFailure(`Access projection after a change to ${appId}`, error));
     const reconciliation = await admissionReconciliationState(appId);
     return NextResponse.json({ policy: await getAdmissionPolicy(appId), reconciliation,
+      ...await installedAccessFacts(appId),
       ...await admissionManagementData(appId) }, { status: reconciliation === 'pending' ? 202 : 200 });
   } catch (error) {
     if (!isLifecycleBusy(error)) logOperationFailure(`Access change for ${appId}`, error);

@@ -4,11 +4,12 @@ import {
   listInstalledApps,
   scanInstalledApps,
   readInstallMetadata,
+  readRetainedInstallMetadata,
   removeInstallMetadata,
   removeInstallMetadataRecord,
 } from './metadata';
 import { addRoute, getRoutes, removeRoute, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
-import { deleteOwnedInstance } from './instance-ownership';
+import { APP_TAG, deleteOwnedInstance, INSTALLATION_TAG } from './instance-ownership';
 import { removeCaddyTrustBundle } from './caddy-ca';
 import { deleteAllAppSecrets } from '@/lib/infrastructure/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
@@ -21,9 +22,9 @@ import { CONTAINER_DOMAIN } from './constants';
 import { readReconfigureJournal } from '@/lib/reconfigure/journal';
 import { settingsService } from '@/lib/settings';
 import { repairRouteForCurrentDomain } from '@/lib/reconfigure/route-repair';
-import { deleteAppStorage } from './storage';
+import { deleteAppStorage, findAppOwnedVolumes } from './storage';
 import { AppLifecycleAdmissionError, withAppInventory, withAppLifecycle } from './update-admission';
-import { pushConnectionsToUI, refreshConnectionGrants, UIProjectionDriftError } from '../bridges/manager';
+import { pushConnectionsToUI, refreshConnectionGrants, startRewirePass, UIProjectionDriftError } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import { appContainerAddress, hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
 import {
@@ -301,6 +302,10 @@ export async function reconcileApps(): Promise<ReconcileResult> {
 
   // A recreated or restored peer has a new address: point connection ACLs at the current ones.
   for (const bridgeId of await refreshConnectionGrants()) unresolved.push(`connection-grant:${bridgeId}`);
+  // Connections an uninstall that did not complete had unwired are wired again once both apps run, also when an app
+  // came up by Incus autostart or kept running (YE-218). One still waiting is retried at a later pass, not reported.
+  // Started, not awaited (YE-223): a slow wiring holds its two apps' locks, never this round or the next.
+  void startRewirePass();
 
   if (unresolved.length > 0) {
     await observeIssue({
@@ -383,7 +388,15 @@ export async function cleanupAppByScan(
    * and recorded installation id, and volumes by their ownership tags. */
   options: { keepData?: boolean; force?: boolean } = {},
 ): Promise<ReconcileResult> {
-  return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
+  if (options.force !== true) return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
+  // `--force --keep-data` records keep-data before it waits for the lock (a busy app must not leave an earlier
+  // delete-data mode for the reconcile pass); a delete-data --force records its mode only once admitted. While it runs
+  // or waits, the pass leaves the removal to it (withRemovalRequest). YE-222.
+  const { recordRemovalMode, withRemovalRequest } = await import('@/lib/incus/app-network');
+  return withRemovalRequest(appId, async () => {
+    if (options.keepData !== false) await recordRemovalMode(appId, true).catch(() => undefined);
+    return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
+  });
 }
 
 async function cleanupAppByScanUnderLifecycle(
@@ -393,11 +406,39 @@ async function cleanupAppByScanUnderLifecycle(
   if (!/^[a-z0-9-]+$/.test(appId)) {
     throw new Error(`Invalid app ID for cleanup: ${appId}`);
   }
+  // Every forced and every delete-data cleanup refuses on kept data first, with or without a record (YE-222).
+  if (options.force === true || options.keepData === false) {
+    const kept = await keptDataRefusal(appId);
+    if (kept) return { repaired: [], unresolved: [kept] };
+  }
+  // --force: its mode goes on a lease an earlier attempt left pending before anything else can fail, and whether
+  // --force applies at all is decided here, under the app's lifecycle lock (an install, update or adoption cannot land
+  // in between). YE-222.
+  if (options.force === true) {
+    // Both modes record here, once admitted: keep-data again (the record before the lock finds nothing when a first
+    // attempt was still running, and that attempt's failure wrote delete-data; Iris, batch 1), delete-data only now.
+    const { recordRemovalMode } = await import('@/lib/incus/app-network');
+    await recordRemovalMode(appId, options.keepData !== false);
+    const intact = await forceRefusedForIntactApp(appId);
+    if (intact) return { repaired: [], unresolved: [intact] };
+  }
   const repaired: string[] = [];
   const unresolved: string[] = [];
-  const recoveryMetadata = await readInstallMetadata(appId);
+  let recoveryMetadata = await readInstallMetadata(appId);
   if (!recoveryMetadata) {
-    return { repaired: [], unresolved: [`ownership:${appId}:install metadata is required before cleanup`] };
+    if (!options.force) {
+      return { repaired: [], unresolved: [`ownership:${appId}:install metadata is required before cleanup`] };
+    }
+    // --force finishes a removal whose record is already gone (YE-222): the map is rebuilt from what carries this
+    // app's tags in Incus (its instances and its own volumes, never shared ones), all of one installation. Never for
+    // data an owner chose to keep, nor for an app that is still listed as installed (it may run).
+    const refusal = await forceWithoutRecordRefusal(appId);
+    if (refusal) return { repaired: [], unresolved: [refusal] };
+    const rebuilt = await leftoverRecoveryMap(appId);
+    if ('refused' in rebuilt) return { repaired: [], unresolved: [rebuilt.refused] };
+    recoveryMetadata = rebuilt.metadata;
+    console.warn(`[cleanup] Forced removal of ${appId} without an install record: ${recoveryMetadata.containers.length} `
+      + `instance(s) and ${recoveryMetadata.storageVolumes?.length ?? 0} volume(s) carry its tags`);
   }
   const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
   if (options.force) {
@@ -425,11 +466,41 @@ async function cleanupAppByScanUnderLifecycle(
   const hostname = recoveryMetadata.subdomain && recoveryMetadata.domain
     ? `${recoveryMetadata.subdomain}.${recoveryMetadata.domain}` : null;
 
+  // Revoke every cross-app grant before attempting to remove the target's
+  // primary bridge. A failed revocation retains its bridge record for retry.
+  // This runs before the instances go, so the connect files' `remove:` steps
+  // (run by deleteBridge, non-fatal) can still reach a container that runs.
+  try {
+    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
+    const bridges = await getBridgesForApp(appId);
+    for (const bridge of bridges) {
+      await deleteBridge(bridge.id);
+    }
+    if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
+    repaired.push(`bridges:${appId}`);
+  } catch (error) {
+    unresolved.push(failed(`bridges:${appId}`, error));
+  }
+
+  let instancesGone = true;
+  // Keep-data removal of an installed app (not an interrupted install): an instance goes only when its kept copy is
+  // verified now (retained.json ready, the ye-retained copy present, tagged, stopped and isolated). Otherwise the root
+  // is kept and the cleanup says so (YE-222: a keep-data removal whose copy was never made lost its root here).
+  const keepDataRemoval = options.keepData !== false && !interruptedInstall;
   for (const name of matchingInstances) {
+    if (keepDataRemoval) {
+      const refusal = await retainedCopyRefusal(recoveryMetadata, name);
+      if (refusal) {
+        instancesGone = false;
+        unresolved.push(refusal);
+        continue;
+      }
+    }
     try {
       await deleteOwnedInstance(name, owner);
       repaired.push(`instance:${name}`);
     } catch (error) {
+      instancesGone = false;
       unresolved.push(failed(`instance:${name}`, error));
     }
   }
@@ -447,20 +518,6 @@ async function cleanupAppByScanUnderLifecycle(
     repaired.push(`routes:${appId}`);
   } catch (error) {
     unresolved.push(failed(`routes:${appId}`, error));
-  }
-
-  // Revoke every cross-app grant before attempting to remove the target's
-  // primary bridge. A failed revocation retains its bridge record for retry.
-  try {
-    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
-    const bridges = await getBridgesForApp(appId);
-    for (const bridge of bridges) {
-      await deleteBridge(bridge.id);
-    }
-    if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
-    repaired.push(`bridges:${appId}`);
-  } catch (error) {
-    unresolved.push(failed(`bridges:${appId}`, error));
   }
 
   // Remove the Control-owned holders on the primary bridge. The IPAM lease is
@@ -518,15 +575,16 @@ async function cleanupAppByScanUnderLifecycle(
 
   // The shared database and role this installation created go with delete-data (and with an
   // interrupted install); one the record does not mark as created here is never dropped.
+  // Like the volumes, only once every instance of the app is confirmed gone (YE-222 review).
   const shouldDropDatabase = recoveryMetadata.databaseMode === 'shared' && recoveryMetadata.sharedDatabaseCreated === true
     && (options.keepData === false || (interruptedInstall && !recoveryMetadata.recoveryPreserveData));
-  if (shouldDropDatabase && !recoveryMetadata) {
-    unresolved.push(`database-ownership:${appId}:install metadata is required for destructive database cleanup`);
+  if (shouldDropDatabase && !instancesGone) {
+    unresolved.push(`database:${appId}:its database is kept until its instances are gone`);
   } else if (shouldDropDatabase) {
     try {
       await dropAppDatabase(
-        recoveryMetadata!.databaseName || appId,
-        recoveryMetadata!.databaseUser || appId,
+        recoveryMetadata.databaseName || appId,
+        recoveryMetadata.databaseUser || appId,
       );
       repaired.push(`database:${appId}`);
     } catch (error) {
@@ -539,16 +597,31 @@ async function cleanupAppByScanUnderLifecycle(
       // Never a shared folder: a failed install never bound its ownership (that happens at finalize), and other apps
       // may use it. The normal uninstaller decides shared folders; cleanup by scan leaves them.
       const own = (recoveryMetadata?.storageVolumes ?? []).filter(volume => !volume.sharedGroup);
+      // Data goes strictly after every instance of the app is confirmed gone (YE-222); deleteAppStorage also refuses
+      // a volume any instance still uses.
+      // Also with no volumes of its own (a shared database only): the secrets wait for the instances too.
+      if (!instancesGone) throw new Error('its data is kept until its instances are gone');
       if (own.length) await deleteAppStorage(own);
       repaired.push(`storage:${appId}`);
+      // The secrets go with the data, never before it (YE-222).
+      try {
+        await deleteAllAppSecrets(appId);
+        repaired.push(`secrets:${appId}`);
+      } catch (error) {
+        unresolved.push(failed(`secrets:${appId}`, error));
+      }
     } catch (error) {
       unresolved.push(failed(`storage:${appId}`, error));
     }
+  }
+  // A delete-data removal also clears the stale copies of an earlier adoption before the app directory (with their
+  // record) goes (YE-222, Iris's batch-1 review).
+  if (options.keepData === false) {
     try {
-      await deleteAllAppSecrets(appId);
-      repaired.push(`secrets:${appId}`);
+      const { cleanupAdoptedRetainedCopies } = await import('@/lib/admission/retained-data');
+      if (await cleanupAdoptedRetainedCopies(appId)) repaired.push(`retained-copies:${appId}`);
     } catch (error) {
-      unresolved.push(failed(`secrets:${appId}`, error));
+      unresolved.push(failed(`retained-copies:${appId}`, error));
     }
   }
 
@@ -567,7 +640,8 @@ async function cleanupAppByScanUnderLifecycle(
   }
 
   try {
-    await deregisterAppFromUI(appId);
+    // Keep-data keeps the app's dashboard data too, as the uninstaller does (X-YouEye-Keep-Data).
+    await deregisterAppFromUI(appId, options.keepData !== false);
     repaired.push(`ui-drawer:${appId}`);
   } catch (error) {
     unresolved.push(failed(`ui-drawer:${appId}`, error));
@@ -593,17 +667,20 @@ async function cleanupAppByScanUnderLifecycle(
     unresolved.push(failed(`verify-ui-drawer:${appId}`, error));
   }
 
-  const { deleteAppNetwork, getAppNetworkLease, markAppNetworkCleanupPending } = await import('@/lib/incus/app-network');
+  const { deleteAppNetwork, getAppNetworkLease, markAppNetworkCleanupPending, removalStage } = await import('@/lib/incus/app-network');
   if (unresolved.length === 0) {
     try {
       await deleteAppNetwork(appId);
       repaired.push(`network:${appId}`);
     } catch (error) {
       unresolved.push(failed(`network:${appId}`, error));
+      // A failed network delete leaves the lease pending under its own stage: put the requested mode back (YE-222).
+      await markAppNetworkCleanupPending(appId, removalStage('scan-cleanup', options.keepData !== false), String(error))
+        .catch(() => undefined);
     }
   } else {
     try {
-      await markAppNetworkCleanupPending(appId, 'scan-cleanup', unresolved.join('; '));
+      await markAppNetworkCleanupPending(appId, removalStage('scan-cleanup', options.keepData !== false), unresolved.join('; '));
     } catch (error) {
       unresolved.push(failed(`network-state:${appId}`, error));
     }
@@ -747,6 +824,121 @@ async function forwardAuthConfig(): Promise<{ upstreamDial: string; uri: string;
   };
 }
 
+/** The tag a retained (keep-data) root copy carries (admission/retained-runtime.ts). */
+const RETAINED_SOURCE_TAG = 'user.youeye.retained_source';
+
+/**
+ * Kept data (YE-222): the one check every forced and every delete-data removal refuses on, whatever its install record
+ * says. An app whose data is kept (a keep-data removal started or finished: `retained.json`, or an admission policy
+ * `retained`) or quarantined is never deleted this way; if either cannot be read, it refuses too. A keep-data removal
+ * that stopped partway is finished with `--keep-data`; the data comes back by installing the app again (the owner's
+ * adoption). Returns the refusal (`ownership:<id>:…`), or null.
+ */
+export async function keptDataRefusal(appId: string): Promise<string | null> {
+  const kept = `ownership:${appId}:its data is kept (a removal with keep-data started or finished), and kept data is `
+    + `never deleted this way. Finish that removal with youeye app remove ${appId} --keep-data, or install ${appId} `
+    + 'again to take the data back';
+  try {
+    // An `adopted` record is a leftover of an adoption whose copy cleanup failed: its data now lives in the installed
+    // app, so it is not kept data (the stale copies are left alone).
+    const retained = await readRetainedInstallMetadata(appId);
+    if (retained && retained.retainedRoots?.state !== 'adopted') return kept;
+  } catch {
+    return `ownership:${appId}:its kept-data record could not be read; nothing was removed`;
+  }
+  try {
+    const { getAdmissionPolicy } = await import('@/lib/admission/store');
+    const policy = await getAdmissionPolicy(appId);
+    if (policy?.state === 'retained') return kept;
+    if (policy?.state === 'quarantined') return `ownership:${appId}:its data is quarantined; it is never deleted this way`;
+  } catch {
+    return `ownership:${appId}:its data ownership could not be read; nothing was removed`;
+  }
+  return null;
+}
+
+/**
+ * Keep-data removal: why instance `name` must not be deleted now (null when its kept copy is verified: retained.json
+ * ready, the ye-retained copy present, tagged, stopped and isolated). Anything that cannot be verified keeps it (YE-222).
+ */
+export async function retainedCopyRefusal(metadata: InstallMetadata, name: string): Promise<string | null> {
+  try {
+    const { verifyPreviouslyRetainedRoot } = await import('@/lib/admission/retained-data');
+    await verifyPreviouslyRetainedRoot(metadata, name);
+    return null;
+  } catch (error) {
+    return `instance:${name}:kept: its retained copy is not verified (${describeErrorChainForLog(error)})`;
+  }
+}
+
+/**
+ * `--force` is for a broken or unfinished install only: still installing, a removal left pending, a recorded container
+ * gone, or no install record (that case has its own refusals). Decided under the lifecycle lock (YE-222; it used to
+ * run in the route, before the lock). Returns the refusal for an intact app, or null.
+ */
+async function forceRefusedForIntactApp(appId: string): Promise<string | null> {
+  const meta = await readInstallMetadata(appId).catch(() => null);
+  if (!meta || meta.lifecycleState === 'installing' || meta.cleanupPending) return null;
+  const listed = await incusRequest<string[]>('GET', '/1.0/instances');
+  if (listed.type === 'error' || !Array.isArray(listed.metadata)) {
+    return `ownership:${appId}:its instances could not be listed; nothing was removed`;
+  }
+  const present = new Set(listed.metadata.map((url) => url.split('/').pop()));
+  if (meta.containers.some((container) => !present.has(container.containerName))) return null;
+  return `ownership:${appId}:it is installed and intact; remove it without --force (youeye app remove ${appId})`;
+}
+
+/**
+ * Why `--force` must not rebuild a map for `appId` (null when it may): kept data (`keptDataRefusal`), or an app that
+ * is still listed as installed (it may be running).
+ */
+export async function forceWithoutRecordRefusal(appId: string): Promise<string | null> {
+  const kept = await keptDataRefusal(appId);
+  if (kept) return kept;
+  if (await getInstalledApp(appId)) {
+    return `ownership:${appId}:it is still listed as installed but has no install record; --force does not remove an `
+      + 'app that may be running. Run youeye doctor';
+  }
+  return null;
+}
+
+/**
+ * The recovery map of an app whose install record is gone, from Incus: the instances tagged with its app id and its
+ * own volumes (`findAppOwnedVolumes`). Refused when they carry more than one installation id. The cleanup then
+ * deletes instances only when tagged with that installation and volumes only after every instance is gone and none
+ * is attached (`deleteAppStorage`).
+ */
+export async function leftoverRecoveryMap(appId: string): Promise<{ metadata: InstallMetadata } | { refused: string }> {
+  const listed = await incusRequest<Array<{ name?: string; config?: Record<string, string> }>>('GET', '/1.0/instances?recursion=1');
+  if (listed.type === 'error' || !Array.isArray(listed.metadata)) {
+    return { refused: `ownership:${appId}:instances could not be listed to find its leftovers` };
+  }
+  // A retained (keep-data) root copy is never part of it: it carries the app's tags plus `retained_source`.
+  const instances = listed.metadata.filter((instance) => instance.name && instance.config?.[APP_TAG] === appId
+    && !instance.config?.[RETAINED_SOURCE_TAG]);
+  let volumes: Awaited<ReturnType<typeof findAppOwnedVolumes>>;
+  try {
+    volumes = await findAppOwnedVolumes(appId);
+  } catch (error) {
+    return { refused: `ownership:${appId}:${describeErrorChainForLog(error)}` };
+  }
+  const installations = new Set([
+    ...instances.map((instance) => instance.config?.[INSTALLATION_TAG]),
+    ...volumes.map((volume) => volume.installationId),
+  ].filter((id): id is string => Boolean(id)));
+  if (installations.size > 1) {
+    return { refused: `ownership:${appId}:its leftovers belong to different installations; nothing was removed` };
+  }
+  const metadata = {
+    schema: 'youeye.install.v1',
+    appId,
+    installationId: [...installations][0],
+    containers: instances.map((instance) => ({ name: instance.name!, containerName: instance.name!, type: 'oci' })),
+    storageVolumes: volumes,
+  } as unknown as InstallMetadata;
+  return { metadata };
+}
+
 async function listInstances(): Promise<string[]> {
   const resp = await incusRequest<Array<{ name?: unknown }>>('GET', '/1.0/instances?recursion=1');
   return (resp.metadata ?? []).map((instance) => String(instance.name ?? '')).filter(Boolean);
@@ -840,7 +1032,7 @@ async function registerAppWithUI(meta: InstallMetadata): Promise<void> {
   }
 }
 
-async function deregisterAppFromUI(appId: string): Promise<void> {
+async function deregisterAppFromUI(appId: string, keepData = false): Promise<void> {
   const uiIP = await getContainerIP(UI_CONTAINER);
   if (!uiIP) {
     throw new Error('YE-UI container IP is unavailable');
@@ -849,7 +1041,8 @@ async function deregisterAppFromUI(appId: string): Promise<void> {
   const bridgeToken = await readBridgeToken();
   const response = await fetch(`http://${uiIP}:3000/api/v1/apps/${appId}/unregister`, {
     method: 'DELETE',
-    headers: { 'X-UI-Bridge-Token': bridgeToken },
+    // Keep-data keeps the app's dashboard data, as the uninstaller's deregistration does (YE-222).
+    headers: { 'X-UI-Bridge-Token': bridgeToken, 'X-YouEye-Keep-Data': keepData ? 'true' : 'false' },
   });
 
   if (!response.ok && response.status !== 404) {

@@ -43,13 +43,18 @@ function initialsOf(user: IdentityUser) {
 
 
 
+/** Seconds from now to `date`, negative in the past. The clock is read outside the component body (YE-205). */
+function secondsFromNow(date: Date): number {
+  return (date.getTime() - Date.now()) / 1000;
+}
+
 export function UsersClient() {
   const translateInterface = useInterfaceTranslations("interface");
   const settingsServer = useInterfaceTranslations("settingsServer");
   const locale = useLocale();
 function lastSeen(iso: string | null): string {
   if (!iso) return translateInterface("mfde96b0ea420");
-  const date = new Date(iso), seconds = (date.getTime() - Date.now()) / 1000;
+  const date = new Date(iso), seconds = secondsFromNow(date);
   if (!Number.isFinite(seconds)) return translateInterface("mfde96b0ea420");
   const unit = Math.abs(seconds) < 60 ? "second" : Math.abs(seconds) < 3600 ? "minute" : Math.abs(seconds) < 86400 ? "hour" : "day";
   const time = Math.abs(seconds) < 604800

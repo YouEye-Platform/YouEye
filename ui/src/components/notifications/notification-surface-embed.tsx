@@ -14,12 +14,15 @@ import { useTranslations as useInterfaceTranslations } from "next-intl";
 
 import { type ReactNode } from "react";
 import { UnifiedEmbed } from "@/components/embeds/unified-embed";
+import { surfaceEmbedUrl } from "@/lib/surfaces/embed-url";
 
 interface NotificationSurface {
   surface_id: string;
   embed_path: string;
   name: string | null;
   description: string | null;
+  /** The app's public address, built by the server (`GET /api/v1/notifications`, YE-151). */
+  app_url?: string | null;
 }
 
 interface NotificationSurfaceEmbedProps {
@@ -43,20 +46,18 @@ export function NotificationSurfaceEmbed({
 }: NotificationSurfaceEmbedProps) {
   const translateInterface = useInterfaceTranslations("interface");
 
-  // No app / no surface / no DOM (SSR) → the standard row carries the notification.
-  if (!appId || !surface?.embed_path || typeof window === "undefined") {
+  // The app's page on the address the server gave (never one guessed from the page's host, YE-151).
+  const url = surface
+    ? surfaceEmbedUrl(surface.app_url, surface.embed_path, { notification_id: notificationId, surface_id: surface.surface_id })
+    : null;
+  // No app / no surface or address / no DOM (SSR) → the standard row carries the notification.
+  if (!appId || !surface || !url || typeof window === "undefined") {
     return <>{fallback}</>;
   }
 
-  const appSlug = appId.replace(/^ye-/, "");
-  const host = window.location.hostname.replace(/^[^.]+\./, "");
-  const url = new URL(`https://${appSlug}.${host}${surface.embed_path}`);
-  url.searchParams.set("notification_id", notificationId);
-  url.searchParams.set("surface_id", surface.surface_id);
-
   return (
     <UnifiedEmbed
-      url={url.toString()}
+      url={url}
       kind="notification"
       size={{ default: MIN_HEIGHT, min: MIN_HEIGHT, max: MAX_HEIGHT }}
       timeout={3000}

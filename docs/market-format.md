@@ -75,9 +75,12 @@ At most 4 MiB, schema `youeye.market-index.v1`. It holds everything a box needs 
 |---|---|
 | `categories` | `[{id, label, icon?, order?, tile?: {bg, fg}}]`, from `catalog.yaml` |
 | `curation` | `{spotlight?: {title?, apps}, collections?: [{id, label, apps}]}`, from `catalog.yaml` |
-| `native` | ids of native apps (YouEye's own apps). A box reads this list from the official Market only and ignores it in any other market; their manifests and files come from the box's channel index ([native-apps.md](native-apps.md)) |
 | `bundles` | `[{id, definition}]`: the text of each `bundles/<id>/bundle.yaml` (at most 64 KiB each); the box parses it with the bundle parser |
-| `apps` | one entry per container app (below) |
+| `apps` | one entry per app, container or native (below) |
+
+Indexes before 0.6.20 also carried `native`, the ids of native apps whose manifests came from the box's channel
+index. A native app is an `apps` entry of kind `native` now; a reader ignores the `native` key, and the generator no
+longer writes it.
 
 An app entry (`MarketIndexEntrySchema`). Only `id`, `kind` and `name` are required, so an entry of a kind an older
 box does not know still parses:
@@ -95,7 +98,7 @@ box does not know still parses:
 | Field | Rule |
 |---|---|
 | `id` | `[a-z][a-z0-9-]{0,31}`; an id listed twice keeps its first entry |
-| `kind` | `container` is the only kind this YouEye installs |
+| `kind` | `container` (OCI images pinned by digest) or `native` (a Node.js app whose `standalone.tar` the manifest pins by `source.package`; 0.6.20 on). Any other kind, and `native` on a box before 0.6.20, is "Needs a newer YouEye". The kind must be what the manifest is |
 | `name` | 1–120 characters |
 | `version`, `tagline`, `description`, `category`, `tags`, `developer` | listing text (at most 80, 300, 2,000, 40 characters; 40 tags of 40; 200) |
 | `icon` | a picture path `h/files/<sha256>.<ext>` |
@@ -131,7 +134,8 @@ The box parses the manifest and setup files strictly with the one app-format par
 | index | 4 MiB |
 | one app bundle | 1 MiB |
 | one picture | 5 MiB |
-| one box, per market | 2,000 apps; 200 native ids; 500 bundles; 64 MiB of app bundles together; 512 MiB of pictures kept |
+| one box, per market | 2,000 apps; 500 bundles; 64 MiB of app bundles together; 512 MiB of pictures kept |
+| a native app's package (`source.package.size`) | 1 GiB packed, 2 GiB unpacked, 100,000 entries |
 | fetch time (headers to last byte) | `market.json` 20 s, index 60 s, bundle 30 s, picture 90 s; 10 s without data ends any of them |
 | one refresh (`market.json`, the index and every missing bundle together) | 3 minutes; what it fetched until then is dropped |
 
@@ -178,7 +182,7 @@ The generator turns a catalog repository (a git checkout or a plain export) into
 ```sh
 cd control-panel        # tsx and the @/ paths resolve here; node_modules must be installed
 node --import tsx scripts/market-build.ts <market-repo> --out <dir> [--commit <sha>] [--sequence <unix seconds>] \
-  [--official | --address <https address of this market>] [--native-listing <file.json>] [--require-provenance]
+  [--official | --address <https address of this market>] [--require-provenance]
 ```
 
 - `<dir>` must be missing or empty. In a git checkout `--commit` and `--sequence` default to `HEAD` and its commit
@@ -189,12 +193,12 @@ node --import tsx scripts/market-build.ts <market-repo> --out <dir> [--commit <s
 - `--require-provenance` refuses a repository without `asset-provenance.json` (see Provenance below). The
   official Market is always built with it.
 - Exit 0 when the market was built and read back, 1 when the repository has problems (every one is printed and
-  nothing is written), 2 for wrong arguments. The summary names the apps, bundles, native ids, pictures, notices,
+  nothing is written), 2 for wrong arguments. The summary names the apps, bundles, native apps, pictures, notices,
   pages and the bytes of each part.
 - The catalog repository can build itself: `YOUEYE_ROOT=<YouEye checkout> npm run build` (writes `out/`).
 
 **What it reads.** `store.yaml` (`name` and `publisher`, 1–120 characters; optional `homepage`, an `https` URL),
-`catalog.yaml` (`youeye.catalog.v1`: `categories`, `curation`, `native`), `apps/<id>/youeye-app.yaml` with
+`catalog.yaml` (`youeye.catalog.v1`: `categories`, `curation`; a `native:` list is refused since 0.6.20), `apps/<id>/youeye-app.yaml` with
 `setup/*.yaml` and the pictures the listing names, `bundles/<id>/bundle.yaml`, an optional `asset-provenance.json`,
 and licence or notice files (names starting with `LICENSE`, `LICENCE`, `COPYING`, `NOTICE`, `NOTICES` or
 `ASSET-NOTICES`, see Notices below) at the root and in app folders. Dot files, `.git` and `node_modules` are
@@ -204,8 +208,11 @@ skipped; other folders (`drafts/`, `tests/`) are not published. A symbolic link 
 **What it checks.**
 
 - Every app with the Control Panel's strict parser, and compiled; every file under `setup/` must be one the app
-  names. The `id` equals the folder name, and the app is a container app (`image:`); native apps are only ids in
-  `catalog.yaml` `native:` (never also an app folder, never twice).
+  names. The `id` equals the folder name. An app is a container app (`image:`, kind `container`) or a native app
+  (`source:` with `source.package`: an exact `https` URL without credentials, query or fragment, a 64-hex SHA-256 and
+  a size of at most 1 GiB; kind `native`). A native app needs `requires.youeye` of at least 0.6.20 (a since-row of
+  `source.package`). The generator does not fetch the package; the publish tool checks every package URL with a HEAD
+  request (200 and exactly that size).
 - `listing.category` is one of `catalog.yaml`'s categories; every picture the listing names exists, is one of the
   six types, is not empty and is at most 5 MiB.
 - Bundles: `id` equals the folder, every member is in the market, every connection joins two members. Curation
@@ -254,9 +261,7 @@ YouEye" button on an app page:
 | `--address <address>` | `https://my.youeye.me/add?market=<address>` (any other market; at most 1,500 characters) |
 | neither | no button |
 
-`--native-listing <file.json>` gives the listing text of native apps (`{"<id>": {"name", "tagline", "description",
-"version"}}`), which the repository does not hold; without it they are listed by a name made from the id, without a
-button.
+Native apps are listed like any other app, in their category, with their own text, version, requirement and button.
 
 ## Hosting a market
 
@@ -319,8 +324,8 @@ percent-encoded when forwarded. The home page builds links for market authors an
    another one is answered 429.
 3. The preview reads the market (`market.json` and its index, both checked, 20 s at most) or the app (its manifest
    and setup files) with the same fetchers as everything else, **writes nothing**, and answers the market's own
-   name, publisher, `https` homepage, number of container apps (`apps`) and how many run setup steps, plus
-   `native` (YouEye's own apps it names) for the box's own official Market only; or the app's id, name, version,
+   name, publisher, `https` homepage, number of apps (`apps`), how many run setup steps and how many are native
+   apps (`native`); or the app's id, name, version,
    host, images and setup files; plus `already_added` when the box has it. An official lane (below) is not a
    custom market: the lane the box follows is previewed as its `official` source, the other lane is refused with
    "This is the official YouEye Market; your YouEye already follows it". A bad link is 400; a market or app that
@@ -335,17 +340,20 @@ percent-encoded when forwarded. The home page builds links for market authors an
 The official Market is built from the catalog repository, **YE-AppMarket** (public copy:
 `github.com/YouEye-Platform/Market`), and published at `https://market.youeye.me` with `--official`.
 
-| Branch | Lane (address) | Read by boxes on channel |
+| Branch | Lane (address) | Read by |
 |---|---|---|
-| `main` | `https://market.youeye.me/` | beta, stable |
-| `dev` | `https://market.youeye.me/dev/` | dev, alpha |
+| `main` | `https://market.youeye.me/` | every box (the default, whatever its release channel) |
+| `dev` | `https://market.youeye.me/dev/` | boxes whose owner chose it (`youeye market official-lane dev`): test boxes |
 | a test branch | `https://market.youeye.me/test/<name>/` | none: added as a custom market on a test box |
+
+Before 0.6.20 the lane followed the release channel (dev and alpha read `/dev/`). Since then it is the box's own
+setting, `lane` on the official entry of `market-sources.json` ([market.md](market.md#where-the-apps-come-from)).
 
 - The two lanes `/` and `/dev/` are never custom markets: adding either, or re-pointing a custom market at either
   (also with a trailing dot after the host name), is refused with "This is the official YouEye Market; your YouEye
   already follows it" before anything is fetched. Test lanes under `/test/` are ordinary markets.
-- Only the official Market's `native` list counts: native apps are YouEye's own and install from the box's channel
-  index, so a custom market's `native` list is ignored (a test lane's too).
+- Any market may offer native apps (YE-142): a test lane's native folders are installed from it like its other
+  apps.
 
 - **A push is what goes live.** Publishing builds every lane from its branch head with the generator, assembles one
   site, keeps the hashed files of the state that was live in each lane, deploys the whole site, then reads every lane

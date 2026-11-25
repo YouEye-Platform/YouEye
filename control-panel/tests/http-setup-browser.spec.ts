@@ -35,19 +35,25 @@ function browser() {
     emit(data:unknown,source:unknown=frame,origin='https://names.test') {for(const fn of [...listeners])fn({data,source,origin} as MessageEvent);},
     tick() {const pending=[...timers.values()];timers.clear();for(const fn of pending)fn();},
     component(filename:string, additions:Record<string,unknown>={}) {
-      const slots:any[]=[];let cursor=0;const effects:Array<()=>void>=[];
+      const slots:any[]=[];let cursor=0;const effects:Array<()=>void>=[];const layoutEffects:Array<()=>void>=[];
       const useState=(initial:any)=>{const slot=cursor++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return [slots[slot],(next:any)=>{slots[slot]=typeof next==='function'?next(slots[slot]):next;}];};
       const useRef=(initial:any)=>{const slot=cursor++;return slots[slot]??=( {current:initial} );};
-      const useEffect=(effect:()=>void|(()=>void),dependencies?:any[])=>{
+      const effectHook=(queue:Array<()=>void>)=>(effect:()=>void|(()=>void),dependencies?:any[])=>{
         const slot=cursor++, previous=slots[slot];
         if(!previous || !dependencies || dependencies.some((value,index)=>!Object.is(value,previous.dependencies[index]))) {
           slots[slot]={dependencies,cleanup:previous?.cleanup};
-          effects.push(()=>{slots[slot].cleanup?.();slots[slot].cleanup=effect();});
+          queue.push(()=>{slots[slot].cleanup?.();slots[slot].cleanup=effect();});
         }
       };
+      // Layout effects run before passive effects, as in React (useLatestRef updates its ref in one).
+      const useEffect=effectHook(effects), useLayoutEffect=effectHook(layoutEffects);
+      const react={useState,useRef,useEffect,useLayoutEffect,useCallback:(fn:any)=>fn};
+      const latestRef:Record<string,any>={};
+      vm.runInNewContext(ts.transpileModule(readFileSync(path.join(import.meta.dirname,'../src/lib/use-latest-ref.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+        {exports:latestRef,require:(id:string)=>{if(id==='react')return react;throw Error('Unexpected dependency '+id);}});
       const jsx=(type:string,props:Record<string,any>)=>{if(type==='iframe'&&props.ref)props.ref.current={contentWindow:frame,focus(){}};return {type,props};};
       const dependencies:Record<string,unknown>={
-        react:{useState,useRef,useEffect,useCallback:(fn:any)=>fn},'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'fragment'},
+        react,'@/lib/use-latest-ref':latestRef,'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'fragment'},
         'next-intl':{useLocale:()=> 'en',useTranslations:()=> (key:string)=>key},
         'lucide-react':new Proxy({},{get:(_,key)=>String(key)}),
         '@/components/ui/button':{Button:'button'},'@/components/ui/input':{Input:'input'},'@/components/ui/label':{Label:'label'},
@@ -58,7 +64,7 @@ function browser() {
       vm.runInNewContext(output,{exports,require:(id:string)=>{if(id in dependencies)return dependencies[id];throw Error('Unexpected client dependency '+id);},
         window,document:{body:{},activeElement:{}},sessionStorage,crypto,fetch:(...args:Parameters<typeof fetch>)=>globalThis.fetch(...args),
         AbortController,AbortSignal,TextDecoder,URL,Date,JSON,setTimeout:window.setTimeout,clearTimeout:window.clearTimeout,clearInterval(){}});
-      return {render(props:Record<string,any>={}) {cursor=0;const element=(exports.default??exports.OnboardingClient)(props) as Element;for(const effect of effects.splice(0))effect();return element;},
+      return {render(props:Record<string,any>={}) {cursor=0;const element=(exports.default??exports.OnboardingClient)(props) as Element;for(const effect of [...layoutEffects.splice(0),...effects.splice(0)])effect();return element;},
         dispose(){for(const slot of slots)slot?.cleanup?.();}};
     },
     restore() {for(const [key,descriptor] of previous) {if(descriptor)Object.defineProperty(globalThis,key,descriptor);else Reflect.deleteProperty(globalThis,key);}}

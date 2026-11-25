@@ -1,0 +1,89 @@
+{
+  "schema": "youeye.install.v1",
+  "appId": "wiki",
+  "installationId": "inst-wiki-6f1d2c3b4a59",
+  "sharedFolders": [],
+  "lifecycleState": "active",
+  "recoveryPreserveData": false,
+  "storageVolumes": [],
+  "catalogKey": "official:app:wiki",
+  "itemKind": "app",
+  "sourceId": "official",
+  "sourceName": "Official YouEye Market",
+  "manifestPath": "youeye-app.yaml",
+  "manifestRepo": "https://forgejo.example/youeye/YE-App-Wiki",
+  "manifestBranch": "v0.6.4-alpha.1",
+  "manifestDigest": "sha256:194ba01c430eabe964d2283c3f61eee1d8adc4797110da87a6b62231e7106a05",
+  "nativeArtifacts": [
+    {
+      "productRelease": {
+        "manifestBase64": "ewogICJzY2hlbWEiOiAieW91ZXllLnByb2R1Y3QtcmVsZWFzZS52MSIsCiAgInByb2R1Y3QiOiAid2lraSIsCiAgInZlcnNpb24iOiAiMC42LjQtYWxwaGEuMSIsCiAgInRhZyI6ICJ2MC42LjQtYWxwaGEuMSIsCiAgInNvdXJjZV90cmVlIjogIjEyNGIzNzg3N2ZhZjE5MzNiZWM1NDE2MzJiODM0NDhkYzBlYWJlNmUiLAogICJzZXF1ZW5jZSI6IDE3OTUwODM1NDgsCiAgIm1pbmltdW1fcmVhZGVyIjogMiwKICAiYXV0aG9yaXR5IjogImRpZ2VzdCIsCiAgImJ1aWxkX21hbmlmZXN0X2Jhc2U2NCI6ICJleUp6WTJobGJXRWlPaUo1YjNWbGVXVXVjSEp2WkhWamRDMWlkV2xzWkM1Mk1TSXNJbkJ5YjJSMVkzUWlPaUozYVd0cElpd2lhMmx1WkNJNkltNWhkR2wyWlNJc0luTnZkWEpqWlY5MGNtVmxJam9pTVRJMFlqTTNPRGMzWm1GbU1Ua3pNMkpsWXpVME1UWXpNbUk0TXpRME9HUmpNR1ZoWW1VMlpTSXNJbWx1Y0hWMFgzTm9ZVEkxTmlJNklqbGhOamsyWWpjeU1UTmpPV1E1Tm1GaE5UTmtNVGMwT1dVeU1ESmtZVEU1WTJJM056ZzFOREV3TlRKak4yUXlOVFl6T0dNNE9EVTBNbUk1WldZM01XWWlMQ0pqYjI1MGNtRmpkRjl6YUdFeU5UWWlPaUl6WVRJMll6VXlOR1ZsT1dabFlUVTNaamhrWVdWbE1XRTRZVFpsWmpNM1pEVmxNV1UxTTJOaE1UZ3dZakk0TVRSbVlqSXhOMkppT0RNMk5HTXpZMlE0SWl3aWNISnBiV0Z5ZVNJNkluTjBZVzVrWVd4dmJtVXVkR0Z5SWl3aVlYTnpaWFJ6SWpwYmV5SnVZVzFsSWpvaWMzUmhibVJoYkc5dVpTNTBZWElpTENKemFHRXlOVFlpT2lJMVpERmtabU0zTkRJelpqQTVOalZpWmpWa01tSXdabVV5TkRRNE5HTTJaR0V5TVdFNVlqZzBNRE0zWVRaaE1tVTJPR0ZoTWpReFpqQmtOemxoWVdNeElpd2ljMmw2WlY5aWVYUmxjeUk2TVRrNU5ETTBNalF3ZlN4N0ltNWhiV1VpT2lKNWIzVmxlV1V0WVhCd0xubGhiV3dpTENKemFHRXlOVFlpT2lJellUSTJZelV5TkdWbE9XWmxZVFUzWmpoa1lXVmxNV0U0WVRabFpqTTNaRFZsTVdVMU0yTmhNVGd3WWpJNE1UUm1Zakl4TjJKaU9ETTJOR016WTJRNElpd2ljMmw2WlY5aWVYUmxjeUk2TXpNek1IMWRmUT09Igp9Cg==",
+        "manifestSHA256": "5e806bac6d7e6fe34bb1c00a17666cafbe5709eb203c5ff4b4848d7b39d8f9e9",
+        "repository": "https://forgejo.example/youeye/YE-App-Wiki"
+      },
+      "runtimeUUID": "0d9e8c7b-6a5f-4e3d-2c1b-0a9f8e7d6c5b",
+      "containerName": "main",
+      "sourceRepo": "https://forgejo.example/youeye/YE-App-Wiki",
+      "releaseTag": "v0.6.4-alpha.1",
+      "version": "0.6.4-alpha.1",
+      "artifactName": "standalone.tar",
+      "sha256": "5d1dfc7423f0965bf5d2b0fe24484c6da21a9b84037a6a2e68aa241f0d79aac1",
+      "bytes": 199434240,
+      "verification": "product-release",
+      "productReleaseSHA256": "5e806bac6d7e6fe34bb1c00a17666cafbe5709eb203c5ff4b4848d7b39d8f9e9"
+    }
+  ],
+  "productReleaseFloors": {
+    "wiki": {
+      "line": "0.6.4",
+      "sequence": 1795083548,
+      "build": "0.6.4-alpha.1",
+      "buildSHA256": "1da3b440e2434352d3a76905eef06184cacd5895d9e070b9e87397df7a20b041",
+      "manifestSHA256": "5e806bac6d7e6fe34bb1c00a17666cafbe5709eb203c5ff4b4848d7b39d8f9e9"
+    }
+  },
+  "integration": "native",
+  "subdomain": "wiki",
+  "domain": "azure-delta.ui.bingo",
+  "enableSSO": true,
+  "forwardAuthEnabled": false,
+  "protectWithAccountLogin": true,
+  "installedAt": "2026-11-23T08:41:57.930Z",
+  "installedVersion": "0.6.4-alpha.1",
+  "catalogVersion": "0.6.4-alpha.1",
+  "enabled": true,
+  "desiredState": "running",
+  "autoRestart": true,
+  "containers": [
+    {
+      "name": "main",
+      "containerName": "app-wiki",
+      "type": "lxd",
+      "primary": true,
+      "network": "isolated",
+      "port": 3000,
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "timeout": 120000,
+        "retries": 3,
+        "startPeriod": 0,
+        "autoRestart": true
+      }
+    }
+  ],
+  "ssoSlug": "wiki",
+  "ssoClientId": "youeye-wiki",
+  "manifestSource": "market",
+  "selectedIntegrations": [],
+  "databaseMode": "shared",
+  "databaseName": "ye_wiki",
+  "databaseUser": "ye_wiki",
+  "databasePasswordFile": "secrets/db_password",
+  "sharedDatabaseCreated": true,
+  "hasSSO": true,
+  "usePerAppBridge": true,
+  "serviceCredentialState": "ready",
+  "serviceCredentialDesiredState": "running",
+  "updatedAt": "2026-11-23T08:41:57.930Z"
+}

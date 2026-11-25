@@ -10,7 +10,7 @@
 import { resolveVariables } from './variables';
 import type { AppManifest, ConfigFileSpec, StorageVolumeMeta, VariableContext } from './types';
 import {
-  execCommand,
+  execInImagePath,
   incusCreateVolumeDirectory,
   incusDownloadFile,
   incusDownloadVolumeFile,
@@ -82,21 +82,25 @@ export async function writeConfigFile(
 export async function enforceConfigFilePermissions(
   containerName: string,
   spec: ConfigFileSpec,
-  ctx: Partial<VariableContext>
+  ctx: Partial<VariableContext>,
+  volumes?: StorageVolumeMeta[],
 ): Promise<void> {
   const resolvedPath = resolvedConfigPath(spec, ctx);
   // Running state alone does not mean Incus can execute the permission checks.
   // Wait for transport readiness, then enforce and verify every exact mode.
-  await waitForContainerExec(containerName);
+  const readiness = await waitForContainerExec(containerName);
+  // An image without a shell (YE-216): no chmod or stat to run, and no entrypoint script to change modes.
+  if (readiness?.shell === false) return verifyConfigFilePermissionsInStorage(containerName, spec, ctx, volumes);
   const targets = [
     { path: path.posix.dirname(resolvedPath), mode: permissionDigits(spec.directoryPermission) },
     { path: resolvedPath, mode: permissionDigits(spec.permission) },
   ];
 
+  // chmod and stat are looked up through the image's PATH and then the standard directories (YE-221).
   for (const target of targets) {
-    const chmod = await execCommand(containerName, ['chmod', target.mode, target.path], { timeout: 10_000 });
+    const chmod = await execInImagePath(containerName, ['chmod', target.mode, target.path], { timeout: 10_000 });
     if (chmod.exitCode !== 0) throw new Error('App configuration permissions could not be applied');
-    const stat = await execCommand(containerName, ['stat', '-c', '%a', target.path], { timeout: 10_000 });
+    const stat = await execInImagePath(containerName, ['stat', '-c', '%a', target.path], { timeout: 10_000 });
     const expected = target.mode.replace(/^0+/, '') || '0';
     if (stat.exitCode !== 0 || stat.stdout.trim() !== expected) {
       throw new Error('App configuration permissions did not read back exactly');
@@ -104,14 +108,61 @@ export async function enforceConfigFilePermissions(
   }
 }
 
+/**
+ * Every bit the manifest wants, plus at most extra traversal (`x`) bits, never extra reading or writing ones and never
+ * fewer bits than wanted (YE-221: a 0711 root for a wanted 0755 fails closed). No catalog app with a shell-less image
+ * has `files:` in a volume root today, so nothing needs a mode the root cannot have.
+ */
+function onlyTraversalBeyond(actual: string, wanted: string): boolean {
+  const have = Number.parseInt(actual, 8);
+  const want = Number.parseInt(wanted, 8);
+  return (want & ~have) === 0 && (have & ~want & 0o7666) === 0;
+}
+
+/**
+ * The permission check for a container without a shell (YE-216), host-side through the Incus storage-volume files
+ * API. An OCI app's `files:` live on its custom volume and were written there before the first start with their exact
+ * file and directory modes (`writeConfigFileToStorage`); this reads both back, as the stat readback does, and fails
+ * closed on a difference. The Incus files API sets a mode only when it creates a path, so nothing can be re-applied
+ * without a shell. One allowance: when the directory is the volume's root, which neither the write nor the files API
+ * can chmod, it may carry extra traverse (`x`) bits, never read or write ones (a new volume root is 0711, the manifest
+ * default 0700). The file's own mode is always exact.
+ */
+async function verifyConfigFilePermissionsInStorage(
+  containerName: string,
+  spec: ConfigFileSpec,
+  ctx: Partial<VariableContext>,
+  volumes?: StorageVolumeMeta[],
+): Promise<void> {
+  if (!volumes?.length) {
+    throw new Error(`${containerName} has no shell and its configuration is not on app storage: permissions can't be checked`);
+  }
+  const target = configVolumeTarget(spec, volumes, ctx);
+  const fileMode = permissionDigits(spec.permission);
+  const directoryMode = permissionDigits(spec.directoryPermission);
+  const file = await incusInspectVolumeFile(target.pool, target.volume, target.path);
+  if (!file || file.type !== 'file' || file.mode !== fileMode) {
+    throw new Error('App configuration permissions did not read back exactly');
+  }
+  const parent = path.posix.dirname(target.path);
+  const directory = await incusInspectVolumeFile(target.pool, target.volume, parent);
+  if (!directory || directory.type !== 'directory' || !directory.mode) {
+    throw new Error('App configuration permissions did not read back exactly');
+  }
+  if (directory.mode === directoryMode) return;
+  if (parent === '/' && onlyTraversalBeyond(directory.mode, directoryMode)) return;
+  throw new Error('App configuration permissions did not read back exactly');
+}
+
 export async function enforceAllConfigFilePermissions(
   configFiles: ConfigFileSpec[],
   logicalContainerName: string,
   runtimeContainerName: string,
-  ctx: Partial<VariableContext>
+  ctx: Partial<VariableContext>,
+  volumes?: StorageVolumeMeta[],
 ): Promise<void> {
   for (const spec of configFiles.filter((candidate) => candidate.container === logicalContainerName)) {
-    await enforceConfigFilePermissions(runtimeContainerName, spec, ctx);
+    await enforceConfigFilePermissions(runtimeContainerName, spec, ctx, volumes);
   }
 }
 

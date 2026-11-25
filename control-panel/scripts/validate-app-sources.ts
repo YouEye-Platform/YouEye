@@ -41,11 +41,13 @@ const check = (label: string, run: () => string) => {
   try { console.log(`ok    ${label}${(() => { const note = run(); return note ? `  (${note})` : ''; })()}`); }
   catch (error) { failures += 1; console.log(`FAIL  ${label}\n      ${error instanceof Error ? error.message : String(error)}`); }
 };
+// An app folder of a market is read as a box reads it from a market: a native app there names its package
+// (source.package). An app repository's own youeye-app.yaml has none; its release adds it (Tools/market/native-pin).
 const appIn = (repo: string, list: string[], dir: string) => {
   const prefix = dir ? `${dir}/` : '';
   const setups = Object.fromEntries(list.filter((file) => file.startsWith(`${prefix}setup/`) && file.endsWith('.yaml'))
     .map((file) => [file.slice(prefix.length), read(repo, file)]));
-  const manifest = loadApp({ manifest: read(repo, `${prefix}youeye-app.yaml`), setups });
+  const manifest = loadApp({ manifest: read(repo, `${prefix}youeye-app.yaml`), setups }, { market: Boolean(dir) });
   return `${manifest.metadata.id} ${manifest.version}${manifest.setups.length ? `, setup: ${manifest.setups.map((s) => s.for).join(' ')}` : ''}`;
 };
 

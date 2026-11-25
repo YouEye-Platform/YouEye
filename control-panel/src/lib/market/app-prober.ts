@@ -328,6 +328,9 @@ async function probeHTTP(containerName: string, healthcheck: any, fallbackPort?:
   const timeoutMs = Number(healthcheck?.timeoutMs ?? healthcheck?.timeout ?? 5000);
   try {
     const res = await fetch(`http://${ip}:${port}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+    // Only the status counts: let the body go, or the idle connection ends later under a paused body and Node's HTTP
+    // client throws an uncaught assertion (`assert(!this.paused)`), as waitForAppHealth did (YE-213).
+    await res.body?.cancel().catch(() => undefined);
     if (res.ok || res.status === 401 || res.status === 403) return { ok: true, detail: `HTTP ${res.status}` };
     return { ok: false, detail: `HTTP ${res.status} from ${path}` };
   } catch (err) {

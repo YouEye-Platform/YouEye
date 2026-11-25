@@ -23,7 +23,7 @@
  * address: a source that was removed, or whose id now reads another address, is never answered from it, and such a
  * refresh commits nothing.
  *
- * The floor belongs to the address. When a source's address changes (the official Market after a channel change, or
+ * The floor belongs to the address. When a source's address changes (the official Market after a lane change, or
  * a custom market the owner re-pointed), the next accept starts a new floor and replaces the store.
  *
  * Reading (`readAcceptedMarket`) checks every file against the hash that names it, once per accepted state (kept in
@@ -47,7 +47,7 @@ import { openMarketSession, type MarketFetchDeps, type MarketSession } from './m
 import {
   OFFICIAL_MARKET_AS_CUSTOM, OFFICIAL_MARKET_SOURCE_ID, getConfiguredMarketSources, isOfficialMarketAddress, isOfficialMarketLane,
   isOfficialMarketSource, marketSourceRefusal, marketStateDir, officialMarketAddress,
-  type MarketSource, type ReleaseChannelClient,
+  type MarketSource,
 } from './source';
 
 const STORE_SCHEMA = 'youeye.market-store.v1';
@@ -85,8 +85,7 @@ export const MARKET_SEQUENCE_AHEAD_SECONDS = 24 * 60 * 60;
 export const MARKET_STORE_LIMITS = {
   /** Apps in one index. */
   apps: 2000,
-  /** Native app ids and bundle definitions in one index. */
-  native: 200,
+  /** Bundle definitions in one index. */
   bundles: 500,
   /** All bundles of one index together. */
   bundleBytes: 64 * 1024 * 1024,
@@ -194,8 +193,6 @@ function asRefreshError(error: unknown): unknown {
 
 export interface MarketStoreOptions {
   deps?: MarketFetchDeps;
-  /** Asked for the box's channel (the official Market's lane). */
-  channel?: ReleaseChannelClient;
   now?: () => number;
   /** 0 ≤ value < 1; the jitter of the next wait. */
   random?: () => number;
@@ -294,7 +291,7 @@ const scope = (sourceId: string) => `${marketStoreDirectory(sourceId)}\0`;
 /**
  * What a running refresh belongs to: the source AND the address it reads. Two markets that had the same source id
  * one after the other (a custom market removed and another added, or one re-pointed) never share a refresh. The
- * official Market's address follows the box's channel and is always an official lane, so its refreshes are one.
+ * official Market's address is its lane's and is always an official lane, so its refreshes are one.
  */
 const refreshKey = (source: Pick<MarketSource, 'id' | 'kind' | 'url'>) =>
   `${scope(source.id)}${isOfficialMarketSource(source) ? 'official' : source.url}`;
@@ -411,7 +408,6 @@ function picturesOf(bytes: Buffer): string[] {
 
 function indexLimitProblem(index: MarketIndex): string | null {
   if (index.apps.length > MARKET_STORE_LIMITS.apps) return `the index lists ${index.apps.length} apps, more than the ${MARKET_STORE_LIMITS.apps} this box accepts`;
-  if (index.native.length > MARKET_STORE_LIMITS.native) return `the index lists ${index.native.length} native apps, more than the ${MARKET_STORE_LIMITS.native} this box accepts`;
   if (index.bundles.length > MARKET_STORE_LIMITS.bundles) return `the index lists ${index.bundles.length} bundles, more than the ${MARKET_STORE_LIMITS.bundles} this box accepts`;
   const total = index.apps.reduce((sum, entry) => sum + (entry.bundle?.size ?? 0), 0);
   if (total > MARKET_STORE_LIMITS.bundleBytes) return `the app bundles are ${total} bytes together, more than the ${MARKET_STORE_LIMITS.bundleBytes} this box accepts`;
@@ -447,9 +443,13 @@ async function loadAccepted(sourceId: string, directory: string, parsed: NonNull
   };
 }
 
-/** The address the source's store must hold: a custom market's own; any official lane for the official Market. */
-function addressBelongs(source: Pick<MarketSource, 'kind' | 'url'>, address: string): boolean {
-  return isOfficialMarketSource(source) ? isOfficialMarketAddress(address) : address === source.url;
+/**
+ * The address the source's store must hold: a custom market's own; for the official Market, the address of its lane
+ * as configured now (after a lane change, the other lane's copy is not this source's market any more).
+ */
+async function addressBelongs(source: Pick<MarketSource, 'kind' | 'url'>, address: string): Promise<boolean> {
+  if (!isOfficialMarketSource(source)) return address === source.url;
+  return isOfficialMarketAddress(address) && address === officialMarketAddress(await configuredOfficialSource()).address;
 }
 
 /** What the store of a source id holds, whatever address it was accepted from; null when it holds no usable state. */
@@ -474,7 +474,7 @@ async function readStoredMarket(sourceId: string): Promise<AcceptedMarket | null
  */
 export async function readAcceptedMarket(source: Pick<MarketSource, 'id' | 'kind' | 'url'>): Promise<AcceptedMarket | null> {
   const accepted = await readStoredMarket(source.id);
-  return accepted && addressBelongs(source, accepted.address) ? accepted : null;
+  return accepted && await addressBelongs(source, accepted.address) ? accepted : null;
 }
 
 export async function readMarketRefreshStatus(sourceId: string): Promise<MarketRefreshStatus> {
@@ -589,6 +589,11 @@ async function tidyStore(sourceId: string, now: number): Promise<void> {
  * given to another one. A source the list does not hold was removed (`removeMarketStoresExcept` stops its refresh)
  * or never came from the list.
  */
+/** The official source as configured (its lane), whatever copy of it a caller holds; the defaults when the list cannot be read. */
+async function configuredOfficialSource(): Promise<MarketSource | undefined> {
+  try { return (await getConfiguredMarketSources()).find(isOfficialMarketSource); } catch { return undefined; }
+}
+
 async function stillConfigured(source: Pick<MarketSource, 'id' | 'kind' | 'url'>): Promise<boolean> {
   if (isOfficialMarketSource(source)) return true;
   try {
@@ -619,7 +624,7 @@ async function accept(source: MarketSource, options: MarketStoreOptions, now: nu
   await removeStaleAttempts(directory);
   const stored = await readRecord(directory);
   const address = isOfficialMarketSource(source)
-    ? (await guarded(officialMarketAddress(stored?.record.address, options.channel))).address
+    ? officialMarketAddress(await configuredOfficialSource()).address
     : source.url;
   const sameAddress = stored?.record.address === address;
   const prior = stored && sameAddress ? await loadAccepted(source.id, directory, stored) : null;
@@ -768,7 +773,7 @@ export function refreshMarket(source: MarketSource, options: MarketStoreOptions 
     const mine = async () => stop.reason !== NOT_THIS_SOURCE && schedule.url === source.url && await stillConfigured(source);
     try {
       const { accepted } = await accept(source, options, started, stop);
-      if (!addressBelongs(source, accepted.address)) throw new MarketRefreshError(NOT_THIS_SOURCE);
+      if (!await addressBelongs(source, accepted.address)) throw new MarketRefreshError(NOT_THIS_SOURCE);
       if (await mine()) {
         schedule.lastError = undefined;
         schedule.slow = false;
@@ -802,7 +807,7 @@ export function refreshMarket(source: MarketSource, options: MarketStoreOptions 
 /** A refresh as a reader gets it: for `waitMs` at most, and never the market of another address than the source's. */
 async function forReader(source: MarketSource, refresh: Promise<AcceptedMarket>, waitMs: number): Promise<AcceptedMarket> {
   const accepted = await within(refresh, waitMs, STILL_READING);
-  if (!addressBelongs(source, accepted.address)) throw new MarketRefreshError(NOT_THIS_SOURCE);
+  if (!await addressBelongs(source, accepted.address)) throw new MarketRefreshError(NOT_THIS_SOURCE);
   return accepted;
 }
 
@@ -841,7 +846,7 @@ async function loadSchedule(source: MarketSource, options: MarketStoreOptions): 
     // A time in the future (the clock moved) counts as never asked.
     // The recorded attempt counts only for the address the store holds (a re-pointed source has not been asked yet).
     const record = await readRecord(marketStoreDirectory(source.id)).catch(() => null);
-    const sameMarket = !record || addressBelongs(source, record.record.address);
+    const sameMarket = !record || await addressBelongs(source, record.record.address);
     if (sameMarket && Number.isFinite(checkedAt) && checkedAt <= now) {
       // With nothing in the store, a failed attempt is repeated sooner, as in the process that made it.
       const empty = !await readAcceptedMarket(source).catch(() => null);
@@ -972,8 +977,8 @@ function summary(address: string, pointer: MarketPointer, index: MarketIndex): M
     ...(pointer.commit ? { commit: pointer.commit } : {}),
     sequence: pointer.sequence, sequence_date: sequenceDate(pointer.sequence),
     apps: index.apps.length, apps_with_setup: index.apps.filter((entry) => entry.runs_setup).length,
-    // Native apps are YouEye's own: only the official Market's list of them counts (catalog.ts).
-    native: isOfficialMarketAddress(address) ? index.native.length : 0, bundles: index.bundles.length,
+    // Native apps are Market apps of kind `native` (YE-142): any market may offer them, and `apps` counts them too.
+    native: index.apps.filter((entry) => entry.kind === 'native').length, bundles: index.bundles.length,
   };
 }
 
@@ -1002,7 +1007,7 @@ export async function marketSourceView(source: MarketSource) {
   }
   return {
     ...source,
-    /** Where the box's copy of the market was read from (the official Market's follows the box's channel). */
+    /** Where the box's copy of the market was read from (the official Market's is its lane's). */
     address: accepted?.address ?? (source.url || null),
     /** The market's own words and state; null while the box has no copy of it. */
     market,
@@ -1021,11 +1026,11 @@ export async function marketSourceView(source: MarketSource) {
  * follows is previewed like any market: it is the box's official source already. Neither lane can be added
  * (`withAddedMarketSource`).
  *
- * `native` counts the native apps a source at this address would list: an official lane's, none of any other market.
+ * `native` counts the native apps (entries of kind `native`, also counted in `apps`) the market offers.
  * The whole preview takes `MARKET_READER_WAIT_MS` at most.
  */
 export async function previewMarket(
-  address: string, deps?: MarketFetchDeps, options: Pick<MarketStoreOptions, 'channel' | 'now' | 'readerWaitMs'> = {},
+  address: string, deps?: MarketFetchDeps, options: Pick<MarketStoreOptions, 'now' | 'readerWaitMs'> = {},
 ): Promise<MarketSummary> {
   let session: MarketSession | undefined;
   let over = false;
@@ -1033,8 +1038,7 @@ export async function previewMarket(
     session = await openMarketSession(address, deps);
     if (over) throw new MarketRefreshError(NO_ANSWER_IN_TIME);
     if (isOfficialMarketLane(session.address)) {
-      const stored = await readRecord(marketStoreDirectory(OFFICIAL_MARKET_SOURCE_ID)).catch(() => null);
-      const own = (await officialMarketAddress(stored?.record.address, options.channel)).address;
+      const own = officialMarketAddress(await configuredOfficialSource()).address;
       if (session.address !== own) throw new MarketRefreshError(OFFICIAL_MARKET_AS_CUSTOM, 'official-market');
     }
     const answer = await session.get(MARKET_POINTER_FILE, 'pointer');

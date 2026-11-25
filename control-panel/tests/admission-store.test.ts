@@ -87,7 +87,9 @@ test('actual store SQL preserves grants, enforces administration and restores im
     await ensureClient({ clientId: 'youeye-ui', clientSecret: '', name: 'UI', scopes: ['openid'], redirectUris: [] });
     assert.equal((await evaluateClientAdmission('youeye-ui', household)).allowed, true, 'fresh core client preserves platform access');
     await ensureClient({ clientId: 'client-a', clientSecret: '', name: 'App A', scopes: ['openid'], redirectUris: [] });
-    const first = await ensureAppAdmission({ appId: 'app-a', clientId: 'client-a', routes: [{ host: 'a.example.test' }] });
+    // "Only me" at install (a new install defaults to the household since YE-232): the grants below start from owner-only.
+    const first = await ensureAppAdmission({ appId: 'app-a', clientId: 'client-a', mode: 'owner',
+      routes: [{ host: 'a.example.test' }] });
     assert.equal(first.ownerId, owner);
     assert.equal((await evaluateAppAdmission('app-a', owner)).reason, 'policy_pending');
     const acknowledge = () => identityCommand('UPDATE admission_outbox SET acknowledged_revision=revision');
@@ -114,7 +116,7 @@ test('actual store SQL preserves grants, enforces administration and restores im
       sessionId: ownerSession.id, scope: 'openid' });
     const rotated = await rotateRefreshToken(refresh, 'client-a');
     assert.ok(rotated);
-    await ensureAppAdmission({ appId: 'app-b', routes: [{ host: 'b.example.test' }] });
+    await ensureAppAdmission({ appId: 'app-b', mode: 'owner', routes: [{ host: 'b.example.test' }] });
     await acknowledge();
     assert.equal((await evaluateAppAdmission('app-b', household)).allowed, false);
     const stopped = await ensureAppAdmission({ appId: 'restore-stopped', routes: [] });

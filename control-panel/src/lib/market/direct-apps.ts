@@ -30,7 +30,7 @@ interface DirectMarketAppStore {
 function compileEntry(entry: StoredDirectMarketApp): DirectMarketApp | null {
   try {
     const { source, ...rest } = entry;
-    return { ...rest, manifest: loadApp(source) };
+    return { ...rest, manifest: loadApp(source, { market: true }) };
   } catch {
     return null;
   }

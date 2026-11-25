@@ -12,7 +12,7 @@
     "test": "CONTROL_PANEL_ROOT=\"$PWD\" node --import tsx --test tests/*.ts tests/*.mjs",
     "audit:unused": "pnpm dlx knip@6.34.0 --production",
     "test:independent-copy": "bun test tests/independent-copy/inventory.test.ts tests/independent-copy/journal.test.ts tests/independent-copy/admission.test.ts tests/independent-copy/source-history.test.ts && bun test tests/independent-copy/app-runtime.test.ts && bun test tests/independent-copy/platform.test.ts",
-    "i18n:check": "node scripts/check-i18n-source.mjs && node scripts/check-i18n.mjs"
+    "i18n:check": "node scripts/check-i18n-source.mjs && node scripts/check-i18n.mjs && node scripts/check-i18n-keys.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "1.3.1",

@@ -38,6 +38,8 @@ export const FIELDS_SINCE: readonly FieldSince[] = [
   { document: 'setup', field: 'steps[].http.form', since: '0.6.9' },
   { document: 'setup', field: 'remove[].http.form', since: '0.6.9' },
   { document: 'app', field: 'sidecars[].data[].from', since: '0.6.9' },
+  // Native apps are Market apps from 0.6.20 (YE-142): an older box reads native apps from its channel index only.
+  { document: 'app', field: 'source.package', since: '0.6.20' },
 ];
 
 /**

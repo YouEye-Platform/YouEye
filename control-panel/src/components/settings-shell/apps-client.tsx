@@ -23,6 +23,8 @@ import { AppDefaultCredentials, AppUninstall, AppUpdateSource } from "@/componen
 import type { UpdateBlocked } from "@/lib/market/types";
 import { uiSettingsApi } from "./api-base";
 import { AppSection, groupClass, selectClass } from "./app-section";
+import { AppConnections } from "./app-connections";
+import { approvableCount, type ConnectionSuggestion } from "./app-connections-model";
 
 interface DrawerApp {
   id: string;
@@ -52,6 +54,8 @@ interface UnifiedApp {
   enabled?: boolean;
   desiredState?: "running" | "stopped";
   serviceCredentialState?: "pending" | "ready" | "revoked";
+  /** Its removal stopped after the credential was revoked: removing it again finishes it (YE-225) */
+  removalUnfinished?: boolean;
   databaseMode?: "shared" | "own" | "none";
   updateAvailable: boolean;
   updateInfo?: string;
@@ -205,12 +209,22 @@ function permissionTitle(permission: Permission) {
 
 
 
-function InstalledAppsList() {
+function InstalledAppsList({ isAdmin }: { isAdmin: boolean }) {
   const translateInterface = useInterfaceTranslations("interface");
 
   const [apps, setApps] = useState<DrawerApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Suggested connections waiting for a decision (YE-227): administrators decide them, so only they get a count.
+  const [suggestions, setSuggestions] = useState<ConnectionSuggestion[]>([]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/suggestions", { cache: "no-store" })
+      .then(async (res) => (res.ok ? res.json() : []))
+      .then((all) => setSuggestions(Array.isArray(all) ? all : []))
+      .catch(() => setSuggestions([]));
+  }, [isAdmin]);
 
   const load = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
@@ -254,6 +268,11 @@ function InstalledAppsList() {
                 <span className="min-w-0 flex-1 truncate font-medium text-foreground">{app.name}</span>
                 {/* A status only when the app is not running. */}
                 {app.status === "stopped" && <span className="shrink-0 text-[13px] text-muted-foreground">{translateInterface("mca7981b46ecf")}</span>}
+                {approvableCount(app.id, suggestions) > 0 && (
+                  <span className="shrink-0 text-[13px] font-medium text-primary">
+                    {translateInterface("mf69084b4e263", { count: approvableCount(app.id, suggestions) })}
+                  </span>
+                )}
                 <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               </Link>
             </li>
@@ -687,7 +706,7 @@ function AdminAppSections({ onOpen, part }: { onOpen: (id: string) => void; part
                         </div>
                       )}
                       {status.status === "failed" && status.error && <p className="text-xs text-destructive">{status.error}</p>}
-                      {status.status === "completed" && !operation?.pending && <p className="text-xs text-green-600">{translateInterface("m2ca13025d60c")}{status.version_after ? `: v${status.version_after}` : ""}</p>}
+                      {status.status === "completed" && !operation?.pending && <p className="text-xs text-green-600">{status.version_after ? translateInterface("m3211e08d269c", {version: status.version_after}) : translateInterface("m2ca13025d60c")}</p>}
                     </div>
                   )}
                 </div>
@@ -963,7 +982,7 @@ function AppAISettings({ appId, title }: { appId: string; title: string }) {
         {!ownerIsCurrent && status.connection && (
           <div className="flex min-w-0 flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="text-sm font-medium">{translateInterface("m0eba3d4ee43f")}{status.installation?.routingOwner?.displayName || translateInterface("mc13dc9685345")}</p>
+              <p className="text-sm font-medium">{translateInterface("m7f013bd610dc", {name: status.installation?.routingOwner?.displayName || translateInterface("mc13dc9685345")})}</p>
               <p className="mt-1 text-xs text-muted-foreground">{translateInterface("m615937f6702b")}</p>
             </div>
             <Button variant="outline" className="shrink-0" disabled={busy || !groupId} onClick={() => void mutate("takeover", groupId)}>
@@ -983,7 +1002,7 @@ const TAB_SECTIONS: Record<AppTab, string | null> = {
   ai: "ai",
   branding: "name-and-icon",
   permissions: "permissions",
-  network: "diagnostics",
+  network: "connections",
   "link-handling": "diagnostics",
 };
 
@@ -1184,6 +1203,8 @@ function permissionDescription(permission: Permission) {
   const isUserApp = unifiedApp?.category === "user";
   const controllable = isAdmin && isUserApp && (unifiedApp?.containers?.length ?? 0) > 0;
   const credentialState = unifiedApp?.serviceCredentialState;
+  // A removal that stopped after the revocation: Reconcile can't bring the credential back; Remove finishes it.
+  const removalUnfinished = unifiedApp?.removalUnfinished === true;
   const databaseNote = unifiedApp?.databaseMode === "shared"
     ? translateInterface("m2b43e68d0127")
     : unifiedApp?.databaseMode === "own"
@@ -1193,7 +1214,8 @@ function permissionDescription(permission: Permission) {
   // The one place the app's state is said, and only when it is not simply running.
   const healthState = unifiedApp?.appHealthState;
   const status: { text: string; serious: boolean } | null =
-    credentialState === "revoked" ? { text: translateInterface("m2a6af261ee1c"), serious: true }
+    removalUnfinished ? { text: translateInterface("m176648d8341c"), serious: true }
+    : credentialState === "revoked" ? { text: translateInterface("m2a6af261ee1c"), serious: true }
     : credentialState === "pending" ? { text: translateInterface("m3727b0acb45f"), serious: false }
     : powerPending === "stop" ? { text: translateInterface("md54dbde107ff", { app: title }), serious: false }
     : powerPending === "start" ? { text: translateInterface("mc5e3c57a0200", { app: title }), serious: false }
@@ -1221,7 +1243,8 @@ function permissionDescription(permission: Permission) {
 
   const canStart = controllable && off && credentialState !== "pending" && credentialState !== "revoked";
   const canOpen = !!drawerApp?.url && !off;
-  const hasActions = canOpen || canStart || (controllable && !off) || (isAdmin && credentialState === "pending");
+  const canReconcile = isAdmin && credentialState === "pending" && !removalUnfinished;
+  const hasActions = canOpen || canStart || (controllable && !off) || canReconcile;
   const showPermissions = hasUserContext && (!!drawerApp || isUserApp || permissions.length > 0);
   const showLook = hasUserContext && (!!drawerApp || isUserApp);
   const showDiagnostics = isAdmin && !!unifiedApp;
@@ -1278,7 +1301,7 @@ function permissionDescription(permission: Permission) {
                 {powerPending === "start" ? <Loader2 className="animate-spin" /> : <Power />}
                 {translateInterface("m2e4f3ea97036")}</Button>
             )}
-            {isAdmin && credentialState === "pending" && (
+            {canReconcile && (
               <Button variant="outline" onClick={() => void reconcileCredentials()} disabled={credentialPending}>
                 {credentialPending && <Loader2 className="animate-spin" />}
                 {credentialPending ? translateInterface("m393dc4a3ec89") : translateInterface("m3b6c613892eb")}
@@ -1354,6 +1377,14 @@ function permissionDescription(permission: Permission) {
       )}
 
       {isAdmin && isUserApp && (
+        <AppConnections
+          appId={appId}
+          appName={title}
+          nameOf={(id) => unifiedApps.find((app) => app.id === id)?.displayName || undefined}
+        />
+      )}
+
+      {isAdmin && isUserApp && (
         <AppSection id="access" title={t("access.title")}>
           {signIn?.available && (
             <div className={groupClass}>
@@ -1377,7 +1408,7 @@ function permissionDescription(permission: Permission) {
               </div>
             </div>
           )}
-          <AppAccessSettings appId={appId} />
+          <AppAccessSettings appId={appId} appName={title} />
         </AppSection>
       )}
 
@@ -1595,7 +1626,7 @@ export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { i
   return (
     <div className="min-w-0 space-y-8">
       <PageHeader title={translateInterface("m89dd748442c1")} description={translateInterface("mbc5dbd212da8")} />
-      {hasUserContext && <InstalledAppsList />}
+      {hasUserContext && <InstalledAppsList isAdmin={isAdmin} />}
       {isAdmin && <AdminAppSections part="updates" onOpen={open} />}
     </div>
   );

@@ -39,6 +39,15 @@ export async function register() {
       return;
     }
 
+    // A container's default route belongs on its own network, never on a connection NIC or one of Caddy's app NICs
+    // (YE-198): repaired after every container start, and at this start for every running container. Started first:
+    // after a reboot Incus has started the apps before this process, and their routes stay wrong until this runs.
+    // It waits for Incus by itself and never blocks the startup steps below.
+    const { startDefaultRouteWatch } = await import("@/lib/incus/default-route-watch");
+    void startDefaultRouteWatch().catch((error) => {
+      console.error(`[instrumentation] default route watch did not start: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
     // Console access: Spine's admin accounts follow YouEye ID's admins. Every
     // identity change syncs; this startup and periodic pass repairs a missed one.
     const { startConsoleAccessSync } = await import('@/lib/console-access');
@@ -80,6 +89,16 @@ export async function register() {
       console.error("[instrumentation] app-update journals could not be inspected; platform reconciliation remains stopped:", error);
       return;
     }
+
+    // An app never has a host port on every address of the box (YE-189): one the Market's native deploy used to add
+    // is removed here, after update recovery and before the reconciler starts apps. A failure leaves the device.
+    try {
+      const { removeAppHostPorts } = await import("@/lib/infrastructure/security-posture");
+      const removed = await removeAppHostPorts();
+      if (removed.length > 0) console.log(`[instrumentation] removed ${removed.length} app host port(s): ${removed.join(", ")}`);
+    } catch (error) {
+      console.error(`[instrumentation] app host ports could not be checked: ${error instanceof Error ? error.message : String(error)}`);
+    }
   
     // Connection suggestions an installed app no longer asks for (an update before 0.6.15 kept them). Checked once
     // per start, in the background: nothing waits for it, and an app whose installed copy cannot be read is skipped.
@@ -107,6 +126,9 @@ export async function register() {
     startVersionChecker();
     const { startHealthChecker } = await import("@/lib/market/health-checker");
     startHealthChecker();
+    // App starts that asked for their connections to be wired again, served without the reconcile round (YE-224).
+    const { startRewireWatch } = await import("@/lib/bridges/manager");
+    startRewireWatch();
     const { startBackupScheduler } = await import("@/lib/backup/scheduler");
     startBackupScheduler();
     const { reconcileInstalledAdmission } = await import('@/lib/admission/lifecycle');

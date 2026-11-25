@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken, resetAllRateLimits } from '@/lib/auth';
+import { resetSignInLimits } from '@/lib/identity/sign-in-limit';
 
 export async function DELETE(request: Request) {
   const session = await getSession();
@@ -21,9 +22,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
 
-  const cleared = resetAllRateLimits();
+  // This process's limits: the sign-in limits (YE-149) live beside the other attempt limits.
+  const cleared = resetAllRateLimits() + resetSignInLimits();
 
-  console.log(`[rate-limit] Admin "${session.username}" reset all rate limits (${cleared} entries cleared)`);
+  // YouEye ID's sign-in limits live in its own process (port 3001) and are not cleared here.
+  console.log(`[rate-limit] Admin "${session.username}" reset this Control Panel process's attempt limits (${cleared} entries cleared)`);
 
   return NextResponse.json({
     success: true,

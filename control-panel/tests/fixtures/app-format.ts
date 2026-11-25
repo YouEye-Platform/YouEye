@@ -40,3 +40,23 @@ export function appFixture(changes: Record<string, unknown> = {}, setups: Record
 export function nativeFixture(changes: Record<string, unknown> = {}): AppManifest {
   return appFixture({ image: undefined, source: { node: '24' }, port: 3000, health: '/api/health', ...changes });
 }
+
+/** A native app's package as a market pins it (YE-142). */
+export const NATIVE_PACKAGE = {
+  url: 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar', sha256: 'a'.repeat(64), size: 199936000,
+} as const;
+
+/** A native app as a market offers it (0.6.20): `source.package` and `requires.youeye`. Changes as `appDocument`. */
+export function marketNativeDocument(changes: Record<string, unknown> = {}): Record<string, unknown> {
+  return appDocument({ image: undefined, source: { node: '24', package: { ...NATIVE_PACKAGE } }, port: 3000, health: '/api/health',
+    requires: { youeye: '>=0.6.20' }, ...changes });
+}
+
+export function marketNativeYAML(changes: Record<string, unknown> = {}): string {
+  return stringify(marketNativeDocument(changes), { aliasDuplicateObjects: false });
+}
+
+/** A native app as a market offers it, compiled (strict, from a market). */
+export function marketNativeFixture(changes: Record<string, unknown> = {}): AppManifest {
+  return loadApp({ manifest: marketNativeYAML(changes) }, { market: true });
+}
