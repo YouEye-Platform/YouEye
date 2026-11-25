@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/settings-shell/page-header";
 import { validTimelineSecret } from "../../../../shared/timeline-secret";
 import { uiSettingsApi } from "@/components/settings-shell/api-base";
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 /** Privacy is personal only: what your timeline keeps, and the lock on it. Server statistics are on General. */
 export function PrivacyClient() {
@@ -35,8 +35,7 @@ export function PrivacyClient() {
 type CollectionState = { configured: boolean; enabled: boolean; revision: string | null };
 function TimelineCollection() {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const [state, setState] = useState<CollectionState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +48,7 @@ function TimelineCollection() {
       if (typeof current.enabled !== "boolean") throw new Error(interfaceTranslationRef.current("m48cb26f49fff"));
       setState(current);
     } catch { setState(null); setNote(interfaceTranslationRef.current("m7c7f8d51262b")); }
-  }, []);
+  }, [interfaceTranslationRef]);
   useEffect(() => { void load(); }, [load]);
   async function save(enabled: boolean) {
     if (!state || busy) return;
@@ -88,8 +87,7 @@ function TimelineCollection() {
 function TimelineLock() {
   const translateInterface = useInterfaceTranslations("interface");
   const t = useInterfaceTranslations("settingsYou.privacy");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const [hasPin, setHasPin] = useState<boolean | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
@@ -119,7 +117,7 @@ function TimelineLock() {
       setHasPin(null);
         setNote(interfaceTranslationRef.current("md2a6768e3ec5"));
     }
-  }, []);
+  }, [interfaceTranslationRef]);
   useEffect(() => {
     load();
   }, [load]);

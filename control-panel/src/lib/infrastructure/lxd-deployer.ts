@@ -44,10 +44,6 @@ export function assertMarketNativeSpec(spec: LXDContainerSpec): void {
   }
 }
 
-type LXDDeploymentConfig = {
-  exposeHostPort?: boolean;
-};
-
 /** The exact release artifact a container runs. */
 export type LXDRelease = {
   tag: string;
@@ -85,10 +81,9 @@ function storageDevices(spec: LXDContainerSpec): Record<string, Record<string, s
  */
 export async function deployLXDContainer(
   spec: LXDContainerSpec,
-  cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
 ): Promise<LXDRelease | null> {
-  return deployLXDContainerInternal(spec, cfg, nicDevices);
+  return deployLXDContainerInternal(spec, nicDevices);
 }
 
 /**
@@ -100,7 +95,6 @@ export async function deployLXDContainer(
  */
 export async function deployMarketLXDContainer(
   spec: LXDContainerSpec,
-  cfg: LXDDeploymentConfig,
   artifact: StagedMarketNativeArtifact,
   nicDevices: Record<string, Record<string, string>> | undefined,
   owner: InstanceOwner,
@@ -111,12 +105,11 @@ export async function deployMarketLXDContainer(
   if (await containerExists(spec.containerName)) {
     throw new Error(`An Incus instance named ${spec.containerName} already exists; refusing to reuse it`);
   }
-  return deployLXDContainerInternal(spec, cfg, nicDevices, artifact, undefined, tags);
+  return deployLXDContainerInternal(spec, nicDevices, artifact, undefined, tags);
 }
 
 async function deployLXDContainerInternal(
   spec: LXDContainerSpec,
-  cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
   marketArtifact?: StagedMarketNativeArtifact,
   preparedRelease?: LXDRelease,
@@ -221,15 +214,8 @@ async function deployLXDContainerInternal(
     // Non-fatal: sysctl may be restricted in some container setups.
   }
 
-  // Add port proxy for the app (skip if port conflicts)
-  if (spec.port && cfg.exposeHostPort !== false) {
-    try {
-      await addPortProxy(spec.containerName, spec.port);
-    } catch {
-      // Port may conflict with another container (e.g. CP on 3000)
-      // Non-fatal — the app is still reachable via Incus network
-    }
-  }
+  // No host port: an app is reached through Caddy and the YouEye gate on its own
+  // network, never on a port of every address of the box (YE-189).
 
   // Install Node.js and deploy the application
   const artifactSHA256 = await installNodeAndApp(spec, release, marketArtifact);
@@ -315,23 +301,22 @@ export async function adoptRestoredLXDContainer(
  */
 export async function redeployLXDContainer(
   spec: LXDContainerSpec,
-  cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
 ): Promise<LXDRelease | null> {
   await removeLXDContainer(spec);
-  return deployLXDContainer(spec, cfg, nicDevices);
+  return deployLXDContainer(spec, nicDevices);
 }
 
 /** Managed Pointer consumes only its digest-bound product archive. Validate
  * before deleting any partial prior runtime. */
 export async function deployPointerLXDContainer(
   spec: LXDContainerSpec,
-  cfg: LXDDeploymentConfig,
   artifact: StagedMarketNativeArtifact,
   replaceExisting: boolean,
 ): Promise<LXDRelease | null> {
   if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun') throw new Error('Invalid managed Pointer installation');
   if (artifact.verification.status !== 'product-release' || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
+  if (!artifact.productRelease) throw new Error('Pointer artifact has no product release receipt');
   const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer'});
   if (selected.release.tag !== artifact.tag || selected.release.version !== artifact.version || selected.build.kind !== 'native'
     || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
@@ -339,7 +324,7 @@ export async function deployPointerLXDContainer(
   }
   await verifyStagedMarketNativeArtifact(artifact);
   if (replaceExisting) await removeLXDContainer(spec);
-  return deployLXDContainerInternal(spec, cfg, undefined, artifact);
+  return deployLXDContainerInternal(spec, undefined, artifact);
 }
 
 async function removeLXDContainer(spec: LXDContainerSpec): Promise<void> {
@@ -394,25 +379,6 @@ async function waitForContainerReady(containerName: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(`Container ${containerName} did not become ready in 30s`);
-}
-
-/** Add a port proxy device. */
-async function addPortProxy(containerName: string, port: number): Promise<void> {
-  const current = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${containerName}`);
-  const metadata = current.metadata as Record<string, unknown>;
-  const existingDevices = (metadata.devices as Record<string, Record<string, string>>) || {};
-
-  const newDevices = {
-    ...existingDevices,
-    [`port${port}`]: {
-      type: 'proxy',
-      bind: 'host',
-      listen: `tcp:0.0.0.0:${port}`,
-      connect: `tcp:127.0.0.1:${port}`,
-    },
-  };
-
-  await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
 /**
@@ -554,7 +520,8 @@ async function installNodeAndApp(
     }
   }
 
-  if (marketArtifact) {
+  // Pointer's release receipt goes into its runtime; a native Market app has none (its manifest pins its package).
+  if (marketArtifact?.productRelease) {
     const { publishProductProjection } = await import('../releases/product-projection');
     marketArtifact.runtimeUUID = await publishProductProjection(cn,marketArtifact.productRelease);
   }

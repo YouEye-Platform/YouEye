@@ -3,7 +3,7 @@
  * repository: a folder of static files that any HTTPS host can serve.
  *
  *   node --import tsx scripts/market-build.ts <market-repo-dir> --out <dir> [--commit <sha>] [--sequence <unix seconds>]
- *     [--official | --address <https address of this market>] [--native-listing <file.json>] [--require-provenance]
+ *     [--official | --address <https address of this market>] [--require-provenance]
  *
  * Run it from control-panel/ (tsx and the `@/` paths resolve there). The repository may be a git
  * checkout or a plain export (`git archive`); without `.git`, --commit and --sequence are required.
@@ -14,7 +14,7 @@
  *
  * Output (every path relative to `<dir>`, as the format defines):
  *   market.json                 schema, name, publisher, homepage, sequence, commit, index {path, sha256, size}
- *   h/index/<sha256>.json       categories, curation, native, bundles, apps (one entry per app)
+ *   h/index/<sha256>.json       categories, curation, bundles, apps (one entry per app)
  *   h/apps/<id>/<sha256>.json   { manifest, setups, files } of one app
  *   h/files/<sha256>.<ext>      icons and screenshots the listings name (identical pictures once)
  *   notices/<id>/<file>         licence and notice files of an app folder (bytes unchanged)
@@ -26,9 +26,12 @@
  *
  * The website's "Add to YouEye" buttons: with --official, each app page links
  * https://my.youeye.me/app?id=<id>; with --address (another market), the pages link
- * https://my.youeye.me/add?market=<address>; with neither, there is no button. --native-listing
- * names a JSON file `{ "<id>": { "name", "tagline", "description", "version" } }` with the listing
- * text of native apps (catalog.yaml names only their ids); without it they are listed by name.
+ * https://my.youeye.me/add?market=<address>; with neither, there is no button.
+ *
+ * An app folder is a container app (`image:`, kind `container`) or a native app (`source:` with
+ * `source.package`, the URL, SHA-256 and size of its `standalone.tar`; kind `native`). A native app
+ * says `requires.youeye: ">=0.6.20"` or higher: older boxes read native apps from their channel index
+ * and list a native entry as "needs a newer YouEye". catalog.yaml has no `native:` list any more.
  * --require-provenance (the publish tool passes it for the official lanes) refuses a repository
  * without asset-provenance.json; without it the file is checked only when it exists.
  *
@@ -50,7 +53,7 @@ import {
   readMarketIndex, readMarketPointer, sha256Hex,
   normalizeMarketAddress,
 } from '../src/lib/market/market-format';
-import { buildSite, nameFromId, readNativeListing, type SiteApp, type SiteOptions } from './market-site';
+import { buildSite, type SiteApp, type SiteOptions } from './market-site';
 
 const APP_ID = /^[a-z][a-z0-9-]{0,31}$/;
 /** A file name that is meant as a licence or notice file (carried to `notices/`, or refused when it cannot be). */
@@ -84,7 +87,7 @@ export interface BuildOptions {
   now?: number;
   /** Refuse a repository without asset-provenance.json (the official lanes). */
   requireProvenance?: boolean;
-  /** The website's buttons and native app listings (scripts/market-site.ts). */
+  /** The website's buttons (scripts/market-site.ts). */
   site?: SiteOptions;
 }
 
@@ -246,18 +249,15 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
     }
   }
 
-  // catalog.yaml: categories, curation, native ids.
+  // catalog.yaml: categories and curation.
   let catalog: ReturnType<typeof parseCatalog> | null = null;
   if (!has.has('catalog.yaml')) errors.push('catalog.yaml: missing');
   else {
     try { catalog = parseCatalog(text('catalog.yaml')); } catch (error) { errors.push(message(error)); }
   }
-  const native = catalog?.native ?? [];
   const appIds = folders(files, 'apps');
-  const known = new Set([...appIds, ...native]);
+  const known = new Set(appIds);
   const categories = new Set((catalog?.categories ?? []).map((category) => category.id));
-  for (const id of native) if (appIds.includes(id)) errors.push(`catalog.yaml: native app "${id}" also has an app folder`);
-  if (new Set(native).size !== native.length) errors.push('catalog.yaml: native lists an id twice');
   for (const [where, ids] of [
     ['curation.spotlight', catalog?.curation?.spotlight?.apps ?? []],
     ...(catalog?.curation?.collections ?? []).map((collection) => [`curation.collections.${collection.id}`, collection.apps] as const),
@@ -279,7 +279,7 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
       .map((file) => [file.slice(where.length + 1), text(file)] as [string, string]));
     let parsed: ReturnType<typeof parseAppSource>;
     try {
-      parsed = parseAppSource({ manifest, setups });
+      parsed = parseAppSource({ manifest, setups }, { market: true });
       compileApp(parsed);
     } catch (error) {
       const issues = error instanceof AppFormatError ? error.issues : [message(error)];
@@ -289,7 +289,6 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
     const app = parsed.app;
     const problems: string[] = [];
     if (app.id !== id) problems.push(`id is "${app.id}"; it must equal the folder name`);
-    if (!app.image) problems.push('a Market app is a container app (image:); native apps are named in catalog.yaml native');
     problems.push(...requiresProblems(parsed, OLDEST_MARKET_READER));
     const listing = app.listing ?? {};
     if (categories.size && listing.category && !categories.has(listing.category)) {
@@ -317,7 +316,7 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
       files: sortedRecord(fileMap),
       entry: {
         id,
-        kind: 'container',
+        kind: app.source ? 'native' : 'container',
         name: app.name,
         version: app.version,
         tagline: listing.tagline,
@@ -331,8 +330,7 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
       },
       site: {
         id,
-        kind: 'container',
-        listed: true,
+        kind: app.source ? 'native' : 'container',
         name: app.name,
         version: app.version,
         tagline: listing.tagline,
@@ -430,7 +428,6 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
       spotlight: catalog.curation.spotlight ? { title: catalog.curation.spotlight.title, apps: catalog.curation.spotlight.apps } : undefined,
       collections: catalog.curation.collections?.map((collection) => ({ id: collection.id, label: collection.label, apps: collection.apps })),
     })) : undefined,
-    native,
     bundles,
     apps: entries,
   });
@@ -453,7 +450,6 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
   if (errors.length) throw new MarketBuildError(errors);
 
   // The website, from the same inputs.
-  const nativeListing = options.site?.nativeListing ?? {};
   const noticeFiles = [...notices.keys()].sort(byPath);
   const site = buildSite({
     name: store.name as string,
@@ -469,17 +465,10 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
         ...app.site,
         notices: noticeFiles.filter((file) => file.startsWith(`notices/${app.id}/`)),
       })),
-      ...native.map((id): SiteApp => {
-        const listed = nativeListing[id];
-        return listed
-          ? { id, kind: 'native', listed: true, name: listed.name, tagline: listed.tagline, description: listed.tagline ? undefined : listed.description,
-            longDescription: listed.description, version: listed.version }
-          : { id, kind: 'native', listed: false, name: nameFromId(id) };
-      }),
     ],
     notices: noticeFiles.filter((file) => file.split('/').length === 2),
     pictures: new Map([...pictures].map(([picturePath, picture]) => [picturePath, picture.bytes])),
-  }, { official: options.site?.official, address, nativeListing });
+  }, { official: options.site?.official, address });
   let siteBytes = 0;
   let pages = 0;
   for (const [file, bytes] of site) {
@@ -499,7 +488,7 @@ export function buildMarket(root: string, options: BuildOptions): BuiltMarket {
     summary: {
       apps: entries.length,
       bundles: bundles.length,
-      native: native.length,
+      native: entries.filter((entry) => entry.kind === 'native').length,
       pictures: pictures.size,
       notices: notices.size,
       files: out.size,
@@ -598,13 +587,11 @@ const kb = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).t
 function main(argv: string[]): number {
   const usage = [
     'usage: market-build.ts <market-repo-dir> --out <dir> [--commit <sha>] [--sequence <unix seconds>]',
-    '         [--official | --address <https address of this market>] [--native-listing <file.json>] [--require-provenance]',
+    '         [--official | --address <https address of this market>] [--require-provenance]',
     '',
     '  --official        the official YouEye Market: each app page links https://my.youeye.me/app?id=<id>',
     '  --address <url>   this market\'s address (https, folder URL): the pages link https://my.youeye.me/add?market=<address>',
     '                    with neither, the website has no "Add to YouEye" button',
-    '  --native-listing  JSON {"<id>": {"name", "tagline", "description", "version"}} for native apps;',
-    '                    without it they are listed by a name made from the id, without a button',
     '  --require-provenance  refuse a repository without asset-provenance.json (the official lanes)',
     '  --sequence        Unix seconds (default: the commit time); at most 300 s ahead of this machine\'s clock',
   ].join('\n');
@@ -616,7 +603,7 @@ function main(argv: string[]): number {
     const arg = argv[index];
     if (arg === '--official') official = true;
     else if (arg === '--require-provenance') requireProvenance = true;
-    else if (['--out', '--commit', '--sequence', '--address', '--native-listing'].includes(arg)) {
+    else if (['--out', '--commit', '--sequence', '--address'].includes(arg)) {
       if (argv[index + 1] === undefined) { console.error(`${arg} needs a value\n${usage}`); return 2; }
       options[arg.slice(2)] = argv[index + 1];
       index += 1;
@@ -632,9 +619,8 @@ function main(argv: string[]): number {
   }
   let market: BuiltMarket;
   try {
-    const nativeListing = options['native-listing'] ? readNativeListing(readFileSync(path.resolve(options['native-listing']), 'utf8')) : undefined;
     market = buildMarket(root, {
-      ...commitOf(root, options.commit, options.sequence), requireProvenance, site: { official, address: options.address, nativeListing },
+      ...commitOf(root, options.commit, options.sequence), requireProvenance, site: { official, address: options.address },
     });
   } catch (error) {
     const errors = error instanceof MarketBuildError ? error.errors : [message(error)];

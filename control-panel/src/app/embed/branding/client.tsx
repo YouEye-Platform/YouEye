@@ -7,15 +7,14 @@ import { Button } from "@/components/ui/button";
 import { DEFAULT_STYLE, type SiteNameStyle } from "@/lib/wordart-presets";
 import { notifyAppearanceSaved } from "@youeye/branding/appearance-events";
 import { useTranslations as useInterfaceTranslations } from "next-intl";
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 import { authenticatedFetch } from "@/lib/api-client";
 
 type Branding = { site_name: string; site_name_style: SiteNameStyle | null; accent_color: string };
 
 export function BrandingEmbedClient() {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [design, setDesign] = useState<Design | null>(null);
@@ -30,7 +29,7 @@ export function BrandingEmbedClient() {
       if (active) { setBranding(data); setDesign(saved.success ? saved.data : initialDesign(data.site_name)); }
     }).catch((error) => { if (active) setStatus(error.message); });
     return () => { active = false; };
-  }, []);
+  }, [interfaceTranslationRef]);
   async function save() {
     if (!branding || !design || saving) return;
     setSaving(true); setStatus("");

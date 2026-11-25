@@ -136,7 +136,7 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
     spec.deferStart = true;
   }
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
-  const resolved = await deploy(spec, { exposeHostPort: false });
+  const resolved = await deploy(spec);
   if (resolved) {
     await recordCoreProvenance('ui', {
       version: resolved.version,
@@ -222,7 +222,7 @@ async function deployPointerContainerFromConfiguredSource(replaceExisting = fals
     },
     deploy: async artifact => {
       await preparePointerStorage();
-      const installed = await deployPointerLXDContainer(pointerContainerSpec(), { exposeHostPort: false }, artifact, replaceExisting);
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), artifact, replaceExisting);
       if (!installed) throw new Error('Pointer runtime appeared during installation');
     },
     configure: () => configurePointerService(),
@@ -271,7 +271,7 @@ export async function buildPointerForSetup(): Promise<'built' | 'kept'> {
     },
     deploy: async artifact => {
       await preparePointerStorage();
-      const installed = await deployPointerLXDContainer(pointerContainerSpec(), { exposeHostPort: false }, artifact, replaceExisting);
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), artifact, replaceExisting);
       if (!installed) throw new Error('Pointer runtime appeared during installation');
     },
     defer: () => deferPointerServiceUntilSetup(),

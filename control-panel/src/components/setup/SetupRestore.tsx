@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { recoverableRestoreSelection, waitForSetupRestoreStatus, type SetupRestoreSelection } from './restore-status';
 import { randomBrowserUUID } from '@/lib/browser-random';
+import { useLatestRef } from '@/lib/use-latest-ref';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -38,8 +39,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
 
   const translateInterface = useInterfaceTranslations("interface");
   const recoveryText = useInterfaceTranslations("setupRestoreRecovery");
-  const translationRef = useRef({ translateInterface, recoveryText });
-  translationRef.current = { translateInterface, recoveryText };
+  const translationRef = useLatestRef({ translateInterface, recoveryText });
 
   const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPoint[]>([]);
   const [selectedKey, setSelectedKey] = useState('');
@@ -51,9 +51,12 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
   const [error, setError] = useState('');
   const [recovery, setRecovery] = useState<'resume' | 'finalize' | null>(null);
   const retainedSelection = useRef<SetupRestoreSelection | null>(null);
+  // What the render shows of the two refs, set with them (React reads no ref during render, YE-205).
+  const [retainedChoice, setRetainedChoice] = useState<SetupRestoreSelection | null>(null);
   const [checking, setChecking] = useState(false);
   const hasCompleted = useRef(false);
   const operationId = useRef<string | null>(null);
+  const [hasOperation, setHasOperation] = useState(false);
   const submitting = useRef(false);
 
   const checkRestoreStatus = async (id: string, attempts?: number) => {
@@ -68,6 +71,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
       } else {
         const selected = recoverableRestoreSelection(status, id);
         retainedSelection.current = selected;
+        setRetainedChoice(selected);
         setRecovery(selected ? status.recovery as 'resume' | 'finalize' : null);
         if (selected) {
           setSelectedKey(JSON.stringify([selected.mediaId, selected.backupId]));
@@ -86,6 +90,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
     const pending = sessionStorage.getItem('youeye-setup-restore-operation');
     if (pending && /^[0-9a-f-]{36}$/.test(pending)) {
       operationId.current = pending;
+      setHasOperation(true);
       setRestoring(true);
       void checkRestoreStatus(pending);
     }
@@ -114,8 +119,8 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
   }, [isComplete, onComplete]);
 
   const choices = [...recoveryPoints];
-  if (retainedSelection.current && !choices.some(point => point.mediaId === retainedSelection.current!.mediaId && point.backupId === retainedSelection.current!.backupId)) {
-    choices.push({ ...retainedSelection.current, apps: retainedSelection.current.appIds, createdAt: '' });
+  if (retainedChoice && !choices.some(point => point.mediaId === retainedChoice.mediaId && point.backupId === retainedChoice.backupId)) {
+    choices.push({ ...retainedChoice, apps: retainedChoice.appIds, createdAt: '' });
   }
   const selectedPoint = choices.find(point => JSON.stringify([point.mediaId, point.backupId]) === selectedKey);
   const canStart = Boolean(selectedPoint && passphrase.trim().length >= 12);
@@ -144,6 +149,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
       if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error(translateInterface("ma40ce2df5560"));
       const id = resuming ? operationId.current! : operationId.current ?? randomBrowserUUID();
       operationId.current = id;
+      setHasOperation(true);
       sessionStorage.setItem('youeye-setup-restore-operation', id);
       submitted = true;
       const res = await fetch('/api/setup/restore', {
@@ -293,7 +299,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
 
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-between pt-4 animate-in fade-in slide-in-from-bottom-8 duration-500 delay-200">
-          <Button variant="ghost" onClick={onBack} disabled={operationId.current !== null}>
+          <Button variant="ghost" onClick={onBack} disabled={hasOperation}>
             {translateInterface("m76900f1bfd16")}</Button>
           <Button onClick={handleStartRestore} disabled={!canStart || checking}>
             {recovery ? recoveryText(recovery === 'finalize' ? 'finish' : 'resume') : translateInterface("me91ee8913c7c")}</Button>

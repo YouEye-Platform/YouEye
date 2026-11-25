@@ -12,10 +12,10 @@ export interface MarketPreviewData {
   publisher: string;
   /** Only an https address. */
   homepage?: string;
-  /** Its container apps (the count `youeye market list` shows); YouEye's own apps are `native`. */
+  /** Its apps (the count `youeye market list` shows), native ones included; `native` says how many are native apps (YE-142). */
   apps: number;
   apps_with_setup: number;
-  /** YouEye's own apps it names: only for the box's own official Market. */
+  /** How many of its apps are native apps (they join the dashboard; any market may offer them, YE-142). */
   native?: number;
   /** The id of the source this box already has for this address, or null. */
   already_added: string | null;

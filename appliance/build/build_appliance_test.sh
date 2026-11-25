@@ -223,6 +223,8 @@ for text in \
 	'LinkLocalAddressing=ipv4' \
 	'60-youeye-appliance-ipv4-only.conf' \
 	'net.ipv6.conf.all.disable_ipv6=1' \
+	'60-youeye-incus-listener.conf' \
+	'net.ipv4.ip_nonlocal_bind=1' \
 	'precedence ::ffff:0:0/96  100' \
     'Dir::Cache::pkgcache "";' \
     'Dir::Cache::srcpkgcache "";' \

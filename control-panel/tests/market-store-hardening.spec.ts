@@ -13,7 +13,7 @@ import {
   currentMarket, marketSourceView, previewMarket, readAcceptedMarket, readMarketPicture, readMarketRefreshStatus, refreshMarket,
   refreshMarketForReader, removeMarketStoresExcept, requestMarketRefresh, resetMarketStoreMemory,
 } from '../src/lib/market/market-store';
-import { OFFICIAL_MARKET_ADDRESSES, OFFICIAL_MARKET_AS_CUSTOM, customMarketSource } from '../src/lib/market/source';
+import { OFFICIAL_MARKET_ADDRESSES, OFFICIAL_MARKET_AS_CUSTOM, customMarketSource, setOfficialMarketLane } from '../src/lib/market/source';
 import { buildFixtureMarket, fakeMarketHosts, type FixtureMarket } from './fixtures/market';
 
 const ADDRESS = 'https://markets.example.org/friend/';
@@ -415,17 +415,19 @@ test('a preview of the official lane this box does not follow is refused; its ow
   const built = buildFixtureMarket(one());
   const test = 'https://market.youeye.me/test/andrew/';
   const hosts = fakeMarketHosts({ [OFFICIAL_MARKET_ADDRESSES.main]: built.files, [OFFICIAL_MARKET_ADDRESSES.dev]: built.files, [test]: built.files });
-  const on = (channel: string) => ({ channel: { getReleaseChannel: async () => ({ channel }) } });
 
-  assert.equal((await previewMarket(OFFICIAL_MARKET_ADDRESSES.main, hosts.deps, on('stable'))).address, OFFICIAL_MARKET_ADDRESSES.main);
+  // No lane set: the box reads main (whatever its release channel).
+  assert.equal((await previewMarket(OFFICIAL_MARKET_ADDRESSES.main, hosts.deps)).address, OFFICIAL_MARKET_ADDRESSES.main);
   hosts.take();
-  await assert.rejects(previewMarket(OFFICIAL_MARKET_ADDRESSES.dev, hosts.deps, on('stable')), (error: unknown) => error instanceof MarketRefreshError && error.message === OFFICIAL_MARKET_AS_CUSTOM);
-  await assert.rejects(previewMarket('https://market.youeye.me/dev/market.json', hosts.deps, on('beta')), refused(/This is the official YouEye Market; your YouEye already follows it/));
-  await assert.rejects(previewMarket(OFFICIAL_MARKET_ADDRESSES.main, hosts.deps, on('dev')), refused(/official YouEye Market/));
-  await assert.rejects(previewMarket('https://market.youeye.me./dev/', hosts.deps, on('dev')), refused(/official YouEye Market/), 'the same lane under another spelling of its host');
+  await assert.rejects(previewMarket(OFFICIAL_MARKET_ADDRESSES.dev, hosts.deps), (error: unknown) => error instanceof MarketRefreshError && error.message === OFFICIAL_MARKET_AS_CUSTOM);
+  await assert.rejects(previewMarket('https://market.youeye.me/dev/market.json', hosts.deps), refused(/This is the official YouEye Market; your YouEye already follows it/));
+  // The owner chose dev: main is the other lane now.
+  await setOfficialMarketLane('dev');
+  await assert.rejects(previewMarket(OFFICIAL_MARKET_ADDRESSES.main, hosts.deps), refused(/official YouEye Market/));
+  await assert.rejects(previewMarket('https://market.youeye.me./', hosts.deps), refused(/official YouEye Market/), 'the same lane under another spelling of its host');
   assert.equal(hosts.requests.length, 0, 'a refused lane is not fetched');
-  assert.equal((await previewMarket(OFFICIAL_MARKET_ADDRESSES.dev, hosts.deps, on('alpha'))).address, OFFICIAL_MARKET_ADDRESSES.dev);
-  assert.equal((await previewMarket(test, hosts.deps, on('stable'))).address, test);
+  assert.equal((await previewMarket(OFFICIAL_MARKET_ADDRESSES.dev, hosts.deps)).address, OFFICIAL_MARKET_ADDRESSES.dev);
+  assert.equal((await previewMarket(test, hosts.deps)).address, test);
 }));
 
 // ─── G: pictures are fetched a few at a time ──────────────

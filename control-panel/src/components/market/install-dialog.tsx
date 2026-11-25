@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
 import type { MarketApp, InstallConfig } from '@/lib/market/types';
+import { defaultOnlyUsers, installAccessFields, installSwitchLocked } from '@/lib/market/public-access';
 import type { ConnectionsResponse } from '@/app/api/market/app/[appId]/connections/route';
 
 interface InstallDialogProps {
@@ -95,7 +96,7 @@ function formatBytes(value: number | null): string {
   const t = useTranslations('market');
   const marketStore = useInterfaceTranslations('marketStore');
   const tc = useTranslations('common');
-  const [retainedData, setRetainedData] = useState<{ retained: boolean; canAdopt?: boolean; version?: string }>();
+  const [retainedData, setRetainedData] = useState<{ retained: boolean; canAdopt?: boolean; version?: string; existingAccess?: { publicAccess: boolean; mode?: string } | null }>();
   const [adoptRetainedData, setAdoptRetainedData] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -115,14 +116,15 @@ function formatBytes(value: number | null): string {
   const [integrationToggles, setIntegrationToggles] = useState<Record<string, boolean>>({});
   const [allowInternet, setAllowInternet] = useState(false);
   const [protectWithAccountLogin, setProtectWithAccountLogin] = useState(() => defaultAccountLogin(app));
-  // Forward-auth proxy gate — SEPARATE from account login. Only meaningful for apps that do
-  // their own YouEye ID login (native SSO or an identity integration); for them it is an
-  // optional extra gate, off by default and fully operable. Plain apps drive the gate from
-  // `protectWithAccountLogin` instead, so this stays false/ignored for them.
-  const [forwardAuthGate, setForwardAuthGate] = useState(false);
-  // Apps that protect themselves (manifest `public_access`) install public unless the owner turns it off here.
-  const offersPublicAccess = app.publicAccess === true;
-  const [publicAccess, setPublicAccess] = useState(offersPublicAccess);
+  // "Only <site> users" is the one control for the gate (YE-154): on keeps it (for who the access choice below names), off is public
+  // access. It starts off only for apps that protect themselves (manifest `public_access`), and stays on, with the
+  // reason, for apps without a sign-in of their own or that trust the YouEye sign-in header.
+  const [onlyUsers, setOnlyUsers] = useState(() => defaultOnlyUsers(app));
+  // Who in the household may use a new install (YE-232): everyone unless the administrator picks "Only me". A reinstall
+  // that kept a policy keeps it, so the choice is not shown then.
+  const [accessMode, setAccessMode] = useState<'all_users' | 'owner'>('all_users');
+  // Apps with their own YouEye ID login (native, or through a setup file) also get the "Sign in with YouEye ID" row.
+  const appHasOwnLogin = app.supportsSSO || !!identityIntegration(app);
   const supportsAI = app.capabilities?.ai_api === true;
   const [useAISettings, setUseAISettings] = useState(supportsAI);
   const [aiGroups, setAIGroups] = useState<AIGroup[]>([]);
@@ -159,7 +161,14 @@ function formatBytes(value: number | null): string {
     }
     setIntegrationToggles(toggles);
     setProtectWithAccountLogin(defaultAccountLogin(app));
+    setOnlyUsers(defaultOnlyUsers(app));
   }, [app]);
+  // A reinstall starts from the policy the app kept (YE-168). The install waits for this answer, so what is sent is
+  // what the dialog showed.
+  const existingAccess = retainedData?.existingAccess;
+  useEffect(() => {
+    if (existingAccess) setOnlyUsers(defaultOnlyUsers(app, existingAccess));
+  }, [app, existingAccess]);
 
   // Fetch connections
   useEffect(() => {
@@ -260,9 +269,8 @@ function formatBytes(value: number | null): string {
       domain,
       customName: trimmedName !== app.name ? trimmedName : undefined,
       selectedIntegrations: (app.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,
-      protectWithAccountLogin,
-      forwardAuthGate,
-      publicAccess: offersPublicAccess ? publicAccess : undefined,
+      ...installAccessFields(app, { onlyUsers, youEyeSignIn: protectWithAccountLogin, existing: existingAccess }),
+      accessMode: existingAccess ? undefined : accessMode,
       allowInternet,
       aiSettings: supportsAI
         ? { enabled: useAISettings, ...(useAISettings ? { modelGroupId: aiGroupId } : {}) }
@@ -278,13 +286,7 @@ function formatBytes(value: number | null): string {
 
   const fullUrl = `https://${subdomain}.${domain}`;
   const loginIntegration = identityIntegration(app);
-  const accountLoginLocked = app.supportsSSO || loginIntegration?.required || (!loginIntegration && app.forwardAuth === 'disabled');
-  // The forward-auth gate is an OPTIONAL extra gate only for apps that do their own YouEye ID
-  // login (native SSO, or an identity integration that's currently selected). Plain apps use
-  // the account-login toggle above as their gate, so this extra control is hidden for them.
-  // It is never available when the manifest hard-disables forward-auth.
-  const appDoesOwnLogin = app.supportsSSO || (!!loginIntegration && protectWithAccountLogin);
-  const showForwardAuthGate = appDoesOwnLogin && app.forwardAuth !== 'disabled';
+  const accountLoginLocked = app.supportsSSO || loginIntegration?.required;
 
   const toggleAccountLogin = () => {
     if (accountLoginLocked) return;
@@ -295,12 +297,20 @@ function formatBytes(value: number | null): string {
     }
   };
 
-  const accountLoginLabel = (app.supportsSSO || loginIntegration) ? translateInterface("m9696eb03a395") : translateInterface("m659fff76f687", { value0: String(siteName) });
-  const accountLoginHint = (app.supportsSSO || loginIntegration)
-    ? translateInterface("m58ce1fed0ab1", { value0: String(siteName) })
-    : app.forwardAuth === 'disabled'
-      ? translateInterface("mf87c41b17f22")
-      : translateInterface("meb2a62b44094", { value0: String(siteName) });
+  const accountLoginLabel = translateInterface("m9696eb03a395");
+  const accountLoginHint = translateInterface("m58ce1fed0ab1", { value0: String(siteName) });
+  // What the switch does right now, in plain words (never "reverse proxy" or "forward-auth").
+  const youEyeSignIn = app.supportsSSO || (!!loginIntegration && protectWithAccountLogin);
+  const onlyUsersLocked = installSwitchLocked(app, existingAccess);
+  // The kept policy's mode on a reinstall (an older Control Panel's answer has none), else the choice below.
+  const whoMayUse = existingAccess ? existingAccess.mode : accessMode;
+  const onlyUsersHint = onlyUsersLocked
+    ? marketStore(app.gateOnly === 'login-header' ? 'install.onlyUsersLockedHeader' : 'install.onlyUsersLockedNoSignIn', { app: app.name, site: siteName })
+    : onlyUsers
+      ? (whoMayUse === 'owner' ? marketStore('install.onlyUsersOn', { app: app.name })
+        : whoMayUse === 'all_users' ? marketStore('install.onlyUsersOnEveryone', { app: app.name })
+        : marketStore('install.onlyUsersOnKept', { app: app.name }))
+      : `${marketStore('install.onlyUsersOff', { app: app.name, host: fullUrl.replace(/^https:\/\//, '') })}${youEyeSignIn ? ` ${marketStore('install.onlyUsersOffSignIn', { site: siteName })}` : ''}`;
   const otherIntegrations = app.integrations?.filter((integration) => integration.id !== loginIntegration?.id) ?? [];
   const internetChoice = !!connections?.internet?.needsInternet;
   const blockedByRetained = !retainedData || (retainedData.retained && (!retainedData.canAdopt || !adoptRetainedData));
@@ -386,12 +396,26 @@ function formatBytes(value: number | null): string {
             </Alert>
           )}
 
+          {app.nativeAccess && app.sourceId !== 'official' && (
+            <Alert>
+              <AlertTitle>{marketStore("install.nativeTitle")}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>{marketStore("install.nativeIntro", { name: app.name, market: app.sourceName || app.sourceId || '' })}</p>
+                <ul className="list-disc space-y-0.5 pl-5">
+                  <li>{marketStore("install.nativeGateway")}</li>
+                  {app.nativeAccess.surfaces.length > 0 && <li>{marketStore("install.nativeSurfaces", { surfaces: app.nativeAccess.surfaces.join(', ') })}</li>}
+                  {app.nativeAccess.notifications && <li>{marketStore("install.nativeNotifications")}</li>}
+                  {app.nativeAccess.proxyHosts.length > 0 && <li>{marketStore("install.nativeProxy", { hosts: app.nativeAccess.proxyHosts.join(', ') })}</li>}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <section aria-labelledby="install-access" className="settings-section">
             <h3 id="install-access" className="settings-section-title">{marketStore("install.access")}</h3>
             <ul className="settings-group">
-              {row('account', accountLoginLabel, accountLoginHint, protectWithAccountLogin, () => toggleAccountLogin(), !!accountLoginLocked)}
-              {showForwardAuthGate && row('gate', translateInterface("mc664ff9c2740", { site: siteName }), translateInterface("m59829f8776db", { site: siteName }), forwardAuthGate, setForwardAuthGate)}
-              {offersPublicAccess && row('public', translateInterface("ma05ac86e60af"), translateInterface("m7abb883ab0c4", { name: app.name, site: siteName }), publicAccess, setPublicAccess)}
+              {appHasOwnLogin && row('account', accountLoginLabel, accountLoginHint, protectWithAccountLogin, () => toggleAccountLogin(), !!accountLoginLocked)}
+              {row('only-users', translateInterface("mc664ff9c2740", { site: siteName }), onlyUsersHint, onlyUsers, setOnlyUsers, onlyUsersLocked)}
             </ul>
           </section>
 
@@ -485,6 +509,20 @@ function formatBytes(value: number | null): string {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {!existingAccess && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="access-mode">{marketStore('install.accessLabel')}</Label>
+                  <Select value={accessMode} onValueChange={(value) => setAccessMode(value === 'owner' ? 'owner' : 'all_users')}>
+                    <SelectTrigger id="access-mode"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all_users">{marketStore('install.accessEveryone')}</SelectItem>
+                      <SelectItem value="owner">{marketStore('install.accessOnlyMe')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{marketStore('install.accessHint', { app: app.name })}</p>
                 </div>
               )}
 

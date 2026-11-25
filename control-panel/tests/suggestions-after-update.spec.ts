@@ -41,7 +41,8 @@ test('the reverse scan reads what is installed now, and the start drops what app
 });
 
 /** suggestions.ts over an in-memory store and the given installed apps (`frozen`: the installed copies; a missing one cannot be read). */
-function loadSuggestions(stored: Suggestion[], installed: Array<Record<string, unknown>>, frozen: Record<string, Record<string, unknown>>) {
+function loadSuggestions(stored: Suggestion[], installed: Array<Record<string, unknown>>, frozen: Record<string, Record<string, unknown>>,
+  bridges: Array<{ from: string; to: string }> = []) {
   const files = new Map<string, string>([['/var/lib/youeye/bridges/suggestions.json', JSON.stringify(stored)]]);
   const tick = () => new Promise((resolve) => setTimeout(resolve, 2));
   const mocks: Record<string, unknown> = {
@@ -53,7 +54,7 @@ function loadSuggestions(stored: Suggestion[], installed: Array<Record<string, u
     '../market/metadata': { listReadableInstalledApps: async () => installed },
     '../market/frozen-manifest': { readInstalledAppManifest: async (id: string) => { await tick(); if (!frozen[id]) throw new Error('unreadable'); return frozen[id]; } },
     '../health/notification-bridge': { sendNotificationToUI: async () => {} },
-    './store': { loadBridges: async () => [] },
+    './store': { loadBridges: async () => bridges },
     './atomic-json-store': { async writeJsonAtomically(file: string, value: unknown) { await tick(); files.set(file, JSON.stringify(value)); } },
   };
   const exports: Record<string, any> = {};
@@ -114,4 +115,47 @@ test('changes of the suggestion store do not undo each other', async () => {
   ]);
   assert.equal(dropped, 1);
   assert.deepEqual(read().map((s) => [s.id, s.dismissed]), [['bridge-chat-ollama', true]]);
+});
+
+// YE-227: approving removes the suggestion and suggestions are made only at an install or an update, so a connection
+// disconnected in Settings could never be approved again. The disconnect brings its suggestion back.
+test('a disconnected connection is suggested again while the consumer still asks for it', async () => {
+  const installed = [{ appId: 'nextcloud' }, { appId: 'onlyoffice' }, { appId: 'chat' }, { appId: 'ollama' }];
+  const frozen = {
+    nextcloud: { metadata: { name: 'Nextcloud' }, wants: [{ appId: 'onlyoffice', name: 'Office', scope: 'service' }] },
+    onlyoffice: { metadata: { name: 'ONLYOFFICE Docs' } },
+    chat: { metadata: { name: 'Chat' }, wants: [{ type: 'llm', name: 'A language model' }] },
+    ollama: { metadata: { name: 'Ollama' }, provides: [{ type: 'llm' }] },
+  };
+  const dismissed = { ...suggestion('chat', 'ollama'), dismissed: true, targetInstalled: true };
+  const { suggestions, read } = loadSuggestions([dismissed], installed, frozen);
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('nextcloud', 'onlyoffice'), true);
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('chat', 'ollama'), true);
+  assert.deepEqual(read().map((s) => [s.id, s.fromAppName, s.targetAppName, s.scope, s.targetInstalled, s.dismissed]), [
+    ['bridge-chat-ollama', 'chat', 'ollama', 'user', true, false], // dismissed before it was connected: waiting again
+    ['bridge-nextcloud-onlyoffice', 'Nextcloud', 'ONLYOFFICE Docs', 'service', true, false],
+  ]);
+  // Asked twice (a retried disconnect), it is still one suggestion.
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('nextcloud', 'onlyoffice'), true);
+  assert.equal(read().length, 2);
+});
+
+test('no suggestion comes back for an app that no longer asks, one not installed, or a pair still connected', async () => {
+  const installed = [{ appId: 'nextcloud' }, { appId: 'onlyoffice' }, { appId: 'memos' }];
+  const frozen = {
+    nextcloud: { metadata: { name: 'Nextcloud' }, wants: [{ appId: 'onlyoffice', name: 'Office' }] },
+    onlyoffice: { metadata: { name: 'ONLYOFFICE Docs' } },
+    memos: { metadata: { name: 'Memos' }, wants: [] },
+  };
+  const { suggestions, read } = loadSuggestions([], installed, frozen, [{ from: 'nextcloud', to: 'onlyoffice' }]);
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('memos', 'onlyoffice'), false, 'memos does not ask for it');
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('nextcloud', 'whiteboard'), false, 'the target is not installed');
+  assert.equal(await suggestions.suggestAgainAfterDisconnect('nextcloud', 'onlyoffice'), false, 'still connected');
+  assert.deepEqual(read(), []);
+});
+
+test('the disconnect route suggests the connection again, and the disconnect stands if that fails', () => {
+  const route = readFileSync(new URL('../src/app/api/bridges/[bridgeId]/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /const bridge = await getBridge\(bridgeId\);\s*const deleted = await deleteBridge\(bridgeId\);/);
+  assert.match(route, /try \{\s*suggested = await suggestAgainAfterDisconnect\(bridge\.from, bridge\.to\);\s*\} catch/);
 });

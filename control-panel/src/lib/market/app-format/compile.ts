@@ -158,7 +158,13 @@ export function compileApp(parsed: ParsedApp): AppManifest {
     environment: {},
     volumes: volumes(app.data, app.shared),
     healthCheck: health(app.health),
-    source: app.source ? { node: app.source.node } : undefined,
+    source: app.source ? {
+      node: app.source.node,
+      ...(app.source.package ? {
+        package: { url: app.source.package.url, sha256: app.source.package.sha256, size: app.source.package.size },
+        artifactSHA256: app.source.package.sha256,
+      } : {}),
+    } : undefined,
     network,
   };
   // Sidecars (database, cache, workers) come first, in their declared order, and

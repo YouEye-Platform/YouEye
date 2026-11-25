@@ -29,7 +29,13 @@ const SETUP_CHANGED = 'Setup steps changed: the new version of this app, added b
   + 'only if you trust its publisher.';
 
 /** What a finished update says. An app that already runs what its source offers is told so, not "Update complete". */
-export function completedMessage(result: { sharedFolders?: string[]; unchanged?: boolean; newVersion?: string }): string {
+export function completedMessage(result: { sharedFolders?: string[]; unchanged?: boolean; moved?: boolean; manifestUpdated?: boolean; newVersion?: string }): string {
+  if (result.moved) {
+    return `Already up to date${result.newVersion ? ` (version ${result.newVersion})` : ''}: it now takes its updates from its Market; nothing was downloaded or restarted.`;
+  }
+  if (result.manifestUpdated) {
+    return `Update complete${result.newVersion ? ` (version ${result.newVersion})` : ''}: the Market's new manifest for the same package; nothing was downloaded or restarted.`;
+  }
   if (result.unchanged) {
     return `Already up to date${result.newVersion ? ` (version ${result.newVersion})` : ''}: nothing was changed.`;
   }
@@ -59,6 +65,7 @@ function publicUpdateFailure(code: unknown): string {
   if (code === 'requires-newer-youeye') return 'Update blocked: the new version of this app needs a newer YouEye. Update YouEye in Settings, then update the app.';
   if (code === 'source-not-accepted') return 'Update blocked: this app comes from a Market source you have not accepted. Accept the source first (youeye market accept <source>).';
   if (code === 'source-unavailable') return 'Update blocked: this app\'s Market source is turned off or no longer configured. Choose a source for it on the app\'s page (or: youeye app source <app> <market id>).';
+  if (code === 'not-in-market') return 'No update source: this native app is not in its Market; it keeps running as it is.';
   if (code === 'source-changed') return 'Update blocked: this app\'s Market source now points at another market than the app was installed from. Switch the app to that source on its page if you want its updates from there.';
   return 'Update failed. Check the operation status.';
 }
@@ -227,7 +234,7 @@ export async function handleMarketUpdate(req: NextRequest, routeAppId?: string, 
       finish({ operationId, success: result.success, errorCode: result.errorCode ?? null, message });
       return NextResponse.json({ status: result.success ? 'success' : 'error', message: forApp(message, appId),
         previous_version: result.previousVersion, new_version: result.newVersion },
-        { status: result.success ? 200 : result.errorCode === 'operation_in_progress' ? 409 : 500 });
+        { status: result.success ? 200 : result.errorCode === 'operation_in_progress' || result.errorCode === 'not-in-market' ? 409 : 500 });
     } catch (error) {
       logOperationFailure(`Update of ${appId}`, error);
       const code = thrownCode(error);

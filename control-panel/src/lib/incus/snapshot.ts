@@ -155,11 +155,22 @@ export async function waitForRunning(name: string, maxWait = 30): Promise<void> 
   throw new Error(`Container ${name} did not reach Running state within ${maxWait}s`);
 }
 
-export async function waitForContainerExec(name: string, maxWait = 30): Promise<void> {
+/**
+ * Wait until Incus can run a command inside a container that has just started: right after Incus reports it Running,
+ * an exec can still fail while its transport into the new container comes up (587a5e2d). Bounded; fails closed.
+ *
+ * An image without a shell (a static binary: Garage, many Go/Rust services) answers the probe with 127 (`sh` not
+ * found) or 126 (not executable). That exec reached the container, so the transport is ready; there is just no shell
+ * to run anything in (YE-216). `shell: false` tells callers to use host-side checks instead. `execShell` looks `sh` up
+ * through the image's PATH and then the standard directories, so an image whose PATH lacks /bin, or that keeps `sh`
+ * outside /bin (Nix), still counts as having a shell (YE-221).
+ */
+export async function waitForContainerExec(name: string, maxWait = 30): Promise<{ shell: boolean }> {
   for (let i = 0; i < maxWait; i++) {
     try {
       const result = await execShell(name, 'echo ready', { timeout: 5000 });
-      if (result.stdout.trim() === 'ready') return;
+      if (result.stdout.trim() === 'ready') return { shell: true };
+      if (result.exitCode === 127 || result.exitCode === 126) return { shell: false };
     } catch { /* not ready yet */ }
     await new Promise((r) => setTimeout(r, 1000));
   }

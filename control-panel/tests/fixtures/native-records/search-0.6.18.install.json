@@ -1,0 +1,117 @@
+{
+  "schema": "youeye.install.v1",
+  "appId": "search",
+  "installationId": "811b04e1-159f-452c-bac9-d993ec72c4dd",
+  "lifecycleState": "active",
+  "recoveryPreserveData": false,
+  "storageVolumes": [],
+  "catalogKey": "official:app:search",
+  "itemKind": "app",
+  "sourceId": "official",
+  "sourceName": "Official YouEye Market",
+  "manifestPath": "youeye-app.yaml",
+  "manifestRepo": "https://github.com/YouEye-Platform/Search",
+  "manifestBranch": "v0.6.4",
+  "manifestDigest": "sha256:6e0a745dd88551f2cab8be549e3a37dcf11a9a34606dd70e526a87ac1b4d020d",
+  "nativeArtifacts": [
+    {
+      "productRelease": {
+        "manifestBase64": "ewogICJzY2hlbWEiOiAieW91ZXllLnByb2R1Y3QtcmVsZWFzZS52MSIsCiAgInByb2R1Y3QiOiAic2VhcmNoIiwKICAidmVyc2lvbiI6ICIwLjYuNCIsCiAgInRhZyI6ICJ2MC42LjQiLAogICJzb3VyY2VfdHJlZSI6ICIyMmQyMTkwMDY3ZDVhYmRkNjk0YWY1ZmMzOTk4MjMzMmQ0ZmY5NWQ4IiwKICAic2VxdWVuY2UiOiAxNzk1MDgzNjE3LAogICJtaW5pbXVtX3JlYWRlciI6IDIsCiAgImF1dGhvcml0eSI6ICJkaWdlc3QiLAogICJidWlsZF9tYW5pZmVzdF9iYXNlNjQiOiAiZXlKelkyaGxiV0VpT2lKNWIzVmxlV1V1Y0hKdlpIVmpkQzFpZFdsc1pDNTJNU0lzSW5CeWIyUjFZM1FpT2lKelpXRnlZMmdpTENKcmFXNWtJam9pYm1GMGFYWmxJaXdpYzI5MWNtTmxYM1J5WldVaU9pSXlNbVF5TVRrd01EWTNaRFZoWW1Sa05qazBZV1kxWm1Nek9UazRNak16TW1RMFptWTVOV1E0SWl3aWFXNXdkWFJmYzJoaE1qVTJJam9pWVRJNE5qTTROMlJtWVdFek4yUXlZVEF5TUdFMU9UVmlPRGMwT0RRNU0yUTRNMkpoWTJKbU0yVmxNRGs1TmpBd01EUTJaRGhqTVRSa1pEQmtNVEEzTnlJc0ltTnZiblJ5WVdOMFgzTm9ZVEkxTmlJNklqRmlNakJsTVdNM01EazBPR1V3T1dJd1pEVXlNR0kzTWpOaFltSTNZakE1T0Roa09EYzFOVE13T1dVek0yVTJNRFZpTmpZd1pqRTFNR000T0RVd05ESWlMQ0p3Y21sdFlYSjVJam9pYzNSaGJtUmhiRzl1WlM1MFlYSWlMQ0poYzNObGRITWlPbHQ3SW01aGJXVWlPaUp6ZEdGdVpHRnNiMjVsTG5SaGNpSXNJbk5vWVRJMU5pSTZJalZtT1RBeE9XUmlZak5pTjJKbU5UVTBORFUxT1RBM05XRXhPVEV3WkRrME9EZzFZV1ZoTmpOaFl6QTJaR000TlRKaE1ESmxOekUyWWpnMk1EUTVNelVpTENKemFYcGxYMko1ZEdWeklqb3pPRGM1TmpJNE9EQjlMSHNpYm1GdFpTSTZJbmx2ZFdWNVpTMWhjSEF1ZVdGdGJDSXNJbk5vWVRJMU5pSTZJakZpTWpCbE1XTTNNRGswT0dVd09XSXdaRFV5TUdJM01qTmhZbUkzWWpBNU9EaGtPRGMxTlRNd09XVXpNMlUyTURWaU5qWXdaakUxTUdNNE9EVXdORElpTENKemFYcGxYMko1ZEdWeklqb3lOamMxZlYxOSIKfQo=",
+        "manifestSHA256": "9302e062ee5f29443a77056630203975dac1eff61936fcc3cdff87cc2b4f3b27",
+        "repository": "https://github.com/YouEye-Platform/Search"
+      },
+      "runtimeUUID": "36f7d9e0-e50f-40af-808d-2166104bd6fe",
+      "containerName": "main",
+      "sourceRepo": "https://github.com/YouEye-Platform/Search",
+      "releaseTag": "v0.6.4",
+      "version": "0.6.4",
+      "artifactName": "standalone.tar",
+      "sha256": "5f9019dbb3b7bf5544559075a1910d94885aea63ac06dc852a02e716b8604935",
+      "bytes": 387962880,
+      "verification": "product-release",
+      "productReleaseSHA256": "9302e062ee5f29443a77056630203975dac1eff61936fcc3cdff87cc2b4f3b27"
+    }
+  ],
+  "integration": "native",
+  "perUserData": "identity_uuid",
+  "subdomain": "search",
+  "domain": "azure-delta.ui.bingo",
+  "enableSSO": true,
+  "forwardAuthEnabled": false,
+  "protectWithAccountLogin": true,
+  "installedAt": "2026-11-24T00:46:24.241Z",
+  "installedVersion": "0.6.4",
+  "catalogVersion": "0.6.4",
+  "enabled": true,
+  "desiredState": "running",
+  "autoRestart": true,
+  "containers": [
+    {
+      "name": "main",
+      "containerName": "app-search",
+      "type": "lxd",
+      "primary": true,
+      "network": "isolated",
+      "port": 3000,
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "timeout": 120000,
+        "retries": 3,
+        "startPeriod": 0,
+        "autoRestart": true
+      }
+    }
+  ],
+  "ssoSlug": "youeye-app-search",
+  "ssoClientId": "youeye-app-search",
+  "manifestSource": "market",
+  "selectedIntegrations": [],
+  "databaseMode": "none",
+  "hasSSO": true,
+  "wants": [
+    {
+      "type": "search-engine",
+      "name": "Search Engine",
+      "description": "Any compatible search engine backend (SearXNG, Whoogle, etc.)",
+      "defaultPort": 8080,
+      "scope": "user"
+    },
+    {
+      "appId": "searxng",
+      "name": "SearXNG",
+      "description": "Private meta-search engine",
+      "defaultPort": 8080,
+      "proxy": {
+        "paths": [
+          "/search*",
+          "/autocompleter*"
+        ],
+        "methods": [
+          "GET"
+        ]
+      },
+      "scope": "user"
+    },
+    {
+      "appId": "whoogle",
+      "name": "Whoogle",
+      "description": "Privacy search frontend",
+      "defaultPort": 3000,
+      "scope": "user"
+    }
+  ],
+  "usePerAppBridge": true,
+  "productReleaseFloors": {
+    "search": {
+      "line": "0.6.4",
+      "sequence": 1795083617,
+      "build": "0.6.4",
+      "buildSHA256": "a230cfa6e635b7d679b1f8957a08be6d00f83f859228fb42d72744437a72d6ce",
+      "manifestSHA256": "9302e062ee5f29443a77056630203975dac1eff61936fcc3cdff87cc2b4f3b27"
+    }
+  },
+  "updatedAt": "2026-11-24T00:47:03.280Z",
+  "serviceCredentialState": "ready",
+  "admissionOwnerId": "8d29a2e6-b00e-4608-8d3c-e708e76e97b6"
+}

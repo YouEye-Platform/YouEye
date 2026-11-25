@@ -1,4 +1,4 @@
-export { authenticatePAM, getUserGroups, isAdmin } from './pam';
+export { authenticatePAM, getUserGroups, isAdmin, isValidPAMUsername } from './pam';
 export {
   createSession,
   createSetupSession,

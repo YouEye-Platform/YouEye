@@ -58,7 +58,7 @@ Spine runs a Unix socket server at `/var/run/youeye/youeye.sock`. The Control Pa
 | `/api/health` | GET | Health check |
 | `/api/version` | GET | Version info |
 | `/api/status` | GET | Full system status |
-| `/api/auth/verify` | POST | PAM authentication |
+| `/api/auth/verify` | POST | PAM authentication (a backstop limit that slows, never locks: [docs/spine.md](../docs/spine.md#pam-sign-in-checks)) |
 | `/api/appliance/core-update/*` | GET/POST | System release: status, check, stage, activate, resume, recover, cancel |
 
 The full list of route groups is in [docs/spine.md](../docs/spine.md#the-api). Spine has no route that updates a

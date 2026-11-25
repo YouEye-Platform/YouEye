@@ -9,7 +9,9 @@ Every product is built once and promoted unchanged through four channels:
 | `beta` | GitHub `YouEye-Platform` | `beta` | prerelease |
 | `stable` | GitHub `YouEye-Platform` | `main` | normal (latest) |
 
-Products: YouEye (the System), the native apps (Notes, Wiki, Search, Translate, Weather, Cinema) and Pointer.
+Products: YouEye (the System) and Pointer. The native apps (Notes, Wiki, Search, Translate, Weather, Cinema) are
+built and promoted with the same tools, but since 0.6.20 they reach boxes through a market, which pins a release's
+`standalone.tar` ([native-apps.md](native-apps.md), YE-142).
 Nothing is signed; integrity comes from HTTPS and SHA-256. The Market is not a product: it has no releases and is
 published as static files ([market-format.md](market-format.md)); its old index entry is
 [removed with 0.6.13](#the-frozen-market-entry).
@@ -85,9 +87,10 @@ Settings → Apps, backups), the CLI (`youeye version`, `youeye status`, `youeye
 console, the dashboard (from `/etc/youeye/release.json`, [control-panel.md](control-panel.md#the-installed-release)),
 the heartbeat to the YouEye Names broker and the platform context apps get (`requires.youeye` checks it too).
 
-Native apps and Pointer keep the name of the release they installed: the same build under another channel's name
-is not offered as an update and not applied, so after a channel switch Notes still shows `0.6.4` where alpha calls
-that build `0.6.4-alpha.1`, until a newer build arrives (since 0.6.17, [native-apps.md](native-apps.md)).
+Pointer keeps the name of the release it installed: the same build under another channel's name is not offered as
+an update and not applied, until a newer build arrives (since 0.6.17). Native apps follow their market since 0.6.20:
+the same package under another version name is no new build there either; its manifest decides, and a new manifest
+for it that configures the app the same way is taken without a download or restart ([native-apps.md](native-apps.md)).
 
 For support, a details line gives the git tree: About shows `0.6.13 · b39fe307` (version · short tree) with a Copy
 button, and `youeye version --verbose` lists the release tree and each part's tree and SHA-256
@@ -145,8 +148,10 @@ forge before it goes public. Boxes read one small file per channel (`releasecach
   equal an old-shape document's `build`. The tools write the document's `build` when it has one (0.6.12 and
   earlier) and the entry's `version` otherwise (0.6.13 and later), so a promoted entry never names a dev build.
   Readers from 0.6.12 on neither check nor use it. It is deleted before the Release, with the 0.6.12 stones.
-- Products: `youeye`, `pointer`, `notes`, `wiki`, `search`, `translate`, `weather`, `cinema`. Readers from 0.6.13
-  skip a `market` entry like any product they do not know ([below](#the-frozen-market-entry)).
+- Products: `youeye` and `pointer` (`releasecache.Products`, `INDEX_PRODUCTS`). The entries `notes`, `wiki`,
+  `search`, `translate`, `weather` and `cinema` are frozen for boxes up to 0.6.19, which read native apps only from
+  them; readers from 0.6.20 skip them like any product they do not know, as readers from 0.6.13 skip `market`
+  ([below](#the-frozen-native-app-entries)). The entries go once 0.6.20 is on stable.
 - **Read leniently, so later indexes never cut a box off:** unknown keys at any level are ignored, a product this
   reader doesn't know is skipped, and an invalid entry makes only that product unavailable (`Invalid` in Go,
   `invalid` in the CP). Only a different `schema` means an incompatible index. A new product or field therefore
@@ -186,7 +191,17 @@ Who reads it:
 | Installer | the index, or an exact `--release-tag` + `--core-manifest-sha256` handed over by `install.sh` |
 | First-boot network check | one GET of the index (a 403/429 answer still proves the network works) |
 | Spine (`youeye update core check`) | the `youeye` entry of the box's channel |
-| Control Panel | native apps and Pointer through Spine `GET /api/releases/index` (never the Market) |
+| Control Panel | Pointer through Spine `GET /api/releases/index` (never the Market; native apps come from their market since 0.6.20) |
+
+### The frozen native app entries
+
+Up to 0.6.19 a box listed, installed and updated native apps from these entries of its channel index; the System
+update never read them. From 0.6.20 (YE-142) native apps are Market apps and the entries are **frozen** as they are:
+they keep native apps working on older boxes until the Market carries the new `kind: native` entries, from which
+point those boxes list their native apps as "needs a newer YouEye" until they update to 0.6.20: the installed apps
+keep running, but such a box can no longer install, update or reinstall a native app, nor restore one whose backup
+has no app runtime. The update to 0.6.20 itself is unchanged: Spine reads only the `youeye` entry for it. Once 0.6.20 is on stable, the six go into `FORMER_PRODUCTS` (`Tools/release/lib.py`) and the
+next index write drops them on every channel.
 
 ### The frozen Market entry
 
@@ -199,6 +214,10 @@ is published and promoted. Boxes up to 0.6.10 then have no Market until they upd
 the Market by address.
 
 ## The box's channel
+
+The channel decides the System and Pointer. It does not decide native apps (they come from their market) or the
+official Market's lane (the box's own setting, `main` unless the owner chose `dev`; [market.md](market.md#where-the-apps-come-from)),
+both since 0.6.20 (YE-142).
 
 The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
 
@@ -230,7 +249,7 @@ The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
     `youeye.release-policy.v1` and its fields; older Spines read it unchanged.
 
   The answer names the head the new channel offers (`head_version` in the API). The update check, the downloads of
-  every newer release, and native apps and Pointer (the Control Panel reads them through Spine's
+  every newer release, and Pointer (the Control Panel reads it through Spine's
   `/api/releases/index`) read the repository live, so updates now depend on that host. Booting never needs the
   new host: the network check ([above](#channel-index-no-release-listing)) runs at the first deploy, before a switch
   is allowed, and again only when network settings are changed from the console (`youeye-installer network`),
@@ -242,7 +261,7 @@ The installer writes `/var/lib/youeye-state/bootstrap/release-policy.json`:
   - a box on `0.6.13-dev.7` that switches to stable, where 0.6.13 is `dev.5` promoted, waits for a later stable
     (0.6.14). `youeye update core check` then says `"behind": true` with a message that names versions only:
     `channel stable offers 0.6.13; this box has 0.6.13-dev.7; waiting for it to catch up`. Settings → System shows
-    that message and offers no update. Native apps and Pointer say the same per product
+    that message and offers no update. Pointer says the same
     ([troubleshooting.md](troubleshooting.md#waiting-for-the-channel-to-catch-up));
   - the same build under another channel's name (`0.6.13-dev.5` → `0.6.13-alpha.1`) is not older; taking it only
     records the new document (a metadata-only update, no file changes).

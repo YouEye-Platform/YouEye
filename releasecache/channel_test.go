@@ -136,19 +136,20 @@ func TestChannelIndexValidation(t *testing.T) {
 	}
 	// A bad entry fails only its own product.
 	for i, entry := range []string{
-		`"notes":{"repository":"https://a.test/o/r","tag":"dev-v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `"}`,
-		`"notes":{"repository":"http://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `"}`,
-		`"notes":{"repository":"https://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `","download_base":"https://x.test/f?sig=1"}`,
-		`"notes":7`,
+		`"pointer":{"repository":"https://a.test/o/r","tag":"dev-v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `"}`,
+		`"pointer":{"repository":"http://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `"}`,
+		`"pointer":{"repository":"https://a.test/o/r","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("a", 64) + `","download_base":"https://x.test/f?sig=1"}`,
+		`"pointer":7`,
 	} {
 		parsed, err := ParseChannelIndex([]byte(index("dev", entry+`,"wiki":{"repository":"https://a.test/o/w","tag":"v1.0.0-dev.1","version":"1.0.0-dev.1","build":"1.0.0-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("a", 64)+`"}`)))
-		if err != nil || parsed.Invalid["notes"] == "" || len(parsed.Products) != 1 || parsed.Products["wiki"].Tag != "v1.0.0-dev.1" {
+		if err != nil || parsed.Invalid["pointer"] == "" || len(parsed.Products) != 0 || parsed.Invalid["wiki"] != "" {
 			t.Errorf("case %d: %v %+v", i, err, parsed)
 		}
 	}
-	good := index("beta", `"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.1-dev.2","version":"0.6.1-dev.2","build":"0.6.1-dev.2","document":"product-release.json","sha256":"`+strings.Repeat("b", 64)+`"},"market":{"repository":"https://github.com/YouEye-Platform/YE-AppMarket","tag":"catalog-v0.6.1-dev.1","version":"0.6.1-dev.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("c", 64)+`"}`)
-	// The frozen market entry (for boxes up to 0.6.10) is skipped like any product this reader does not take.
-	if parsed, err := ParseChannelIndex([]byte(good)); err != nil || len(parsed.Products) != 1 || len(parsed.Invalid) != 0 || parsed.Products["notes"].Tag != "v0.6.1-dev.2" {
+	good := index("beta", `"pointer":{"repository":"https://github.com/YouEye-Platform/Pointer","tag":"v0.6.1-dev.2","version":"0.6.1-dev.2","build":"0.6.1-dev.2","document":"product-release.json","sha256":"`+strings.Repeat("b", 64)+`"},"market":{"repository":"https://github.com/YouEye-Platform/YE-AppMarket","tag":"catalog-v0.6.1-dev.1","version":"0.6.1-dev.1","build":"0.6.1-dev.1","document":"product-release.json","sha256":"`+strings.Repeat("c", 64)+`"},"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.4","version":"0.6.4","document":"product-release.json","sha256":"`+strings.Repeat("e", 64)+`"}`)
+	// The frozen market entry (for boxes up to 0.6.10) and the frozen native app entries (for boxes up to 0.6.19,
+	// YE-142) are skipped like any product this reader does not take.
+	if parsed, err := ParseChannelIndex([]byte(good)); err != nil || len(parsed.Products) != 1 || len(parsed.Invalid) != 0 || parsed.Products["pointer"].Tag != "v0.6.1-dev.2" {
 		t.Fatal(err, parsed)
 	}
 }
@@ -161,7 +162,7 @@ func TestFutureChannelIndexIsRead(t *testing.T) {
 	 "youeye":{"repository":"https://github.com/YouEye-Platform/YouEye","tag":"youeye-v0.9.0","version":"0.9.0","build":"0.9.0-dev.4","document":"core-release.json","sha256":"` + strings.Repeat("a", 64) + `","download_base":"https://releases.youeye.me/v1/files","size_bytes":123,
 	  "stepping_stones":[{"tag":"youeye-v0.7.0","version":"0.7.0","build":"0.7.0-dev.3","document":"core-release.json","sha256":"` + strings.Repeat("b", 64) + `","minimum_release":"0.6.0","minimum_reader":1,"note":"x"},{"broken":true},"nonsense"]},
 	 "photos":{"repository":"https://github.com/YouEye-Platform/Photos","tag":"v0.1.0","version":"0.1.0","build":"0.1.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("c", 64) + `"},
-	 "notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.9.0","version":"0.9.0","build":"0.9.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("d", 64) + `","channel_note":"y"}}}`
+	 "pointer":{"repository":"https://github.com/YouEye-Platform/Pointer","tag":"v0.9.0","version":"0.9.0","build":"0.9.0-dev.1","document":"product-release.json","sha256":"` + strings.Repeat("d", 64) + `","channel_note":"y"}}}`
 	parsed, err := ParseChannelIndex([]byte(future))
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +391,7 @@ func TestChannelIndexBuildIsOptionalAndIgnored(t *testing.T) {
 		 "stepping_stones":[{"tag":"youeye-v0.6.12","version":"0.6.12","build":"0.6.12-dev.4","sequence":1795100000,"document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5-dev.2","minimum_reader":1},
 		  {"tag":"youeye-v0.6.11","version":"0.6.11","document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5","minimum_reader":1},
 		  {"tag":"youeye-v0.6.10","version":"0.6.10","sequence":-4,"document":"core-release.json","sha256":"` + digest + `","minimum_release":"0.6.5","minimum_reader":1}]},
-		"notes":{"repository":"https://github.com/YouEye-Platform/Notes","tag":"v0.6.4","version":"0.6.4",` + extra + `"document":"product-release.json","sha256":"` + digest + `"}`
+		"pointer":{"repository":"https://github.com/YouEye-Platform/Pointer","tag":"v0.6.4","version":"0.6.4",` + extra + `"document":"product-release.json","sha256":"` + digest + `"}`
 	}
 	for _, extra := range []string{``, `"build":"0.6.13",`, `"build":"not a version",`} {
 		parsed, err := ParseChannelIndex([]byte(index("stable", entry(extra))))

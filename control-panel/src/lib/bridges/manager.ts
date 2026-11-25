@@ -17,7 +17,7 @@ import {
   SYSTEM_APP_IDS,
   withAppNetworkOperationLock,
 } from '../incus/app-network';
-import { withAppLifecycle } from '../market/update-admission';
+import { isAppHeld, withAppLifecycle } from '../market/update-admission';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { incusDownloadFile, incusRequest, incusUploadFile } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
@@ -531,12 +531,274 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   return bridge;
 }
 
-/** Before a connection goes away: run the `remove:` steps of the consumer's connect file (non-fatal). */
-async function unwireBridge(bridgeId: string): Promise<void> {
+/**
+ * Before a connection goes away: run the `remove:` steps of the consumer's connect file. Non-fatal: the wire runner
+ * logs a failure, and its fixed message (no values) is returned.
+ */
+async function unwireBridge(bridgeId: string, leaving?: string): Promise<string | undefined> {
   const bridge = await getBridge(bridgeId);
   if (bridge?.active && isNetworkConnection(bridge)) {
-    await runConnectionWiring(bridge.from, bridge.to, undefined, { remove: true });
+    return (await runConnectionWiring(bridge.from, bridge.to, undefined, { remove: true, leaving })).error;
   }
+  return undefined;
+}
+
+/** A connection whose `remove:` steps did not run: the other app may still list the uninstalled one. */
+export interface ConnectionLeftover {
+  /** The other app (absent when the connections could not even be read). */
+  appId?: string;
+  /** Its name from its installed manifest, else its id. */
+  name?: string;
+  /** Fixed text for the API result and the journal (no values). */
+  message: string;
+}
+
+/**
+ * For an uninstall, before the app is stopped: run the `remove:` steps of every active connection of `appId`, both
+ * ways (the app as the consumer, and as the app another one connects to). The steps call the other app with both
+ * apps' secrets and addresses, so they can run only while both apps are up; once the app is stopped, its address is
+ * gone. Never throws: returns one leftover per connection whose steps failed (the uninstall carries on and reports
+ * them). The connections stay until `deleteBridge(id, { unwired: true })`, which does not run the steps again.
+ */
+export async function unwireAppConnections(appId: string): Promise<ConnectionLeftover[]> {
+  const failed: ConnectionLeftover[] = [];
+  let bridges: Bridge[];
+  try {
+    bridges = await getBridgesForApp(appId);
+  } catch (error) {
+    console.error(`[bridges] The connections of ${appId} could not be read to undo them: ${describeErrorChainForLog(error)}`);
+    return [{ message: `The connections of ${appId} could not be read, so their remove steps did not run` }];
+  }
+  for (const bridge of bridges) {
+    const other = bridge.from === appId ? bridge.to : bridge.from;
+    let error: string | undefined;
+    try {
+      error = await withBridgeAdmission(bridge.id, 'bridge-unwire', undefined, () => unwireBridge(bridge.id, appId));
+    } catch (cause) {
+      console.error(`[bridges] Undoing connection ${bridge.id} failed: ${describeErrorChainForLog(cause)}`);
+      error = `Could not unwire ${bridge.from} → ${bridge.to}`;
+    }
+    if (!error) continue;
+    const name = await readInstalledAppManifest(other).then((manifest) => manifest.metadata?.name || other, () => other);
+    failed.push({
+      appId: other,
+      name,
+      message: `${error}: the remove steps of this connection did not all run; ${other} may still list ${appId}`,
+    });
+  }
+  return failed;
+}
+
+/**
+ * An uninstall that ran the connections' `remove:` steps (`unwireAppConnections`) and then did not complete leaves
+ * them recorded and active, but unwired (YE-209): mark the remaining active network connections of `appId`
+ * `rewirePending`, so the next start wires them again (`rewirePendingConnections`). Never throws: a connection
+ * that cannot be read or marked is logged. Returns the marked connections.
+ */
+export async function markConnectionsForRewire(appId: string): Promise<string[]> {
+  let bridges: Bridge[];
+  try {
+    bridges = await getBridgesForApp(appId);
+  } catch (error) {
+    console.error(`[bridges] The connections of ${appId} could not be read to mark them for re-wiring: ${describeErrorChainForLog(error)}`);
+    return [];
+  }
+  const marked: string[] = [];
+  for (const bridge of bridges) {
+    if (!bridge.active || !isNetworkConnection(bridge)) continue;
+    try {
+      if (!bridge.rewirePending) await updateBridge(bridge.id, { rewirePending: true });
+      marked.push(bridge.id);
+    } catch (error) {
+      console.error(`[bridges] Connection ${bridge.id} could not be marked for re-wiring: ${describeErrorChainForLog(error)}`);
+    }
+  }
+  if (marked.length > 0) {
+    console.warn(`[bridges] The uninstall of ${appId} did not complete after its connections were unwired: `
+      + `${marked.join(', ')} will be wired again when ${appId} starts`);
+  }
+  return marked;
+}
+
+/**
+ * The re-wiring runs under both apps' lifecycle locks and the bridge lock, so the connect file it runs (its `wait:`
+ * steps included) is bounded: an app that runs but does not answer holds the locks for this long at most, not for
+ * the file's own limit (YE-223). A connection whose wiring fails is tried again after a growing pause.
+ */
+export const REWIRE_LIMIT_MS = 20_000;
+const REWIRE_BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000];
+/** How often the re-wire watch looks for an app start that asked for its connections (YE-224). */
+export const REWIRE_WATCH_MS = 5_000;
+
+/**
+ * The re-wiring's state, one per process (YE-224): Next bundles this module more than once (the instrumentation and
+ * health code, each route), and a user's start in a route bundle must reach the back-off the pass in another bundle
+ * reads. Kept on globalThis like update-admission.ts and health/service.ts.
+ */
+interface RewireState {
+  backoff: Map<string, { from: string; to: string; failures: number; nextAt: number }>;
+  pass: Promise<string[]> | null;
+  /** Apps whose start or restart asked for their connections, and when (the watch starts a pass for them). */
+  requested: Map<string, number>;
+  watch?: ReturnType<typeof setInterval>;
+}
+const rewireStateKey = Symbol.for('youeye.bridge-rewire');
+const rewireGlobal = globalThis as typeof globalThis & { [rewireStateKey]?: RewireState };
+const rewireState: RewireState = rewireGlobal[rewireStateKey] ??= { backoff: new Map(), pass: null, requested: new Map() };
+
+/**
+ * Start a re-wiring pass over every app unless one is still running (the reconcile pass and the re-wire watch call
+ * this and do not wait: a slow wiring never holds up the reconcile round, health checks or the route repair at
+ * Control Panel start). Never rejects; resolves with the connections still waiting.
+ */
+export function startRewirePass(): Promise<string[]> {
+  if (!rewireState.pass) {
+    rewireState.pass = rewirePendingConnections().catch(() => []).finally(() => { rewireState.pass = null; });
+  }
+  return rewireState.pass;
+}
+
+/**
+ * An app started or restarted: its marked connections are tried at once, without waiting out their back-off, by a
+ * pass the re-wire watch starts within `REWIRE_WATCH_MS`, whether or not the reconcile round runs (YE-224). Takes no
+ * lock and waits for nothing, so a user's start is never held up by a peer (YE-223).
+ */
+export function requestRewire(appId: string, now: () => number = Date.now): void {
+  for (const [bridgeId, entry] of rewireState.backoff) {
+    if (entry.from === appId || entry.to === appId) rewireState.backoff.delete(bridgeId);
+  }
+  rewireState.requested.set(appId, now());
+}
+
+/**
+ * One look of the re-wire watch: when an app asked for its connections and no pass is running, start one. A request
+ * made while a pass runs waits for the next look, so that pass (which may have passed its connections already)
+ * never swallows it.
+ */
+export function rewireWatchTick(isHeld: (appId: string) => boolean = isAppHeld): void {
+  if (rewireState.requested.size === 0 || rewireState.pass) return;
+  // A start asks from inside its own lifecycle hold (lifecycle.ts): a pass now would skip that app as busy, quietly,
+  // and the request would be lost. A held app's request waits for a look after the hold ends (alpha.7 review).
+  let served = 0;
+  for (const appId of [...rewireState.requested.keys()]) {
+    if (isHeld(appId)) continue;
+    rewireState.requested.delete(appId);
+    served++;
+  }
+  if (served > 0) void startRewirePass();
+}
+
+/**
+ * The re-wire watch, started once per process from instrumentation (background context, outside any user's
+ * lifecycle hold): it serves app starts without depending on the reconcile round, which returns early while a
+ * reconfigure journal, the install-operation state or the app networks need attention (YE-224).
+ */
+export function startRewireWatch(): void {
+  if (rewireState.watch) return;
+  rewireState.watch = setInterval(rewireWatchTick, REWIRE_WATCH_MS);
+  rewireState.watch.unref?.();
+}
+
+/**
+ * Wire again the connections marked `rewirePending` (of `appId`, or of every app): the consumer's connect file runs
+ * as on activation (its steps are idempotent), within `REWIRE_LIMIT_MS`. Run by the periodic reconcile pass
+ * (`startRewirePass`), which also covers an app that came up by Incus autostart or kept running after an uninstall
+ * that did not complete (YE-218); an app's start or restart only brings its connections forward (`requestRewire`).
+ * A connection is wired only while both its apps run, checked before and again inside its admission.
+ *
+ * Each connection is wired under its admission (both apps' lifecycle locks and the bridge lock, YE-218), like
+ * activation and the uninstall's unwiring: a peer's retried uninstall or its update's rollback cannot run meanwhile,
+ * and the mark is read again inside and cleared only while it is still set. A busy app is skipped quietly (the next
+ * pass retries). The mark stays when the wiring fails, and the connection waits out its back-off (30 s doubling to
+ * 30 min) before the next try. Never throws; returns the connections still waiting.
+ */
+export async function rewirePendingConnections(appId?: string, now: () => number = Date.now): Promise<string[]> {
+  let bridges: Bridge[];
+  try {
+    bridges = (appId ? await getBridgesForApp(appId) : await loadBridges()).filter((bridge) => bridge.rewirePending);
+  } catch (error) {
+    console.error(`[bridges] The connections${appId ? ` of ${appId}` : ''} could not be read to wire them again: ${describeErrorChainForLog(error)}`);
+    return [];
+  }
+  const marked = new Set(bridges.map((bridge) => bridge.id));
+  if (!appId) for (const bridgeId of rewireState.backoff.keys()) if (!marked.has(bridgeId)) rewireState.backoff.delete(bridgeId);
+  if (bridges.length === 0) return [];
+  // A connection with a stopped side stays marked: that app's start brings it forward.
+  const running = await runningInstances();
+  const waiting: string[] = [];
+  for (const bridge of bridges) {
+    const pause = rewireState.backoff.get(bridge.id);
+    if (pause && now() < pause.nextAt) { waiting.push(bridge.id); continue; }
+    const attemptAt = now();
+    try {
+      if (running && bridge.active && isNetworkConnection(bridge)) {
+        const [from, to] = await Promise.all([resolveContainerName(bridge.from), resolveContainerName(bridge.to)]);
+        if (!running.has(from) || !running.has(to)) { waiting.push(bridge.id); continue; }
+      }
+      const outcome = await withBridgeAdmission(bridge.id, 'bridge-rewire', 'gone' as const, () => rewireBridgeLocked(bridge.id));
+      if (outcome === 'failed') {
+        // An app of it started while this try ran (YE-224): its request wins over this try's back-off.
+        const startedSince = [bridge.from, bridge.to].some((id) => (rewireState.requested.get(id) ?? -Infinity) >= attemptAt);
+        // Counted from the entry as it is now: a start during the try has cleared it.
+        const failures = (rewireState.backoff.get(bridge.id)?.failures ?? 0) + 1;
+        if (startedSince) {
+          rewireState.backoff.delete(bridge.id);
+          console.warn(`[bridges] Connection ${bridge.id} is still not wired again; an app of it started meanwhile, tried again soon`);
+        } else {
+          const delay = REWIRE_BACKOFF_MS[Math.min(failures, REWIRE_BACKOFF_MS.length) - 1];
+          rewireState.backoff.set(bridge.id, { from: bridge.from, to: bridge.to, failures, nextAt: now() + delay });
+          console.warn(`[bridges] Connection ${bridge.id} is still not wired again (try ${failures}); next try in ${delay / 1000} s or when an app of it starts`);
+        }
+      } else if (outcome !== 'stopped') {
+        rewireState.backoff.delete(bridge.id);
+      }
+      if (outcome === 'failed' || outcome === 'stopped') waiting.push(bridge.id);
+    } catch (error) {
+      waiting.push(bridge.id);
+      if (appBusy(error)) continue;
+      console.error(`[bridges] Connection ${bridge.id} could not be wired again: ${describeErrorChainForLog(error)}`);
+    }
+  }
+  return waiting;
+}
+
+/** An app of the connection is busy (another operation holds its lock) or not admitted now: retried later, quietly. */
+function appBusy(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { name, message } = error as { name?: unknown; message?: unknown };
+  return /executor lock is busy|AppLifecycleBusyError|AppLifecycleAdmissionError|AppNetworkLockBusyError/.test(`${name} ${message}`);
+}
+
+/** Whether an instance runs now (null when Incus could not say). */
+async function instanceRunning(name: string): Promise<boolean | null> {
+  try {
+    const state = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${encodeURIComponent(name)}/state`);
+    if (state.type === 'error') return state.error_code === 404 ? false : null;
+    return state.metadata?.status === 'Running';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One marked connection, under its admission: check again that both apps run (one may have stopped while the pass
+ * waited for its locks), wire it within `REWIRE_LIMIT_MS`, then clear the mark only if it is still set.
+ */
+async function rewireBridgeLocked(bridgeId: string): Promise<'wired' | 'failed' | 'stopped' | 'gone'> {
+  const marked = await getBridge(bridgeId);
+  if (!marked?.rewirePending) return 'gone';
+  if (marked.active && isNetworkConnection(marked)) {
+    const [from, to] = await Promise.all([resolveContainerName(marked.from), resolveContainerName(marked.to)]);
+    if ((await instanceRunning(from)) === false || (await instanceRunning(to)) === false) return 'stopped';
+    const result = await runConnectionWiring(marked.from, marked.to, undefined, { deadlineMs: REWIRE_LIMIT_MS });
+    if (result.error) return 'failed';
+    console.log(`[bridges] Connection ${bridgeId} wired again after an uninstall that did not complete`);
+  }
+  // Compare and clear: the mark the wiring answered, and the same two apps (admission checked them on entry).
+  const current = await getBridge(bridgeId);
+  if (!current?.rewirePending || current.from !== marked.from || current.to !== marked.to) return 'gone';
+  await updateBridge(bridgeId, { rewirePending: undefined });
+  return 'wired';
 }
 
 /** Point an active network connection's ACLs (both ways if it has two) at the peers' current addresses. */
@@ -780,11 +1042,12 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
 }
 
 /**
- * Delete a bridge entirely.
+ * Delete a bridge entirely, running its `remove:` steps first. `unwired`: they already ran (an uninstall runs them
+ * with `unwireAppConnections` before it stops the app), so they are not run again.
  */
-export async function deleteBridge(bridgeId: string): Promise<boolean> {
+export async function deleteBridge(bridgeId: string, options: { unwired?: boolean } = {}): Promise<boolean> {
   return withBridgeAdmission(bridgeId, 'bridge-delete', false, async () => {
-    await unwireBridge(bridgeId);
+    if (!options.unwired) await unwireBridge(bridgeId);
     return deleteBridgeLocked(bridgeId);
   });
 }

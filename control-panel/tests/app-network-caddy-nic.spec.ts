@@ -98,6 +98,36 @@ function sandbox() {
   return { dir, state, run, log, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+test('a stale DHCP pid file never kills a process that is not our udhcpc for that interface', async () => {
+  const box = sandbox();
+  const { spawn } = await import('node:child_process');
+  const ifName = planCaddyAppNIC('actual-budget', 'yeapp1', {}).device.name;
+  const pidFile = path.join(box.dir, `youeye-udhcpc-${ifName}.pid`);
+  // After a restart the old number belongs to one of the app's own processes.
+  const app = spawn('sleep', ['30']);
+  // Our client for this interface (a stand-in whose command line is udhcpc's).
+  const ours = spawn('sh', ['-c', 'sleep 30; :', 'udhcpc', '-i', ifName, '-s', 'x'], { argv0: 'udhcpc' });
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try {
+    writeFileSync(pidFile, `${app.pid}\n`);
+    assert.equal(box.run(caddyAppNICReleaseScript(ifName, box.dir)), 0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(alive(app.pid!), 'the app\'s process is left alone');
+    assert.ok(!existsSync(pidFile));
+    const cmdline = readFileSync(`/proc/${ours.pid}/cmdline`, 'utf8').split('\0').join(' ');
+    assert.ok(cmdline.includes(`udhcpc -i ${ifName} `), cmdline);
+    {
+      writeFileSync(pidFile, `${ours.pid}\n`);
+      assert.equal(box.run(caddyAppNICReleaseScript(ifName, box.dir)), 0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(ours.signalCode, 'SIGTERM', 'our client is stopped');
+    }
+  } finally {
+    app.kill(); ours.kill(); box.cleanup();
+  }
+});
+
 test('a hot-plugged Caddy NIC is brought up with a DHCP address that only touches the interface', () => {
   const box = sandbox();
   try {

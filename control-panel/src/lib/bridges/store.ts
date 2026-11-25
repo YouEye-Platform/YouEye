@@ -37,6 +37,11 @@ export interface Bridge {
   approvedBy: string;
   approvedAt: string;
   activatedAt?: string;
+  /**
+   * The connection is recorded active but its wiring was undone: an uninstall ran its `remove:` steps and then did
+   * not complete (YE-209). The app's next start runs the connect file again and clears it.
+   */
+  rewirePending?: boolean;
 }
 
 async function ensureDir(): Promise<void> {
@@ -60,7 +65,8 @@ function validateBridge(value: unknown, index: number): Bridge {
     || !['one-way', 'both-ways'].includes(String(bridge.direction))
     || typeof bridge.approved !== 'boolean' || typeof bridge.active !== 'boolean'
     || !Array.isArray(bridge.envMappings) || typeof bridge.approvedBy !== 'string'
-    || typeof bridge.approvedAt !== 'string') {
+    || typeof bridge.approvedAt !== 'string'
+    || (bridge.rewirePending !== undefined && typeof bridge.rewirePending !== 'boolean')) {
     throw new Error(`Bridge record ${index} is invalid`);
   }
   for (const mapping of bridge.envMappings) {

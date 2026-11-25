@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ProfileIconPicker } from "./profile-icon-picker";
 import { IDENTITY_PASSWORD_MAX_LENGTH, IDENTITY_PASSWORD_MIN_LENGTH, validateIdentityPassword } from "@/lib/identity/password-policy";
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 interface ProfileClientProps {
   userId?: string;
@@ -56,8 +56,7 @@ const NATIVE_CONTROL =
 
 export function ProfileClient({ userId, username, name, email, isAdmin }: ProfileClientProps) {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const t = useTranslations("settingsYou.profile");
@@ -121,7 +120,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [interfaceTranslationRef]);
 
   useEffect(() => {
     const handler = (event: Event) => {

@@ -74,7 +74,7 @@ async function admittedUrlInstall(
   request: NextRequest, session: SessionPayload, hold: PlatformLifecycleHold, streaming: () => void,
 ): Promise<Response> {
   const auth = { session };
-  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean; publicAccess?: boolean };
+  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; allowSetup?: boolean; adoptRetainedData?: boolean; publicAccess?: boolean; accessMode?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -84,6 +84,9 @@ async function admittedUrlInstall(
   }
   if (body.adoptRetainedData !== undefined && typeof body.adoptRetainedData !== 'boolean') {
     return Response.json({ error: 'Invalid adoption request' }, { status: 400 });
+  }
+  if (body.accessMode !== undefined && body.accessMode !== 'all_users' && body.accessMode !== 'owner') {
+    return Response.json({ error: 'Invalid access choice: use all_users or owner' }, { status: 400 });
   }
   const actorId = await admissionAdministrator(auth.session);
   if (!actorId) {
@@ -183,8 +186,11 @@ async function admittedUrlInstall(
     manifestDigest: directEntry.manifestDigest,
     subdomain,
     domain,
-    // An app added by URL is not reviewed: its manifest cannot open itself to the public.
-    publicAccess: body.publicAccess === true,
+    // An app added by URL is not reviewed: its manifest cannot open itself to the public (the manifest default never
+    // applies to it). No choice in the request keeps a policy a reinstall kept, open or not (YE-168).
+    publicAccess: typeof body.publicAccess === 'boolean' ? body.publicAccess : undefined,
+    // Who in the household may use it, when its policy is created (YE-232); the engine defaults to everyone.
+    accessMode: body.accessMode as InstallConfig['accessMode'],
   };
 
   // Start tracking this install for reconnection support
@@ -238,7 +244,9 @@ async function admittedUrlInstall(
         if (baseInstallComplete) {
           const { uninstallApp } = await import('@/lib/market/uninstaller');
           const rollback = await hold.run(() => withUserOperationLockWait(
-            () => uninstallApp(config.appId, { keepData: false }),
+            // An install that adopted kept data rolls back keeping it: the kept copy was consumed by the adoption, and a
+            // delete-data rollback would delete the owner's data (YE-222). A plain install deletes what it created.
+            () => uninstallApp(config.appId, { keepData: config.adoptRetainedData === true }),
           )).catch(() => null);
           if (!rollback?.success) {
             onEvent({

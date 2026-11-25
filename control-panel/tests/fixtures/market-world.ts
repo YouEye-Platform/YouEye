@@ -3,7 +3,7 @@
  * catalog reader and (with `load`) the routes and engines that use them. Nothing here reaches a network or Spine.
  */
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
@@ -13,6 +13,7 @@ import * as requires from '../../src/lib/market/app-format/requires';
 import * as format from '../../src/lib/market/market-format';
 import * as realStore from '../../src/lib/market/market-store';
 import * as partialCatalog from '../../src/lib/market/partial-catalog';
+import * as publicAccess from '../../src/lib/market/public-access';
 import * as sources from '../../src/lib/market/source';
 import * as routing from '../../src/lib/market/update-routing';
 import * as realVersion from '../../src/lib/version';
@@ -59,10 +60,8 @@ export function withMarketState(work: (directory: string) => Promise<void>) {
 export interface WorldOptions {
   /** The YouEye version of the box (`requires.youeye` is checked against it). */
   boxVersion?: string;
-  /** The box's release channel (the official Market's lane). */
-  channel?: string;
-  /** Native apps of the channel by id. */
-  native?: Record<string, AppManifest>;
+  /** The official Market's lane (`lane` on the official entry of market-sources.json); main when not given. */
+  lane?: 'main' | 'dev';
   now?: () => number;
   /** The source module to use (a copy loaded with other installed apps); the real one by default. */
   sources?: Record<string, any>;
@@ -78,10 +77,19 @@ export interface WorldOptions {
  */
 export function marketWorld(sites: Record<string, Map<string, Buffer>>, options: WorldOptions = {}) {
   const hosts = fakeMarketHosts(sites, options.hosts);
+  if (options.lane) {
+    // Written before anything reads the list (a test that writes its own list sets the lane there).
+    const file = path.join(sources.marketStateDir(), 'market-sources.json');
+    let list: { active_sources?: Array<Record<string, unknown>> } = {};
+    try { list = JSON.parse(readFileSync(file, 'utf8')); } catch { /* no list yet */ }
+    const entries = list.active_sources ?? [];
+    const official = entries.find((entry) => entry.id === 'official');
+    if (official) official.lane = options.lane; else entries.unshift({ id: 'official', enabled: true, lane: options.lane });
+    writeFileSync(file, JSON.stringify({ ...list, active_sources: entries }));
+  }
   const sourceModule = options.sources ?? sources;
   const defaults = (): realStore.MarketStoreOptions => ({
     deps: hosts.deps,
-    channel: { getReleaseChannel: async () => ({ channel: options.channel ?? 'stable' }) },
     ...(options.now ? { now: options.now } : {}),
     ...options.store,
   });
@@ -94,7 +102,6 @@ export function marketWorld(sites: Record<string, Map<string, Buffer>>, options:
     readInstallIconPicture: (sourceId: string, file: string) => realStore.readInstallIconPicture(sourceId, file, defaults()),
     previewMarket: (address: string) => realStore.previewMarket(address, hosts.deps, defaults()),
   };
-  const nativeRequests: string[] = [];
   const catalog = load('src/lib/market/catalog.ts', {
     './app-format/compile': compile,
     './app-format/parse': parse,
@@ -103,20 +110,17 @@ export function marketWorld(sites: Record<string, Map<string, Buffer>>, options:
     './market-format': format,
     './market-store': store,
     './native-artifact': {
-      nativeListing: async (id: string) => {
-        nativeRequests.push(id);
-        const manifest = options.native?.[id];
-        if (!manifest) throw new Error(`This channel has no ${id} release yet`);
-        return {
-          manifest: structuredClone(manifest),
-          selected: { repository: `https://git.example.test/owner/${id}`, release: { tag: `v${manifest.version}`, version: manifest.version, sequence: 1762950000 }, build: { assets: [{ name: 'standalone.tar', sha256: 'a'.repeat(64), size_bytes: 1 }] } },
-        };
+      // The real one, without the module's release and staging imports.
+      nativePackageOf: (manifest: AppManifest) => {
+        const lxd = manifest.containers.filter((container) => container.type === 'lxd');
+        return lxd.length === 1 ? lxd[0].source?.package ?? null : null;
       },
     },
     '../version': realVersion,
     './partial-catalog': partialCatalog,
+    './public-access': publicAccess,
     './source': sourceModule,
     './platform-env': { getPlatformContext: async () => ({ version: options.boxVersion ?? '0.6.11' }) },
   });
-  return { hosts, sites, store, catalog, sources: sourceModule, nativeRequests, routing };
+  return { hosts, sites, store, catalog, sources: sourceModule, routing };
 }

@@ -16,6 +16,8 @@
  *                             It cannot add one or accept one; a changed address drops the acceptance, and an
  *                             official lane is refused as an address.
  *                             { dismiss_removed_sources: true } clears the note about removed sources.
+ *                             { official_lane: "main" | "dev" } sets the official Market's lane (every box reads
+ *                             `main` unless its owner chose `dev`; YE-142). The next read uses the new lane.
  *
  * The list never fails for one source: a source whose copy of its market cannot be shown is listed without a market
  * and with the reason in `refresh_error`, so it can still be turned off or removed.
@@ -29,7 +31,7 @@ import { clearCatalogCache } from '@/lib/market/catalog';
 import { marketSourceView, previewMarket, refreshMarketForReader, removeMarketStoresExcept } from '@/lib/market/market-store';
 import {
   OFFICIAL_MARKET_AS_CUSTOM, addMarketSource, checkedMarketAddress, dismissRemovedMarketSources, getConfiguredMarketSources,
-  getRemovedMarketSources, isOfficialMarketLane, updateMarketSourceList, type MarketSource,
+  getRemovedMarketSources, isOfficialMarketLane, setOfficialMarketLane, updateMarketSourceList, type MarketSource,
 } from '@/lib/market/source';
 
 export const dynamic = 'force-dynamic';
@@ -99,6 +101,11 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json();
+    if (body && typeof body === 'object' && 'official_lane' in body) {
+      await setOfficialMarketLane(body.official_lane);
+      clearCatalogCache('official');
+      return NextResponse.json({ status: 'ok', ...await listing(await getConfiguredMarketSources()) });
+    }
     if (body?.dismiss_removed_sources === true) {
       await dismissRemovedMarketSources();
       return NextResponse.json({ status: 'ok', ...await listing(await getConfiguredMarketSources()) });
@@ -111,7 +118,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ status: 'ok', ...await listing(sources) });
     }
 
-    return NextResponse.json({ error: 'active_sources is required' }, { status: 400 });
+    return NextResponse.json({ error: 'active_sources, official_lane or dismiss_removed_sources is required' }, { status: 400 });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to update Market source' },

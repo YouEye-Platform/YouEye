@@ -193,3 +193,29 @@ test("a System update action waits longer for Spine than Spine waits for a gap i
   const client = readFileSync(new URL("../src/lib/spine/client.ts", import.meta.url), "utf8");
   assert.match(client, /core-update\/\$\{action\}`, 'POST', \{ \.\.\.request \}, CORE_UPDATE_ACTION_TIMEOUT_MS\)/);
 });
+
+// YE-152: the restart button read "Restart and install0.6.18-alpha.1"; the version is now a placeholder in one message.
+const restartGraph = (): Step[] => ["verify-members", "stage-host", "checkpoint", "activate-host", "host-health"]
+  .map(name => ({ name, state: ["verify-members", "stage-host"].includes(name) ? "succeeded" : "pending" }));
+for (const [locale, label] of [
+  ["en", "Restart and install 0.6.18-alpha.1"],
+  ["de", "Neu starten und 0.6.18-alpha.1 installieren"],
+  ["es", "Reiniciar e instalar 0.6.18-alpha.1"],
+  ["fr", "Redémarrer et installer 0.6.18-alpha.1"],
+  ["ru", "Перезагрузить и установить 0.6.18-alpha.1"],
+]) {
+  test(`awaiting restart (${locale}): the button names the version with a space, and nothing runs`, () => {
+    const html = panel(restartGraph(), { phase: "awaiting-restart", restart_required: true, target_version: "0.6.18-alpha.1" }, locale);
+    assert.ok(html.includes(`>${label}</button>`), html);
+    assert.doesNotMatch(html, /\p{L}0\.6\.18/u);
+    if (locale === "en") {
+      // The status line is the phase alone: the recovery point is saved only after the restart is requested.
+      assert.match(html, /role="status">Ready to restart<\/p>/);
+      assert.doesNotMatch(html, /Saving the recovery point/);
+      // Spine's resume stops at the same place while it waits for the restart, so the panel offers none.
+      assert.doesNotMatch(html, /Resume checks|Retry update/);
+      // Only preparation ran, so the update can still be cancelled.
+      assert.match(html, /Cancel preparation/);
+    }
+  });
+}

@@ -1,0 +1,84 @@
+schema: youeye.app.v1
+id: search
+version: 0.6.4
+name: Search
+listing:
+  description: Privacy-respecting web search. Results are fetched through your connected search backend — no tracking, no
+    profiling.
+  long_description: |
+    YouEye Search is a privacy-respecting search app that routes all queries through
+    your connected search backend. Supports web, images, news, and video search with
+    configurable search engine backends (SearXNG, Whoogle, etc). No search data
+    is stored, tracked, or profiled. Integrates with YouEye SSO and supports dark mode.
+  category: search
+  tags: [search, privacy, searxng, native]
+  icon: search
+  website: https://github.com/YouEye-Platform/Search
+source: {node: '24'}
+port: 3000
+health: /api/health
+env:
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  SEARCH_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+connects:
+  - type: search-engine
+    name: Search Engine
+    description: Any compatible search engine backend (SearXNG, Whoogle, etc.)
+    port: 8080
+  - app: searxng
+    name: SearXNG
+    description: Private meta-search engine
+    port: 8080
+    proxy: {paths: [/search*, /autocompleter*], methods: [GET]}
+  - app: whoogle
+    name: Whoogle
+    description: Privacy search frontend
+    port: 3000
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: quick-search
+    kind: widget
+    placement: dashboard
+    name: Quick Search
+    description: Search bar widget for your dashboard
+    embed: /embed/widget/quick-search
+    size: {default: [30, 7], min: [20, 5], max: [50, 12]}
+  - id: search-query
+    kind: timeline-card
+    placement: timeline
+    name: Search query
+    description: Web search performed
+    embed: /embed/timeline/search
+    permissions: ['timeline:write']
+    triggers: [search-query]
+  - id: search-link-clicked
+    kind: timeline-card
+    placement: timeline
+    name: Search result click
+    description: Search result link clicked
+    embed: /embed/timeline/search
+    permissions: ['timeline:write']
+    triggers: [search-link-clicked]

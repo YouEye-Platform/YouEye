@@ -5,7 +5,7 @@ import { readFileSync } from 'fs';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { createIdentitySession, getClient, verifyUser } from '@/lib/identity/store';
 import { requestClientAddress } from '@/lib/auth/client-address';
-import { beginSignInAttempt, signInSucceeded } from '@/lib/identity/sign-in-limit';
+import { beginSignInAttempt, signInRetryAfterSeconds, signInSucceeded } from '@/lib/identity/sign-in-limit';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
@@ -260,7 +260,8 @@ async function resolveLoginContext(returnTo: string, serverName: string): Promis
   }
 }
 
-async function html(returnTo: string, error = ''): Promise<Response> {
+/** The sign-in page; `retryAfter` (seconds) answers a refused attempt with 429 and Retry-After. */
+async function html(returnTo: string, error = '', retryAfter?: number): Promise<Response> {
   const [provider, branding] = await Promise.all([
     getIdentityProviderConfig(),
     identityBranding(),
@@ -422,7 +423,12 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   </script>
 </body>
 </html>`, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    status: retryAfter ? 429 : 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...(retryAfter ? { 'Retry-After': String(retryAfter) } : {}),
+    },
   });
 }
 
@@ -460,11 +466,17 @@ export async function POST(request: NextRequest) {
   const returnTo = await safeReturnTo(String(form.get('return_to') || ''), identitySearchParams(request).get('return_to'), config);
   const username = String(form.get('username') || '');
   const password = String(form.get('password') || '');
-  // Per username from any address, and per client address (`sign-in-limit.ts`); the same message either way. The
-  // address is the TCP peer (Caddy's X-Forwarded-For only from Caddy), so an app's doorway cannot forge it.
+  // An empty form is no guess: it counts against nothing, and the answer is the same as for a wrong password.
+  if (!username || !password) return html(returnTo, 'Invalid username or password.');
+  // Per (username, client address) and per client address a lock, per username a slow-down (`sign-in-limit.ts`,
+  // YE-149); the same answer for real and unknown usernames. The address is the TCP peer (Caddy's X-Forwarded-For
+  // only from Caddy), so an app's doorway cannot forge it.
   const attempt = beginSignInAttempt(username, await requestClientAddress(request.headers));
   if (!attempt.allowed) {
-    return html(returnTo, 'Too many sign-in attempts. Try again later.');
+    const retryAfter = signInRetryAfterSeconds(attempt);
+    return html(returnTo, attempt.refusal === 'wait'
+      ? `Too many sign-in attempts. Try again in ${retryAfter} seconds.`
+      : 'Too many sign-in attempts. Try again later.', retryAfter);
   }
   const user = await verifyUser(username, password);
 

@@ -76,47 +76,43 @@ test('an entry that carries another app\'s bundle never resolves to that app, co
   assert.equal((await world.catalog.fetchManifest('foo')).metadata.id, 'foo');
 }));
 
-// ─── H: native apps come from the official Market only ────
+// ─── H: native apps come from any market (YE-142) ─────────
 
-test('a custom market\'s `native` list is ignored: YouEye\'s own apps are listed and installed from the official Market only', withMarketState(async (directory) => {
+test('a `native` id list is ignored; native apps are index entries, and a custom market may offer them as it offers any app', withMarketState(async (directory) => {
   seed(directory, [friendEntry]);
-  const official = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }], native: ['notes'] });
-  // A custom market that is a copy of the official one, plus a native id of its own.
-  const copy = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }, { id: 'beta' }], native: ['notes', 'wiki'], bundles: [{ id: 'pair', members: ['notes', 'beta'] }] });
-  const world = marketWorld({ [OFFICIAL]: official.files, [FRIEND]: copy.files },
-    { native: { notes: nativeFixture({ id: 'notes', name: 'Notes', version: '0.6.3' }), wiki: nativeFixture({ id: 'wiki', name: 'Wiki', version: '0.6.3' }) } });
+  const official = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }, { id: 'notes', native: true, version: '0.6.4' }], legacyNative: ['wiki'] });
+  // A custom market with its own native app, a copy of the official Notes, and an old-style native id list.
+  const copy = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }, { id: 'beta' }, { id: 'notes', native: true, version: '0.6.4' }, { id: 'journal', native: true }],
+    legacyNative: ['wiki'], bundles: [{ id: 'pair', members: ['journal', 'beta'] }] });
+  const world = marketWorld({ [OFFICIAL]: official.files, [FRIEND]: copy.files }, { boxVersion: '0.6.20' });
 
   const warnings: unknown[] = [];
   const apps = await world.catalog.fetchAvailableApps((warning: unknown) => warnings.push(warning));
   assert.deepEqual(apps.map((app: any) => `${app.sourceId}/${app.id}/${app.integration}`).sort(),
-    ['custom-1/alpha/basic', 'custom-1/beta/basic', 'official/alpha/basic', 'official/notes/native'], 'Notes once, from the official Market');
+    ['custom-1/alpha/basic', 'custom-1/beta/basic', 'custom-1/journal/native', 'custom-1/notes/native', 'official/alpha/basic', 'official/notes/native']);
   assert.deepEqual(warnings, []);
-  assert.deepEqual(world.nativeRequests, ['notes'], 'no native release is looked up for the custom market');
 
-  // Installing or updating a native app from the custom market is not possible; from the official Market it is.
-  await assert.rejects(world.catalog.resolveCatalogApp('notes', 'custom-1'), /App "notes" could not be resolved from Market source "custom-1" \(app is not present\)/);
+  // Each resolves from its own source only; the old `native` list names nothing installable.
+  assert.equal((await world.catalog.resolveCatalogApp('journal', 'custom-1')).entry.integration, 'native');
+  assert.equal((await world.catalog.resolveCatalogApp('notes', 'custom-1')).source.id, 'custom-1');
+  assert.equal((await world.catalog.resolveCatalogApp('notes')).source.id, 'official');
   await assert.rejects(world.catalog.resolveCatalogApp('wiki', 'custom-1'), /app is not present/);
-  await assert.rejects(world.catalog.fetchManifestFromSource('notes', 'custom-1'), /not found in Market source "custom-1"/);
-  assert.equal((await world.catalog.resolveCatalogApp('notes')).entry.integration, 'native');
-  assert.equal((await world.catalog.resolveCatalogApp('notes', 'official')).source.id, 'official');
-  assert.equal((await world.catalog.resolveCatalogApp('beta', 'custom-1')).entry.integration, 'basic');
+  await assert.rejects(world.catalog.resolveCatalogApp('wiki'), /app is not present/);
+  await assert.rejects(world.catalog.resolveCatalogApp('journal'), /app is not present/, 'the official Market never resolves another market\'s app');
 
-  // The catalog of the custom source holds its container apps only; a bundle of it that names a native app cannot
-  // resolve that member from it.
   const sources = await world.sources.getConfiguredMarketSources();
   const customSource = sources.find((source: any) => source.id === 'custom-1');
-  assert.deepEqual((await world.catalog.fetchCatalog(customSource)).apps.map((app: any) => app.id), ['alpha', 'beta']);
-  assert.deepEqual((await world.catalog.fetchCatalog()).apps.map((app: any) => [app.id, app.integration]), [['alpha', 'basic'], ['notes', 'native']]);
+  assert.deepEqual((await world.catalog.fetchCatalog(customSource)).apps.map((app: any) => [app.id, app.integration]),
+    [['alpha', 'basic'], ['beta', 'basic'], ['journal', 'native'], ['notes', 'native']]);
   const pair = await world.catalog.fetchBundle('pair', 'custom-1');
-  assert.deepEqual(pair.members, ['notes', 'beta']);
-  await assert.rejects(world.catalog.resolveCatalogApp(pair.members[0], pair.sourceId), /app is not present/);
+  assert.equal((await world.catalog.resolveCatalogApp(pair.members[0], pair.sourceId)).entry.integration, 'native');
 
-  // What the sources page and the add-preview say a market holds counts native apps for the official Market only.
-  assert.equal((await world.store.marketSourceView(customSource)).market.native, 0);
+  // What the sources page and the add-preview say a market holds counts its native entries, any market's.
+  assert.equal((await world.store.marketSourceView(customSource)).market.native, 2);
   assert.equal((await world.store.marketSourceView(sources.find((source: any) => source.id === 'official'))).market.native, 1);
-  assert.equal((await world.store.previewMarket('https://markets.example.org/other/').catch(() => null)), null);
   world.sites['https://markets.example.org/other/'] = copy.files;
-  assert.equal((await world.store.previewMarket('https://markets.example.org/other/')).native, 0);
+  const preview = await world.store.previewMarket('https://markets.example.org/other/');
+  assert.deepEqual([preview.apps, preview.native], [4, 2]);
 }));
 
 // ─── B: one slow market does not hold the others' listing ─
@@ -231,7 +227,7 @@ test('an official lane cannot be added as a custom market or be the new address 
   seed(directory, [friendEntry]);
   const built = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }] });
   const test = 'https://market.youeye.me/test/andrew/';
-  const { world, route, patch } = routesOf({ [OFFICIAL]: built.files, [DEV]: built.files, [FRIEND]: built.files, [test]: built.files }, { channel: 'dev' });
+  const { world, route, patch } = routesOf({ [OFFICIAL]: built.files, [DEV]: built.files, [FRIEND]: built.files, [test]: built.files }, { lane: 'dev' });
   const ids = async () => (await world.sources.getConfiguredMarketSources()).map((source: any) => source.id);
 
   for (const url of [OFFICIAL, DEV, 'https://market.youeye.me', 'https://market.youeye.me/market.json', 'https://market.youeye.me/dev', 'https://MARKET.youeye.me/dev/market.json', 'https://market.youeye.me./', 'https://market.youeye.me:443/dev/']) {
@@ -253,7 +249,7 @@ test('an official lane cannot be added as a custom market or be the new address 
   }
   assert.equal((await world.sources.getConfiguredMarketSources()).find((source: any) => source.id === 'custom-1').url, FRIEND);
 
-  // The preview says the same for the lane this box (dev channel) does not follow, with a typed refusal…
+  // The preview says the same for the lane this box (set to dev) does not follow, with a typed refusal…
   await assert.rejects(world.store.previewMarket(OFFICIAL), (error: any) => error.name === 'MarketRefreshError' && error.code === 'official-market'
     && error.message === OFFICIAL_MARKET_AS_CUSTOM && world.store.isOfficialMarketRefusal(error));
   assert.equal(world.hosts.requests.length, 0);
@@ -266,6 +262,20 @@ test('an official lane cannot be added as a custom market or be the new address 
   assert.equal(added.status, 200);
   assert.equal((await added.json()).source.url, test);
   assert.deepEqual(await ids(), ['official', 'custom-1', 'custom-2']);
+
+  // The lane is the box's own setting (YE-142): PATCH { official_lane }; nothing else of the list changes.
+  const toMain = await patch({ official_lane: 'main' });
+  assert.equal(toMain.status, 200);
+  const listed = (await toMain.json()).sources;
+  assert.deepEqual(listed.map((source: any) => [source.id, source.lane ?? null]), [['official', 'main'], ['custom-1', null], ['custom-2', null]]);
+  assert.equal((await world.store.previewMarket(OFFICIAL)).address, OFFICIAL, 'main is now the lane this box follows');
+  await assert.rejects(world.store.previewMarket(DEV), (error: any) => world.store.isOfficialMarketRefusal(error));
+  for (const lane of ['stable', 'alpha', '', null, 'test/andrew']) {
+    const refused = await patch({ official_lane: lane });
+    assert.equal(refused.status, 400, String(lane));
+    assert.match((await refused.json()).error, /The official Market lane is main or dev/);
+  }
+  assert.equal((await world.sources.getConfiguredMarketSources())[0].lane, 'main');
 }));
 
 // ─── G: the image route under many requests ───────────────

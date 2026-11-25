@@ -10,11 +10,15 @@ export async function GET(_request: Request, context: { params: Promise<{ appId:
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId)) return NextResponse.json({ error: 'Invalid app' }, { status: 400 });
   try {
     const retained = await readRetainedInstallMetadata(appId);
-    if (!retained) return NextResponse.json({ retained: false });
     const policy = await getAdmissionPolicy(appId);
+    // A reinstall keeps the policy an earlier install left (retained data or not): the install dialog's
+    // "Only <site> users" switch starts from it, so leaving the switch alone keeps it (YE-168).
+    // Its mode lets the dialog say who keeps access; the dialog's household choice (YE-232) is hidden then.
+    const existingAccess = policy ? { publicAccess: policy.publicAccess === true, mode: policy.mode } : null;
+    if (!retained) return NextResponse.json({ retained: false, existingAccess });
     const actor = (await getAdmissionPrincipals()).find(p => p.id === auth.session.identityId);
     return NextResponse.json({
-      retained: true, version: retained.installedVersion,
+      retained: true, version: retained.installedVersion, existingAccess,
       canAdopt: policy?.state === 'retained' && policy.installationId === retained.installationId
         && policy.ownerId === actor?.id && actor.active && !actor.deleted
         && retained.retainedRoots?.state === 'ready',

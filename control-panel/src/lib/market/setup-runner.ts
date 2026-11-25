@@ -140,14 +140,33 @@ export interface SetupRunContext {
   /** Run the file's `remove:` steps instead of `steps:` (e.g. turning SSO off). */
   remove?: boolean;
   onProgress?: (message: string) => void;
+  /**
+   * Each step that failed but has `allow_failure` (the run goes on): its number, kind, the app it ran against
+   * (the connected app for `target: peer`, else this app) and the error message.
+   */
+  onAllowedFailure?: (failure: SetupAllowedFailure) => void;
   /** Defaults to the Incus transport. */
   transport?: SetupTransport;
+  /**
+   * A shorter limit for the whole file than `SETUP_LIMITS.fileMs` (its `wait:` steps included), for a run that holds
+   * locks other operations wait for: the periodic re-wire (YE-223).
+   */
+  deadlineMs?: number;
+}
+
+export interface SetupAllowedFailure {
+  step: number;
+  kind: string;
+  appId: string;
+  message: string;
 }
 
 /** The setup file ran past `SETUP_LIMITS.fileMs`; never skipped by `allow_failure`. */
 export class SetupDeadlineError extends Error {
-  constructor() {
-    super(`the setup file ran longer than ${SETUP_LIMITS.fileMs / 60_000} minutes`);
+  constructor(limitMs: number = SETUP_LIMITS.fileMs) {
+    super(limitMs >= 60_000 && limitMs % 60_000 === 0
+      ? `the setup file ran longer than ${limitMs / 60_000} minutes`
+      : `the setup file ran longer than ${Math.ceil(limitMs / 1000)} seconds`);
     this.name = 'SetupDeadlineError';
   }
 }
@@ -368,6 +387,7 @@ class Run {
   private readonly addresses = new Map<string, string>();
   private readonly base: Data = Object.create(null);
   private readonly deadline: number;
+  private readonly limitMs: number;
 
   constructor(
     private readonly manifest: Pick<AppManifest, 'setups' | 'containers'>,
@@ -382,7 +402,8 @@ class Run {
       this.base[key] = value;
     }
     this.base.vars = this.vars;
-    this.deadline = this.now() + SETUP_LIMITS.fileMs;
+    this.limitMs = Math.min(SETUP_LIMITS.fileMs, Math.max(1, context.deadlineMs ?? SETUP_LIMITS.fileMs));
+    this.deadline = this.now() + this.limitMs;
   }
 
   // ── Time ──
@@ -394,7 +415,7 @@ class Run {
   /** Time left before the file deadline; throws once it has passed. */
   private remaining(): number {
     const left = this.deadline - this.now();
-    if (left <= 0) throw new SetupDeadlineError();
+    if (left <= 0) throw new SetupDeadlineError(this.limitMs);
     return left;
   }
 
@@ -624,7 +645,7 @@ class Run {
       return this.io.restart(this.ownContainer(step.restart));
     }
     if ('sleep' in step) {
-      if (step.sleep * 1000 >= this.remaining()) throw new SetupDeadlineError();
+      if (step.sleep * 1000 >= this.remaining()) throw new SetupDeadlineError(this.limitMs);
       return this.io.sleep(step.sleep * 1000);
     }
     throw new Error('unknown step');
@@ -644,6 +665,10 @@ class Run {
           && (('http' in step && step.http.allow_failure) || ('exec' in step && step.exec.allow_failure));
         if (allowFailure) {
           console.warn(`[setup] ${this.context.appId} ${this.file.name} step ${index + 1} (${kind}) failed (allowed): ${describeErrorChainForLog(error)}`);
+          const againstPeer = 'http' in step && step.http.target === 'peer' && this.context.peer;
+          this.context.onAllowedFailure?.({
+            step: index + 1, kind, appId: againstPeer ? this.context.peer!.appId : this.context.appId, message,
+          });
           continue;
         }
         throw new SetupStepError(this.file.name, index + 1, kind, message);

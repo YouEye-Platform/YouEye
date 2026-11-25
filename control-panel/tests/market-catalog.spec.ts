@@ -24,14 +24,19 @@ const SETUP = 'schema: youeye.setup.v1\nfor: install\nsteps:\n  - wait: { http: 
 test('an app is listed from its bundle, with pictures on this box and the record an install keeps', withMarketState(async () => {
   const built = buildFixtureMarket({
     sequence: 1795000000, commit: '60f999c4',
-    apps: [{ id: 'trek', version: '5.1.4', setups: { 'install.yaml': SETUP }, pictures: { 'icon.svg': ICON, 'screenshots/a.webp': SHOT } }, { id: 'plain' }],
-    native: ['notes'], bundles: [{ id: 'pair', members: ['trek', 'plain'] }],
+    apps: [{ id: 'trek', version: '5.1.4', setups: { 'install.yaml': SETUP }, pictures: { 'icon.svg': ICON, 'screenshots/a.webp': SHOT } }, { id: 'plain' },
+      { id: 'notes', native: true, version: '0.6.4', changes: { proxy: [{ host: '*.wikipedia.org', paths: ['/w/*'] }] } }],
+    // An index from before 0.6.20 named native apps of the channel; that list is ignored now (YE-142).
+    legacyNative: ['wiki'], bundles: [{ id: 'pair', members: ['trek', 'plain'] }],
   });
-  const world = marketWorld({ [OFFICIAL]: built.files }, { native: { notes: nativeFixture({ id: 'notes', name: 'Notes', version: '0.6.3' }) } });
+  const world = marketWorld({ [OFFICIAL]: built.files }, { boxVersion: '0.6.20' });
   const warnings: unknown[] = [];
   const apps = await world.catalog.fetchAvailableApps((warning: unknown) => warnings.push(warning));
   assert.deepEqual(warnings, []);
-  assert.deepEqual(apps.map((app: any) => [app.id, app.integration, app.version]), [['notes', 'native', '0.6.3'], ['plain', 'basic', '1.0.0'], ['trek', 'basic', '5.1.4']]);
+  assert.deepEqual(apps.map((app: any) => [app.id, app.integration, app.version]), [['notes', 'native', '0.6.4'], ['plain', 'basic', '1.0.0'], ['trek', 'basic', '5.1.4']]);
+  // A native app says what it gets beyond a container app (the install screen shows it for markets other than the official one).
+  assert.deepEqual(apps.find((app: any) => app.id === 'notes').nativeAccess, { surfaces: [], gatewayToken: true, notifications: false, proxyHosts: ['*.wikipedia.org'] });
+  assert.equal(apps.find((app: any) => app.id === 'trek').nativeAccess, undefined);
 
   const trek = apps.find((app: any) => app.id === 'trek');
   assert.equal(trek.catalogKey, 'official:app:trek');
@@ -56,9 +61,12 @@ test('an app is listed from its bundle, with pictures on this box and the record
   assert.deepEqual(resolved.reference, { path: 'apps/trek/youeye-app.yaml', repo: OFFICIAL, branch: '60f999c4', digest: trek.manifestDigest });
   assert.equal(resolved.manifest.frozen.manifest, built.manifests.trek, 'the frozen copy is the market\'s manifest text');
   assert.deepEqual(resolved.manifest.frozen.setups, { 'setup/install.yaml': SETUP });
+  // A native app resolves like any other app, with the package its manifest pins.
   const native = await world.catalog.resolveCatalogApp('notes');
-  assert.deepEqual(native.entry, { id: 'notes', integration: 'native' });
-  assert.deepEqual(native.reference, { path: 'youeye-app.yaml', repo: 'https://git.example.test/owner/notes', branch: 'v0.6.3', digest: native.manifest.frozen.digest, key: { line: '0.6.3', sequence: 1762950000 }, artifactSHA256: 'a'.repeat(64) });
+  assert.deepEqual(native.entry, { id: 'notes', integration: 'native', path: 'apps/notes' });
+  assert.deepEqual(native.reference, { path: 'apps/notes/youeye-app.yaml', repo: OFFICIAL, branch: '60f999c4', digest: native.manifest.frozen.digest, artifactSHA256: 'a'.repeat(64) });
+  assert.equal(native.manifest.containers[0].source.package.url, 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar');
+  await assert.rejects(world.catalog.resolveCatalogApp('wiki'), /app is not present/);
   await assert.rejects(world.catalog.resolveCatalogApp('absent'), /App "absent" could not be resolved from Market source "official" \(app is not present\)/);
 
   // Callers may change what they get; the next reader is not affected.
@@ -69,7 +77,7 @@ test('an app is listed from its bundle, with pictures on this box and the record
 
   // The catalog, categories and bundles come from the index.
   assert.deepEqual(await world.catalog.fetchCatalog(), {
-    apps: [{ id: 'notes', integration: 'native' }, { id: 'plain', integration: 'basic', path: 'apps/plain' }, { id: 'trek', integration: 'basic', path: 'apps/trek' }],
+    apps: [{ id: 'notes', integration: 'native', path: 'apps/notes' }, { id: 'plain', integration: 'basic', path: 'apps/plain' }, { id: 'trek', integration: 'basic', path: 'apps/trek' }],
     bundles: ['pair'], categories: [{ id: 'utilities', label: 'Utilities', order: 1 }], curation: undefined,
   });
   assert.deepEqual((await world.catalog.fetchCategories()).map((category: any) => category.id), ['utilities']);
@@ -95,10 +103,10 @@ test('an app is listed from its bundle, with pictures on this box and the record
 }));
 
 test('listing reads the store: page views cost no request; an explicit check costs one', withMarketState(async () => {
-  const built = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }, { id: 'beta' }], native: ['notes'] });
+  const built = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'alpha' }, { id: 'beta' }] });
   // An hour ago, so that the explicit check at the end (which uses the wall clock) is later than every attempt here.
   let now = Date.now() - 3_600_000;
-  const world = marketWorld({ [OFFICIAL]: built.files }, { native: { notes: nativeFixture({ id: 'notes', name: 'Notes' }) }, now: () => now });
+  const world = marketWorld({ [OFFICIAL]: built.files }, { now: () => now });
   await world.catalog.fetchAvailableApps();
   assert.deepEqual(world.hosts.take(), [MARKET_POINTER_FILE, built.indexPath, built.bundlePaths.alpha, built.bundlePaths.beta]);
   for (let view = 0; view < 20; view += 1) {
@@ -115,7 +123,6 @@ test('listing reads the store: page views cost no request; an explicit check cos
   await Promise.all([world.catalog.fetchAvailableApps(), world.catalog.fetchCatalog(), world.catalog.fetchManifest('alpha')]);
   await world.catalog.fetchAvailableApps();
   assert.deepEqual(world.hosts.requests.map((request) => [request.path, request.status]), [[MARKET_POINTER_FILE, 304]]);
-  assert.deepEqual(world.nativeRequests.length > 0 && new Set(world.nativeRequests).size, 1);
 }));
 
 test('an app that needs a newer YouEye, or is of an unknown kind, is listed and refused; its bundle is not parsed', withMarketState(async () => {
@@ -259,6 +266,44 @@ test('a source that cannot be read is reported with the reason and does not hide
   assert.deepEqual(warnings, [{ sourceId: 'custom-1', message: 'Gone: could not load its catalog: market.json: HTTP 404' }]);
   await assert.rejects(world.catalog.resolveCatalogApp('good', 'custom-1'), /catalog could not be loaded: market\.json: HTTP 404/);
   assert.deepEqual((await world.catalog.fetchCategories()).map((category: any) => category.id), ['utilities']);
+}));
+
+test('native apps come from any market: a custom one lists and resolves them; kind and package must match (YE-142)', withMarketState(async (directory) => {
+  const CUSTOM = 'https://markets.example.org/canvas/';
+  const official = buildFixtureMarket({ sequence: 1795000000, apps: [{ id: 'notes', native: true, version: '0.6.4' }] });
+  const custom = buildFixtureMarket({ sequence: 1795000000, apps: [
+    { id: 'journal', native: true, version: '1.2.0' },
+    // The index says container, the manifest is a native app (and the other way round): neither is installed.
+    { id: 'posing', native: true, entry: { kind: 'container' } },
+    { id: 'faker', entry: { kind: 'native', requires: { youeye: '>=0.6.20' } } },
+    // A native app from a market must pin its package.
+    { id: 'loose', native: true, changes: { source: { node: '24' } } },
+  ] });
+  writeFileSync(path.join(directory, 'market-sources.json'), JSON.stringify({ active_sources: [
+    { id: 'official', enabled: true },
+    { id: 'custom-1', name: 'Canvas forks', url: CUSTOM, enabled: true, priority: 1, accepted_at: '2026-11-23T10:00:00.000Z' },
+  ] }));
+  const world = marketWorld({ [OFFICIAL]: official.files, [CUSTOM]: custom.files }, { boxVersion: '0.6.20' });
+  const warnings: any[] = [];
+  const apps = await world.catalog.fetchAvailableApps((warning: unknown) => warnings.push(warning));
+  assert.deepEqual(apps.map((app: any) => [app.id, app.sourceId, app.integration]).sort(), [['journal', 'custom-1', 'native'], ['notes', 'official', 'native']]);
+  assert.deepEqual(warnings.map((warning) => [warning.itemId, warning.message.replace(/^.*could not be loaded: /, '')]).sort(), [
+    ['faker', 'the index lists it as a native app, but its manifest is a container app'],
+    ['loose', 'youeye-app.yaml: source.package: a native app from a market names its package (url, sha256 and size of its standalone.tar)'],
+    ['posing', 'the index lists it as a container app, but its manifest is a native app'],
+  ]);
+  const journal = await world.catalog.resolveCatalogApp('journal', 'custom-1');
+  assert.deepEqual(journal.entry, { id: 'journal', integration: 'native', path: 'apps/journal' });
+  assert.equal(journal.reference.repo, CUSTOM);
+  assert.equal(journal.reference.artifactSHA256, 'a'.repeat(64));
+  await assert.rejects(world.catalog.resolveCatalogApp('posing', 'custom-1'), /the index lists it as a container app, but its manifest is a native app/);
+
+  // A box before 0.6.20 is never asked to parse a native app: the entry's requirement holds it back.
+  const old = marketWorld({ [OFFICIAL]: official.files }, { boxVersion: '0.6.19' });
+  const listed = (await old.catalog.fetchAvailableApps()).find((app: any) => app.id === 'notes');
+  assert.equal(listed.installBlocked?.code, 'requires-newer-youeye');
+  assert.equal(listed.needsYouEye, '0.6.20');
+  assert.equal(listed.integration, 'native');
 }));
 
 // ─── From the catalog tar to the store ────────────────────

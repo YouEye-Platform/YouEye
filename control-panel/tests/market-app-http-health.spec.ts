@@ -7,6 +7,7 @@ import ts from 'typescript';
 function fixture(status: number, failConnection = false) {
   let now = 0;
   let probes = 0;
+  let cancelled = 0;
   class Clock extends Date { static now() { return now; } }
   const exports: any = {};
   const source = ts.transpileModule(readFileSync(join(import.meta.dirname, '../src/lib/market/health.ts'), 'utf8'), {
@@ -17,11 +18,12 @@ function fixture(status: number, failConnection = false) {
     async () => {
       probes++;
       if (failConnection) throw new Error('connection refused');
-      return { status };
+      return { status, body: { cancel: async () => { cancelled++; } } };
     },
     (resolve: () => void, delay: number) => { now += delay; resolve(); }, Clock,
   );
-  return { probe: () => exports.waitForAppHealth('fixture', 8080, '/health', 10_000), count: () => probes };
+  return { probe: () => exports.waitForAppHealth('fixture', 8080, '/health', 10_000), count: () => probes,
+    cancelled: () => cancelled };
 }
 
 for (const status of [200, 204, 301, 401, 403]) {
@@ -42,4 +44,12 @@ test('connection failures cannot pass declared HTTP health', async () => {
   const f = fixture(200, true);
   assert.equal(await f.probe(), false);
   assert.ok(f.count() > 1);
+});
+
+test('every probe lets go of its response body, whatever the status (YE-213)', async () => {
+  for (const status of [200, 404, 503]) {
+    const f = fixture(status);
+    await f.probe();
+    assert.equal(f.cancelled(), f.count(), `status ${status}: one cancelled body per probe`);
+  }
 });

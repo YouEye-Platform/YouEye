@@ -28,24 +28,15 @@ export interface ResolvedCatalogUpdateEvidence {
 }
 
 /**
- * `channel`: a native app; its candidate is its product release on the box's
- * channel index. `catalog`: a catalog app; its candidate is the catalog manifest.
+ * Where an app's update comes from: its market (`catalog`). Since 0.6.20 every app, native or container, updates from
+ * the market it was installed from (YE-142); a native app no longer has a `channel` route. `integration: 'native'`
+ * says what the app can do (widgets, the gateway token, admission, copy), never where it comes from.
  */
 export interface UpdateRoutingDecision {
-  kind: 'catalog' | 'channel';
-  reason: 'native-app' | 'recorded-external-catalog' | 'default-catalog';
+  kind: 'catalog';
+  reason: 'recorded-external-catalog' | 'default-catalog';
   /** Exact Market source retained for external catalog lookup and audit metadata. */
   catalogSourceId?: string;
-}
-
-export interface UpdateCandidate {
-  /** Release name (display). */
-  version: string;
-  tag: string;
-  /** Line and sequence of a channel release; channel candidates are ordered by it. */
-  key?: ReleaseKey;
-  /** SHA-256 of the release's app package (`standalone.tar`): the build, whatever release names it. */
-  artifactSHA256?: string;
 }
 
 export interface UpdateAvailability {
@@ -95,8 +86,8 @@ export function sameMarketAddress(
  * Why an installed app may not take updates from the source its id now resolves to, or null when it may: the app
  * recorded another market address (`sourceRepoUrl`) than the source has now. A source's address can be edited, and an
  * id may have been handed out again; an app follows the address it was installed from (or explicitly switched to,
- * `PATCH /api/market/app/<id>/source`), never just the id. The official Market's address follows the box's channel
- * and is not recorded, so it is never "changed".
+ * `PATCH /api/market/app/<id>/source`), never just the id. The official Market's address is the box's own lane
+ * setting and is not recorded, so it is never "changed".
  */
 export function recordedSourceAddressChange(
   recorded: { sourceRepoUrl?: string | null },
@@ -143,7 +134,7 @@ export function hasRecordedCatalogIdentity(
     || installMetadata.itemKind === 'app';
 }
 
-/** Decide the update source before release resolution or runtime mutation. */
+/** Decide the update source before any manifest resolution or runtime mutation: the app's market. */
 export function classifyAppUpdateRouting(input: {
   appId: string;
   installed: InstalledUpdateEvidence;
@@ -151,11 +142,6 @@ export function classifyAppUpdateRouting(input: {
   catalog?: ResolvedCatalogUpdateEvidence | null;
 }): UpdateRoutingDecision {
   const { installed, installMetadata, catalog } = input;
-  const native = catalog?.entry.integration === 'native'
-    || catalog?.manifestIntegration === 'native'
-    || installMetadata.integration === 'native'
-    || installed.type === 'native';
-  if (native) return { kind: 'channel', reason: 'native-app', catalogSourceId: catalog?.sourceId };
   if (catalog || hasRecordedCatalogIdentity(installed, installMetadata)) {
     return {
       kind: 'catalog',
@@ -171,7 +157,7 @@ export function sameBuild(installed: readonly string[] | null | undefined, candi
   return !!candidate && !!installed?.length && installed.every((sha256) => sha256 === candidate);
 }
 
-/** What a box knows of a native app's installed build. */
+/** What a box knows of a channel product's installed build (Pointer). */
 export interface InstalledNativeBuild {
   /** Line and sequence of the installed release: its recorded release, else its product floor (the last accepted). */
   key?: ReleaseKey | null;
@@ -184,7 +170,7 @@ export interface InstalledNativeBuild {
 }
 
 /**
- * Order of a native app's channel release against the build it runs: 1 newer, 0 the same build, -1 older, null when
+ * Order of a channel release (Pointer, the System's native product) against the build it runs: 1 newer, 0 the same build, -1 older, null when
  * this box can't tell (then it is neither offered nor applied: a box never downgrades an app, YE-141).
  *
  * With a release key (recorded, or the product floor) the key decides. Without one (installed or restored before
@@ -210,62 +196,50 @@ export function compareToInstalledNative(
 }
 
 /**
- * Whether a native app's channel release is the build it runs (YE-139): the same line and sequence as its recorded
- * release, or, without one, the same package. The update then has nothing to do and the installed name stays.
- */
-export function isInstalledNativeBuild(installed: InstalledNativeBuild, candidate: { key: ReleaseKey; artifactSHA256?: string | null }): boolean {
-  return compareToInstalledNative(installed, candidate) === 0;
-}
-
-/**
- * Shared update projection used by Settings, Market, the UI bridge and the
- * CLI (`youeye app check-updates`, `info`). A native app's channel candidate is
- * ordered by line and sequence, never by release name: an older release is
- * never offered (the box waits for its channel to catch up), and the same build
- * under another release name (the box changed channel, or the build was
- * promoted) is no update either: the app keeps showing the release it
- * installed until a newer build arrives, which brings its own name (owner,
- * 2026-11-23, YE-139).
+ * Shared update projection used by Settings, Market, the UI bridge and the CLI (`youeye app check-updates`, `info`):
+ * the market's version is an update when it is newer than the installed one (`isNewer`: an older version is never
+ * offered), except for the same package (`source.package.sha256` equal to every installed `standalone.tar`; YE-139's
+ * rule, by package; YE-142): then the manifest decides, whatever the version names. The same manifest (the record's
+ * `manifestDigest` equal to the market's frozen digest) is no update; another one is (YE-194: the update check takes it
+ * itself when only the record changes, `adoptNativeMarketManifest`, so what stays offered is a new configuration of
+ * the same package, applied by the ordinary update), unless it names a lower version than a Market record (YE-212).
+ * A container app has no package and is decided by version alone.
  */
 export function projectUpdateAvailability(input: {
   routing: UpdateRoutingDecision;
   installedVersion: string | null | undefined;
-  /** Line and sequence of the installed native release, when known. */
-  installedKey?: ReleaseKey | null;
-  /** SHA-256 of each installed app package (install.json `nativeArtifacts`), for an install without a recorded release. */
+  /** SHA-256 of each installed app package (install.json `nativeArtifacts`). */
   installedArtifactSHA256?: readonly string[] | null;
-  /** When the install record was created, for an install without a recorded release (see compareToInstalledNative). */
-  installedAt?: string | null;
   catalogVersion: string | null;
-  candidate?: UpdateCandidate | null;
+  /** SHA-256 of the package the market's manifest pins (a native app). */
+  candidateArtifactSHA256?: string | null;
+  /** The installed native app's manifest digest (install.json `manifestDigest`) and the market's (its frozen digest). */
+  installedManifestDigest?: string | null;
+  candidateManifestDigest?: string | null;
+  /** The installed native app's record names a market manifest (not a channel release, YE-142): its version is the
+   * market's own name, so a lower one is not offered for the same package either (YE-212). */
+  marketRecord?: boolean;
 }): UpdateAvailability {
   const installedVersion = clean(input.installedVersion);
-  const candidate = input.routing.kind === 'channel' ? input.candidate ?? null : null;
-  const version = candidate ? candidate.version : input.routing.kind === 'catalog' ? input.catalogVersion : null;
+  const version = input.catalogVersion;
   let updateAvailable = false;
   if (version) {
     try {
-      if (!candidate) {
-        updateAvailable = !installedVersion || isNewer(version, installedVersion);
-      } else if (candidate.key) {
-        // Only a newer build is an update: not the same build under another name (YE-139), not an older one, and not
-        // one this box can't order against an install without a recorded release (YE-141).
-        updateAvailable = compareToInstalledNative({
-          key: input.installedKey, artifactSHA256: input.installedArtifactSHA256, version: installedVersion,
-          installedAt: input.installedAt,
-        }, { key: candidate.key, artifactSHA256: candidate.artifactSHA256 }) === 1;
-      }
+      updateAvailable = sameBuild(input.installedArtifactSHA256, input.candidateArtifactSHA256)
+        ? !!input.installedManifestDigest && !!input.candidateManifestDigest && input.installedManifestDigest !== input.candidateManifestDigest
+          && !(input.marketRecord && installedVersion && isNewer(installedVersion, version))
+        : !installedVersion || isNewer(version, installedVersion);
     } catch {
       updateAvailable = false;
     }
   }
   return {
-    catalogVersion: version ?? input.catalogVersion,
+    catalogVersion: version,
     updateAvailable,
     switchPending: false,
-    candidateVersion: version ?? input.catalogVersion,
+    candidateVersion: version,
     candidateBranch: null,
-    candidateTag: candidate?.tag ?? null,
+    candidateTag: null,
   };
 }
 

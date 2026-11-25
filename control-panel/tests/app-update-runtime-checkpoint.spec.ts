@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
 import { containerOrder } from './fixtures/update-provider-harness';
+import { generatedSecretNames } from '../src/lib/market/manifest-secrets';
 
 function fixture() {
   const id = '12345678-1234-4234-8234-123456789abc';
@@ -22,8 +23,12 @@ function fixture() {
     steps: [{ id: 'initialize-recovery-plan', state: 'complete' }, { phase: 'applying' }],
     resources: [{ kind: 'container', scope: 'incus', name: original.name }],
     checkpoints: [{ method: 'runtime-copy', resource: original.name, reference: 'retained' }] };
-  const metadata = { installedVersion: '1.0.0',
+  const metadata: Record<string, any> = { installedVersion: '1.0.0',
     containers: [{ name: 'main', containerName: 'app-fixture', type: 'oci', primary: true }] };
+  // What the install record holds now (the update may have written it); restore() saves into `saved`.
+  const current: { value: Record<string, any> } = { value: metadata };
+  const saved: Record<string, any>[] = [];
+  const removedSecrets: string[] = [];
   const output = ts.transpileModule(readFileSync(join(import.meta.dirname, '../src/lib/market/update-provider.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -57,7 +62,13 @@ function fixture() {
     };
     if (name === '@/lib/apps/container-order') return containerOrder();
     if (name === './update-journal') return { updateResourceKey: (r: any) => r.name };
-    if (name === './metadata') return { readInstallMetadata: async () => metadata, saveInstallMetadata: async () => {} };
+    if (name === './metadata') return { readInstallMetadata: async () => current.value,
+      saveInstallMetadata: async (value: Record<string, any>) => { saved.push(structuredClone(value)); } };
+    if (name === './manifest-secrets') return { removeGeneratedSecrets: async (r: any) => {
+      const names = generatedSecretNames(r);
+      removedSecrets.push(...names.map((n) => `${r.appId}/${n}`));
+      return names;
+    } };
     if (name === './installed-apps') return { restoreInstalledAppUpdateState: async () => {} };
     if (name === './ui-manifest-sync') return { syncAppManifestObjectToUI: async () => {} };
     return {};
@@ -66,7 +77,7 @@ function fixture() {
   provider.load = () => ({ instances: [original], metadata, installed: {}, manifest: {} });
   provider.ingress = provider.bootFence = async () => {};
   provider.postgres = async () => undefined;
-  return { id, original, instances, effects, provider, record };
+  return { id, original, instances, effects, provider, record, metadata, current, saved, removedSecrets };
 }
 
 test('stopped runtime checkpoints disable local and profile NIC/proxy identities while preserving disks', async () => {
@@ -98,4 +109,34 @@ test('recovery refuses foreign retained copies before detaching devices or delet
     config: { ...f.original.config, 'user.youeye.update_operation': 'foreign' } });
   await assert.rejects(f.provider.restore(f.record), /identity mismatch/);
   assert.deepEqual(f.effects, []);
+});
+
+test('a rollback deletes only the secrets its update generated and restores the shown credentials (YE-208)', async () => {
+  const f = fixture();
+  f.instances.set('retained', { ...structuredClone(f.original), name: 'retained',
+    config: { ...f.original.config, 'user.youeye.update_operation': f.id, 'user.youeye.update_source': 'app-fixture' } });
+  // The update generated admin_password (completed) and started session_key (intent only: it may or may not exist).
+  f.record.steps.push({ id: 'generate-secret-admin_password', phase: 'applying', state: 'completed' } as any,
+    { id: 'generate-secret-session_key', phase: 'applying', state: 'intent' } as any,
+    { id: 'apply-generated-configuration', phase: 'applying', state: 'intent' } as any);
+  // It had also written the new release's credentials into the record before it failed.
+  f.current.value = { ...f.metadata, installedVersion: '2.0.0',
+    credentials: [{ label: 'Administrator', username: 'admin', passwordSecret: 'admin_password' }] };
+  await f.provider.restore(f.record);
+  assert.deepEqual(f.removedSecrets, ['fixture/admin_password', 'fixture/session_key']);
+  const restored = f.saved.at(-1)!;
+  assert.equal(restored.installedVersion, '1.0.0');
+  assert.equal(Object.hasOwn(restored, 'credentials'), false, 'the release before had none: none are shown again');
+});
+
+test('a rollback of an app that had credentials shows the ones it had (YE-208)', async () => {
+  const f = fixture();
+  f.instances.set('retained', { ...structuredClone(f.original), name: 'retained',
+    config: { ...f.original.config, 'user.youeye.update_operation': f.id, 'user.youeye.update_source': 'app-fixture' } });
+  f.metadata.credentials = [{ label: 'Admin', username: 'root', passwordSecret: 'root_password' }];
+  f.current.value = { ...f.metadata, installedVersion: '2.0.0',
+    credentials: [{ label: 'Administrator', username: 'admin', passwordSecret: 'api_key' }] };
+  await f.provider.restore(f.record);
+  assert.deepEqual(f.removedSecrets, [], 'an update that generated nothing deletes nothing');
+  assert.deepEqual(f.saved.at(-1)!.credentials, [{ label: 'Admin', username: 'root', passwordSecret: 'root_password' }]);
 });

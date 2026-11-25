@@ -210,6 +210,9 @@ re-checks the security posture; it never replaces running ones.
   and setup before setup is complete; afterwards only setup-complete, reset-owner and what those pages call
   (`lib/auth/setup-host-paths.ts`). A password sign-in over plain HTTP on a setup host is refused. Every other host
   is a named host (YouEye ID sign-in, dashboard, apps).
+- **Password sign-in usernames** (`/api/auth/login`, YE-169): `PAM_USERNAME` in `lib/auth/pam.ts`,
+  `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$`. Another name is answered `400` "Invalid username format" before the sign-in
+  limits and without asking Spine, which checks the same rule.
 - **HTTP on setup hosts:** Caddy's `:80` server `setup_http` (`lib/caddy/servers.ts`) proxies setup hosts to the
   Control Panel and redirects every other host to HTTPS (308). Caddy's own redirects are off only while `setup_http`
   exists; the CP adds it at every start (`lib/caddy/setup-http-startup.ts`), so updated boxes keep redirecting. Every writer of the live
@@ -279,9 +282,12 @@ admins). On a phone it is a list of sections, each page with a back link.
   (`system/machine`), AI and SSH keys.
 - **Apps** (`/settings/apps`): every user's apps in one grouped list; for admins also the waiting updates, said once.
   Each app has one page (`/settings/apps/<id>`) with sections instead of tabs: App settings (the app's own settings
-  panel), Permissions you gave it, AI, Who can use it (YouEye ID sign-in and access), Sign-in it was installed with,
-  Name and icon (title studio: `apps/<id>/title`, `?scope=server` for the admin's default), Updates (where it takes
-  updates from, Change, Sync manifest), Diagnostics and Uninstall. Managing an installed app lives here; the Market
+  panel), Permissions you gave it, AI, Connections (admins: the app's connections with Disconnect, and the suggested
+  ones with Approve and Dismiss, through `/api/bridges` and `/api/suggestions`:
+  `components/settings-shell/app-connections.tsx`; the app's row in the list counts the suggestions that can be
+  approved now), Who can use it (YouEye ID sign-in and access), Sign-in it was installed with, Name and icon (title
+  studio: `apps/<id>/title`, `?scope=server` for the admin's default), Updates (where it takes updates from, Change,
+  Sync manifest), Diagnostics and Uninstall. Managing an installed app lives here; the Market
   is a store ([market.md](market.md#what-the-market-shows)).
 - **Appearance** has your own title studio (`appearance/title`).
 
@@ -293,7 +299,7 @@ check `session.isAdmin`; changes also need a CSRF token (`X-CSRF-Token`).
 `system`, `dns` → `network?tab=dns`, `apps-list` and `app-management` → `apps`, `accounts` → `/settings`, `market` →
 `/market`. The old app tabs (`/settings/apps/<id>?tab=…`, as in a native app's `app_settings_url`) scroll to the
 section that replaced them: `app-settings` → App settings, `manage` → Who can use it, `branding` → Name and icon,
-`permissions`, `ai`, and `network` / `link-handling` → Diagnostics.
+`permissions`, `ai`, `network` → Connections, and `link-handling` → Diagnostics.
 
 ### The installed release
 

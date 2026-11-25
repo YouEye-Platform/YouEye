@@ -280,6 +280,10 @@ export async function deployOCIContainer(
     const { copyRetainedRuntime } = await import('@/lib/admission/retained-runtime');
     if (options.retainedRuntime.sourceName !== manifest.containerName) throw new Error('Retained runtime target mismatch');
     await copyRetainedRuntime(options.retainedRuntime, { config, devices });
+    // The adopted copy is Stopped and may never have started on this Incus (a runtime from before YE-215): replace
+    // its symlinked network files before it first starts, as a fresh app container gets (YE-221).
+    const { replaceSymlinkedNetworkFiles } = await import('./oci-network-files');
+    await replaceSymlinkedNetworkFiles(manifest.containerName);
     if (config['boot.autostart'] !== 'false') {
       const boot = await incusRequest('PATCH', `/1.0/instances/${manifest.containerName}`,
         { config: { 'boot.autostart': config['boot.autostart'] } });
@@ -342,6 +346,13 @@ export async function deployOCIContainer(
     await applyStaticIP(manifest.containerName);
   } catch (err) {
     console.warn(`[oci-deployer] Could not apply static IP to ${manifest.containerName}:`, err);
+  }
+
+  // An app image may link the network files Incus mounts over (Collabora CODE): replace those links before the
+  // first start (YE-215). The platform's own images have regular files.
+  if (options?.owner) {
+    const { replaceSymlinkedNetworkFiles } = await import('./oci-network-files');
+    await replaceSymlinkedNetworkFiles(manifest.containerName);
   }
 
   if (options?.start === false) return;

@@ -88,7 +88,14 @@ Configure the Spine API server:
 api:
   socket_path: "/var/run/youeye/youeye.sock"  # Unix socket path
   timeout: 30                                   # Request timeout in seconds
+  auth:                                         # PAM sign-in checks (/api/auth/verify), a backstop that never locks
+    max_attempts: 5                             # wrong passwords per username before their answers are held
+    window_minutes: 5                           # how long a wrong password counts
+    cleanup_interval_minutes: 1                 # how often old counts are forgotten
 ```
+
+Since 0.6.19 (YE-164), `max_attempts` counts failures only and never refuses. Past it, a wrong password's answer
+is held 1 s per further failure, at most 5 s. See [docs/spine.md](../../docs/spine.md#pam-sign-in-checks).
 
 ### Paths
 
@@ -107,8 +114,6 @@ Security-related settings:
 
 ```yaml
 security:
-  rate_limit_requests: 5     # Max auth attempts
-  rate_limit_window: 300     # Window in seconds (5 minutes)
   backup_on_update: true     # Create backup before self-update
 ```
 

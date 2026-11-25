@@ -469,6 +469,8 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
     '@/components/market/app-access-settings': {},
     '@/components/market/app-management': {},
     './app-section': { AppSection: ({ children }: any) => React.createElement('section', null, children), groupClass: '', selectClass: '' },
+    './app-connections': { AppConnections: stub },
+    './app-connections-model': { approvableCount: () => 0 },
     '@/components/setup/WordArtPickerInline': {},
     '@/components/market/update-blocked': { UpdateBlockedNote: stub },
     './api-base': {},

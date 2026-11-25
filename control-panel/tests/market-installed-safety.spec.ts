@@ -157,7 +157,15 @@ test('colliding container names are refused in either install order', () => {
 
 // ─── Uninstall: siblings, CA directory, cleanup_pending ─────
 
-function uninstallFixture(options: { failStorage?: boolean; sharedDatabaseCreated?: boolean } = {}) {
+function uninstallFixture(options: {
+  failStorage?: boolean; sharedDatabaseCreated?: boolean;
+  /** The app's connections; `unwireFails` makes their remove: steps fail. */
+  bridges?: { id: string; from: string; to: string }[]; unwireFails?: boolean;
+  /** YE-209: the credential revocation, a connection's deletion, or the refusal checks fail. */
+  revokeFails?: boolean; deleteBridgeFails?: boolean; refused?: boolean;
+  /** YE-222: the app's data is kept (the shared refusal answers). */
+  kept?: string;
+} = {}) {
   const incus = fakeIncus({
     'app-foo': tags('foo', INSTALLATION),
     'app-foo-bar': tags('foo-bar', FOREIGN),
@@ -176,9 +184,13 @@ function uninstallFixture(options: { failStorage?: boolean; sharedDatabaseCreate
     { id: 'app-foo-bar-web', hostname: 'foo-bar.example.test', upstream: 'app-foo-bar' },
   ];
   const sql: string[][] = [];
+  let bridges = structuredClone(options.bridges ?? []);
   const uninstaller = loadModule('lib/market/uninstaller.ts', {
     '../incus/server': { execCommand: async (_container: string, args: string[]) => { sql.push(args); return { exitCode: 0, stdout: '' }; } },
-    '../infrastructure/oci-deployer': { containerExists: async (name: string) => name === 'app-foo-bar' },
+    '../infrastructure/oci-deployer': { containerExists: async (name: string) => name === 'app-foo-bar'
+      // With connections, foo runs until its container is deleted (so the uninstall stops it first).
+      || (options.bridges !== undefined && name === 'app-foo'
+        && !incus.effects.some((effect) => effect.method === 'DELETE' && effect.route === '/1.0/instances/app-foo')) },
     '../caddy/client': {
       getRoutes: async () => routes.filter((route) => !removedRoutes.includes(route.id)),
       removeRoute: async (id: string) => { removedRoutes.push(id); },
@@ -191,13 +203,17 @@ function uninstallFixture(options: { failStorage?: boolean; sharedDatabaseCreate
     },
     './installed-apps': { removeInstalledApp: async () => {}, getInstalledApp: async () => null },
     '@/lib/identity/provider': { removeForwardAuth: async () => {}, removeOAuthClient: async () => {} },
-    './reconciler': { isAppRegisteredWithUI: async () => false, cleanupAppByScan: async () => ({ repaired: [], unresolved: [] }) },
+    './reconciler': { isAppRegisteredWithUI: async () => false, cleanupAppByScan: async () => ({ repaired: [], unresolved: [] }),
+      keptDataRefusal: async () => options.kept ?? null },
     './install-tracker': { describeErrorChainForLog: (error: unknown) => String(error) },
     '../incus/app-network': {
       withAppNetworkOperationLock: async (_id: string, _op: string, fn: () => unknown) => fn(),
       removeSystemProxyDevices: async () => {}, removeCaddyFromAppNetwork: async () => {},
       deleteAppNetwork: async () => { lease = null; }, getAppNetworkLease: async () => lease,
       markAppNetworkCleanupPending: async () => { calls.push('lease-cleanup-pending'); },
+      removalStage: (stage: string, keepData: boolean) => `${stage}-${keepData ? 'keep-data' : 'delete-data'}`,
+      recordRemovalMode: async (_appId: string, keepData: boolean) => { calls.push(`mode:${keepData ? 'keep' : 'delete'}`); },
+      withRemovalRequest: async (_appId: string, work: () => unknown) => work(),
     },
     '@/lib/pointer/managed-apps': {},
     '@/lib/infrastructure/secrets': {
@@ -213,10 +229,38 @@ function uninstallFixture(options: { failStorage?: boolean; sharedDatabaseCreate
     },
     './update-admission': { withAppInventory: async (fn: () => unknown) => fn(),
       withAppLifecycle: async (_id: string, fn: () => unknown) => fn() },
-    '../apps/service-credential-bridge': { revokeAppCredential: async () => {} },
-    '../apps/service-credential-probe': { quiesceAppCredentialRuntime: async () => {} },
-    '@/lib/admission/lifecycle': { verifyAdmissionCleanup: async () => {}, retainAdmissionOnUninstall: async () => {} },
-    '../bridges/manager': { getBridgesForApp: async () => [] },
+    '../apps/service-credential-bridge': { revokeAppCredential: async () => {
+      calls.push('revoke');
+      if (options.revokeFails) throw Error('YouEye ID unreachable');
+    } },
+    '../apps/service-credential-probe': { quiesceAppCredentialRuntime: async () => { calls.push(`stop:${incus.effects.length}`); } },
+    '@/lib/admission/retained-data': { cleanupAdoptedRetainedCopies: async () => false },
+    '@/lib/admission/lifecycle': {
+      verifyAdmissionCleanup: async () => { if (options.refused) throw Error('admission cleanup refused'); },
+      retainAdmissionOnUninstall: async () => {},
+    },
+    '../bridges/manager': {
+      getBridgesForApp: async () => structuredClone(bridges),
+      // The real one runs every connection's remove: steps and never throws (bridges/manager.ts).
+      unwireAppConnections: async (appId: string) => {
+        calls.push(`unwire:${appId}:${incus.effects.length}`);
+        return options.unwireFails
+          ? bridges.map((bridge) => ({ appId: bridge.to, name: 'Sonarr',
+            message: `Could not unwire ${bridge.from} → ${bridge.to}: the remove steps of this connection did not run` }))
+          : [];
+      },
+      deleteBridge: async (id: string, deleteOptions: { unwired?: boolean } = {}) => {
+        calls.push(`delete-bridge:${id}:${deleteOptions.unwired === true ? 'unwired' : 'unwire-again'}:${incus.effects.length}`);
+        if (options.deleteBridgeFails) throw Error('integration ACL delete failed');
+        bridges = bridges.filter((bridge) => bridge.id !== id);
+        return true;
+      },
+      // The real one marks the app's remaining active network connections rewirePending (bridges/manager.ts).
+      markConnectionsForRewire: async (appId: string) => {
+        calls.push(`mark-rewire:${appId}:${bridges.map((bridge) => bridge.id).join(',')}`);
+        return bridges.map((bridge) => bridge.id);
+      },
+    },
     '../apps/pihole-api': { getCNAMERecords: async () => [], getDNSRecords: async () => [] },
     '../incus/container-ip': { getContainerIP: async () => '192.0.2.1' },
     '@/lib/identity/store': { getClient: async () => null },
@@ -239,6 +283,99 @@ test('uninstalling foo never touches foo-bar and removes its database, secrets a
   assert.equal(f.metadata(), null);
 });
 
+test('uninstall runs the connections\' remove: steps while the app still runs, before any deletion (YE-199)', async () => {
+  // SABnzbd as the consumer (its connect file removes its download client from Sonarr) and as the app another one
+  // connects to: both connections are undone before the app is stopped and before its containers or secrets go.
+  const f = uninstallFixture({ bridges: [
+    { id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' },
+    { id: 'lidarr-to-foo', from: 'lidarr', to: 'foo' },
+  ] });
+  const result = await f.uninstaller.uninstallApp('foo', { keepData: false });
+  assert.equal(result.success, true, result.errors.join('; '));
+  assert.deepEqual([...result.warnings], []);
+  assert.deepEqual([...result.connectionsLeft], []);
+  const order = f.calls.filter((call) => /^(unwire|stop|delete-bridge|secrets)/.test(call));
+  assert.deepEqual(order, [
+    'unwire:foo:0',
+    'stop:0',
+    // The steps already ran: deleting the connections does not run them again against the stopped app.
+    'delete-bridge:foo-to-sonarr:unwired:0',
+    'delete-bridge:lidarr-to-foo:unwired:0',
+    'secrets:foo',
+  ]);
+  assert.ok(f.incus.effects.length > 0, 'the containers were deleted after the connections');
+});
+
+test('a failing remove: step never blocks the uninstall: it is reported in warnings (YE-199)', async () => {
+  const f = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }], unwireFails: true });
+  const result = await f.uninstaller.uninstallApp('foo', { keepData: false });
+  assert.equal(result.success, true, result.errors.join('; '));
+  assert.deepEqual([...result.errors], []);
+  assert.deepEqual([...result.warnings], ['Could not unwire foo → sonarr: the remove steps of this connection did not run']);
+  // The Control Panel names the app that may still list foo.
+  assert.deepEqual(JSON.parse(JSON.stringify(result.connectionsLeft)), [{ appId: 'sonarr', name: 'Sonarr' }]);
+  assert.ok(f.calls.includes('delete-bridge:foo-to-sonarr:unwired:0'), 'the connection is still deleted');
+  assert.ok(f.calls.includes('remove-metadata'));
+  assert.equal(f.metadata(), null);
+});
+
+test('a revocation that fails after the remove: steps ran marks the connections for re-wiring (YE-209)', async () => {
+  const f = uninstallFixture({ bridges: [
+    { id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' },
+    { id: 'lidarr-to-foo', from: 'lidarr', to: 'foo' },
+  ], revokeFails: true });
+  await assert.rejects(f.uninstaller.uninstallApp('foo', { keepData: false }), /YouEye ID unreachable/);
+  const order = f.calls.filter((call) => /^(unwire|stop|revoke|mark-rewire|delete-bridge|secrets)/.test(call));
+  // The app stays installed (stopped) with both connections, which are marked so its next start wires them again.
+  assert.deepEqual(order, ['unwire:foo:0', 'stop:0', 'revoke', 'mark-rewire:foo:foo-to-sonarr,lidarr-to-foo']);
+  assert.ok(f.metadata(), 'install.json stays');
+  assert.equal(f.saved.at(-1).enabled, false);
+  assert.equal(f.incus.effects.length, 0, 'nothing was deleted');
+});
+
+test('a removal that stops after the revocation leaves the record pending: what YE-225 recognises', async () => {
+  // The revocation's publication fails (the dashboard down): the store's credential is already revoked by then.
+  const publication = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }], revokeFails: true });
+  await assert.rejects(publication.uninstaller.uninstallApp('foo', { keepData: false }), /YouEye ID unreachable/);
+  assert.ok(publication.calls.includes('revoke'));
+  assert.equal(publication.metadata().serviceCredentialState, 'pending');
+  // A later step fails (a connection that can't be deleted): the record stays, pending, after the revocation.
+  const later = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }], deleteBridgeFails: true });
+  const result = await later.uninstaller.uninstallApp('foo', { keepData: false });
+  assert.equal(result.success, false);
+  assert.ok(later.calls.includes('revoke'));
+  assert.equal(later.metadata()?.serviceCredentialState, 'pending');
+});
+
+test('an uninstall that returns with errors after the remove: steps ran marks the connections left (YE-209)', async () => {
+  const f = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }], deleteBridgeFails: true });
+  const result = await f.uninstaller.uninstallApp('foo', { keepData: false });
+  assert.equal(result.success, false);
+  assert.ok(result.errors.includes('Explicit integration cleanup or verification failed'));
+  assert.ok(f.calls.includes('mark-rewire:foo:foo-to-sonarr'));
+});
+
+test('a complete uninstall, or one refused before the remove: steps, marks nothing (YE-209)', async () => {
+  const done = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }] });
+  assert.equal((await done.uninstaller.uninstallApp('foo', { keepData: false })).success, true);
+  assert.ok(!done.calls.some((call) => call.startsWith('mark-rewire')));
+  const refused = uninstallFixture({ bridges: [{ id: 'foo-to-sonarr', from: 'foo', to: 'sonarr' }], refused: true });
+  await assert.rejects(refused.uninstaller.uninstallApp('foo', { keepData: false }), /admission cleanup refused/);
+  assert.ok(!refused.calls.some((call) => /^(unwire|mark-rewire)/.test(call)), 'nothing was unwired, nothing to mark');
+});
+
+test('install rollback and forced removal delete the connections before the containers (YE-199)', () => {
+  const engine = readFileSync(path.join(root, 'src/lib/market/engine.ts'), 'utf8');
+  const rollback = engine.slice(engine.indexOf('async function rollbackInstall('));
+  const bridgesGo = rollback.indexOf('await deleteBridge(bridge.id)');
+  assert.ok(bridgesGo > 0 && bridgesGo < rollback.indexOf('await deleteOwnedInstance(name')
+    && bridgesGo < rollback.indexOf('await deleteAllAppSecrets(ctx.appId)'));
+  const reconciler = readFileSync(path.join(root, 'src/lib/market/reconciler.ts'), 'utf8');
+  const scan = reconciler.slice(reconciler.indexOf('async function cleanupAppByScanUnderLifecycle('));
+  const scanBridgesGo = scan.indexOf('await deleteBridge(bridge.id)');
+  assert.ok(scanBridgesGo > 0 && scanBridgesGo < scan.indexOf('await deleteOwnedInstance(name, owner)'));
+});
+
 test('delete-data never drops a shared database this installation did not create', async () => {
   const f = uninstallFixture({ sharedDatabaseCreated: false });
   const result = await f.uninstaller.uninstallApp('foo', { keepData: false });
@@ -256,6 +393,24 @@ test('the install record marks the shared database as created only after creatio
   assert.match(engine, /sharedDatabaseCreated: manifest\.database\?\.mode === 'shared' && restoreOptions\?\.sharedDatabaseCreated \? true : undefined/);
   const reconciler = readFileSync(path.join(root, 'src/lib/market/reconciler.ts'), 'utf8');
   assert.match(reconciler, /databaseMode === 'shared' && recoveryMetadata\.sharedDatabaseCreated === true/);
+});
+
+test('order B: a delete-data retry after a keep-data removal started is refused before anything changes (YE-222)', async () => {
+  // A keep-data attempt failed partway (retained policy, retained.json); a plain remove (delete-data) follows.
+  const f = uninstallFixture({ kept: 'ownership:foo:its data is kept (a removal with keep-data started or finished), and kept data is never deleted this way. Finish that removal with youeye app remove foo --keep-data' });
+  await assert.rejects(f.uninstaller.uninstallApp('foo', { keepData: false }), /foo: its data is kept .* youeye app remove foo --keep-data/);
+  assert.deepEqual(f.calls, [], 'no revocation, no mode change, nothing deleted');
+  assert.equal(f.saved.length, 0, 'the record is not even rewritten');
+  assert.deepEqual(f.incus.effects, []);
+  // A keep-data request is not refused by it: that request is what finishes a stopped keep-data removal.
+  const source = readFileSync(path.join(root, 'src/lib/market/uninstaller.ts'), 'utf8');
+  assert.match(source, /if \(!keepData && !options\.preserveAdmission\) \{\s*const kept = await keptDataRefusal\(appId\);/);
+});
+
+test('a removal records its own mode on the lease before anything changes (YE-222)', async () => {
+  const f = uninstallFixture({ failStorage: true });
+  await f.uninstaller.uninstallApp('foo', { keepData: false });
+  assert.equal(f.calls[0], 'mode:delete', 'first, before any effect');
 });
 
 test('a failed deletion keeps install.json with cleanupPending for the next retry', async () => {
@@ -365,7 +520,7 @@ test('a bad Node version or app directory is refused at the native deployer befo
   ];
   for (const change of bad) {
     assert.throws(() => deployer.assertMarketNativeSpec({ ...spec, ...change }));
-    await assert.rejects(deployer.deployMarketLXDContainer({ ...spec, ...change }, {}, {}, undefined,
+    await assert.rejects(deployer.deployMarketLXDContainer({ ...spec, ...change }, {}, undefined,
       { appId: 'notes', installationId: INSTALLATION }));
   }
   assert.deepEqual(incus.effects, []);
@@ -417,12 +572,13 @@ test('app icons come only from a picture of the market the app installs from, ne
 
 function routeModule(file: string, setups: Array<{ name: string; for: string }>) {
   const started: string[] = [];
+  const configs: Array<Record<string, unknown>> = [];
   const manifest = { metadata: { id: 'demo', name: 'Demo', defaultSubdomain: 'demo' }, version: '1.0.0', setups,
     containers: [], secrets: [], capabilities: {} };
   const json = (body: unknown, init?: ResponseInit) => Response.json(body, init);
   const loaded = loadModule(file, {
     'next/server': { NextResponse: { json } },
-    '@/lib/market/engine': { installApp: async () => { started.push('install'); } },
+    '@/lib/market/engine': { installApp: async (_manifest: unknown, config: Record<string, unknown>) => { started.push('install'); configs.push(config); } },
     '@/lib/market/url-app': {
       fetchUrlApp: async () => manifest, validateAppUrl: () => null, isPrivateHostname: () => false,
       resolveAppManifestUrl: (url: string) => url,
@@ -441,7 +597,7 @@ function routeModule(file: string, setups: Array<{ name: string; for: string }>)
     '@/lib/market/direct-apps': { saveDirectMarketApp: async () => { started.push('saved'); return {}; } },
     '@/lib/market/source': marketSource,
   }, { Response, TextEncoder, ReadableStream });
-  return { loaded, started };
+  return { loaded, started, configs };
 }
 
 const post = (body: unknown) => new Request('https://cp.example.test/api', { method: 'POST', body: JSON.stringify(body) });
@@ -461,6 +617,19 @@ test('install-url refuses an app with setup files unless allowSetup is sent', as
   assert.equal(accepted.status, 200);
   await accepted.text();
   assert.deepEqual(plain.started.slice(0, 3), ['saved', 'tracking', 'install']);
+});
+
+test('install-url passes the access choice only when one was made: a reinstall by URL keeps an opened policy (YE-168)', async () => {
+  for (const [body, want] of [[{}, undefined], [{ publicAccess: true }, true], [{ publicAccess: false }, false]] as const) {
+    const route = routeModule('app/api/market/install-url/route.ts', []);
+    const answer = await route.loaded.POST(post({ url: 'https://example.com/youeye-app.yaml', acceptUnverifiedPublisher: true, ...body }));
+    assert.equal(answer.status, 200);
+    await answer.text();
+    assert.equal(route.configs.length, 1);
+    // Undefined: no explicit "only users", so the install never closes a policy an administrator opened; a URL app's
+    // manifest default never opens one either (it is not the official catalog).
+    assert.equal(route.configs[0].publicAccess, want, JSON.stringify(body));
+  }
 });
 
 test('validate-url refuses to add an app with setup files unless allowSetup is sent', async () => {

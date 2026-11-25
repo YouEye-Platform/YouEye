@@ -1,0 +1,106 @@
+schema: youeye.app.v1
+id: notes
+version: 0.6.4
+name: Notes
+listing:
+  description: Create, organize, and share notes with Markdown support. Full-text search, folders, pinning, and public sharing.
+  long_description: |
+    Notes is a full-featured note-taking app with Markdown support. Organize with folders,
+    pin important notes, use full-text search, and share notes publicly with a link.
+    All data stored locally on your YouEye server with SSO authentication.
+  category: productivity
+  tags: [notes, markdown, productivity, native]
+  icon: sticky-note
+  screenshots:
+    - {path: assets/screenshots/1.png, caption: Note editor with Markdown preview}
+    - {path: assets/screenshots/2.png, caption: Folder organization and search}
+  website: https://github.com/YouEye-Platform/Notes
+source: {node: '24'}
+port: 3000
+health: /api/health
+database:
+  postgres: {name: ye_notes, user: ye_notes}
+env:
+  DATABASE_URL: ${database.url}
+  JWT_SECRET: ${secret.jwt_secret}
+  IDENTITY_URL: ${identity.external_url}
+  IDENTITY_INTERNAL_URL: ${identity.internal_url}
+  APP_URL: ${app.url}
+  NOTES_EXTERNAL_URL: ${app.url}
+  YOUEYE_GATEWAY: ${youeye.gateway_url}
+  YOUEYE_APP_TOKEN: ${youeye.app_token}
+  YOUEYE_APP_ID: ${app.id}
+  NODE_ENV: production
+  PORT: '3000'
+  HOSTNAME: 0.0.0.0
+secrets:
+  jwt_secret: {kind: key, length: 64}
+sso:
+  callback: /api/auth/callback
+  backchannel_logout: /api/auth/backchannel-logout
+  env:
+    IDENTITY_CLIENT_ID: ${sso.client_id}
+    IDENTITY_CLIENT_SECRET: ${sso.client_secret}
+data_ownership: {per_user: identity_uuid}
+capabilities: {widgets: true, settings_panel: true}
+surfaces:
+  - id: default-notification
+    kind: notification
+    placement: notification-center
+    name: Notes reminder
+    description: Rich Notes reminder notification body
+    embed: /embed/notification/default
+    permissions: ['notifications:send']
+  - id: app-settings
+    kind: settings-panel
+    placement: app-settings
+    name: App Settings
+    description: App-owned settings panel
+    embed: /embed/settings
+  - id: recent-notes
+    kind: widget
+    placement: dashboard
+    name: Recent Notes
+    description: Your most recently updated notes
+    embed: /embed/widget/recent-notes
+    size: {default: [25, 28], min: [18, 20], max: [45, 50]}
+    refresh: 300
+  - id: quick-capture
+    kind: widget
+    placement: dashboard
+    name: Quick Capture
+    description: Quickly create a new note from your dashboard
+    embed: /embed/widget/quick-capture
+    size: {default: [25, 12], min: [18, 8], max: [40, 20]}
+  - id: pinned-notes
+    kind: widget
+    placement: dashboard
+    name: Pinned Notes
+    description: Your top pinned notes at a glance
+    embed: /embed/widget/pinned-notes
+    size: {default: [22, 25], min: [16, 18], max: [40, 45]}
+    refresh: 300
+  - id: note-stats
+    kind: widget
+    placement: dashboard
+    name: Note Stats
+    description: Overview of your notes collection
+    embed: /embed/widget/note-stats
+    size: {default: [18, 18], min: [14, 14], max: [30, 30]}
+    refresh: 600
+  - id: notes-note-created
+    kind: timeline-card
+    placement: timeline
+    name: Note created
+    description: Note created
+    embed: /embed/timeline/note
+    permissions: ['timeline:write']
+    triggers: [notes-note-created]
+  - id: notes-note-edited
+    kind: timeline-card
+    placement: timeline
+    name: Note edited
+    description: Note edited
+    embed: /embed/timeline/note
+    permissions: ['timeline:write']
+    triggers: [notes-note-edited]

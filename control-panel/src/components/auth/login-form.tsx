@@ -56,6 +56,14 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
 
       const data = await response.json();
 
+      // Refused before any password check (the Control Panel's limits, or Spine's, YE-164): say when to try again.
+      const retryAfter = Number(data.retryAfter ?? response.headers.get('retry-after'));
+      if (response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0) {
+        setError(translateInterface("m1a403ef0db2d", {seconds: Math.ceil(retryAfter)}));
+        setRemaining(null);
+        return;
+      }
+
       if (!response.ok) {
         setError(data.error || translateInterface("m5a96e8452f1e"));
         if (data.remaining !== undefined) {

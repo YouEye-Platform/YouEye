@@ -57,22 +57,33 @@ const defaultDeps: WiringDeps = {
 interface Endpoint {
   container: string;
   port: number;
-  values: { host: string; url: string; api_key?: string };
+  values: { host?: string; url?: string; api_key?: string };
 }
 
 /**
  * An app's primary container as seen on `network`'s bridge (the peer's network for both ends):
  * the peer on its own eth0, the consumer on its connection NIC (`iface`). The transport accepts
  * only an address inside that network's lease (see `appContainerAddress`).
+ *
+ * `addressOptional` (remove steps): a stopped app has no address; its `host` and `url` are then left
+ * out, and only a step that needs them fails (an unresolved variable, or `target: peer`'s own
+ * address check). So a `remove:` that only calls the other app still runs.
  */
 async function endpoint(
   appId: string, manifest: AppManifest, meta: InstallMetadata, deps: WiringDeps, network: string, iface?: string,
+  addressOptional = false,
 ): Promise<Endpoint> {
   const primary = manifest.containers.find((spec) => spec.primary) ?? manifest.containers[0];
   if (!primary?.port) throw new Error(`${appId} has no primary container port`);
   const container = setupContainers(manifest, meta)[primary.name];
   const io = deps.transport ?? (await import('./setup-transport')).incusSetupTransport;
-  const host = await io.address(container, network, iface);
+  let host: string | undefined;
+  try {
+    host = await io.address(container, network, iface);
+  } catch (error) {
+    if (!addressOptional) throw error;
+    console.warn(`[wire] ${appId} has no address (${describeErrorChainForLog(error)}); its remove steps run without it`);
+  }
   let apiKey: string | undefined;
   if (manifest.apiKey) {
     apiKey = (await deps.readSecret(appId, manifest.apiKey.secret)) || undefined;
@@ -81,7 +92,7 @@ async function endpoint(
   return {
     container,
     port: primary.port,
-    values: { host, url: `http://${host}:${primary.port}`, ...(apiKey ? { api_key: apiKey } : {}) },
+    values: { ...(host ? { host, url: `http://${host}:${primary.port}` } : {}), ...(apiKey ? { api_key: apiKey } : {}) },
   };
 }
 
@@ -95,7 +106,7 @@ export async function runConnectionWiring(
   fromAppId: string,
   toAppId: string,
   deps: WiringDeps = defaultDeps,
-  options: { remove?: boolean } = {},
+  options: { remove?: boolean; leaving?: string; deadlineMs?: number } = {},
 ): Promise<{ ran: boolean; error?: string }> {
   const action = options.remove ? 'unwire' : 'wire';
   let fromManifest: AppManifest;
@@ -106,7 +117,7 @@ export async function runConnectionWiring(
   }
   const want = fromManifest.wants.find((w) => w.appId === toAppId);
   if (!want?.setup) return { ran: false };
-  // Nothing to undo: skip the address lookups (the consumer may already be stopped for its uninstall).
+  // Nothing to undo: skip the address lookups.
   if (options.remove && !(setupFor(fromManifest, `connect:${toAppId}`)?.remove?.length)) return { ran: false };
 
   try {
@@ -116,9 +127,10 @@ export async function runConnectionWiring(
     const [fromMeta, toMeta] = await Promise.all([deps.readMetadata(fromAppId), deps.readMetadata(toAppId)]);
     if (!fromMeta || !toMeta) return { ran: false, error: 'endpoint not installed' };
     const toManifest = await deps.readManifest(toAppId);
+    const removing = options.remove === true;
     const [self, peer] = await Promise.all([
-      endpoint(fromAppId, fromManifest, fromMeta, deps, toAppId, connectionInterface(toAppId)),
-      endpoint(toAppId, toManifest, toMeta, deps, toAppId),
+      endpoint(fromAppId, fromManifest, fromMeta, deps, toAppId, connectionInterface(toAppId), removing),
+      endpoint(toAppId, toManifest, toMeta, deps, toAppId, undefined, removing),
     ]);
     const variables: Partial<VariableContext> = {
       app: {
@@ -132,14 +144,25 @@ export async function runConnectionWiring(
       self: self.values as VariableContext['self'],
       peer: { id: toAppId, ...peer.values } as VariableContext['peer'],
     };
+    // A remove: step that failed with `allow_failure` did not block, but what it should have undone may still be
+    // there: report it, unless it ran against the app that is leaving (being uninstalled) anyway.
+    const missed: string[] = [];
     const ran = await runSetup(fromManifest, `connect:${toAppId}`, {
       appId: fromAppId,
       containers: setupContainers(fromManifest, fromMeta),
       variables,
       peer: { appId: toAppId, container: peer.container, port: peer.port },
       remove: options.remove,
+      onAllowedFailure: removing
+        ? (failure) => { if (failure.appId !== options.leaving && !missed.includes(failure.appId)) missed.push(failure.appId); }
+        : undefined,
       transport: deps.transport,
+      deadlineMs: options.deadlineMs,
     });
+    if (missed.length > 0) {
+      console.warn(`[wire] Unwired ${fromAppId} → ${toAppId}, but remove steps against ${missed.join(', ')} failed`);
+      return { ran, error: `Remove steps of ${fromAppId} → ${toAppId} failed against ${missed.join(', ')}` };
+    }
     if (ran) console.log(`[wire] ${options.remove ? 'Unwired' : 'Wired'} ${fromAppId} → ${toAppId}`);
     return { ran };
   } catch (err) {

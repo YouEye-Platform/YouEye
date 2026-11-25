@@ -1,6 +1,6 @@
 import { ensureAppAdmission, getAdmissionPolicy, reserveAppUserData, saveResourceOwnership } from './store';
 import { ensureIdentitySchema, identityCommand as command, identityRows as rows, identitySql as sql } from '@/lib/identity/store';
-import { listInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
+import { listInstalledApps, readInstallMetadata, readRetainedInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { getConfig, setConfig, buildForwardAuthHandler, currentControlPanelDials, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
 import { applyControlPanelRetry, canonicalJSON } from '@/lib/caddy/servers';
 import { getIdentityConfig } from '@/lib/identity/config';
@@ -121,7 +121,7 @@ async function bindInstalledAdmissionUnderLifecycle(metadata: InstallMetadata, a
     const existing = await rows(`SELECT resource_id FROM admission_resources
       WHERE installation_id = ${sql(policy.installationId)}::uuid AND resource_id = ${sql(resourceId)}`);
     const [baseline] = await rows<{ actor_id: string }>(`SELECT actor_id::text FROM admission_audit
-      WHERE installation_id = ${sql(policy.installationId)}::uuid AND action = 'owner_only_baseline'
+      WHERE installation_id = ${sql(policy.installationId)}::uuid AND action IN ('owner_only_baseline', 'install_baseline')
       ORDER BY id LIMIT 1`);
     if (!existing.length && !baseline) throw new Error('Shared database needs original owner resolution');
     if (!existing.length) await saveResourceOwnership({
@@ -275,6 +275,12 @@ export async function verifyAdmissionCleanup(metadata: InstallMetadata, keepData
     const { runtimeExists } = await import('./retained-runtime');
     if (keepData && !await runtimeExists(container.containerName)) {
       const { verifyPreviouslyRetainedRoot } = await import('./retained-data');
+      // A keep-data retry after a delete-data attempt that already deleted the containers: there is no copy of
+      // them to keep, only the volumes. Say how to finish instead of "Missing retained root recovery map" (YE-222).
+      if (!await readRetainedInstallMetadata(metadata.appId)) {
+        throw new Error(`The containers of ${metadata.appId} are already gone (an earlier removal deleted them); `
+          + `its volumes are kept. Finish the removal with: youeye app remove ${metadata.appId} --force --keep-data`);
+      }
       await verifyPreviouslyRetainedRoot(metadata, container.containerName);
     } else {
       // Validated restore replacement, and the retry of a delete-data uninstall that already

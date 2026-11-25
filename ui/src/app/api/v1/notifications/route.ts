@@ -24,7 +24,8 @@ import {
   markAllNotificationsRead,
   deleteReadNotifications,
 } from "@/lib/db/queries/notifications";
-import { getNotificationSurfaceMap, getAppMetaMap } from "@/lib/db/queries/app-management";
+import { getNotificationSurfaceMap, getAppMetaMap, type NotificationSurfaceEntry } from "@/lib/db/queries/app-management";
+import { publicAppOrigin, publicBaseDomain } from "@/lib/surfaces/app-url";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 async function resolveInboxUserId(): Promise<string | null> {
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
 
   const filters = { limit, offset, type, read, search };
 
-  const [notifs, unreadCount, totalCount, notificationSurfaces, appMeta] = await Promise.all([
+  const [notifs, unreadCount, totalCount, surfaceEntries, appMeta] = await Promise.all([
     getUserNotifications(userId, filters),
     getUnreadCount(userId),
     getNotificationCount(userId, { type, read, search }),
@@ -57,6 +58,14 @@ export async function GET(request: NextRequest) {
     // (same source the timeline feed uses — anti-impersonation: UI-rendered, not app-supplied).
     getAppMetaMap(),
   ]);
+  // Each surface carries its app's public address (YE-151): `https://<its subdomain>.<the box's domain>`, built here
+  // like every other app link, so the embed never guesses a host from the page's address. None (no subdomain, or
+  // the dashboard reached by IP address): the notification shows its standard row.
+  const baseDomain = publicBaseDomain(request.headers.get("host"), false);
+  const notificationSurfaces = Object.fromEntries(Object.entries(surfaceEntries).map(([appId, entry]) => {
+    const { subdomain, ...surface }: NotificationSurfaceEntry = entry;
+    return [appId, { ...surface, app_url: publicAppOrigin(subdomain, baseDomain) }];
+  }));
   const notifications = notifs.map((notif) => {
     const appId = notif.appId;
     const surface = appId

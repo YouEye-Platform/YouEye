@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -9,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
@@ -143,8 +144,8 @@ func TestNewServer(t *testing.T) {
 	if s.mux == nil {
 		t.Error("mux should not be nil")
 	}
-	if s.authLimiter == nil {
-		t.Error("authLimiter should not be nil")
+	if s.pamGate == nil {
+		t.Error("pamGate should not be nil")
 	}
 }
 
@@ -219,81 +220,6 @@ func TestSocketOwnershipPreventsConcurrentStaleProbe(t *testing.T) {
 		t.Fatalf("owned listener became unreachable: %v", err)
 	}
 	conn.Close()
-}
-
-func TestRateLimiter_AllowsUnderLimit(t *testing.T) {
-	cfg := config.Default()
-	cfg.API.Auth.MaxAttempts = 3
-	cfg.API.Auth.WindowMinutes = 5
-	limiter := newAuthRateLimiter(cfg)
-
-	for i := 0; i < 3; i++ {
-		allowed, remaining := limiter.checkRateLimit("testuser")
-		if !allowed {
-			t.Errorf("attempt %d should be allowed", i+1)
-		}
-		expectedRemaining := 2 - i
-		if remaining != expectedRemaining {
-			t.Errorf("attempt %d: remaining = %d, want %d", i+1, remaining, expectedRemaining)
-		}
-	}
-}
-
-func TestRateLimiter_BlocksOverLimit(t *testing.T) {
-	cfg := config.Default()
-	cfg.API.Auth.MaxAttempts = 2
-	cfg.API.Auth.WindowMinutes = 5
-	limiter := newAuthRateLimiter(cfg)
-
-	limiter.checkRateLimit("testuser")
-	limiter.checkRateLimit("testuser")
-
-	allowed, remaining := limiter.checkRateLimit("testuser")
-	if allowed {
-		t.Error("third attempt should be blocked")
-	}
-	if remaining != 0 {
-		t.Errorf("remaining = %d, want 0", remaining)
-	}
-}
-
-func TestRateLimiter_SeparateUsers(t *testing.T) {
-	cfg := config.Default()
-	cfg.API.Auth.MaxAttempts = 1
-	cfg.API.Auth.WindowMinutes = 5
-	limiter := newAuthRateLimiter(cfg)
-
-	limiter.checkRateLimit("user1")
-
-	// user2 should still be allowed
-	allowed, _ := limiter.checkRateLimit("user2")
-	if !allowed {
-		t.Error("different user should have separate limit")
-	}
-}
-
-func TestRateLimiter_Cleanup(t *testing.T) {
-	cfg := config.Default()
-	cfg.API.Auth.MaxAttempts = 1
-	cfg.API.Auth.WindowMinutes = 0 // Effectively expired immediately
-	limiter := newAuthRateLimiter(cfg)
-
-	// Add some attempts
-	limiter.mu.Lock()
-	limiter.attempts["old-user"] = &authAttempt{
-		attempts: []time.Time{time.Now().Add(-10 * time.Minute)},
-	}
-	limiter.mu.Unlock()
-
-	limiter.cleanup()
-
-	limiter.mu.Lock()
-	_, exists := limiter.attempts["old-user"]
-	limiter.mu.Unlock()
-
-	if exists {
-		t.Error("cleanup should remove expired entries")
-	}
 }
 
 func TestRoutesRegistered(t *testing.T) {
@@ -541,5 +467,48 @@ func TestHandleYouEyeConfig_MethodDelete_NotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestHandleAuthVerify_RefusesBadUsername(t *testing.T) {
+	s := testServer()
+	checked := 0
+	s.pamGate.check = func(context.Context, string, string) bool { checked++; return true }
+	for _, name := range []string{strings.Repeat("a", 33), "-v", "--help", "a b", "ad.min", "owner;id"} {
+		body, _ := json.Marshal(map[string]string{"username": name, "password": "secret"})
+		w := httptest.NewRecorder()
+		s.handleAuthVerify(w, httptest.NewRequest("POST", "/api/auth/verify", bytes.NewReader(body)))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want 400", name, w.Code)
+		}
+	}
+	if checked != 0 {
+		t.Fatalf("PAM was asked %d times about names no account can have", checked)
+	}
+	s.pamGate.mu.Lock()
+	keys := len(s.pamGate.failures)
+	s.pamGate.mu.Unlock()
+	if keys != 0 {
+		t.Fatalf("the gate keeps %d keys for refused names", keys)
+	}
+	for _, name := range []string{"owner", "Owner_1", "a", "_svc", strings.Repeat("x", 32)} {
+		body, _ := json.Marshal(map[string]string{"username": name, "password": "secret"})
+		w := httptest.NewRecorder()
+		s.handleAuthVerify(w, httptest.NewRequest("POST", "/api/auth/verify", bytes.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Errorf("%q: status = %d, want 200", name, w.Code)
+		}
+	}
+}
+
+func TestHandleAuthVerify_BodyOver4KiB(t *testing.T) {
+	s := testServer()
+	checked := 0
+	s.pamGate.check = func(context.Context, string, string) bool { checked++; return true }
+	body := `{"username":"owner","password":"` + strings.Repeat("p", 10*1024) + `"}`
+	w := httptest.NewRecorder()
+	s.handleAuthVerify(w, httptest.NewRequest("POST", "/api/auth/verify", strings.NewReader(body)))
+	if w.Code != http.StatusBadRequest || checked != 0 {
+		t.Fatalf("10 KiB body: status = %d, checks %d; want 400 and none", w.Code, checked)
 	}
 }

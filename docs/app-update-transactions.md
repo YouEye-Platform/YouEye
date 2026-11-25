@@ -222,7 +222,9 @@ plan's is used and that is logged), the plan's (old) one after a rollback.
 4. Run hooks and migrations under a temporary idle init with services stopped. All code is replaced before any new
    code starts; the app's own database engine is not rebuilt and keeps its image, environment and configuration.
    Generated config, env and commands are applied under the checkpoint; existing credentials and settings are
-   kept, not regenerated. Config in custom volumes is written through the volume API while stopped.
+   kept, not regenerated. A secret new in the release (never declared by the installed version) is generated first, one journal step
+   each (`generate-secret-<name>`, since 0.6.20). Config in custom volumes is written through the volume API while
+   stopped.
 5. Start the new version in start order with ingress still fenced. Re-point the app's connection ACLs and check
    every connection NIC is still there (`verify-connections`). Run first-start migrations and health checks. The
    whole recovery set is kept until the installed version and migrations commit.
@@ -244,7 +246,9 @@ On an uncommitted interruption, recovery restores the whole set instead of re-ru
   write that Incus refuses ("the MAC addresses of restored `<container>` could not be written") or a MAC that does
   not hold is logged ("did not keep its MAC addresses") and the rollback goes on;
 - volumes go back to their snapshots, a shared-PostgreSQL database to its logical archive, and the update-owned
-  metadata to its checkpoint;
+  metadata to its checkpoint (the shown `credentials` included, since 0.6.20);
+- the secrets the journal's `generate-secret-<name>` steps name are deleted (intended or completed: an absent one is
+  fine); no other secret is touched;
 - the containers that ran before start again in start order.
 
 A failure before the apply phase restores nothing: what still runs keeps running, and the rest is started. A failed
@@ -253,11 +257,12 @@ verification stops writers and fences the database again; `recovery_required` ke
 restored; newer credentials, grants, admission and deletion markers stay as they are.
 
 **Security state** (`securityParts` in `update-provider.ts`): the app's own security fields of install.json (owner,
-installation, sign-in, domain, database identity, shared folders, storage, credentials, AI connection, credential
-state; never fields the update writes, nor `updatedAt`), every file under its app directory (`secrets/` included,
+installation, sign-in, domain, database identity, shared folders, storage, AI connection, credential state; never
+fields the update writes, such as the shown `credentials`, nor `updatedAt`), every file under its app directory (`secrets/` included,
 bounded; links and devices refused), its credential projection, its admission policy (revision and state, no
 timestamps; no box-wide user list: the policy revision moves whenever this app's admission changes) and its
-non-private admission resources. It is compared only in `restore()`, and only to log: a rollback never restores
+non-private admission resources. It is compared only in `restore()`, after the generated secrets are deleted,
+and only to log: a rollback never restores
 security state (the credential and install record can't change meanwhile: their writers need the app lock the update
 holds), and an unreadable state never blocks recovery. Reopening after a commit compares nothing, and the PostgreSQL fence checks only the
 operation and database identity. Operations stuck on builds before 0.6.9 therefore finish at the next Control Panel

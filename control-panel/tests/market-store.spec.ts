@@ -14,7 +14,7 @@ import {
   readAcceptedMarket, readMarketPicture, readMarketRefreshStatus, refreshMarket, requestMarketRefresh, resetMarketStoreMemory,
 } from '../src/lib/market/market-store';
 import {
-  OFFICIAL_MARKET_ADDRESSES, customMarketSource, officialMarketAddress, officialMarketAddressForChannel, officialMarketSource,
+  OFFICIAL_MARKET_ADDRESSES, customMarketSource, getConfiguredMarketSources, officialMarketAddress, officialMarketSource, setOfficialMarketLane,
 } from '../src/lib/market/source';
 import { buildFixtureMarket, fakeMarketHosts, type FixtureMarket } from './fixtures/market';
 
@@ -175,45 +175,38 @@ test('a lower sequence is refused for the same address and accepted after the ad
   await assert.rejects(refreshMarket(moved, { deps: hosts.deps }), refused(/lower than the 1795000100/));
 }));
 
-test('the official Market follows the box\'s channel: a channel change starts a new floor', withStore(async () => {
+test('the official Market reads its lane, main by default: a lane change starts a new floor (YE-142)', withStore(async (directory) => {
   const dev = buildFixtureMarket(one({ sequence: 1795009999, commit: 'dev' }));
   const main = buildFixtureMarket(one({ sequence: 1795000001, commit: 'main', apps: [{ id: 'alpha' }] }));
   const hosts = fakeMarketHosts({ [OFFICIAL_MARKET_ADDRESSES.dev]: dev.files, [OFFICIAL_MARKET_ADDRESSES.main]: main.files });
-  let channel = 'dev';
-  const client = { getReleaseChannel: async () => ({ channel }) };
-  assert.equal((await refreshMarket(official, { deps: hosts.deps, channel: client })).address, OFFICIAL_MARKET_ADDRESSES.dev);
-  channel = 'beta';
-  const accepted = await refreshMarket(official, { deps: hosts.deps, channel: client });
+  // No lane set (every box, dev and alpha ones included): main. Spine is never asked.
+  assert.equal((await refreshMarket(official, { deps: hosts.deps })).address, OFFICIAL_MARKET_ADDRESSES.main);
+  await setOfficialMarketLane('dev');
+  assert.equal((await refreshMarket(official, { deps: hosts.deps })).pointer.commit, 'dev');
+  await setOfficialMarketLane('main');
+  const accepted = await refreshMarket(official, { deps: hosts.deps });
   assert.equal(accepted.address, OFFICIAL_MARKET_ADDRESSES.main, 'the lower sequence of the main lane is not "older"');
   assert.equal(accepted.pointer.commit, 'main');
-  channel = 'alpha';
-  assert.equal((await refreshMarket(official, { deps: hosts.deps, channel: client })).pointer.commit, 'dev');
-
-  // Spine cannot be asked: the lane last used stays. It is never a guess.
-  const silent = { getReleaseChannel: async () => { throw new Error('socket closed'); } };
-  hosts.take();
-  await refreshMarket(official, { deps: hosts.deps, channel: silent });
-  assert.ok(hosts.take().every((file) => file === MARKET_POINTER_FILE));
-  assert.equal(hosts.requests.length, 0);
-  assert.equal((await readAcceptedMarket(official))!.address, OFFICIAL_MARKET_ADDRESSES.dev);
+  // The lane is kept in market-sources.json, on the official entry; the official Market stays on.
+  const stored = JSON.parse(readFileSync(path.join(directory, 'market-sources.json'), 'utf8'));
+  assert.deepEqual(stored.active_sources.find((entry: { id: string }) => entry.id === 'official'), { id: 'official', enabled: true, lane: 'main' });
+  await assert.rejects(setOfficialMarketLane('stable'), /The official Market lane is main or dev/);
+  await assert.rejects(setOfficialMarketLane('test/andrew'), /main or dev/);
 }));
 
-test('the official lane: dev and alpha read /dev/, beta and stable the root; without Spine the last lane, else the main one', async () => {
-  assert.equal(officialMarketAddressForChannel('dev'), 'https://market.youeye.me/dev/');
-  assert.equal(officialMarketAddressForChannel('alpha'), 'https://market.youeye.me/dev/');
-  assert.equal(officialMarketAddressForChannel('beta'), 'https://market.youeye.me/');
-  assert.equal(officialMarketAddressForChannel('stable'), 'https://market.youeye.me/');
-  assert.equal(officialMarketAddressForChannel('nightly'), null);
-  const down = { getReleaseChannel: async () => { throw new Error('down'); } };
-  assert.deepEqual(await officialMarketAddress(undefined, down), { address: 'https://market.youeye.me/', from: 'default' });
-  assert.deepEqual(await officialMarketAddress('https://market.youeye.me/dev/', down), { address: 'https://market.youeye.me/dev/', from: 'last-known' });
-  // A stored address that is not an official lane is never used.
-  assert.equal((await officialMarketAddress('https://evil.example.org/dev/', down)).address, 'https://market.youeye.me/');
-  // A channel this reader does not know is like no answer.
-  assert.equal((await officialMarketAddress('https://market.youeye.me/dev/', { getReleaseChannel: async () => ({ channel: 'nightly' }) })).from, 'last-known');
-  assert.deepEqual(await officialMarketAddress('https://market.youeye.me/', { getReleaseChannel: async () => ({ channel: 'alpha' }) }),
-    { address: 'https://market.youeye.me/dev/', from: 'channel', channel: 'alpha' });
-});
+test('the official lane: the setting, else main; a lane this reader does not know reads as main', withStore(async (directory) => {
+  assert.deepEqual(officialMarketAddress(), { address: 'https://market.youeye.me/', lane: 'main', from: 'default' });
+  assert.deepEqual(officialMarketAddress({ lane: 'dev' }), { address: 'https://market.youeye.me/dev/', lane: 'dev', from: 'setting' });
+  assert.deepEqual(officialMarketAddress({ lane: 'main' }), { address: 'https://market.youeye.me/', lane: 'main', from: 'setting' });
+  // An alpha box from before 0.6.20 has no lane in its list: it reads main now (owner, 2026-11-23).
+  writeFileSync(path.join(directory, 'market-sources.json'), JSON.stringify({ active_sources: [{ id: 'official', enabled: true }] }));
+  assert.equal((await getConfiguredMarketSources())[0].lane, undefined);
+  writeFileSync(path.join(directory, 'market-sources.json'), JSON.stringify({ active_sources: [{ id: 'official', enabled: false, lane: 'test/native' }] }));
+  const [kept] = await getConfiguredMarketSources();
+  assert.deepEqual([kept.enabled, kept.lane, officialMarketAddress(kept).address], [false, undefined, 'https://market.youeye.me/']);
+  writeFileSync(path.join(directory, 'market-sources.json'), JSON.stringify({ active_sources: [{ id: 'official', enabled: true, lane: 'dev' }] }));
+  assert.equal(officialMarketAddress((await getConfiguredMarketSources())[0]).address, 'https://market.youeye.me/dev/');
+}));
 
 test('an unreachable market keeps the accepted state and reports the error', withStore(async () => {
   const built = buildFixtureMarket(one());
@@ -616,18 +609,17 @@ test('the old catalog release files go once the official store holds an accepted
   writeFileSync(path.join(directory, 'catalog-cache.json'), '{}');
   const built = buildFixtureMarket(one());
   const hosts = fakeMarketHosts({ [OFFICIAL_MARKET_ADDRESSES.main]: built.files, [ADDRESS]: built.files });
-  const stable = { getReleaseChannel: async () => ({ channel: 'stable' }) };
 
   // A custom market's accept does not touch them; neither does a failed official refresh.
   await refreshMarket(custom, { deps: hosts.deps });
   hosts.state.down = true;
-  await assert.rejects(refreshMarket(official, { deps: hosts.deps, channel: stable }));
+  await assert.rejects(refreshMarket(official, { deps: hosts.deps }));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(existsSync(path.join(directory, 'market-releases/official.json')));
   assert.ok(existsSync(path.join(directory, 'catalog-cache.json')));
 
   hosts.state.down = false;
-  await refreshMarket(official, { deps: hosts.deps, channel: stable });
+  await refreshMarket(official, { deps: hosts.deps });
   await until(() => !existsSync(path.join(directory, 'catalog-cache.json')), 'the old files to go');
   assert.equal(existsSync(path.join(directory, 'market-releases')), false);
   assert.equal(existsSync(path.join(directory, 'catalog-cache.json')), false);

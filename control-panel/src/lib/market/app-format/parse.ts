@@ -32,6 +32,11 @@ export interface ParseOptions {
   lenient?: boolean;
   /** Tests and development only: accept image tags that are not digest-pinned. */
   allowUnpinned?: boolean;
+  /**
+   * The manifest comes from a market (or a URL): a native app (`source:`) must name its package (`source.package`),
+   * because the box installs and updates it from exactly that file.
+   */
+  market?: boolean;
 }
 
 /** Safe YAML (or JSON, which is YAML) to plain data. */
@@ -123,6 +128,9 @@ export function parseApp(text: string, options: ParseOptions = {}): AppDocument 
     for (const [path, image] of images) {
       if (image && !PINNED_IMAGE.test(image)) issues.push(`${path}: image must be pinned by digest (@sha256:…)`);
     }
+  }
+  if (options.market && app.source && !app.source.package) {
+    issues.push('source.package: a native app from a market names its package (url, sha256 and size of its standalone.tar)');
   }
   issues.push(...checkVariables(app, variableScope(app)));
   if (app.api_key && !appSecretNames(app).has(app.api_key.secret)) {

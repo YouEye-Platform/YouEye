@@ -4,10 +4,19 @@ This development contract separates application admission from launcher
 preferences, runtime permission consent and the application's own roles.
 
 An active administrator manages admission in the existing Market app settings.
-Ordinary installs start with owner-only access. The verified installer becomes
-the application owner; unattended installs resolve the explicit appliance
-owner. An administrator may choose all active household users, selected users
-or selected groups. The active application owner is included in every mode.
+Ordinary installs start with access for all active household users (since
+0.6.20, YE-232); the installing administrator can pick "Only me" (owner-only)
+under the install dialog's "Name, address and more" (`accessMode: "owner"` in
+`POST /api/market/install` and `install-url`; CLI and Pointer installs take the
+default). The choice applies only when the policy is created: a reinstall keeps
+the policy it had, and the dialog does not show the choice then. A policy
+created for an app that is already installed (a recovery path) stays
+owner-only. The creation is audited as `install_baseline` with its mode
+(before YE-232: `owner_only_baseline`, owner-only); apps installed before
+0.6.20 keep their owner-only policies (the owner's decision, 2026-11-25). The
+verified installer becomes the application owner; unattended installs resolve
+the explicit appliance owner. An administrator may change it to all active
+household users, selected users or selected groups. The active application owner is included in every mode.
 An empty selection admits only that owner. Administrative status alone does
 not admit a user to an application.
 
@@ -47,14 +56,53 @@ and identity headers, and applies the same decision to direct application URLs
 and registered alternate routes. App manifests cannot disable this boundary.
 The administrator's explicit public exposure setting bypasses browser admission
 for the application's URLs; protected UI services remain user authenticated.
-An official-catalog manifest with `public_access: true` (an app that protects
-itself) pre-selects that setting at install: the install dialog shows it, the
-CLI says so (`--public-access=false` declines), and the install applies it as the
-installing administrator once the app is healthy, audited as
-`public_access_at_install`. The manifest default never overrides an
-administrator's earlier policy change for the same installation, and apps from
-added sources or URLs default to household-only. Bundle members install
-household-only.
+
+**"Only <site> users" (since 0.6.19, YE-154)** is the one control for that
+setting, in the install dialog and in the app's Access settings: on keeps the
+gate with the policy's people (owner only, all users, selected users or
+groups); off is public access, so anyone who can reach the address gets the
+app's own sign-in page. There is no separate "publicly reachable" row. The who
+list ("Who may enter") is always shown (YE-232): with public access it still
+decides whose dashboard lists the app and who may sign in to it with YouEye ID
+(`evaluateClientAdmission`). The switch saves at once; the Access
+settings say "Opening to everyone…" until the public projection is applied
+(forward-auth passes only then: "saved" is not "applied"), and show the error
+with a retry when it is not. The retry reads the policy again first, so a
+revision conflict (another administrator saved meanwhile) resolves on the next
+try.
+
+- **Default.** An official-catalog manifest with `public_access: true` (an app
+  that protects itself) starts with the switch off; every other app starts on.
+  The CLI says so (`--public-access=false` keeps it on). The install applies the
+  choice as the installing administrator once the app is healthy, audited as
+  `public_access_at_install`. The manifest default never overrides an
+  administrator's earlier policy change for the same installation. Apps from
+  added sources or URLs, and bundle members, start on.
+- **Reinstall (0.6.20, YE-168).** A policy outlives an uninstall. On a reinstall
+  the dialog's switch starts from that kept policy (`existingAccess` from
+  `GET /api/market/app/<id>/retained`), so leaving it alone keeps it, open or
+  not; turning it on closes it, turning it off opens it. A reinstall by URL
+  changes the policy only when the request carries `publicAccess`
+  (`--public-access` on the CLI).
+- **Locked on.** An app that has no sign-in of its own, or that trusts the
+  gate's login header, cannot be opened: the switch is disabled with the
+  reason, the install ignores a public choice (with a warning), and
+  `PUT /api/market/apps/<id>/access` answers 409 to opening it
+  (`lib/market/public-access.ts` `gateOnlyReason`). The rule reads the
+  manifest: a value naming an `X-YouEye-*` identity header in its environment
+  (Navidrome's ExtAuth) is header trust; no `sso:`, no `credentials:` and no
+  official `public_access: true` is no sign-in (SearXNG, Wikiless, the arr
+  apps). An installed app is judged by its frozen manifest; without a readable
+  one it stays locked. An app an administrator opened before 0.6.19 can still
+  be closed.
+- **Data (v1).** The switch writes the policy's `publicAccess`. The install
+  record's `forwardAuthEnabled` is written with it for older readers: for apps
+  without their own YouEye ID login it equals the switch; apps with one keep the
+  old optional-gate flag. The install API takes `publicAccess` (the switch
+  inverted) and still accepts `forwardAuthGate`: `true` means "only users",
+  `false` is no choice, as it never opened an app before.
+- **Installed boxes.** Nothing changes on update: the switch shows the
+  installation's policy, never the record, until an administrator flips it.
 Caddy's interface on each app bridge is named `eth-` plus the first 11 hex
 characters of the SHA-256 of the complete app ID, within Linux's 15-byte name
 limit, so apps sharing an ID prefix keep distinct interfaces
@@ -298,4 +346,7 @@ reads back the complete policy; duplicate managed mappings fail closed.
 
 Post-start configuration permission checks wait for the container exec transport
 to become ready. A running state alone is insufficient. Permission changes and
-exact mode readback still fail closed after that bounded readiness wait.
+exact mode readback still fail closed after that bounded readiness wait. An image
+without a shell answers the readiness probe with "command not found" (127): its
+modes are then read back host-side from the app's volume instead, still failing
+closed on any difference ([app-manifest.md](app-manifest.md#images-without-a-shell), YE-216).

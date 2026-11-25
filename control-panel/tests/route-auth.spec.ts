@@ -84,7 +84,6 @@ const STANDARD_USER_HANDLERS: Record<string, string> = {
   'GET /api/market': 'catalog',
   'GET /api/market/app/[appId]': 'catalog entry',
   'GET /api/market/app/[appId]/connections': 'connections an app could make, for the install dialog',
-  'GET /api/market/app/[appId]/provider-options': 'providers an app could use, for the install dialog',
   'GET /api/market/catalog': 'catalog',
   'GET /api/market/install-status': 'install progress',
   'GET /api/market/providers': 'installed providers',

@@ -18,8 +18,10 @@ interface MarketSourceConfig {
   kind: 'official' | 'url';
   /** The address of a custom market; empty for the official Market. */
   url: string;
-  /** Where the box's copy of the market was read from (the official Market's follows the box's channel). */
+  /** Where the box's copy of the market was read from (the official Market's is its lane's). */
   address?: string | null;
+  /** The official Market's lane: `main` unless the owner chose `dev` (YE-142). */
+  lane?: 'main' | 'dev';
   /** What the market says about itself and its accepted state. */
   market?: {
     name: string; publisher: string; homepage?: string; commit?: string; sequence_date: string;
@@ -44,7 +46,9 @@ interface RemovedSource {
 
 export default function MarketSourcesPage() {
   const translateInterface = useInterfaceTranslations("interface");
+  const marketStore = useInterfaceTranslations("marketStore");
   const locale = useLocale();
+  const [choosingLane, setChoosingLane] = useState(false);
 
   const [sources, setSources] = useState<MarketSourceConfig[]>([]);
   const [removedSources, setRemovedSources] = useState<RemovedSource[]>([]);
@@ -126,6 +130,25 @@ export default function MarketSourcesPage() {
     },
     [applyListing, load, translateInterface],
   );
+
+  // The official Market's lane is the box's own setting (PATCH { official_lane }); the next read uses it.
+  const setLane = async (lane: 'main' | 'dev') => {
+    setSaving(true);
+    setError('');
+    try {
+      const res = await authenticatedFetch('/api/market/source', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ official_lane: lane }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      applyListing(await res.json());
+      setChoosingLane(false);
+    } catch (e) {
+      console.error('[Market sources] lane change failed', e);
+      setError(marketStore("sources.laneFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const toggle = (index: number, enabled: boolean) => {
     const next = sources.map((s, i) => (i === index ? { ...s, enabled } : s));
@@ -349,7 +372,8 @@ export default function MarketSourcesPage() {
           sources.map((s, i) => {
             const official = s.kind === 'official';
             const notAccepted = !official && !s.accepted_at;
-            const count = s.market ? s.market.apps + (s.market.native ?? 0) : null;
+            // `apps` counts every app of the market, native ones included (YE-142).
+            const count = s.market ? s.market.apps : null;
             const address = s.address || s.url;
             return (
               <div key={`${s.id}-${i}`} className={`border-t px-[18px] py-3 ${s.enabled ? '' : 'opacity-60'}`}>
@@ -374,6 +398,28 @@ export default function MarketSourcesPage() {
                     ) : address ? (
                       <div className="truncate font-mono text-[12px] text-muted-foreground" title={address}>{address}</div>
                     ) : null}
+                    {official && (
+                      <div className="text-[12.5px] text-muted-foreground">
+                        {marketStore("sources.officialLane", { lane: s.lane ?? 'main' })}{' '}
+                        <button type="button" className="font-medium text-primary hover:underline disabled:opacity-50" disabled={saving}
+                          onClick={() => setChoosingLane(!choosingLane)} aria-expanded={choosingLane}>
+                          {marketStore("sources.laneChange")}
+                        </button>
+                        {choosingLane && (
+                          <div className="mt-2 space-y-2 rounded-lg border bg-muted/30 p-3">
+                            <p className="text-[12px]">{marketStore("sources.laneHint")}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(['main', 'dev'] as const).map((lane) => (
+                                <Button key={lane} size="sm" variant={(s.lane ?? 'main') === lane ? 'default' : 'outline'} className="h-8"
+                                  disabled={saving || (s.lane ?? 'main') === lane} onClick={() => setLane(lane)}>
+                                  {marketStore(lane === 'main' ? "sources.laneMain" : "sources.laneDev")}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {s.market && !official && (
                       <div className="truncate text-[12px] text-muted-foreground">
                         {translateInterface("mf2c804fb5a2d", { name: s.market.name, publisher: s.market.publisher })}

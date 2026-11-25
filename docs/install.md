@@ -252,9 +252,9 @@ Open `https://<box IP>` (the certificate is self-signed at this point). On an IP
 - Only one claim succeeds. Afterwards the page offers **resume**: the owner signs in again with that account to
   continue setup.
 - Claiming works only from an IP-address host, with a same-origin request and a CSRF cookie, and is limited like a
-  sign-in: 10 failures per username and 30 per client address in 15 minutes; a form error, a 409 (already
-  claimed, not yet claimed) or a server error counts against nothing
-  ([youeye-id.md](youeye-id.md)).
+  sign-in: 10 failures per username and client address and 30 per client address in 15 minutes lock, and a
+  username's failures from anywhere only slow it down; a form error, a 409 (already claimed, not yet claimed) or a
+  server error counts against nothing ([youeye-id.md](youeye-id.md)).
 
 ## Setup wizard
 

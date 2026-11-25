@@ -47,10 +47,7 @@ export async function POST(request: NextRequest) {
       // app's id and recorded installation id, and report exactly what was and wasn't removed.
       // Only for a broken or unfinished install: an intact app goes through the normal removal, which keeps its
       // ownership checks and the retained-data path.
-      if (!(await forceRemovalApplies(appId))) {
-        return NextResponse.json({ success: false, errors: [
-          `${appId} is installed and intact; remove it without --force (youeye app remove ${appId}).`] }, { status: 409 });
-      }
+      // Whether --force applies is decided inside cleanupAppByScan, under the app's lifecycle lock (YE-222).
       const { cleanupAppByScan } = await import('@/lib/market/reconciler');
       const cleaned = await withUserOperationLockWait(() => cleanupAppByScan(appId, { keepData, force: true }));
       if (cleaned.unresolved.length) logOperationFailure(`Forced removal of ${appId}`, new Error(cleaned.unresolved.join('; ')));
@@ -75,15 +72,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** An unfinished install, a removal left half-done, or a recorded container that no longer exists. */
-async function forceRemovalApplies(appId: string): Promise<boolean> {
-  const { readInstallMetadata } = await import('@/lib/market/metadata');
-  const meta = await readInstallMetadata(appId).catch(() => null);
-  if (!meta) return true; // cleanup by scan refuses on its own without a readable record
-  if (meta.lifecycleState === 'installing' || meta.cleanupPending) return true;
-  const { incusRequest } = await import('@/lib/incus/server');
-  const listed = await incusRequest<string[]>('GET', '/1.0/instances');
-  if (listed.type === 'error' || !Array.isArray(listed.metadata)) return false;
-  const present = new Set(listed.metadata.map(url => url.split('/').pop()));
-  return meta.containers.some(container => !present.has(container.containerName));
-}

@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { AI_SECTIONS } from './ai-navigation';
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 type User = { id: string; name: string; email: string; role: string };
 type Screen = { setLocale?(locale: string): void; navigate(path: string): void; setTheme(theme: 'light' | 'dark'): void; unmount(): void };
@@ -66,14 +66,11 @@ async function request(path: string, init: RequestInit, translateInterface: (key
 
 export function PointerConsole({ user }: { user: User }) {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
   const locale = useLocale();
-  const translationRef = React.useRef(translateInterface);
-  translationRef.current = translateInterface;
-  const localeRef = React.useRef(locale);
-  localeRef.current = locale;
-  const pointerRequest = React.useCallback((path: string, init: RequestInit = {}) => request(path, init, translationRef.current), []);
+  const translationRef = useLatestRef(translateInterface);
+  const localeRef = useLatestRef(locale);
+  const pointerRequest = React.useCallback((path: string, init: RequestInit = {}) => request(path, init, translationRef.current), [translationRef]);
   const { id, name, email, role } = user;
   const pathname = usePathname(), router = useRouter();
   const element = React.useRef<HTMLDivElement>(null), screen = React.useRef<Screen | null>(null);
@@ -107,7 +104,7 @@ export function PointerConsole({ user }: { user: User }) {
       setLoading(false);
     })().catch(() => { if (!abort.signal.aborted) setError(interfaceTranslationRef.current("m7b1850994da3")); });
     return () => { abort.abort(); observer.disconnect(); screen.current?.unmount(); screen.current = null; };
-  }, [id, name, email, role, attempt, router, pointerRequest]);
+  }, [id, name, email, role, attempt, router, pointerRequest, translationRef, localeRef, interfaceTranslationRef]);
   return <section aria-label={translateInterface("m377c481d3c31")} className="settings-pointer-theme min-w-0">
     {loading && !error && <PointerLoading path={pointerPath(pathname)} />}
     {error && <div role="alert" className="space-y-3 rounded-lg border bg-card p-5 text-sm">

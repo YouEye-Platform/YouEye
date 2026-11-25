@@ -54,12 +54,20 @@ function writeProvenance(root: string, except: string[] = []): void {
   put(root, 'asset-provenance.json', `${JSON.stringify({ apiVersion: 'youeye.market/asset-provenance/v1', assets }, null, 2)}\n`);
 }
 
+const NOTES_PACKAGE = { url: 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar', sha256: 'd'.repeat(64), size: 52428800 };
+
+/** A native app folder's manifest, as `native-pin` writes it: the released manifest plus `source.package`. */
+function nativeDocument(changes: Record<string, unknown> = {}) {
+  return appDocument({ id: 'notes', name: 'Notes', version: '0.6.4', image: undefined, port: 3000, requires: { youeye: '>=0.6.20' },
+    source: { node: '24', package: NOTES_PACKAGE }, listing: listing('Notes'), ...changes });
+}
+
 function listing(name: string, extra: Record<string, unknown> = {}) {
   return { tagline: `${name} in a line`, description: `What ${name} does.`, long_description: `All about ${name}.`,
     category: 'utilities', tags: ['demo'], icon: 'box', icon_file: 'icon.svg', developer: `${name} people`, ...extra };
 }
 
-/** A small catalog: two apps (one with setup files, screenshots and notices), one native id, one bundle. */
+/** A small catalog: two container apps (one with setup files, screenshots and notices), one native app, one bundle. */
 function fixture(t: TestContext): string {
   const root = scratch(t, 'market-fixture-');
   put(root, 'store.yaml', 'apiVersion: v1\nkind: store\nid: demo\nname: Demo Market\npublisher: Demo People\nhomepage: https://market.example.org\n');
@@ -67,8 +75,9 @@ function fixture(t: TestContext): string {
     schema: 'youeye.catalog.v1',
     categories: [{ id: 'utilities', label: 'Utilities', icon: 'wrench', order: 1, tile: { bg: '#fff', fg: '#000' } }],
     curation: { spotlight: { title: 'Ours', apps: ['notes'] }, collections: [{ id: 'pair', label: 'Pair', apps: ['alpha', 'beta'] }] },
-    native: ['notes'],
   }));
+  put(root, 'apps/notes/youeye-app.yaml', yaml(nativeDocument()));
+  put(root, 'apps/notes/icon.svg', SVG('red'));
   put(root, 'apps/alpha/youeye-app.yaml', yaml(appDocument({
     id: 'alpha', name: 'Alpha',
     listing: listing('Alpha', { screenshots: [{ path: 'screenshots/a.png', caption: 'The first view' }, { path: 'screenshots/b.svg', caption: 'Shared' }] }),
@@ -121,14 +130,17 @@ test('a catalog builds into files the format readers accept, with right hashes a
   assert.equal(indexBytes.length, pointer.index.size);
   const index = readMarketIndex(indexBytes);
   assert.deepEqual(index.warnings, []);
-  assert.deepEqual(index.native, ['notes']);
+  assert.equal((json(market, pointer.index.path) as Record<string, unknown>).native, undefined, 'the index has no native list');
   assert.deepEqual(index.categories.map((category) => category.id), ['utilities']);
   assert.deepEqual(index.curation?.collections?.[0].apps, ['alpha', 'beta']);
   assert.deepEqual(index.bundles.map((bundle) => bundle.id), ['pair']);
   assert.match(index.bundles[0].definition, /^schema: youeye\.bundle\.v1/);
 
-  assert.deepEqual(index.apps.map((app) => app.id), ['alpha', 'beta']);
-  const [alpha, beta] = index.apps;
+  assert.deepEqual(index.apps.map((app) => [app.id, app.kind]), [['alpha', 'container'], ['beta', 'container'], ['notes', 'native']]);
+  const [alpha, beta, notes] = index.apps;
+  assert.deepEqual(notes.requires, { youeye: '>=0.6.20' });
+  const notesBundle = readMarketAppBundle(market.files.get(notes.bundle!.path)!);
+  assert.equal(loadApp({ manifest: notesBundle.manifest }, { market: true }).containers[0].source?.package?.sha256, NOTES_PACKAGE.sha256);
   assert.deepEqual(Object.keys(json(market, pointer.index.path).apps[0]),
     ['id', 'kind', 'name', 'version', 'tagline', 'description', 'category', 'tags', 'developer', 'icon', 'runs_setup', 'bundle']);
   assert.equal(alpha.kind, 'container');
@@ -176,7 +188,7 @@ test('the same commit builds byte-identical output, also through the command lin
   const cli = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/market-build.ts', root, '--out', second,
     '--commit', OPTIONS.commit, '--sequence', String(OPTIONS.sequence)], { cwd: controlRoot, encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stdout + cli.stderr);
-  assert.match(cli.stdout, /2 apps, 1 bundles, 1 native, 3 pictures, 3 notices, 6 pages; \d+ files/);
+  assert.match(cli.stdout, /3 apps, 1 bundles, 1 native, 3 pictures, 3 notices, 6 pages; \d+ files/);
   assert.match(cli.stdout, /"Add to YouEye" button: none \(give --official or --address\)/);
   const tree = (dir: string, prefix = ''): string[] => readdirSync(path.join(dir, prefix)).sort().flatMap((name) => {
     const rel = prefix ? `${prefix}/${name}` : name;
@@ -369,17 +381,40 @@ test('provenance is checked only when the repository has asset-provenance.json',
   refused(root, /asset-provenance\.json: not JSON/);
 });
 
-test('catalog-level problems: native ids with app folders, unknown curation and bundle members, missing publisher', (t) => {
+test('catalog-level problems: a native list, unknown curation and bundle members, missing publisher', (t) => {
   const root = fixture(t);
   put(root, 'catalog.yaml', yaml({ schema: 'youeye.catalog.v1', native: ['alpha'], curation: { spotlight: { apps: ['nowhere'] } } }));
   put(root, 'bundles/pair/bundle.yaml', yaml({ schema: 'youeye.bundle.v1', id: 'pair', name: 'Pair', description: 'Both.', members: ['alpha', 'ghost'] }));
   put(root, 'store.yaml', 'name: Demo Market\n');
   assert.throws(() => buildMarket(root, OPTIONS), (error: unknown) => {
     assert.ok(error instanceof MarketBuildError);
-    for (const pattern of [/native app "alpha" also has an app folder/, /curation\.spotlight names "nowhere"/,
+    for (const pattern of [/native: is gone; a native app is an apps\/<id>\/ folder whose manifest has source\.package/,
       /bundles\/pair\/bundle\.yaml: member "ghost" is not in the catalog/, /store\.yaml: publisher must be text/]) assert.match(error.message, pattern);
     return true;
   });
+});
+
+test('a native app folder: its package is required and well formed, and it requires YouEye 0.6.20 (YE-142)', (t) => {
+  const root = fixture(t);
+  const market = buildMarket(root, OPTIONS);
+  assert.equal(market.summary.native, 1);
+  assert.equal(market.summary.apps, 3);
+  const cases: Array<[Record<string, unknown>, RegExp]> = [
+    [{ requires: undefined }, /apps\/notes: youeye-app\.yaml: source\.package needs YouEye 0\.6\.20, but requires\.youeye is missing/],
+    [{ requires: { youeye: '>=0.6.19' } }, /source\.package needs YouEye 0\.6\.20, but requires\.youeye is ">=0\.6\.19"/],
+    [{ source: { node: '24' } }, /apps\/notes: .*source\.package: a native app from a market names its package/],
+    [{ source: { node: '24', package: { ...NOTES_PACKAGE, sha256: 'D'.repeat(64) } } }, /package sha256 must be 64 lowercase hex/],
+    [{ source: { node: '24', package: { ...NOTES_PACKAGE, sha256: 'd'.repeat(40) } } }, /package sha256 must be 64 lowercase hex/],
+    [{ source: { node: '24', package: { ...NOTES_PACKAGE, url: 'https://example.org/standalone.tar?raw=1' } } }, /package url must be an exact https/],
+    [{ source: { node: '24', package: { ...NOTES_PACKAGE, size: 2 * 1024 * 1024 * 1024 } } }, /package size must be at most 1 GiB/],
+  ];
+  for (const [changes, pattern] of cases) {
+    put(root, 'apps/notes/youeye-app.yaml', yaml(nativeDocument(changes)));
+    refused(root, pattern);
+  }
+  // A higher requirement is fine.
+  put(root, 'apps/notes/youeye-app.yaml', yaml(nativeDocument({ requires: { youeye: '>=0.7.0' } })));
+  assert.equal(buildMarket(root, OPTIONS).summary.native, 1);
 });
 
 function resolveMarketRoot(): string | null {

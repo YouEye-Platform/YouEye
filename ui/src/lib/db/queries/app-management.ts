@@ -310,11 +310,18 @@ export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
 }
 
 /** Get notification embed surfaces keyed by app id */
-export async function getNotificationSurfaceMap(): Promise<
-  Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }>
-> {
+export type NotificationSurfaceEntry = {
+  surface_id: string;
+  embed_path: string;
+  name: string | null;
+  description: string | null;
+  /** The app's subdomain (its public address is built from it by the route, YE-151). */
+  subdomain: string | null;
+};
+
+export async function getNotificationSurfaceMap(): Promise<Record<string, NotificationSurfaceEntry>> {
   const declarations = await getAppSurfaceDeclarations();
-  const result: Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }> = {};
+  const result: Record<string, NotificationSurfaceEntry> = {};
 
   for (const declaration of declarations) {
     const surface = declaration.surfaces.find(
@@ -327,6 +334,7 @@ export async function getNotificationSurfaceMap(): Promise<
       embed_path: surface.embedPath,
       name: surface.name ?? null,
       description: surface.description ?? null,
+      subdomain: declaration.subdomain,
     };
   }
 

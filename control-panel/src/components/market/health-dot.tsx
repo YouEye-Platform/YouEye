@@ -12,6 +12,11 @@ interface HealthDotProps {
 
 
 
+/** Minutes from now to `date`, negative in the past. The clock is read outside the component body (YE-205). */
+function minutesFromNow(date: Date): number {
+  return Math.round((date.getTime() - Date.now()) / 60000);
+}
+
 export function HealthDot({ healthStatus, healthCheckedAt, className = '' }: HealthDotProps) {
  const translateInterface = useInterfaceTranslations("interface");
   const locale = useLocale();
@@ -23,7 +28,7 @@ const CONFIG: Record<string, { color: string; pulse: boolean; tooltip: string }>
 };
 
 function formatTimeAgo(date: Date): string {
-  const minutes = Math.round((date.getTime() - Date.now()) / 60000);
+  const minutes = minutesFromNow(date);
   if (!Number.isFinite(minutes)) return "";
   return new Intl.RelativeTimeFormat(locale, {numeric: "auto"}).format(Math.abs(minutes) < 60 ? minutes : Math.round(minutes / 60), Math.abs(minutes) < 60 ? "minute" : "hour");
 }

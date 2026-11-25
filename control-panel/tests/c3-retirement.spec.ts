@@ -19,13 +19,15 @@ test('the three dead embeds are deleted (verified unreferenced in CP + UI)', () 
   assert.ok(!has('src/app/embed/containers/page.tsx'), 'embed/containers must be deleted');
   assert.ok(!has('src/app/embed/market/page.tsx'), 'embed/market must be deleted');
   assert.ok(!has('src/app/embed/update-progress/page.tsx'), 'embed/update-progress must be deleted');
+  // YE-227: replaced by the Connections section of the app's page in Settings.
+  assert.ok(!has('src/app/embed/app-network'), 'embed/app-network must be deleted');
 });
 
 test('still-consumed embeds are kept and the retired avatar embed stays removed', () => {
   // embed/health is fetched by the UI admin-embed health poll — must NOT be deleted
   assert.ok(has('src/app/embed/health/route.ts'), 'embed/health is used by the UI — keep it');
   // other active embeds remain
-  for (const e of ['profile', 'language', 'branding', 'apps', 'dns', 'tls', 'app-network']) {
+  for (const e of ['profile', 'language', 'branding', 'apps', 'dns', 'tls']) {
     assert.ok(has(`src/app/embed/${e}`), `embed/${e} should remain`);
   }
   assert.ok(!has('src/app/embed/avatar'), 'first-user onboarding is CP-native; embed/avatar must remain retired');

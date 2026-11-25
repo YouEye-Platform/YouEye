@@ -16,7 +16,7 @@ import { isReservedSetupDomain } from '@/lib/auth/setup-names';
 import { useTranslations } from 'next-intl';
 import { acceptRegistrationProof, runNamesEnrollment } from '@/lib/youeye-names/popup';
 import { copyText as copyToClipboard } from '@/lib/copy-text';
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 export type TlsChoice = 'youeye-names' | 'byo-provider' | 'letsencrypt' | 'selfsigned' | 'upload';
 
@@ -170,8 +170,7 @@ export default function SetupServerName({
   const locale = useLocale();
 
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 async function readSetupJson(response: Response, fallback: string): Promise<Record<string, unknown>> {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.toLowerCase().includes('application/json')) {
@@ -320,7 +319,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
         if (active) setYenReadiness({ reachable: false, error: interfaceTranslationRef.current("m8ef6e612a6a6") });
       });
     return () => { active = false; };
-  }, []);
+  }, [interfaceTranslationRef]);
 
   useEffect(() => {
     let active = true;
@@ -339,7 +338,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
         if (active) setYenError(error instanceof Error ? error.message : interfaceTranslationRef.current("mbf60fae31c6f"));
       });
     return () => { active = false; };
-  }, [setYenTermsVersion]);
+  }, [interfaceTranslationRef, setYenTermsVersion]);
 
   // Check once for a staged reuse bundle (youeye names import).
   useEffect(() => {

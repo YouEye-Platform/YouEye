@@ -1245,6 +1245,7 @@
     "m1b3650fe2b8f": "Un autre navigateur applique actuellement des changements de configuration.",
     "m47bdd7fe238a": "Saisissez le nom d’utilisateur et le mot de passe",
     "m5a96e8452f1e": "Échec de la connexion",
+    "m1a403ef0db2d": "{seconds, plural, one {Trop de tentatives. Réessayez dans # seconde.} other {Trop de tentatives. Réessayez dans # secondes.}}",
     "m9ff8cfaf7d94": "Erreur réseau. Réessayez.",
     "ma32fb655eebd": "Préréglages du serveur enregistrés",
     "mae45ee9018ae": "+ Enregistrer l’actuel",
@@ -1429,6 +1430,7 @@
     "m442c4b893915": "Actualiser l’état",
     "m950e51efd783": "Version précédente restaurée et récupération vérifiée.",
     "m2ca13025d60c": "Mise à jour terminée",
+    "m3211e08d269c": "Mise à jour terminée : v{version}",
     "meccb6abcf328": "Services et infrastructure de base gérés par YouEye.",
     "m2786efec8c30": "Aucune URL de paramètres d’application disponible.",
     "mf8a9594de662": "Chargement des paramètres de l’application",
@@ -1437,7 +1439,7 @@
     "m283317ddeb03": "Cette connexion nécessite une intervention car son propriétaire est indisponible. Un autre administrateur peut la reprendre explicitement.",
     "m26f9ccc0629f": "Certaines routes nécessitent une connexion à un fournisseur.",
     "m8d2a4592acd4": "Alias du modèle par défaut :",
-    "m0eba3d4ee43f": "Propriétaire",
+    "m7f013bd610dc": "Propriétaire : {name}",
     "mc13dc9685345": "un autre administrateur",
     "m615937f6702b": "Après la reprise, l’utilisation future du fournisseur IA sera associée à votre compte.",
     "m3213cd836138": "Reprendre la connexion IA",
@@ -1571,7 +1573,7 @@
     "m7460797e6c6d": "Les opérations d’applications en cours se terminent. Les nouveaux changements sont suspendus pendant l’attente de la mise à jour.",
     "m2708962963e3": "Résolvez les mises à jour, opérations de conteneurs ou sauvegardes inachevées et vérifiez la politique d’accès avant de réessayer.",
     "mfa12e6c66819": "L’attente s’est terminée avant l’étape suivante. Terminez les opérations actives puis réessayez.",
-    "m159713231bf6": "Redémarrer et installer",
+    "m0bf8bea46557": "Redémarrer et installer {version}",
     "me5013ddb039e": "Annuler la préparation",
     "md29ed82b9eeb": "Réessayer la mise à jour",
     "m5aff816e24b2": "Reprendre les vérifications",
@@ -1681,7 +1683,7 @@
     "m3b546dc70b11": "La dernière vérification du cycle de vie nécessite votre attention.",
     "m5cdb07c69226": "Avis relatif au certificat et à la confidentialité",
     "m5a9d2532161c": "Je comprends que cette adresse et ses certificats figurent dans les journaux publics Certificate Transparency.",
-    "mc6ed61c15986": "Conditions du certificat",
+    "mdcb91ff99eb6": "Conditions du certificat {version}",
     "m8839f06e85b7": "Lire et accepter l’avis actuel",
     "m3af396c523a5": "Paquet de récupération",
     "m128e4d5fada6": "Données du service",
@@ -1947,6 +1949,7 @@
     "m6973dddd3ef9": "bloqué",
     "meabc01f12ec3": "autorisé",
     "m1b0ec1954eec": "domaines",
+    "m1da897576823": "{count, plural, one {# domaine} other {# domaines}}",
     "m42d58222b328": "expression régulière",
     "m8e7f7b6938c5": "liste de blocage",
     "mabc12f8d6665": "abonné",
@@ -2615,7 +2618,23 @@
     "m2c0729afc9a9": "Mises à jour depuis",
     "mdcc839a4015c": "Voir",
     "m9bf2d11af31a": "{count, plural, =0 {aucune n’exécute d’étapes de configuration} one {# d’entre elles exécute des étapes de configuration dans ses conteneurs} other {# d’entre elles exécutent des étapes de configuration dans leurs conteneurs}}",
-    "m3fdd7247b42c": "{source} propose la version {version}"
+    "m3fdd7247b42c": "{source} propose la version {version}",
+    "m176648d8341c": "La suppression de cette application ne s’est pas terminée et l’accès du service est déjà révoqué. Supprimez-la à nouveau ci-dessous pour terminer.",
+    "mdc273117482b": "Connexions",
+    "m0c420ea290e0": "Applications avec lesquelles {app} fonctionne. Une connexion permet à une application d’utiliser l’autre sur ce serveur.",
+    "m7b0526da26e5": "{from} peut utiliser {to}",
+    "m8c8eb54074f4": "Suggérée. L’approuver les connecte et lance la configuration de {from} pour cette connexion.",
+    "me1d37689abed": "Installez d’abord {to} pour les connecter.",
+    "m6007acbe30b2": "Approuver",
+    "m7b02fe45a8ef": "{from} utilise {to}",
+    "ma812e71f3ba9": "Sa configuration se relance quand les deux applications tournent.",
+    "m5e27a7a74502": "En attente de {to}",
+    "mbc3c7686445c": "Aucune connexion. Quand {app} pourra utiliser une autre application installée, elle y sera suggérée.",
+    "m5b2cc4b8f41d": "La connexion n’a pas pu être modifiée. Réessayez.",
+    "m78148aaa805a": "Déconnecter {from} de {to} ?",
+    "mf69084b4e263": "{count, plural, one {# connexion à approuver} other {# connexions à approuver}}",
+    "mb9db095f614a": "Impossible de charger les connexions. Réessayez plus tard.",
+    "m6e6e13ff28bc": "{from} cesse d’utiliser {to}. La configuration faite pour cette connexion est supprimée ; les deux applications gardent leurs données, et la connexion reste suggérée ici pour les reconnecter."
   },
   "settingsNavigation": {
     "profile": "Profil",
@@ -2748,9 +2767,34 @@
       "opensAt": "S’ouvre à {address}",
       "access": "Qui peut l’utiliser",
       "uses": "Ce qu’elle peut utiliser",
-      "options": "Nom, adresse et plus"
+      "options": "Nom, adresse et plus",
+      "onlyUsersOn": "Vous seul pouvez l’ouvrir. Choisissez qui dans {app} → Accès.",
+      "onlyUsersOnEveryone": "Tout votre foyer peut l’ouvrir, personne d’autre. Choisissez qui dans {app} → Accès.",
+      "onlyUsersOnKept": "Elle garde qui pouvait l’ouvrir avant. Changez-le dans {app} → Accès.",
+      "accessLabel": "Qui dans le foyer peut l’utiliser",
+      "accessEveryone": "Tout le monde",
+      "accessOnlyMe": "Moi seulement",
+      "accessHint": "Vous pourrez le changer plus tard dans {app} → Accès.",
+      "onlyUsersOff": "Toute personne qui atteint {host} voit la page de connexion propre à {app}.",
+      "onlyUsersOffSignIn": "Les comptes {site} se connectent toujours avec {site} ID.",
+      "onlyUsersLockedNoSignIn": "{app} n’a pas de connexion propre ; elle reste donc réservée aux utilisateurs de {site}.",
+      "onlyUsersLockedHeader": "{app} reprend la connexion de {site} ID ; elle reste donc réservée aux utilisateurs de {site}.",
+      "nativeTitle": "Une app native rejoint votre tableau de bord",
+      "nativeIntro": "{name} vient de {market}, pas du Market de YouEye. En plus de ce que reçoit une app conteneur, elle reçoit :",
+      "nativeGateway": "Une clé pour l’API des apps de YouEye, pour afficher et lire des choses pour les personnes qui l’utilisent",
+      "nativeSurfaces": "Des emplacements sur le tableau de bord : {surfaces}",
+      "nativeNotifications": "Des notifications aux personnes qui l’utilisent",
+      "nativeProxy": "Des appels à ces sites via YouEye, une fois que chaque personne les autorise : {hosts}"
     },
-    "seeAll": "Tout voir"
+    "seeAll": "Tout voir",
+    "sources": {
+      "officialLane": "Market officiel : voie {lane}",
+      "laneChange": "Changer…",
+      "laneHint": "La voie main contient les apps publiées ; la voie dev, des apps à l’essai. Le canal de version de YouEye ne la change pas. Les apps de l’autre voie gardent leur version et se mettent à jour quand cette voie en a une plus récente.",
+      "laneMain": "main : apps publiées",
+      "laneDev": "dev : apps à l’essai",
+      "laneFailed": "La voie n’a pas pu être changée."
+    }
   },
   "systemPages": {
     "services": {
@@ -2890,7 +2934,13 @@
       "customiseTitleHint": "Lettrage, couleurs et emblème, dans le studio de titres."
     },
     "access": {
-      "title": "Qui peut l’utiliser"
+      "title": "Qui peut l’utiliser",
+      "onlyUsersOn": "Seules les personnes choisies ci-dessous peuvent l’ouvrir.",
+      "whoPublic": "Décide aussi sur quels tableaux de bord {app} apparaît et qui peut s’y connecter avec {site} ID.",
+      "opening": "Ouverture à tout le monde…",
+      "notOpen": "{app} n’est pas encore ouverte à tout le monde : {error}",
+      "stillPending": "la modification est enregistrée mais pas encore appliquée",
+      "retry": "Réessayer"
     },
     "defaultSignIn": {
       "title": "Identifiants créés à l’installation"
@@ -2903,7 +2953,11 @@
     },
     "uninstall": {
       "hint": "Supprime {app} de ce serveur. Vous choisissez de conserver ou non ses données.",
-      "action": "Désinstaller…"
+      "action": "Désinstaller…",
+      "done": "{app} est désinstallée.",
+      "leftIn": "{other} affiche peut-être encore {app} : retirez-la dans les réglages de {other}.",
+      "leftSomewhere": "Une app connectée affiche peut-être encore {app} : retirez-la dans les réglages de cette app.",
+      "backToApps": "Retour aux apps"
     },
     "title": {
       "heading": "Votre titre pour {app}",

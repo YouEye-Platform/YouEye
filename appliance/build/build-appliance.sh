@@ -322,6 +322,12 @@ cat > "$rootfs/etc/sysctl.d/60-youeye-appliance-ipv4-only.conf" <<'EOF'
 net.ipv6.conf.all.disable_ipv6=1
 net.ipv6.conf.default.disable_ipv6=1
 EOF
+# Incus listens on incusbr0's own address (core.https_address, the only way the Control Panel reaches it), but at
+# boot it binds the listener before it has created incusbr0, fails, and tries again only 30 s later (YE-207). With
+# non-local binds the first bind succeeds and the socket answers as soon as the bridge has its address.
+cat > "$rootfs/etc/sysctl.d/60-youeye-incus-listener.conf" <<'EOF'
+net.ipv4.ip_nonlocal_bind=1
+EOF
 cat >> "$rootfs/etc/gai.conf" <<'EOF'
 
 # The appliance product supports IPv4 networking in this release line.

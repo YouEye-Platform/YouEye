@@ -20,17 +20,16 @@ test('backup refuses foreign, incomplete or newer manifest registration', () => 
     { code: 'frozen-version-mismatch' });
 });
 
-test('a native app update records the frozen digest the install records, so the frozen copy keeps matching', async () => {
-  const { nativeFixture } = await import('./fixtures/app-format');
-  const { nativeManifestReference } = await import('../src/lib/market/native-artifact');
-  const manifest = nativeFixture();
-  const selected = { repository: 'https://git.example/apps/demo', release: { tag: 'demo-v1.2.0', version: '1.2.0' } };
-  const reference = nativeManifestReference(selected as never, manifest);
-  assert.equal(reference.digest, manifest.frozen!.digest);
-  // The next update, backup or copy reads the frozen copy against the recorded digest.
+test('a native app from a market records the frozen digest of its manifest, so the frozen copy keeps matching', async () => {
+  const { marketNativeFixture } = await import('./fixtures/app-format');
+  const manifest = marketNativeFixture();
+  // The market reference an install or update records names the manifest's frozen digest (catalog.ts).
+  const digest = manifest.frozen!.digest;
+  // The next update, backup or copy reads the frozen copy against the recorded digest; the package is part of it.
   const registration = JSON.stringify({ frozen: manifest.frozen });
-  assert.equal(parseFrozenAppManifest(registration, manifest.metadata.id, undefined, reference.digest).metadata.id, manifest.metadata.id);
-  // The raw contract bytes' hash (what updates used to record) is refused.
+  const read = parseFrozenAppManifest(registration, manifest.metadata.id, undefined, digest);
+  assert.equal(read.containers[0].source?.package?.sha256, 'a'.repeat(64));
+  // The raw manifest bytes' hash is refused.
   const { createHash } = await import('node:crypto');
   const raw = `sha256:${createHash('sha256').update(manifest.frozen!.manifest).digest('hex')}`;
   assert.throws(() => parseFrozenAppManifest(registration, manifest.metadata.id, undefined, raw), { code: 'frozen-digest-mismatch' });

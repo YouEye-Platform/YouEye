@@ -8,15 +8,14 @@ import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProfileIconPicker } from "@/components/settings-shell/profile-icon-picker";
-import { useRef as useInterfaceTranslationRef } from "react";
+import { useLatestRef } from "@/lib/use-latest-ref";
 import { randomBrowserUUID } from "@/lib/browser-random";
 
 type Step = "welcome" | "icon" | "timeline" | "review" | "done";
 type Snapshot = { completed: boolean; has_pin: boolean; timeline: { configured: boolean; enabled: boolean; revision: string | null } };
 export function OnboardingClient({ username }: { username: string }) {
   const translateInterface = useInterfaceTranslations("interface");
-  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
-  interfaceTranslationRef.current = translateInterface;
+  const interfaceTranslationRef = useLatestRef(translateInterface);
 
   const uploadRef = useRef<HTMLInputElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -45,7 +44,7 @@ export function OnboardingClient({ username }: { username: string }) {
       setBranding(await brandRes.json()); setSnapshot(state);
       if (state.timeline.configured) setChoice(state.timeline.enabled);
     } catch (cause) { setError(cause instanceof Error ? cause.message : interfaceTranslationRef.current("m6ac2382ef63e")); }
-  }, []);
+  }, [interfaceTranslationRef]);
   useEffect(() => { void load(); }, [load]);
   const snapshotReady = snapshot !== null;
   useEffect(() => { heading.current?.focus(); }, [step, snapshotReady]);

@@ -35,6 +35,11 @@ function discoverIdHost() {
     return null;
   }
 }
+// Every script launches Chromium with launchOptions and makes each context with contextOptions. The mapping exists in
+// the browser only: Playwright's Node-side requests (context.request, APIRequestContext) resolve through the LAN's
+// DNS, which may answer a clone's domain with another box and get the saved session cookies. Ask the box from inside
+// a page instead (page.evaluate(fetch), pageFetch, controlPanelSession), or from Node with probe(), which honours
+// BOX_IP.
 export const launchOptions = BOX_IP ? { args: [`--host-resolver-rules=MAP ${DOMAIN} ${BOX_IP}, MAP *.${DOMAIN} ${BOX_IP}`] } : {};
 export const contextOptions = BOX_IP ? { ignoreHTTPSErrors: true } : {};
 
@@ -73,6 +78,18 @@ export async function controlPanelSession(page, base = `https://${DOMAIN}`, trie
     await page.waitForTimeout(1000);
   }
   return null;
+}
+
+/**
+ * The admin scripts' start: open the Control Panel (https://<domain>/settings; control.<domain> redirects there) in
+ * `page` and wait until its sign-in from the saved YouEye ID session is complete, so the page can call the Control
+ * Panel API with page.evaluate(fetch) on that origin. Returns the user, or null after `tries` seconds with a warning
+ * (the API calls that follow then answer 401 and say so).
+ */
+export async function openControlPanel(page, tries = 20) {
+  const user = await controlPanelSession(page, `https://${DOMAIN}`, tries);
+  if (!user) console.error(`no Control Panel session on https://${DOMAIN}/settings after ${tries} s (expired? re-run login.mjs)`);
+  return user;
 }
 
 // Server-side checks run a command on the box as root over SSH. BOX_SSH is the ssh command line without the

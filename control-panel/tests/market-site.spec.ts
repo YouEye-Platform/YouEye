@@ -11,7 +11,7 @@ import { stringify } from 'yaml';
 
 import { MarketBuildError, buildMarket, verifyFiles, type BuildOptions, type BuiltMarket } from '../scripts/market-build';
 import {
-  MANIFEST_DOCS, commitDate, esc, html, httpsHref, imageSize, nameFromId, paragraphs, readNativeListing,
+  MANIFEST_DOCS, commitDate, esc, html, httpsHref, imageSize, paragraphs,
 } from '../scripts/market-site';
 import { appDocument } from './fixtures/app-format';
 
@@ -36,7 +36,7 @@ function put(root: string, file: string, content: string | Buffer): void {
 const HOSTILE = `<script>alert("x")</script>"'&`;
 
 /**
- * Two apps, a native id and a bundle. `hostile` fills every text a publisher controls with markup,
+ * Two container apps, a native app and a bundle. `hostile` fills every text a publisher controls with markup,
  * quotes and javascript: links; no asset-provenance.json (a market that is not the official one).
  */
 function fixture(t: TestContext, hostile = false): string {
@@ -47,7 +47,6 @@ function fixture(t: TestContext, hostile = false): string {
     schema: 'youeye.catalog.v1',
     categories: [{ id: 'utilities', label: h('Utilities'), order: 1 }, { id: 'media', label: 'Media', order: 2 }],
     curation: { spotlight: { title: h('Ours'), apps: ['notes'] }, collections: [{ id: 'pair', label: h('Pair'), apps: ['alpha'] }] },
-    native: ['notes'],
   }));
   put(root, 'apps/alpha/youeye-app.yaml', yaml(appDocument({
     id: 'alpha',
@@ -78,6 +77,11 @@ function fixture(t: TestContext, hostile = false): string {
   put(root, 'apps/beta/youeye-app.yaml', yaml(appDocument({
     id: 'beta', name: 'Beta', requires: { youeye: '>=0.6.9' },
     listing: { tagline: 'Beta in a line', category: 'media' },
+  })));
+  put(root, 'apps/notes/youeye-app.yaml', yaml(appDocument({
+    id: 'notes', name: h('Notes'), version: '0.6.4', image: undefined, requires: { youeye: '>=0.6.20' },
+    source: { node: '24', package: { url: 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar', sha256: 'e'.repeat(64), size: 1000 } },
+    listing: { tagline: h('Write things down'), description: 'One.\n\nTwo.', category: 'utilities' },
   })));
   put(root, 'bundles/pair/bundle.yaml', yaml({ schema: 'youeye.bundle.v1', id: 'pair', name: h('Pair'), description: h('Both.'), members: ['alpha', 'beta'] }));
   put(root, 'LICENSE', 'Catalog licence\n');
@@ -180,9 +184,8 @@ test('every app has a page, the index links each of them, and every relative lin
 
 test('the website is byte-identical on a rebuild and shows the commit time, never the build time', (t) => {
   const root = fixture(t);
-  const listing = { notes: { name: 'Notes', tagline: 'Write things down', description: 'One.\n\nTwo.', version: '0.6.3' } };
-  const first = build(root, { address: 'https://market.example.org/x', nativeListing: listing });
-  const second = build(root, { address: 'https://market.example.org/x', nativeListing: listing });
+  const first = build(root, { address: 'https://market.example.org/x' });
+  const second = build(root, { address: 'https://market.example.org/x' });
   assert.deepEqual([...first.files.keys()], [...second.files.keys()]);
   for (const [file, bytes] of first.files) assert.ok(bytes.equals(second.files.get(file)!), file);
   assert.equal(commitDate(1795000000), '2026-11-18');
@@ -192,8 +195,7 @@ test('the website is byte-identical on a rebuild and shows the commit time, neve
 
 test('a hostile listing is escaped everywhere: no markup, no script, no javascript: or http: links', (t) => {
   const root = fixture(t, true);
-  const listing = readNativeListing(JSON.stringify({ notes: { name: `Notes ${HOSTILE}`, tagline: `javascript:alert(1) ${HOSTILE}`, description: HOSTILE } }));
-  for (const site of [{ official: true, nativeListing: listing }, { address: 'https://market.example.org/' }, {}]) {
+  for (const site of [{ official: true }, { address: 'https://market.example.org/' }, {}]) {
     const market = build(root, site);
     const allowedTags = new Set(['html', 'head', 'meta', 'title', 'link', 'script', 'body', 'a', 'header', 'div', 'img', 'span', 'nav', 'main',
       'p', 'form', 'label', 'input', 'output', 'section', 'h1', 'h2', 'h3', 'ul', 'li', 'figure', 'figcaption', 'aside', 'dl', 'dt', 'dd',
@@ -233,13 +235,13 @@ test('"Add to YouEye": official links my.youeye.me/app, another market my.youeye
   assert.deepEqual(official['index.html'], []);
   assert.deepEqual(official['apps/alpha/index.html'], ['https://my.youeye.me/app?id=alpha']);
   assert.deepEqual(official['apps/beta/index.html'], ['https://my.youeye.me/app?id=beta']);
-  assert.deepEqual(official['apps/notes/index.html'], [], 'a native app without listing text has no button');
+  assert.deepEqual(official['apps/notes/index.html'], ['https://my.youeye.me/app?id=notes'], 'a native app is an app like any other');
 
   const other = buttons(build(root, { address: 'https://Market.Example.org/x' }));
   const add = 'https://my.youeye.me/add?market=https%3A%2F%2Fmarket.example.org%2Fx%2F';
   assert.deepEqual(other['index.html'], [add]);
   assert.deepEqual(other['apps/alpha/index.html'], [add]);
-  assert.deepEqual(other['apps/notes/index.html'], []);
+  assert.deepEqual(other['apps/notes/index.html'], [add]);
 
   const none = build(root);
   assert.deepEqual(Object.values(buttons(none)).flat(), []);
@@ -255,38 +257,31 @@ test('"Add to YouEye": official links my.youeye.me/app, another market my.youeye
   }
 });
 
-test('native apps: a readable name without listing text; the listing\'s text, version and a button with it', (t) => {
+test('a native app is listed in its category with its own text, version, requirement and button (YE-142)', (t) => {
   const root = fixture(t);
-  const plain = build(root, { official: true });
-  assert.match(page(plain, 'index.html'), /<span class="name">Notes<\/span><span class="tagline">Ships with YouEye<\/span>/);
-  assert.match(page(plain, 'apps/notes/index.html'), /Notes is one of YouEye’s own apps; it ships with YouEye\. Open the Market on your YouEye to install it\./);
-
-  const listed = build(root, { official: true, nativeListing: { notes: { name: 'YouEye Notes', tagline: 'Write things down', description: 'One.\n\nTwo.', version: '0.6.3' } } });
-  const notes = page(listed, 'apps/notes/index.html');
-  assert.match(notes, /<h1>YouEye Notes<\/h1>/);
-  assert.match(notes, /<p class="tagline">Write things down<\/p>/);
+  const market = build(root, { official: true });
+  const index = page(market, 'index.html');
+  assert.match(index, /<span class="name">Notes<\/span><span class="tagline">Write things down<\/span>/);
+  assert.doesNotMatch(index, /YouEye’s own apps|Ships with YouEye/);
+  const notes = page(market, 'apps/notes/index.html');
+  assert.match(notes, /<h1>Notes<\/h1>/);
   assert.match(notes, /<p>One\.<\/p>\n<p>Two\.<\/p>/);
-  assert.match(notes, /<dt>Version<\/dt><dd><span class="mono">0\.6\.3<\/span><\/dd>/);
+  assert.match(notes, /<dt>Version<\/dt><dd><span class="mono">0\.6\.4<\/span><\/dd>/);
+  assert.match(notes, /<dt>Needs<\/dt><dd>YouEye 0\.6\.20 or newer<\/dd>/);
+  assert.match(notes, /<dt>Kind<\/dt><dd>Native app: it runs on Node\.js in its own container and joins the dashboard<\/dd>/);
   assert.match(notes, /<a class="button" href="https:\/\/my\.youeye\.me\/app\?id=notes">Add to YouEye<\/a>/);
-
-  assert.throws(() => readNativeListing('[]'), /must be a JSON object/);
-  assert.throws(() => readNativeListing('{"Notes": {"name": "x"}}'), /is not an app id/);
-  assert.throws(() => readNativeListing('{"notes": {"tagline": "x"}}'), /notes\.name is required/);
-  assert.throws(() => readNativeListing('{"notes": {"name": 3}}'), /notes\.name must be text/);
-  assert.throws(() => readNativeListing(`{"notes": {"name": "${'x'.repeat(121)}"}}`), /notes\.name must be text of 1–120/);
-  assert.deepEqual(readNativeListing('{"wiki": {"name": "Wiki", "icon": "ignored"}, "notes": {"name": "Notes"}}'),
-    { notes: { name: 'Notes' }, wiki: { name: 'Wiki' } });
-  assert.equal(nameFromId('open-webui'), 'Open Webui');
+  assert.doesNotMatch(notes, /ships with YouEye/);
 });
 
-test('the command line takes --official, --address and --native-listing', (t) => {
+test('the command line takes --official and --address; --native-listing is gone', (t) => {
   const root = fixture(t);
   const out = scratch(t);
-  const listing = path.join(scratch(t), 'native.json');
-  writeFileSync(listing, JSON.stringify({ notes: { name: 'Notes', tagline: 'Write things down' } }));
   const run = (dir: string, ...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/market-build.ts', root, '--out', dir,
     '--commit', BASE.commit, '--sequence', String(BASE.sequence), ...args], { cwd: controlRoot, encoding: 'utf8' });
-  const result = run(out, '--address', 'https://market.example.org/x/', '--native-listing', listing);
+  const gone = run(scratch(t), '--native-listing', 'native.json');
+  assert.equal(gone.status, 2);
+  assert.match(gone.stderr, /unknown option --native-listing/);
+  const result = run(out, '--address', 'https://market.example.org/x/');
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /"Add to YouEye" button: my\.youeye\.me\/add\?market=<address>/);
   assert.match(readFileSync(path.join(out, 'apps/notes/index.html'), 'utf8'), /my\.youeye\.me\/add\?market=https%3A%2F%2Fmarket\.example\.org%2Fx%2F/);

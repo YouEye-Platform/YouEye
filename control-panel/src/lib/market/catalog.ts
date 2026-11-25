@@ -7,11 +7,11 @@
  * waits only when the store is still empty or right after `clearCatalogCache()` (an explicit "check for updates"),
  * and then 20 seconds at most (`MARKET_READER_WAIT_MS`): a market that is slow to answer delays no listing longer.
  *
- * - A container app is an index entry plus its bundle: the text of `youeye-app.yaml` and of its setup files, parsed
- *   strictly with the one app-format parser, and the hashed paths of its pictures.
- * - A native app is an id in the `native` list of the OFFICIAL Market's index; its manifest is the one of its release
- *   on the box's channel (native-artifact.ts). Native apps are YouEye's own: the `native` list of any other market
- *   is ignored (`nativeIdsOf`), so a custom market neither lists nor installs them.
+ * - An app is an index entry plus its bundle: the text of `youeye-app.yaml` and of its setup files, parsed strictly
+ *   with the one app-format parser, and the hashed paths of its pictures. Its kind is `container` (OCI images pinned
+ *   by digest) or `native` (a Node.js app whose `standalone.tar` the manifest pins by `source.package`). Any market,
+ *   official or custom, may offer both (YE-142, 0.6.20); before 0.6.20 native apps came from the box's channel index.
+ *   A `native` id list an older index still carries is ignored.
  * - An entry this box cannot use (its `requires.youeye` is above the box, or its kind is unknown) is listed as
  *   "needs a newer YouEye" from the index alone; its bundle is never parsed, and installing it is refused.
  * - A market never supplies the core containers (Caddy, PostgreSQL, Pi-hole): their images are pinned in
@@ -24,9 +24,9 @@ import { youeyeRequirementProblem } from './app-format/requires';
 import { describeReleaseError } from '../releases/channel-index';
 import { isKnownAppKind, requiredYouEye, type MarketAppBundle, type MarketIndexEntry } from './market-format';
 import { currentMarket, requestMarketRefresh, type AcceptedMarket } from './market-store';
-import { nativeListing } from './native-artifact';
-import { releaseKey, type ReleaseKey } from '../version';
-import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
+import { nativePackageOf } from './native-artifact';
+import type { CatalogWarning } from './partial-catalog';
+import { gateOnlyReason } from './public-access';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp, MarketBundle, MarketCategory, MarketCuration } from './types';
 import {
   getConfiguredMarketSources, getMarketSources, isOfficialMarketSource, marketSourceRefusal, officialMarketSource,
@@ -42,17 +42,18 @@ export const marketImageURL = (sourceId: string, file: string) =>
  * `manifestDigest`).
  */
 export interface ManifestReference {
-  /** `apps/<id>/youeye-app.yaml` for a market app; `youeye-app.yaml` for a native release. */
+  /**
+   * `apps/<id>/youeye-app.yaml`. (Native apps installed before 0.6.20 recorded `youeye-app.yaml` of their channel
+   * release until they move to their market, see update-native-move.ts.)
+   */
   path: string;
-  /** A market app: the market's address. A native app: its release repository. */
+  /** The market's address. */
   repo: string;
-  /** A market app: the commit of the market it was read at. A native app: its release tag. */
+  /** The commit of the market it was read at. */
   branch: string;
   /** The manifest's frozen digest (app-format/digest.ts): the same for the same manifest and setup files, whatever carried them. */
   digest: string;
-  /** Native channel products only: the release's line and sequence (orders updates). */
-  key?: ReleaseKey;
-  /** Native channel products only: SHA-256 of the release's app package (`standalone.tar`), the build it names. */
+  /** A native app: SHA-256 of its package (`source.package`), the build it names, whatever version it is called. */
   artifactSHA256?: string;
 }
 
@@ -106,20 +107,10 @@ async function boxVersion(): Promise<string | null> {
 
 // ─── Catalog ──────────────────────────────────────────────
 
-/**
- * The native app ids a source lists: the official Market's `native` list, and nothing for any other source. A native
- * app is installed from the box's channel index, never from a market, so only YouEye's own market may offer one.
- */
-function nativeIdsOf(source: Pick<MarketSource, 'kind'>, accepted: AcceptedMarket): readonly string[] {
-  return isOfficialMarketSource(source) ? accepted.index.native : [];
-}
-
-function catalogOf(source: Pick<MarketSource, 'kind'>, accepted: AcceptedMarket): Catalog {
-  const apps: CatalogEntry[] = accepted.index.apps.map((entry) => ({ id: entry.id, integration: 'basic', path: `apps/${entry.id}` }));
-  for (const id of nativeIdsOf(source, accepted)) {
-    // A container app wins over a native id of the same name; the listing says so (`fetchAvailableApps`).
-    if (!apps.some((app) => app.id === id)) apps.push({ id, integration: 'native' });
-  }
+function catalogOf(accepted: AcceptedMarket): Catalog {
+  const apps: CatalogEntry[] = accepted.index.apps.map((entry) => ({
+    id: entry.id, integration: entry.kind === 'native' ? 'native' : 'basic', path: `apps/${entry.id}`,
+  }));
   const curation = accepted.index.curation;
   return {
     apps: apps.sort((a, b) => a.id.localeCompare(b.id)),
@@ -135,7 +126,7 @@ function catalogOf(source: Pick<MarketSource, 'kind'>, accepted: AcceptedMarket)
 /** The catalog of a source (the official Market when none is given), from its store. */
 export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog> {
   const source = marketSource ?? await officialSource();
-  return catalogOf(source, await currentMarket(source));
+  return catalogOf(await currentMarket(source));
 }
 
 // ─── Manifests ────────────────────────────────────────────
@@ -189,13 +180,17 @@ function manifestOfEntry(accepted: AcceptedMarket, source: MarketSource, entry: 
     // Bundles name setup files by their file name; the parser knows them as `setup/<file name>`. Every file is
     // passed, so a file the app does not name is refused.
     const setups = Object.fromEntries(Object.entries(stored.bundle.setups ?? {}).map(([name, text]) => [`setup/${name}`, text]));
-    manifest = loadApp({ manifest: stored.bundle.manifest, setups });
+    manifest = loadApp({ manifest: stored.bundle.manifest, setups }, { market: true });
     resolveManifestPaths(manifest, source, stored.bundle.files);
     if (compiledManifests.size >= MAX_COMPILED_MANIFESTS) compiledManifests.clear();
     compiledManifests.set(key, manifest);
   }
-  // Checked for every answer, kept or just compiled: an entry never resolves to the manifest of another app.
+  // Checked for every answer, kept or just compiled: an entry never resolves to the manifest of another app, and its
+  // kind is what the manifest is (a container entry never installs a native app, nor the other way round).
   if (manifest.metadata.id !== entry.id) throw new Error(`its bundle holds app "${manifest.metadata.id}"`);
+  const kind = manifest.integration === 'native' ? 'native' : 'container';
+  if (entry.kind !== kind) throw new Error(`the index lists it as a ${entry.kind} app, but its manifest is a ${kind} app`);
+  const pkg = nativePackageOf(manifest);
   return {
     manifest: structuredClone(manifest),
     reference: {
@@ -203,27 +198,18 @@ function manifestOfEntry(accepted: AcceptedMarket, source: MarketSource, entry: 
       repo: accepted.address,
       branch: accepted.pointer.commit ?? '',
       digest: manifest.frozen!.digest,
-    },
-  };
-}
-
-/** A native app: its release on the box's channel (kept by the digest of its channel index entry). */
-async function nativeManifest(id: string): Promise<ManifestFetchResult> {
-  const { selected, manifest } = await nativeListing(id);
-  return {
-    manifest,
-    reference: {
-      path: 'youeye-app.yaml', repo: selected.repository, branch: selected.release.tag, digest: manifest.frozen!.digest,
-      key: releaseKey(selected.release), artifactSHA256: selected.build.assets.find((asset) => asset.name === 'standalone.tar')?.sha256,
+      ...(pkg ? { artifactSHA256: pkg.sha256 } : {}),
     },
   };
 }
 
 async function manifestOfApp(accepted: AcceptedMarket, source: MarketSource, appId: string): Promise<(ManifestFetchResult & { entry: CatalogEntry }) | null> {
   const entry = accepted.index.apps.find((candidate) => candidate.id === appId);
-  if (entry) return { ...manifestOfEntry(accepted, source, entry, await boxVersion()), entry: { id: appId, integration: 'basic', path: `apps/${appId}` } };
-  if (nativeIdsOf(source, accepted).includes(appId)) return { ...await nativeManifest(appId), entry: { id: appId, integration: 'native' } };
-  return null;
+  if (!entry) return null;
+  return {
+    ...manifestOfEntry(accepted, source, entry, await boxVersion()),
+    entry: { id: appId, integration: entry.kind === 'native' ? 'native' : 'basic', path: `apps/${appId}` },
+  };
 }
 
 /** An app by id from the official Market (for display; installs and updates use `resolveCatalogApp`). */
@@ -354,8 +340,20 @@ export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource
     forwardAuth: manifest.forwardAuth,
     // Only the official catalog may default an app to public access (added sources are not reviewed).
     publicAccess: source?.id === OFFICIAL_MARKET_SOURCE_ID ? manifest.publicAccess : undefined,
+    gateOnly: gateOnlyReason(manifest, source?.id === OFFICIAL_MARKET_SOURCE_ID) ?? undefined,
     capabilities,
     surfaces: manifest.surfaces,
+    ...(manifest.integration === 'native' ? { nativeAccess: nativeAccessOf(manifest, capabilities?.notifications) } : {}),
+  };
+}
+
+/** What a native app gets beyond a container app (`MarketApp.nativeAccess`). */
+function nativeAccessOf(manifest: AppManifest, notifications: boolean | 'push' | undefined): NonNullable<MarketApp['nativeAccess']> {
+  return {
+    surfaces: manifest.surfaces.map((surface) => surface.name || surface.id),
+    gatewayToken: true,
+    notifications: Boolean(notifications),
+    proxyHosts: [...new Set((manifest.internet?.proxy ?? []).map((scope) => scope.host))],
   };
 }
 
@@ -370,7 +368,7 @@ function blockedMarketApp(entry: MarketIndexEntry, source: MarketSource, blocked
     icon: 'package',
     iconUrl: entry.icon ? marketImageURL(source.id, entry.icon) : undefined,
     category: entry.category ?? 'other',
-    integration: 'basic',
+    integration: entry.kind === 'native' ? 'native' : 'basic',
     version: entry.version,
     requiresYouEye: entry.requires?.youeye,
     defaultSubdomain: entry.id,
@@ -414,16 +412,7 @@ export async function fetchAvailableApps(onWarning?: (warning: CatalogWarning) =
         return [];
       }
     });
-    const nativeIds = nativeIdsOf(source, accepted).filter((id) => {
-      if (!accepted.index.apps.some((entry) => entry.id === id)) return true;
-      onWarning?.({ sourceId: source.id, itemId: id, message: `${source.name}: ${id} is listed as a native app and as a container app; the container app is shown.` });
-      return false;
-    });
-    const natives = await loadCatalogEntries(nativeIds.map((id) => ({ id })), async (entry) => {
-      const result = await nativeManifest(entry.id);
-      return manifestToMarketApp(result.manifest, source, result.reference);
-    }, reportFailure);
-    return [...containers, ...natives].sort((a, b) => a.id.localeCompare(b.id));
+    return containers.sort((a, b) => a.id.localeCompare(b.id));
   }));
 
   const apps: MarketApp[] = [];
@@ -469,7 +458,7 @@ export async function fetchCategories(): Promise<MarketCategory[]> {
  */
 export async function fetchCuration(): Promise<MarketCuration | null> {
   for (const { source, accepted } of await enabledMarkets()) {
-    const curation = catalogOf(source, accepted).curation;
+    const curation = catalogOf(accepted).curation;
     if (curation) return curation;
   }
   return null;

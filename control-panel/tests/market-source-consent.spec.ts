@@ -460,6 +460,8 @@ function addressScenario(directory: string, installedFrom: { sourceId: string; s
     './frozen-manifest': {},
     './source': sources,
     '@/lib/version': version,
+    // Container apps here: none is native, so none takes a market manifest record-only (YE-142, YE-194).
+    './update-release-metadata': { nativeManifestChanged: () => false },
     // The first step after the source checks; reaching it means the update was allowed to go on.
     './platform-env': { assertYouEyeRequirement: async () => { throw new Error('past the source checks'); } },
   });
@@ -658,8 +660,8 @@ test('an installed official app continues after the update without any step', wi
   assert.equal(offered.updateAvailable, true);
   assert.equal(offered.catalogVersion, '1.2.0');
   assert.equal((await scenario.update()).errorCode, 'requires-newer-youeye', 'past the source checks');
-  // The channel changes (another lane, another address): still the official source, still no step.
-  const beta = marketWorld({ [OFFICIAL_MARKET_ADDRESSES.dev]: market('1.3.0', false) }, { sources: scenario.sources, channel: 'dev' });
+  // The owner switches the official lane (another address): still the official source, still no step.
+  const beta = marketWorld({ [OFFICIAL_MARKET_ADDRESSES.dev]: market('1.3.0', false) }, { sources: scenario.sources, lane: 'dev' });
   assert.equal((await beta.store.refreshMarket(scenario.sources.officialMarketSource())).address, OFFICIAL_MARKET_ADDRESSES.dev);
   assert.equal(routing.recordedSourceAddressChange({ sourceRepoUrl: undefined }, scenario.sources.officialMarketSource()), null);
   assert.equal(routing.recordedSourceAddressChange({ sourceRepoUrl: OFFICIAL }, scenario.sources.officialMarketSource()), null);

@@ -134,6 +134,9 @@ async function headers() {
   const stoppedStep = stoppedUpdate ? transaction.stopped_step ?? transaction.steps.find(step => step.state === "failed") : undefined;
   const stoppedNotice = !stoppedUpdate ? undefined : transaction.phase === "rolled-back" ? translateInterface("m70549d859aef") : stoppedStep ? translateInterface("m33d5f29d8b07") : undefined;
   const currentStep = transaction?.steps.find(step => step.state !== "succeeded");
+  // Spine stops a restart-requiring update before its recovery point until the owner restarts (`awaiting-restart`):
+  // nothing runs, so no step is in progress, and Resume would stop at the same place. Restart or Cancel are the ways on.
+  const waitingForRestart = unfinished && transaction.phase === "awaiting-restart";
   const waitingForApps = currentStep?.stage === "admission" && currentStep.action_state === "running";
   const canRetryAdmission = currentStep?.action_state === "retryable" && currentStep.stage === "admission" && currentStep.effect_state === "not-started";
   const admissionBlocked = canRetryAdmission && currentStep?.code === "admission_rejected";
@@ -153,7 +156,7 @@ async function headers() {
         <p className="mt-0.5 break-words text-xl font-semibold tracking-tight tabular-nums">
           {status.installed?.release.version ? `YouEye ${status.installed.release.version}` : translateInterface("mc0a7f647c17d")}
         </p>
-        {stateLine && <p className="mt-1 text-sm text-muted-foreground" role="status">{stateLine}{unfinished && currentStep && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? translateInterface("m89f42c216c85")}` : ""}</p>}
+        {stateLine && <p className="mt-1 text-sm text-muted-foreground" role="status">{stateLine}{unfinished && currentStep && !waitingForRestart && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? translateInterface("m89f42c216c85")}` : ""}</p>}
       </div>
       <Button variant="outline" className="shrink-0 self-start" disabled={!!busy || !!unfinished} onClick={() => void check()}>
         {busy === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{translateInterface("mf26f3275e735")}</Button>
@@ -186,9 +189,9 @@ async function headers() {
       {failedStep && canCancel && <p className="text-sm text-muted-foreground">{translateInterface("ma68984fb082f")}</p>}
       {recoveryMessage && <p className="text-sm text-muted-foreground">{recoveryMessage}</p>}
       <div className="flex flex-wrap gap-2">
-        {transaction.phase === "awaiting-restart" && <Button disabled={!!busy || !!pending} onClick={() => void submit("activate")}>{translateInterface("m159713231bf6")}{transaction.target_version}</Button>}
+        {transaction.phase === "awaiting-restart" && <Button disabled={!!busy || !!pending} onClick={() => void submit("activate")}>{translateInterface("m0bf8bea46557", {version: transaction.target_version})}</Button>}
         {canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("cancel")}>{translateInterface("me5013ddb039e")}</Button>}
-        {transaction.phase !== "cancelling" && !failedStep && <Button variant="outline" disabled={!!busy || !!pending || waitingForApps} onClick={() => void submit("resume")}>{canRetryAdmission ? recovering ? translateInterface("mf37b055f32a8") : translateInterface("md29ed82b9eeb") : translateInterface("m5aff816e24b2")}</Button>}
+        {transaction.phase !== "cancelling" && !waitingForRestart && !failedStep && <Button variant="outline" disabled={!!busy || !!pending || waitingForApps} onClick={() => void submit("resume")}>{canRetryAdmission ? recovering ? translateInterface("mf37b055f32a8") : translateInterface("md29ed82b9eeb") : translateInterface("m5aff816e24b2")}</Button>}
         {transaction.phase === "needs-recovery" && !canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("recover")}>{translateInterface("mcbc4381b5be7")}</Button>}
       </div>
       {transaction.phase === "awaiting-restart" && <p className="text-sm text-muted-foreground">{translateInterface("m4d6705344b6d")}</p>}

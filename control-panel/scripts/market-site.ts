@@ -66,10 +66,9 @@ export const MANIFEST_DOCS = 'https://github.com/YouEye-Platform/YouEye/blob/mai
 
 export interface SiteApp {
   id: string;
+  /** `container`: OCI images; `native`: a Node.js app from its pinned package (YE-142). Both are listed the same way. */
   kind: 'container' | 'native';
   name: string;
-  /** False for a native app the build has no listing for: shown by a name made from its id. */
-  listed: boolean;
   version?: string;
   tagline?: string;
   description?: string;
@@ -107,50 +106,11 @@ export interface SiteInput {
   pictures: Map<string, Buffer>;
 }
 
-export interface NativeListingEntry { name: string; tagline?: string; description?: string; version?: string }
-export type NativeListing = Record<string, NativeListingEntry>;
-
 export interface SiteOptions {
   /** The official market: app pages link `my.youeye.me/app?id=<id>`. */
   official?: boolean;
   /** This market's address (normalised). Without `official`, pages link `my.youeye.me/add?market=<address>`. */
   address?: string;
-  /** Listing text of native apps, by id (`--native-listing`). */
-  nativeListing?: NativeListing;
-}
-
-const LISTING_LIMITS: Record<keyof NativeListingEntry, number> = { name: 120, tagline: 300, description: 8000, version: 80 };
-
-/**
- * Parse a `--native-listing` file: `{ "<id>": { "name", "tagline", "description", "version" } }`.
- * Unknown fields are ignored; a wrong type or an over-long value is refused.
- */
-export function readNativeListing(text: string): NativeListing {
-  let document: unknown;
-  try { document = JSON.parse(text); } catch { throw new Error('the native listing is not JSON'); }
-  if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('the native listing must be a JSON object of app ids');
-  const listing: NativeListing = {};
-  for (const [id, value] of Object.entries(document as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (!/^[a-z][a-z0-9-]{0,31}$/.test(id)) throw new Error(`the native listing: "${id}" is not an app id`);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`the native listing: ${id} must be an object`);
-    const entry: Partial<NativeListingEntry> = {};
-    for (const [key, limit] of Object.entries(LISTING_LIMITS) as Array<[keyof NativeListingEntry, number]>) {
-      const field = (value as Record<string, unknown>)[key];
-      if (field === undefined) continue;
-      if (typeof field !== 'string' || !field.trim() || field.length > limit) {
-        throw new Error(`the native listing: ${id}.${key} must be text of 1–${limit} characters`);
-      }
-      entry[key] = field;
-    }
-    if (!entry.name) throw new Error(`the native listing: ${id}.name is required`);
-    listing[id] = entry as NativeListingEntry;
-  }
-  return listing;
-}
-
-/** "notes" → "Notes", "open-webui" → "Open Webui": a readable name for a native app without a listing. */
-export function nameFromId(id: string): string {
-  return id.split('-').filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
 }
 
 // ─── Pictures ─────────────────────────────────────────────
@@ -231,7 +191,6 @@ export function buildSite(input: SiteInput, options: SiteOptions = {}): Map<stri
 
   const addMarketLink = !official && address ? `${MY_SITE}/add?market=${encodeURIComponent(address)}` : null;
   const addAppLink = (app: SiteApp): string | null => {
-    if (app.kind === 'native' && !app.listed) return null;
     if (official) return `${MY_SITE}/app?id=${encodeURIComponent(app.id)}`;
     return addMarketLink;
   };
@@ -286,7 +245,7 @@ ${body}
     return html`<span class="icon letter${large ? ' large' : ''}" aria-hidden="true">${[...app.name][0]?.toUpperCase() ?? '?'}</span>`;
   };
 
-  const taglineOf = (app: SiteApp) => app.tagline ?? app.description ?? (app.kind === 'native' && !app.listed ? 'Ships with YouEye' : '');
+  const taglineOf = (app: SiteApp) => app.tagline ?? app.description ?? '';
 
   // ── The index ──
   const card = (app: SiteApp): Raw => {
@@ -321,12 +280,10 @@ ${list.map(card)}</ul>
   const categories = input.categories.map((category, position) => ({ ...category, position }))
     .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) || a.position - b.position);
   for (const category of categories) {
-    const list = sortedByName(rest.filter((app) => app.kind === 'container' && app.category === category.id));
+    const list = sortedByName(rest.filter((app) => app.category === category.id));
     if (list.length) sections.push(section(`category-${category.id}`, category.label, list));
   }
-  const nativeRest = sortedByName(rest.filter((app) => app.kind === 'native'));
-  if (nativeRest.length) sections.push(section('youeye-apps', 'YouEye’s own apps', nativeRest, 'These apps are made by YouEye.'));
-  const uncategorised = sortedByName(rest.filter((app) => app.kind === 'container' && !(app.category && categoryLabel.has(app.category))));
+  const uncategorised = sortedByName(rest.filter((app) => !(app.category && categoryLabel.has(app.category))));
   if (uncategorised.length) sections.push(section('more', 'More apps', uncategorised));
 
   const bundles = [...input.bundles].sort((a, b) => byText(a.id, b.id));
@@ -391,11 +348,10 @@ ${sections}${bundleBlock}`;
     if (app.category) facts.push(['Category', categoryLabel.get(app.category) ?? app.category]);
     if (app.developer) facts.push(['Developer', app.developer]);
     if (app.license) facts.push(['Licence', app.license]);
-    if (app.kind === 'container') {
-      facts.push(['Needs', app.requiresYouEye ? `YouEye ${app.requiresYouEye} or newer` : 'Any YouEye']);
-      facts.push(['Setup steps', app.runsSetup ? 'Yes: they run inside the app’s own containers when it is installed' : 'None']);
-      if (app.youeyeId) facts.push(['Sign-in', 'With your YouEye ID']);
-    }
+    facts.push(['Needs', app.requiresYouEye ? `YouEye ${app.requiresYouEye} or newer` : 'Any YouEye']);
+    if (app.kind === 'native') facts.push(['Kind', 'Native app: it runs on Node.js in its own container and joins the dashboard']);
+    facts.push(['Setup steps', app.runsSetup ? 'Yes: they run inside the app’s own containers when it is installed' : 'None']);
+    if (app.youeyeId) facts.push(['Sign-in', 'With your YouEye ID']);
     if (app.tags?.length) facts.push(['Tags', html`<ul class="tags">${app.tags.map((tag) => html`<li>${tag}</li>`)}</ul>`]);
     if (linkRows.length) facts.push(['Links', html`<ul class="links">${linkRows.map(([label, href]) => html`<li><a href="${href}" rel="noopener noreferrer">${label}</a></li>`)}</ul>`]);
     if (app.notices?.length) {
@@ -411,7 +367,7 @@ ${taglineOf(app) ? html`<p class="tagline">${taglineOf(app)}</p>\n` : ''}${app.d
 </div>
 <div class="layout">
 <div class="prose">
-${shots.length ? html`<h2 class="sr-only">Pictures</h2>\n<ul class="shots">\n${shots}</ul>\n` : ''}${app.kind === 'native' ? html`<p>${app.name} is one of YouEye’s own apps; it ships with YouEye.${app.listed ? '' : ' Open the Market on your YouEye to install it.'}</p>\n` : ''}${about ? html`<h2>About ${app.name}</h2>\n${paragraphs(about)}` : ''}${app.releaseNotes ? html`<h2>What’s new${app.version ? html` in ${app.version}` : ''}</h2>\n${paragraphs(app.releaseNotes)}` : ''}</div>
+${shots.length ? html`<h2 class="sr-only">Pictures</h2>\n<ul class="shots">\n${shots}</ul>\n` : ''}${about ? html`<h2>About ${app.name}</h2>\n${paragraphs(about)}` : ''}${app.releaseNotes ? html`<h2>What’s new${app.version ? html` in ${app.version}` : ''}</h2>\n${paragraphs(app.releaseNotes)}` : ''}</div>
 ${facts.length ? html`<aside class="facts" aria-labelledby="facts-title">
 <h2 id="facts-title">Details</h2>
 <dl>

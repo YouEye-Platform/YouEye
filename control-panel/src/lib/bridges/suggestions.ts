@@ -93,6 +93,48 @@ export function removeSuggestion(id: string): Promise<void> {
 }
 
 /**
+ * An admin disconnected `from` → `target` (Settings → Apps → Connections, YE-227): the approval removed its
+ * suggestion, and suggestions are otherwise made only at an install or an update, so it comes back here, waiting for
+ * a new approval, while the consumer still asks for the target and both are installed. No notification: the admin
+ * has just chosen this. Returns whether a suggestion is waiting now.
+ */
+export function suggestAgainAfterDisconnect(fromAppId: string, targetAppId: string): Promise<boolean> {
+  return withSuggestionStore(async () => {
+    const installed = await listReadableInstalledApps();
+    const consumer = installed.find((m) => m.appId === fromAppId);
+    const target = installed.find((m) => m.appId === targetAppId);
+    if (!consumer || !target) return false;
+    if ((await loadBridges()).some((b) => b.from === fromAppId && b.to === targetAppId)) return false;
+    const targetProvides = await installedProvides(target);
+    const want = (await installedWants(consumer)).find((w) => wantResolvesToApp(w, targetAppId, targetProvides));
+    if (!want) return false;
+    const nameOf = (appId: string) => readInstalledAppManifest(appId).then((m) => m.metadata.name || appId, () => appId);
+    const suggestions = await readStore();
+    const prior = suggestions.find((s) => s.type === 'bridge' && s.fromAppId === fromAppId && s.targetAppId === targetAppId);
+    if (prior) {
+      if (!prior.dismissed && prior.targetInstalled !== false) return true;
+      prior.dismissed = false;
+      prior.targetInstalled = true;
+    } else {
+      suggestions.push({
+        id: `bridge-${fromAppId}-${targetAppId}`,
+        type: 'bridge',
+        fromAppId,
+        fromAppName: await nameOf(fromAppId),
+        targetAppId,
+        targetAppName: await nameOf(targetAppId),
+        targetInstalled: true,
+        scope: want.scope ?? 'user',
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    await writeStore(suggestions);
+    return true;
+  });
+}
+
+/**
  * Forget an uninstalled app: drop the suggestions it made, and mark suggestions that point at it
  * as waiting for their target again.
  */

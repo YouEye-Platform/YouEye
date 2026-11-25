@@ -55,6 +55,8 @@ export interface UnifiedApp {
   enabled?: boolean;
   desiredState?: 'running' | 'stopped';
   serviceCredentialState?: 'pending' | 'ready' | 'revoked';
+  /** Its removal stopped after the credential was revoked: removing it again finishes it (YE-225) */
+  removalUnfinished?: boolean;
   databaseMode?: 'shared' | 'own' | 'none';
   /** An update is available */
   updateAvailable: boolean;
@@ -328,6 +330,11 @@ export async function GET() {
       filteredMarket.map((meta) => fetchManifest(meta.appId))
     );
 
+    // An app whose removal stopped after its credential was revoked (YE-225): Settings offers to finish the removal.
+    const { removalUnfinished } = await import('@/lib/apps/unfinished-removal');
+    const unfinishedRemovals = new Set((await Promise.all(filteredMarket
+      .filter((meta) => meta.serviceCredentialState === 'pending')
+      .map(async (meta) => (await removalUnfinished(meta)) ? meta.appId : null))).filter(Boolean));
     const marketApps: UnifiedApp[] = filteredMarket.map((meta, i) => {
       const dbEntry = dbAppsMap.get(meta.appId);
       const catV = dbEntry?.catalogVersion;
@@ -371,6 +378,7 @@ export async function GET() {
         enabled,
         desiredState: enabled ? 'running' as const : 'stopped' as const,
         serviceCredentialState: meta.serviceCredentialState,
+        ...(unfinishedRemovals.has(meta.appId) ? { removalUnfinished: true } : {}),
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,

@@ -31,14 +31,14 @@ import {
   CADDY_APP_ACL_INGRESS,
   type CaddyInstanceState,
 } from './app-network-caddy-nic';
-import { connectionInterface } from './connection-nic';
+import { connectionInterface, integrationAclName } from './connection-nic';
 import { stopContainerOrForce, stopTimeoutSec } from './snapshot';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { parse as parseYaml } from 'yaml';
-import { assertNoCriticalIssues, observeIssue, resolveIssue } from '@/lib/health/issues';
+import { assertNoCriticalIssues, INSTALL_GATE_IGNORED_ISSUES, observeIssue, resolveIssue } from '@/lib/health/issues';
 import { spineClient } from '@/lib/spine/client';
-import { AppLifecycleAdmissionError, withAppLifecycle } from '@/lib/market/update-admission';
+import { AppLifecycleAdmissionError, isUserOperationWaiting, withAppLifecycle } from '@/lib/market/update-admission';
 import { containerTargets, orderContainers } from '@/lib/apps/container-order';
 import {
   applyIncusDeviceMergePatch,
@@ -732,7 +732,7 @@ export async function createAppNetwork(
   appId: string,
   options: { nat?: boolean; operationId?: string; requiredAddresses?: number; installationId?: string } = {},
 ): Promise<{ bridgeName: string; subnet: number; subnetCIDR: string }> {
-  await assertNoCriticalIssues(`Install ${appId}`, appId);
+  await assertNoCriticalIssues(`Install ${appId}`, appId, INSTALL_GATE_IGNORED_ISSUES);
   const observation = await observeAppNetworkState();
 
   // Use static IP for pihole DNS forwarding (deterministic, survives restarts)
@@ -846,7 +846,7 @@ export async function preflightAppNetwork(
   appId: string,
   options: { requiredAddresses: number },
 ): Promise<{ bridgeName: string; subnetCIDR: string; gateway: string }> {
-  await assertNoCriticalIssues(`Install ${appId}`, appId);
+  await assertNoCriticalIssues(`Install ${appId}`, appId, INSTALL_GATE_IGNORED_ISSUES);
   const observation = await observeAppNetworkState();
   const existing = observation.state.leases.find((lease) => lease.appId === appId);
   if (existing) {
@@ -897,6 +897,82 @@ export async function markAppNetworkActive(appId: string): Promise<AppNetworkLea
   );
 }
 
+/**
+ * A removal's requested mode, kept in its lease's failure stage (`<stage>-keep-data` / `<stage>-delete-data`), so the
+ * pass that finishes it keeps or deletes the data as the user asked (YE-222 review). No new field: the stage is a
+ * free string. A stage without a mode (written before, or by another path) finishes nothing on its own.
+ */
+export function removalStage(stage: string, keepData: boolean): string {
+  return `${stage}-${keepData ? 'keep-data' : 'delete-data'}`;
+}
+
+export function removalModeOf(stage: string | undefined): 'keep-data' | 'delete-data' | null {
+  if (stage?.endsWith('-keep-data')) return 'keep-data';
+  if (stage?.endsWith('-delete-data')) return 'delete-data';
+  return null;
+}
+
+/**
+ * The stage a failed attempt's end mark writes: never a keep-data mode turned into delete-data (YE-222). A keep
+ * request recorded meanwhile (also one refused because the app was busy) is newer than the failing delete attempt;
+ * only an admitted delete request's own start (recordRemovalMode, under the lock) turns keep into delete. A keep
+ * request made while the lease was still active (a first attempt running) finds nothing to record on: it records
+ * again once admitted (uninstallAppSteps, cleanupAppByScan), and until then the reconcile pass leaves the removal to
+ * it (isRemovalRequested).
+ */
+export function nextRemovalStage(existing: string | undefined, incoming: string): string {
+  return removalModeOf(incoming) === 'delete-data' && removalModeOf(existing) === 'keep-data' ? existing! : incoming;
+}
+
+/**
+ * A new removal attempt records its own mode on a lease an earlier attempt left `cleanup_pending`, at its start
+ * (YE-222): otherwise a retry that stops early leaves the earlier attempt's mode, and the reconcile pass would finish
+ * it in that mode. An active lease (no earlier failed attempt) is not touched. The lease is read again inside the
+ * IPAM write lock: a request recorded lock-free in between is never overwritten from an older read (Iris, batch 1).
+ */
+export async function recordRemovalMode(appId: string, keepData: boolean): Promise<void> {
+  const config = await loadAppNetworkConfig();
+  const state = await readIpamState({ config, allowInitialize: false });
+  const lease = state.leases.find((candidate) => candidate.appId === appId);
+  const stage = removalStage('uninstall', keepData);
+  if (!lease || lease.state !== 'cleanup_pending' || lease.failure?.stage === stage) return;
+  await mutateIpamState({ config, allowInitialize: false }, (current) => {
+    const now = current.leases.find((candidate) => candidate.appId === appId);
+    if (!now || now.state !== 'cleanup_pending' || now.failure?.stage === stage) return;
+    transitionLease(current, appId, 'cleanup_pending', {
+      operationId: now.operationId,
+      failure: { stage, message: 'The removal was asked again', observedAt: new Date().toISOString() },
+    });
+  });
+}
+
+/**
+ * Removal requests (an uninstall, or `youeye app remove --force`) this process is running or holding for the locks,
+ * per app (YE-222, Iris's batch-1 review). The reconcile pass never finishes a removal while one is: that request
+ * is the user's latest, and the lease may not show its mode yet (a keep request made during a first attempt, or one
+ * still waiting for the inventory lock, which no lifecycle wait registers).
+ */
+const removalRequestsKey = Symbol.for('youeye.app-removal-requests');
+const removalRequestsGlobal = globalThis as typeof globalThis & { [removalRequestsKey]?: Map<string, number> };
+const removalRequests = removalRequestsGlobal[removalRequestsKey] ??= new Map<string, number>();
+
+export async function withRemovalRequest<T>(appId: string, work: () => Promise<T>): Promise<T> {
+  removalRequests.set(appId, (removalRequests.get(appId) ?? 0) + 1);
+  try {
+    return await work();
+  } finally {
+    const left = (removalRequests.get(appId) ?? 1) - 1;
+    if (left > 0) removalRequests.set(appId, left); else removalRequests.delete(appId);
+  }
+}
+
+export function isRemovalRequested(appId: string): boolean {
+  return (removalRequests.get(appId) ?? 0) > 0;
+}
+
+/** Apps whose unfinished removal the reconcile pass already logged (YE-222). */
+const unfinishedRemovalsLogged = new Set<string>();
+
 export async function markAppNetworkCleanupPending(
   appId: string,
   stage: string,
@@ -905,20 +981,25 @@ export async function markAppNetworkCleanupPending(
   console.error(`[app-network] ${appId} network cleanup pending after ${stage}: ${describeErrorChainForLog(error)}`);
   const config = await loadAppNetworkConfig();
   const state = await readIpamState({ config, allowInitialize: false });
-  const lease = state.leases.find((candidate) => candidate.appId === appId);
-  if (!lease) return null;
-  const updated = await mutateIpamState({ config, allowInitialize: false }, (current) =>
-    transitionLease(current, appId, 'cleanup_pending', {
+  if (!state.leases.some((candidate) => candidate.appId === appId)) return null;
+  // The next stage comes from the lease as read inside the IPAM write lock: a keep request recorded lock-free after
+  // an earlier read is never overwritten with delete-data (Iris, batch 1).
+  const updated = await mutateIpamState({ config, allowInitialize: false }, (current) => {
+    const lease = current.leases.find((candidate) => candidate.appId === appId);
+    if (!lease) return null;
+    const nextStage = lease.state === 'cleanup_pending' ? nextRemovalStage(lease.failure?.stage, stage) : stage;
+    return transitionLease(current, appId, 'cleanup_pending', {
       operationId: lease.operationId,
-      failure: { stage, message: 'Cleanup did not reach all verified postconditions', observedAt: new Date().toISOString() },
-    }),
-  );
+      failure: { stage: nextStage, message: 'Cleanup did not reach all verified postconditions', observedAt: new Date().toISOString() },
+    });
+  });
+  if (!updated) return null;
   await observeIssue({
     id: `${NETWORK_ISSUE_PREFIX}.${appId}`,
     severity: 'critical',
     source: 'app-network',
     title: `App network cleanup required for ${appId}`,
-    body: `Lease ${lease.bridgeName} (${lease.cidr}) is retained cleanup_pending after ${stage}. It is not reusable until supported reconciliation verifies complete cleanup.`,
+    body: `Lease ${updated.bridgeName} (${updated.cidr}) is retained cleanup_pending after ${stage}. It is not reusable until supported reconciliation verifies complete cleanup.`,
     fixable: true,
     repairFn: 'reconcile-apps',
     learnMore: '/settings/system/health',
@@ -1603,40 +1684,6 @@ export async function removeAppEgressAcl(appId: string): Promise<void> {
   console.log(`[app-network] Removed egress ACL ${name}`);
 }
 
-/**
- * Remove all proxy devices from a container (cleanup on uninstall).
- */
-export async function removeProxyDevices(containerName: string): Promise<void> {
-  const res = await incusRequest<{
-    devices: Record<string, Record<string, string>>;
-  }>('GET', `/1.0/instances/${containerName}`);
-  if (res.type === 'error' && (res.error_code === 404 || res.status_code === 404)) return;
-  const metadata = assertIncusSuccess(res, `Read proxy cleanup target ${containerName}`);
-  const devices = { ...metadata.devices };
-  const removedNames: string[] = [];
-
-  for (const [name, device] of Object.entries(devices)) {
-    if (device.type === 'proxy' && device.bind === 'instance') {
-      delete devices[name];
-      removedNames.push(name);
-    }
-  }
-
-  if (removedNames.length > 0) {
-    const patched = await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
-    await waitForIncusOperation(patched, `Remove proxy devices from ${containerName}`);
-    const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>(
-      'GET', `/1.0/instances/${containerName}`,
-    );
-    const observed = assertIncusSuccess(readBack, `Read back proxy cleanup on ${containerName}`).devices ?? {};
-    const remaining = removedNames.filter((name) => observed[name]);
-    if (remaining.length > 0) {
-      throw new AppNetworkStateError(`Proxy devices still exist on ${containerName}: ${remaining.join(', ')}`);
-    }
-    console.log(`[app-network] Removed ${removedNames.length} proxy devices from ${containerName}`);
-  }
-}
-
 // ─── Checked container addresses ────────────────────────────
 
 /**
@@ -1668,10 +1715,7 @@ export async function appContainerAddress(
 
 // ─── Cross-App NIC Permissions ──────────────────────────────
 
-export function integrationAclName(containerName: string, targetAppId: string): string {
-  const safe = `${containerName}-to-${targetAppId}`.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 42);
-  return `ye-grant-${safe}`;
-}
+export { integrationAclName };
 
 function integrationAclBody(containerName: string, targetAppId: string, targetAddress: string) {
   const peer = `${targetAddress}/32`;
@@ -1858,6 +1902,12 @@ export async function grantBridgeAccess(
       `test -n "$GATEWAY" && resolvectl dns ${ifName} "$GATEWAY" && resolvectl domain ${ifName} ~youeye`,
       { timeout: 10_000 },
     ).catch(() => undefined);
+    // The dhclient path may set a default route through the peer (YE-198); the udhcpc hook never does. After the
+    // name lookup step, which reads the peer's gateway from that route.
+    await (async () => {
+      const { defaultRouteGuard } = await import('./default-route-watch');
+      await (await defaultRouteGuard()).repairNow(containerName, 'connection activated');
+    })().catch(() => undefined);
   } catch (error) {
     console.error(`[app-network] Activating ${deviceName} on ${containerName} failed: ${error instanceof Error ? error.message : String(error)}`);
     await revokeBridgeAccess(containerName, targetAppId).catch(() => undefined);
@@ -2194,8 +2244,36 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
                   }),
                 );
               }
+              // An uninstall someone started that did not complete (its record says cleanupPending) is not finished
+              // here: this pass would keep the data (keep-data), and an uninstall that was deleting it would silently
+              // leave its volumes for the next install to adopt (YE-222). It waits for `youeye app remove <id>`
+              // (or --force), which knows whether to keep the data; the issue stays open meanwhile.
+              const { readInstallMetadata } = await import('../market/metadata');
+              const pending = await readInstallMetadata(originalLease.appId).catch(() => null);
+              let keepData = true;
+              if (pending?.cleanupPending && pending.lifecycleState !== 'installing') {
+                // A removal request for this app is running or waiting for the locks (e.g. a --keep-data retry that
+                // waited for a failing attempt, its keep not on the lease yet), or another user operation is queued:
+                // it goes first, the pass comes back in 30 s (YE-222, Iris's batch-1 review).
+                if (isRemovalRequested(originalLease.appId) || isUserOperationWaiting(originalLease.appId)) return;
+                // Finished only as the user asked: the mode recorded on the lease as read now, under both locks
+                // (currentLease), never the snapshot taken before them; a keep request that ran in between (and
+                // stopped early) is the user's latest. Without a recorded mode it is left for them. Logged once per
+                // app and process: the pass runs every 30 s.
+                const mode = removalModeOf(currentLease.failure?.stage);
+                if (!mode) {
+                  if (!unfinishedRemovalsLogged.has(originalLease.appId)) {
+                    unfinishedRemovalsLogged.add(originalLease.appId);
+                    console.warn(`[app-network] ${originalLease.appId}: its removal did not finish; it is left for `
+                      + `youeye app remove ${originalLease.appId} (add --keep-data to keep its data, or use --force)`);
+                  }
+                  return;
+                }
+                keepData = mode === 'keep-data';
+              }
+              unfinishedRemovalsLogged.delete(originalLease.appId);
               const { cleanupAppByScan } = await import('../market/reconciler');
-              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData: true });
+              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData });
               repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
               if (cleanup.unresolved.length > 0) {
                 throw new Error(cleanup.unresolved.join('; '));

@@ -25,6 +25,11 @@ const EXAMPLES: Record<string, { manifest: Record<string, unknown>; setups?: Rec
       sidecars: [{ name: 'worker', image: `ghcr.io/example/worker${PIN}`, data: ['/cache', { path: '/data', from: 'main' }] }],
     }),
   },
+  'app:source.package': {
+    manifest: appDocument({ image: undefined, source: { node: '24', package: {
+      url: 'https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar', sha256: 'b'.repeat(64), size: 1000,
+    } } }),
+  },
 };
 
 function parse(example: (typeof EXAMPLES)[string], requires?: string) {

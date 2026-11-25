@@ -6,7 +6,6 @@ import {
   catalogUpdateState,
   classifyAppUpdateRouting,
   compareToInstalledNative,
-  isInstalledNativeBuild,
   projectUpdateAvailability,
   recordedCatalogSourceIds,
   recordedSourceAddressChange,
@@ -125,19 +124,17 @@ test('installedBranch alone never selects native release resolution', () => {
   assert.equal(decision.kind, 'catalog');
 });
 
-test('native apps resolve through the channel index by id', () => {
+test('native apps update from their market like container apps (YE-142)', () => {
   const decision = classifyAppUpdateRouting({
     appId: 'search',
     installed: { type: 'native', sourceId: 'official' },
     installMetadata: { sourceId: 'official', integration: 'native' },
-    catalog: {
-      sourceId: 'official',
-      sourceRepoUrl: '',
-      entry: { integration: 'native' },
-      manifestIntegration: 'native',
-    },
+    catalog: { sourceId: 'official', entry: { path: 'apps/search', integration: 'native' }, manifestIntegration: 'native' },
   });
-  assert.deepEqual(decision, { kind: 'channel', reason: 'native-app', catalogSourceId: 'official' });
+  assert.deepEqual(decision, { kind: 'catalog', reason: 'recorded-external-catalog', catalogSourceId: 'official' });
+  // A native app installed before 0.6.20 from the channel (no market entry resolved yet) has the same route.
+  assert.equal(classifyAppUpdateRouting({ appId: 'notes', installed: { type: 'native', installedTag: 'v0.6.4' } as never,
+    installMetadata: { integration: 'native', manifestPath: 'youeye-app.yaml', manifestRepo: 'https://github.com/YouEye-Platform/Notes' } }).kind, 'catalog');
 });
 
 test('external availability never exposes native branch or switch state', () => {
@@ -151,7 +148,6 @@ test('external availability never exposes native branch or switch state', () => 
     routing,
     installedVersion: '2026.7.26',
     catalogVersion: '2026.7.28',
-    candidate: { version: '0.1.0', tag: 'v0.1.0' },
   });
 
   assert.deepEqual(result, {
@@ -164,65 +160,58 @@ test('external availability never exposes native branch or switch state', () => 
   });
 });
 
-test('native channel candidates are ordered by line and sequence, never by release name', () => {
-  const routing = { kind: 'channel' as const, reason: 'native-app' as const };
-  const key = (version: string, sequence: number) => ({ line: version.replace(/-.*/, ''), sequence });
-  const project = (installedVersion: string, installedSequence: number | null, version: string, sequence: number) => projectUpdateAvailability({
-    routing, installedVersion, installedKey: installedSequence === null ? null : key(installedVersion, installedSequence),
-    catalogVersion: null, candidate: { version, tag: `v${version}`, key: key(version, sequence) },
-  });
-  const behind = project('0.6.2-dev.1', 500, '0.6.1-dev.4', 400);
-  assert.equal(behind.updateAvailable, false);
-  assert.equal(behind.switchPending, false);
-  const ahead = project('0.6.1-dev.4', 400, '0.6.2-dev.1', 500);
-  assert.equal(ahead.updateAvailable, true);
-  assert.equal(ahead.candidateTag, 'v0.6.2-dev.1');
-  // A newer build under a promoted name is an update; an older build named "0.6.1" is not.
-  assert.equal(project('0.6.1-dev.2', 200, '0.6.1-alpha.1', 300).updateAvailable, true);
-  assert.equal(project('0.6.1-alpha.1', 300, '0.6.1', 200).updateAvailable, false);
-  // Labels never decide: alpha.2 of an older build is not newer than dev.1 of a newer one.
-  assert.equal(project('0.6.1-dev.1', 300, '0.6.1-alpha.2', 200).updateAvailable, false);
-  // The same build under another name is no update (YE-139): the installed name stays.
-  const renamed = project('0.6.4', 300, '0.6.4-alpha.1', 300);
-  assert.equal(renamed.updateAvailable, false);
-  assert.equal(renamed.switchPending, false);
-  assert.equal(project('0.6.1-alpha.1', 300, '0.6.1-beta.1', 300).updateAvailable, false);
-  assert.equal(project('0.6.1-beta.1', 300, '0.6.1-beta.1', 300).updateAvailable, false);
-  // No recorded release and nothing else known in the same line: never offered, it could be older (YE-141).
-  assert.equal(project('0.6.1-dev.9', null, '0.6.1-dev.1', 100).updateAvailable, false);
-  assert.equal(project('0.6.4-dev.2', null, '0.6.4-dev.2', 100).updateAvailable, false);
-});
-
-test('a native app without a recorded release is decided by its package when it is known (YE-139)', () => {
-  const routing = { kind: 'channel' as const, reason: 'native-app' as const };
+test('a market update is a newer version; the same package under another name is none (YE-142)', () => {
+  const routing = { kind: 'catalog' as const, reason: 'recorded-external-catalog' as const };
   const installed = 'a'.repeat(64), other = 'b'.repeat(64);
-  const project = (installedArtifactSHA256: string[] | undefined, artifactSHA256: string | undefined, version = '0.6.4-alpha.1') =>
-    projectUpdateAvailability({
-      routing, installedVersion: '0.6.4', installedKey: null, installedArtifactSHA256, catalogVersion: null,
-      candidate: { version, tag: `v${version}`, key: { line: '0.6.4', sequence: 300 }, artifactSHA256 },
-    }).updateAvailable;
-  // The installed package under another name: the same build, no update.
-  assert.equal(project([installed], installed), false);
-  assert.equal(project([installed, installed], installed), false);
-  // Another package in the same line, with nothing that orders it: not offered (YE-141, it could be older).
-  assert.equal(project([installed], other), false);
-  assert.equal(project([installed, other], installed), false);
-  assert.equal(project(undefined, installed), false);
-  assert.equal(project([], installed), false);
-  assert.equal(project([installed], undefined), false);
-  assert.equal(project([installed], undefined, '0.6.4'), false);
+  const project = (installedVersion: string, catalogVersion: string, installedArtifactSHA256?: string[], candidateArtifactSHA256?: string) =>
+    projectUpdateAvailability({ routing, installedVersion, catalogVersion, installedArtifactSHA256, candidateArtifactSHA256 }).updateAvailable;
+  // A newer version with another package is an update.
+  assert.equal(project('0.6.4', '0.6.5', [installed], other), true);
+  // The same package under another name is not: 0.6.4-alpha.1 → 0.6.4 (a promotion), 0.6.4 → 0.6.5 (a renamed build).
+  assert.equal(project('0.6.4-alpha.1', '0.6.4', [installed], installed), false);
+  assert.equal(project('0.6.4', '0.6.5', [installed], installed), false);
+  // An older or the same version is never offered, whatever the package.
+  assert.equal(project('0.6.5', '0.6.4', [installed], other), false);
+  assert.equal(project('0.6.4', '0.6.4', [installed], other), false);
+  assert.equal(project('0.6.4', '0.6.4-dev.3', [installed], other), false);
+  // An app installed from the dev lane is newer than main's: back on main it keeps its version, nothing is offered,
+  // until main has a newer one (YE-142 step 8).
+  assert.equal(project('2026.11.20', '2026.11.1', [installed], other), false);
+  assert.equal(project('1.4.0-rc.2', '1.3.9'), false);
+  assert.equal(project('1.4.0-rc.2', '1.4.0'), true);
+  // A dev build of the line before the market's stable name is offered the stable package (test boxes only).
+  assert.equal(project('0.6.5-dev.1', '0.6.5', [installed], other), true);
+  // The same package: the manifest decides, whatever the versions say (YE-194). The same manifest is no update, another
+  // one is; without both digests it is none, as before.
+  const projectManifest = (installedVersion: string, catalogVersion: string, installedManifestDigest?: string, candidateManifestDigest?: string) =>
+    projectUpdateAvailability({ routing, installedVersion, catalogVersion, installedArtifactSHA256: [installed], candidateArtifactSHA256: installed,
+      installedManifestDigest, candidateManifestDigest }).updateAvailable;
+  assert.equal(projectManifest('0.6.4', '0.6.4', 'sha256:1', 'sha256:1'), false);
+  assert.equal(projectManifest('0.6.4', '0.6.5', 'sha256:1', 'sha256:1'), false);
+  assert.equal(projectManifest('0.6.4', '0.6.4', 'sha256:1', 'sha256:2'), true);
+  assert.equal(projectManifest('0.6.4-alpha.1', '0.6.4', 'sha256:1', 'sha256:2'), true);
+  assert.equal(projectManifest('0.6.4', '0.6.4', undefined, 'sha256:2'), false);
+  // A container app is decided by version alone, whatever its manifest digests (YE-194 leaves it as it was).
+  const container = (installedVersion: string, catalogVersion: string) => projectUpdateAvailability({ routing, installedVersion, catalogVersion,
+    installedManifestDigest: 'sha256:1', candidateManifestDigest: 'sha256:2' }).updateAvailable;
+  assert.equal(container('1.0.0', '1.0.0'), false);
+  assert.equal(container('1.0.0', '1.1.0'), true);
+  assert.equal(container('1.1.0', '1.0.0'), false);
+  // A container app (no package) and a native app whose package is not known decide by version alone.
+  assert.equal(project('1.0.0', '1.1.0'), true);
+  assert.equal(project('0.6.4', '0.6.5', undefined, other), true);
+  assert.equal(project('0.6.4', '0.6.5', [installed, other], installed), true, 'only every installed package equal is the same build');
 });
 
-test('a native app without a recorded release or floor is never offered an older build (YE-141)', () => {
-  const routing = { kind: 'channel' as const, reason: 'native-app' as const };
+test('Pointer without a recorded release or floor is never offered an older build (YE-141)', () => {
   const at = (iso: string) => Date.parse(iso) / 1000;
   const installedAt = '2026-10-01T12:00:00.000Z';
-  const project = (installedVersion: string, version: string, line: string, sequence: number, extra: { installedKey?: { line: string; sequence: number } | null; installedAt?: string | null } = {}) =>
-    projectUpdateAvailability({
-      routing, installedVersion, installedKey: extra.installedKey ?? null, installedArtifactSHA256: ['a'.repeat(64)],
-      installedAt: extra.installedAt === undefined ? installedAt : extra.installedAt, catalogVersion: null,
-      candidate: { version, tag: `v${version}`, key: { line, sequence }, artifactSHA256: 'b'.repeat(64) },
-    }).updateAvailable;
+  // Native apps are Market apps since 0.6.20 (YE-142); Pointer keeps the channel's order (compareToInstalledNative).
+  const project = (installedVersion: string, _version: string, line: string, sequence: number, extra: { installedKey?: { line: string; sequence: number } | null; installedAt?: string | null } = {}) =>
+    compareToInstalledNative({
+      key: extra.installedKey ?? null, artifactSHA256: ['a'.repeat(64)], version: installedVersion,
+      installedAt: extra.installedAt === undefined ? installedAt : extra.installedAt,
+    }, { key: { line, sequence }, artifactSHA256: 'b'.repeat(64) }) === 1;
   // Another line orders as the key would: an older line under another name is never offered, a newer one is.
   assert.equal(project('0.6.4-dev.2', '0.6.3', '0.6.3', at('2026-11-20T00:00:00Z')), false);
   assert.equal(project('0.6.4-dev.2', '0.6.5-alpha.1', '0.6.5', at('2026-09-01T00:00:00Z')), true);
@@ -249,17 +238,6 @@ test('the installed key is the recorded release, else the product floor', async 
   assert.equal(installedNativeKey({ productReleaseFloors: { wiki: floor } }, 'notes'), null);
   assert.equal(installedNativeKey({}, 'notes'), null);
   assert.equal(installedNativeKey(null, 'notes'), null);
-});
-
-test('same build with a recorded release: no update whatever the packages say', () => {
-  const routing = { kind: 'channel' as const, reason: 'native-app' as const };
-  const result = projectUpdateAvailability({
-    routing, installedVersion: '0.6.4', installedKey: { line: '0.6.4', sequence: 300 }, installedArtifactSHA256: ['a'.repeat(64)],
-    catalogVersion: null, candidate: { version: '0.6.5-alpha.1', tag: 'v0.6.5-alpha.1', key: { line: '0.6.5', sequence: 310 }, artifactSHA256: 'a'.repeat(64) },
-  });
-  // A newer key is an update even with the same package (a rebuild that changed nothing is adopted without a restart).
-  assert.equal(result.updateAvailable, true);
-  assert.equal(result.candidateVersion, '0.6.5-alpha.1');
 });
 
 test('successful catalog updates clear synthetic native provenance for the next update', () => {
@@ -318,45 +296,26 @@ test('late update failure restores both durable metadata views', () => {
   assert.match(provider, /const restored = \{ \.\.\.current \}/);
 });
 
-test('an update to the installed build does nothing and keeps the installed name (YE-139)', () => {
+test('Pointer: an update to the installed build does nothing; the market updater decides by package, then version', () => {
   const key = (sequence: number) => ({ line: '0.6.4', sequence });
   const pkg = 'a'.repeat(64);
-  assert.equal(isInstalledNativeBuild({ key: key(300) }, { key: key(300) }), true);
-  assert.equal(isInstalledNativeBuild({ key: key(300) }, { key: key(301) }), false);
+  assert.equal(compareToInstalledNative({ key: key(300) }, { key: key(300) }), 0);
+  assert.equal(compareToInstalledNative({ key: key(300) }, { key: key(301) }), 1);
   // A recorded release decides; the package only speaks for an install without one.
-  assert.equal(isInstalledNativeBuild({ key: key(300), artifactSHA256: [pkg] }, { key: key(301), artifactSHA256: pkg }), false);
-  assert.equal(isInstalledNativeBuild({ key: null, artifactSHA256: [pkg] }, { key: key(301), artifactSHA256: pkg }), true);
-  assert.equal(isInstalledNativeBuild({ key: null, artifactSHA256: [pkg] }, { key: key(301), artifactSHA256: 'b'.repeat(64) }), false);
-  assert.equal(isInstalledNativeBuild({ key: null }, { key: key(301) }), false);
+  assert.equal(compareToInstalledNative({ key: null, artifactSHA256: [pkg] }, { key: key(301), artifactSHA256: pkg }), 0);
   // Without a key, the order (YE-141): an older line, or the same line published before the install, is refused.
   assert.equal(compareToInstalledNative({ version: '0.6.5-dev.1' }, { key: key(301) }), -1);
   assert.equal(compareToInstalledNative({ version: '0.6.3' }, { key: key(301) }), 1);
   assert.equal(compareToInstalledNative({ version: '0.6.4', installedAt: new Date(400_000).toISOString() }, { key: key(301) }), null);
   assert.equal(compareToInstalledNative({ version: '0.6.4', installedAt: new Date(200_000).toISOString() }, { key: key(301) }), 1);
 
-  // The updaters stop there: after the floor (an older build or other contents under the key are still refused) and
-  // before the label-only adoption, which stays for a newer key with the same payload.
+  // The Market updater: a native app first takes a changed market manifest of its package (metadata only); then the
+  // same package under the same manifest (or a lower version name than a Market record's, YE-212) is "already up to
+  // date", another manifest of it goes on to the ordinary update, and another package is decided by version. There is no channel route any more (YE-142, YE-194).
   const market = read('src/lib/market/updater.ts');
-  const floor = market.indexOf('acceptProductSequence(installMeta.productReleaseFloors');
-  const order = market.indexOf('buildOrder = compareToInstalledNative(');
-  const refused = market.indexOf('if (buildOrder === null || buildOrder < 0)');
-  const same = market.indexOf('if (buildOrder === 0 ||');
-  const adopt = market.indexOf('updateIdenticalProductRelease(appUpdateJournalStore()');
-  assert.ok(floor >= 0 && order > floor && refused > order && same > refused && adopt > same);
-  // Without a floor or a recorded release an older build, or one it can't order, is refused before anything changes.
-  assert.match(market.slice(refused, same), /throw new Error\(buildOrder === null[\s\S]{0,300}waiting for a newer build[\s\S]{0,200}waiting for the channel to catch up/);
-  assert.match(market.slice(same, adopt), /already up to date \(\$\{installedVersion\}\)[\s\S]{0,200}unchanged: true/);
-  const pointer = read('src/lib/apps/lxd-updater.ts');
-  const pointerFloor = pointer.indexOf('acceptProductSequence(before.floors, selected, installed);');
-  const pointerSame = pointer.indexOf('compareReleases(selected.release, installed.release) === 0');
-  const pointerAdopt = pointer.indexOf('updateIdenticalPointerRelease(appUpdateJournalStore()');
-  assert.ok(pointerFloor >= 0 && pointerSame > pointerFloor && pointerAdopt > pointerSame);
-  // Without a recorded release, Pointer's updater decides by the package as pointerUpdateState does: the same
-  // standalone.tar as the legacy provenance record is up to date, before the adoption or any container change.
-  const pointerLegacy = pointer.indexOf("const legacy = await getCoreProvenance('app:pointer');");
-  assert.ok(pointerLegacy > pointerSame && pointerAdopt > pointerLegacy);
-  assert.match(pointer.slice(pointerLegacy, pointerAdopt),
-    /const order = compareToInstalledNative\([\s\S]{0,500}if \(order === 0\) \{[\s\S]{0,150}already up to date \(\$\{legacy\.version\}\)[\s\S]{0,80}return;[\s\S]{0,80}if \(order === null \|\| order < 0\) \{\s*throw new Error/);
-  assert.ok(pointer.indexOf('containerState(containerName)') > pointerLegacy, 'decided before a stopped Pointer is started');
-  assert.ok(pointer.indexOf("createSnapshot(containerName") > pointerAdopt);
+  const adopt = market.indexOf('if (resolvedCatalog && nativeManifestChanged(installMeta, resolvedCatalog.reference.digest))');
+  const same = market.indexOf('if (samePackage && (!nativeManifestChanged(installMeta, resolvedCatalog?.reference.digest) || olderMarketVersion(installMeta, targetVersion)))');
+  const newer = market.indexOf('if (!samePackage && !isNewer(targetVersion, installedVersion))');
+  assert.ok(adopt >= 0 && same > adopt && newer > same);
+  assert.doesNotMatch(market, /resolveNativeProduct|routing\?\.kind === 'channel'|acceptProductSequence/);
 });

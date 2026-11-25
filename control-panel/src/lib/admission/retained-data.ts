@@ -208,6 +208,19 @@ async function cleanupAdoptedRoots(metadata: InstallMetadata) {
   await removeRetainedInstallMetadata(metadata.appId);
 }
 
+/**
+ * A delete-data removal finishes the copy cleanup an adoption left unfinished (YE-222, Iris's batch-1 review): an
+ * `adopted` retained.json means its data lives in the installed app, so its ye-retained copies are stale; removing the
+ * app directory would otherwise orphan them (a keep-data removal does the same in retainAppRoots). Only an `adopted`
+ * record; a preparing or ready one is kept data and is refused before this (keptDataRefusal). True when it cleaned.
+ */
+export async function cleanupAdoptedRetainedCopies(appId: string): Promise<boolean> {
+  const retained = await readRetainedInstallMetadata(appId);
+  if (retained?.retainedRoots?.state !== 'adopted') return false;
+  await cleanupAdoptedRoots(retained);
+  return true;
+}
+
 /** Persist consumption before cleanup; a failed write must not report success. */
 export async function consumeRetainedRecovery(
   metadata: InstallMetadata,

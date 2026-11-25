@@ -19,7 +19,7 @@ type Fixture = {
 };
 
 function prober(fixture: Fixture = {}) {
-  const calls = { requests: [] as string[], execs: [] as string[], fetches: 0, statuses: [] as Array<{ state: string; level?: string }> };
+  const calls = { requests: [] as string[], execs: [] as string[], fetches: 0, cancelled: 0, statuses: [] as Array<{ state: string; level?: string }> };
   const status = fixture.status ?? { 'app-notes': 'Running' };
   const source = readFileSync(path.join(process.env.CONTROL_PANEL_ROOT || process.cwd(), 'src/lib/market/app-prober.ts'), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -37,7 +37,7 @@ function prober(fixture: Fixture = {}) {
     async fetch() {
       calls.fetches += 1;
       if (fixture.httpOk === false) throw new Error('connection refused');
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, body: { cancel: async () => { calls.cancelled += 1; } } };
     },
     require(id: string) {
       if (id.endsWith('update-admission')) return { isAppHeld: () => false, isAppHeldByCaller: () => false, isAppUpdateReserved: () => false };
@@ -90,6 +90,8 @@ test('a healthy native app with an HTTP check makes no exec', async () => {
   const p = prober();
   assert.equal((await p.probe()).state, 'running');
   assert.equal(p.calls.fetches, 1);
+  // The probe lets go of the response body (left unread, a later socket end threw in Node's HTTP client; YE-213).
+  assert.equal(p.calls.cancelled, 1);
   assert.deepEqual(p.calls.execs, []);
 });
 

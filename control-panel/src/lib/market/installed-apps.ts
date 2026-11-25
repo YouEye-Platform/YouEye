@@ -19,6 +19,7 @@ import { listInstalledApps, readInstallMetadata } from './metadata';
 import { fetchCatalog, isMarketAppUnavailable, resolveCatalogApp } from './catalog';
 import { isMarketSourceConsentError } from './source';
 import { youeyeRequirementProblem } from './app-format/requires';
+import { isChannelInstalledNative } from './update-release-metadata';
 import {
   catalogUpdateState,
   classifyAppUpdateRouting,
@@ -28,7 +29,6 @@ import {
   recordedSourceAddressChange,
 } from './update-routing';
 import type { AppManifest } from './types';
-import { installedNativeKey } from '../releases/product-release';
 
 const STORE_PATH = process.env.YOUEYE_INSTALLED_APPS_PATH ?? statePath('installed-apps.json');
 
@@ -93,7 +93,8 @@ export interface InstalledApp {
    * - `source-not-accepted`: the owner has not accepted the app's custom market.
    * - `requires-newer-youeye`: the market's version of the app needs a newer YouEye than this box runs.
    */
-  updateBlocked?: { code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye'; message: string } | null;
+  /** `not-in-market`: a native app installed from the channel (before 0.6.20) whose market does not list it (YE-142). */
+  updateBlocked?: { code: 'source-changed' | 'source-unavailable' | 'source-not-accepted' | 'requires-newer-youeye' | 'not-in-market'; message: string } | null;
   migrationsRequired?: number;
   migrationGates?: Array<{
     fromVersion: string;
@@ -413,6 +414,15 @@ async function fetchUrlAppManifest(sourceId: string): Promise<AppManifest | null
  * Remote reads use detached snapshots; only preview fields merge into current state.
  */
 export async function checkForUpdates(): Promise<InstalledApp[]> {
+  // Native apps take their market's manifest first when it pins the package they run: those installed from the channel
+  // before 0.6.20 move to their market (YE-142), the others take a new manifest of the same package (YE-194). Metadata
+  // only.
+  try {
+    const { adoptNativeMarketManifests } = await import('./updater');
+    await adoptNativeMarketManifests();
+  } catch (err) {
+    console.error('[installed-apps] Taking the market manifests of native apps failed:', err);
+  }
   let catalog = null;
   try {
     catalog = await fetchCatalog();
@@ -471,6 +481,11 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
         }
         // The market's version needs a newer YouEye: it is never offered as an update.
         if (isMarketAppUnavailable(error)) return blocked('requires-newer-youeye', error.message, error.version ?? null);
+        // A native app installed from the channel whose market does not list it keeps running, without updates.
+        if (installMeta?.integration === 'native' && error instanceof Error && /\(app is not present\)$/.test(error.message)) {
+          return blocked('not-in-market', `No update source: ${app.appId} is not in ${recordedSourceId && recordedSourceId !== 'official'
+            ? `the Market source "${recordedSourceId}"` : 'the YouEye Market'}`);
+        }
         throw error;
       }
       // The id may name another market address by now: offer nothing from it, and say why.
@@ -499,22 +514,16 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       app.catalogKey = `${resolvedCatalog.source.id}:app:${app.appId}`;
     }
 
-    // A native app's catalog manifest is its release on the box's channel.
-    const candidate = routing.kind === 'channel' && resolvedCatalog?.manifest.version
-      ? {
-        version: resolvedCatalog.manifest.version, tag: resolvedCatalog.reference.branch, key: resolvedCatalog.reference.key,
-        artifactSHA256: resolvedCatalog.reference.artifactSHA256,
-      }
-      : null;
-
+    // Every app updates from its market by version; for a native app's same package, the manifest decides (YE-194).
     const availability = projectUpdateAvailability({
       routing,
       installedVersion: app.installedVersion,
-      installedKey: routing.kind === 'channel' ? installedNativeKey(installMeta, app.appId) : null,
       installedArtifactSHA256: installMeta?.nativeArtifacts?.map((artifact) => artifact.sha256),
-      installedAt: installMeta?.installedAt ?? app.installedAt,
       catalogVersion,
-      candidate,
+      candidateArtifactSHA256: resolvedCatalog?.reference.artifactSHA256,
+      installedManifestDigest: installMeta?.manifestDigest,
+      candidateManifestDigest: resolvedCatalog?.reference.digest,
+      marketRecord: installMeta?.integration === 'native' && !isChannelInstalledNative(installMeta),
     });
     catalogVersion = availability.catalogVersion;
     // A version that needs a newer YouEye is never offered as an update.

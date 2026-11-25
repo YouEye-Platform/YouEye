@@ -109,6 +109,14 @@ export async function hasOpenCriticalIssue(appId?: string, except: readonly stri
   return findOpenCriticalIssue(issues, appId, except);
 }
 
+/**
+ * Critical issues an app install does not wait for (YE-219). YouEye AI (Pointer) being down, e.g. still starting
+ * after a fresh install's first boot, concerns only apps that use it, and an install with managed AI already asks
+ * Pointer before it creates anything (`preflightManagedAISelection`), so it is refused there. Every other open
+ * box-level critical issue still blocks an install; system and pool operations are unchanged.
+ */
+export const INSTALL_GATE_IGNORED_ISSUES: readonly string[] = ['service.pointer.down'];
+
 /** The refusal of `assertNoCriticalIssues`; routes answer it with 423 (its message names the issue). */
 export class CriticalIssueBlockedError extends Error {
   readonly code = 'critical-issue-open';

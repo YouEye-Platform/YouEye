@@ -301,6 +301,9 @@ async function controlInstalledAppLocked(
   }
   if ((action === 'start' || action === 'restart')
     && (meta.serviceCredentialState === 'pending' || meta.serviceCredentialState === 'revoked')) {
+    // A removal that stopped after the revocation can't be reconciled; running it again finishes it (YE-225).
+    const { removalUnfinished, unfinishedRemovalMessage } = await import('./unfinished-removal');
+    if (await removalUnfinished(meta)) throw new Error(unfinishedRemovalMessage(meta.appId));
     throw new Error('App service access requires credential reconciliation before start');
   }
 
@@ -369,9 +372,14 @@ async function controlInstalledAppLocked(
       await finishLifecycleOperation(meta, error);
     }
 
-    // Connections to this app follow its current address (unchanged unless it was recreated).
+    // Connections to this app follow its current address (unchanged unless it was recreated); connections an
+    // uninstall that did not complete had unwired are wired again by the next reconcile pass (YE-209, YE-223: the
+    // start brings them forward but does not wait for the peer's lock or the wiring).
     await import('@/lib/bridges/manager')
-      .then(({ refreshConnectionGrants }) => refreshConnectionGrants(meta.appId))
+      .then(async ({ refreshConnectionGrants, requestRewire }) => {
+        await refreshConnectionGrants(meta.appId);
+        requestRewire(meta.appId);
+      })
       .catch(() => undefined);
     if (meta.urlChangeSetupPending && meta.lifecycleOperation?.state === 'completed') {
       const { runPendingUrlChangeSetup } = await import('@/lib/reconfigure');
@@ -412,6 +420,9 @@ async function controlInstalledAppLocked(
       await finishLifecycleOperation(meta, error);
     }
 
+    await import('@/lib/bridges/manager')
+      .then(({ requestRewire }) => requestRewire(meta.appId))
+      .catch(() => undefined);
     const result = await buildResult(meta, action, containers);
     uiStatusSynced = await pushAppRuntimeStatusToUI(meta.appId, result.status === 'running' ? 'healthy' : 'unhealthy');
     return { ...result, uiStatusSynced };

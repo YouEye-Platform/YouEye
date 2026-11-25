@@ -42,7 +42,7 @@ import { getContainerName } from '@/lib/market/engine-helpers';
 import { restartContainerAndWait } from '@/lib/infrastructure/oci-deployer';
 import { containerRole } from '@/lib/apps/container-order';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
-import type { InstallMetadata, AppManifest, ConfigFileSpec, VariableContext } from '@/lib/market/types';
+import type { InstallMetadata, AppManifest, ConfigFileSpec, StorageVolumeMeta, VariableContext } from '@/lib/market/types';
 import { runSetup, setupFor } from '@/lib/market/setup-runner';
 import { logOperationFailure } from '@/lib/market/install-tracker';
 import { installedSetupVariables, setupContainers } from '@/lib/market/setup-context';
@@ -437,6 +437,14 @@ async function buildRenderContext(
  *   manifests that gained a configFile after this app was installed, e.g. the
  *   Nextcloud trusted-domains file).
  */
+/** A config file rewritten for a domain change, and the volumes it lives on (its host-side check, YE-216). */
+type RefreshedConfigFile = {
+  containerName: string;
+  spec: ConfigFileSpec;
+  context: Record<string, unknown>;
+  volumes?: StorageVolumeMeta[];
+};
+
 async function refreshConfigFiles(
   manifest: AppManifest,
   meta: InstallMetadata,
@@ -444,11 +452,11 @@ async function refreshConfigFiles(
   newDomain: string,
   warn: (message: string) => void,
   identityOrigins?: [string, string],
-): Promise<Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }>> {
+): Promise<RefreshedConfigFile[]> {
   const configFiles: ConfigFileSpec[] = manifest.configFiles || [];
   if (configFiles.length === 0) return [];
 
-  const refreshed: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
+  const refreshed: RefreshedConfigFile[] = [];
   const ctx = await buildRenderContext(manifest, meta, newDomain);
   for (const cf of configFiles) {
     const target = meta.containers.find((container) => container.name === cf.container);
@@ -466,7 +474,7 @@ async function refreshConfigFiles(
     const volumes = target.type === 'oci'
       ? meta.storageVolumes?.filter((volume) => volume.containerName === target.containerName)
       : undefined;
-    refreshed.push({ containerName: target.containerName, spec: cf, context: ctx });
+    refreshed.push({ containerName: target.containerName, spec: cf, context: ctx, volumes });
     let existing: string | null = null;
     try {
       existing = (await readConfigFile(target.containerName, cf, ctx, volumes)).toString('utf8');
@@ -570,7 +578,7 @@ async function updateInstalledAppLocked(
   // 2. Refresh manifest-declared config files (SearXNG settings.yml,
   //    Nextcloud trusted-domains file, ...).
   const manifest = installedManifest ?? await fetchAppManifest(appId);
-  let refreshedConfigFiles: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
+  let refreshedConfigFiles: RefreshedConfigFile[] = [];
   if (manifest) {
     refreshedConfigFiles = await refreshConfigFiles(manifest, meta, oldDomain, newDomain, warn, identityOrigins);
   } else {
@@ -587,7 +595,7 @@ async function updateInstalledAppLocked(
     }
 
     for (const configFile of refreshedConfigFiles) {
-      await enforceConfigFilePermissions(configFile.containerName, configFile.spec, configFile.context);
+      await enforceConfigFilePermissions(configFile.containerName, configFile.spec, configFile.context, configFile.volumes);
     }
 
     // Wait for the primary container to be ready before running SSO steps
@@ -693,6 +701,8 @@ async function waitForPrimary(appId: string, manifest: AppManifest): Promise<voi
       const res = await fetch(`http://${ip}:${primaryPort}/`, {
         signal: AbortSignal.timeout(3000),
       });
+      // Only the status counts; an unread body would keep its connection paused (YE-213).
+      await res.body?.cancel().catch(() => undefined);
       if (res.ok || res.status < 500) break;
     } catch { /* not ready yet */ }
   }

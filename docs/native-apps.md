@@ -1,7 +1,9 @@
 # Native apps
 
-Native apps are YouEye's own apps: Next.js servers that run in an Incus system container and use the platform
-directly (dashboard widgets, notifications, the UI gateway). Container apps from the Market are described in
+Native apps are Next.js servers that run in an Incus system container and use the platform directly (dashboard
+widgets, notifications, the UI gateway). Since 0.6.20 they are ordinary Market apps (YE-142): listed, versioned and
+updated through a market like container apps, and anyone can make one from YouEye-Canvas and offer it in any market.
+The six below are YouEye's reference apps. Container apps from the Market are described in
 [market.md](market.md); the manifest format both use is in [app-manifest.md](app-manifest.md).
 
 | App | Repository | What it does |
@@ -13,15 +15,15 @@ directly (dashboard widgets, notifications, the UI gateway). Container apps from
 | Weather | `YE-App-Weather` | Forecasts for saved places (Open-Meteo) |
 | Cinema | `YE-App-Cinema` | Movies and TV from TMDB, watchlists, reviews; can connect to Jellyfin |
 
-The template for new ones is **YouEye-Canvas**. The Market shows a native app when its id is listed in the
-official catalog's `native:` list (a custom market's list is ignored); the app itself comes from its own product
-release (see Releases below).
+The template for new ones is **YouEye-Canvas**. A market lists a native app as an app folder like any other
+(`apps/<id>/youeye-app.yaml`, index entry `kind: native`); its manifest pins the app's package, the `standalone.tar`
+of a release of the app's own repository, by URL, SHA-256 and size (`source.package`, see Releases below).
 
 | | Container app | Native app |
 |---|---|---|
-| Source | `YE-AppMarket/apps/<id>/` | its own repository |
+| Source | `YE-AppMarket/apps/<id>/` | its own repository; its market folder pins a release |
 | Runs as | upstream OCI images, pinned by digest | `standalone.tar` in a Debian 12 system container, Node 22 or 24 |
-| Released as | published with its market (static files, [market-format.md](market-format.md)) | its own product release (`standalone.tar` + `youeye-app.yaml`) |
+| Released as | published with its market (static files, [market-format.md](market-format.md)) | its own release (`standalone.tar` + `youeye-app.yaml`), pinned in a market by `source.package` |
 | Platform access | doorways (YouEye ID, PostgreSQL, Pointer) | also the UI gateway with an app token |
 | Dashboard | a tile | widgets, timeline and info cards, notifications, a settings panel |
 
@@ -62,7 +64,11 @@ surfaces:
 
 Other native-app fields, all in [app-manifest.md](app-manifest.md):
 - `surfaces:` kinds `widget`, `info-card`, `timeline-card`, `notification`, `settings-panel`, each an `embed` page
-  on the app; placements `dashboard`, `timeline`, `notification-center`, `app-settings`, `app-detail`.
+  on the app; placements `dashboard`, `timeline`, `notification-center`, `app-settings`, `app-detail`. The dashboard
+  embeds a widget or notification surface at its `embed` path on the app's own address, which the dashboard's server
+  builds (`app_url` in `GET /api/v1/apps/surfaces` and in each `surface` of `GET /api/v1/notifications`):
+  `https://<the app's subdomain>.<the host the dashboard is on>` (`ui/src/lib/surfaces/app-url.ts`, YE-151). Without
+  one (an app with no subdomain, the dashboard opened by IP address) a notification shows its standard row.
 - `capabilities:` `widgets`, `settings_panel`, `notifications` (`true` | `push`), `info_cards`, `events`.
 - `proxy:` outside HTTPS hosts the app may call through the UI gateway (Wiki: `*.wikipedia.org`; Weather:
   `geocoding-api.open-meteo.com`).
@@ -82,7 +88,11 @@ fails.
   manifest's env and restarts the unit.
 - **Network.** Like every app it has its own `yeapp<N>` network. At the network's gateway, Incus proxy devices
   ("doorways") lead to the UI (`:3001`, always), and to YouEye ID (`:3002`) and PostgreSQL (`:5432`) when the app
-  uses them.
+  uses them. The app has no host port: it is reached only through Caddy and the YouEye gate (`port:` is where Caddy
+  and the health checks reach it on its network). Releases before 0.6.20 added a `port<N>` device listening on
+  `tcp:0.0.0.0:<N>` of the box when the port was free; the CP removes that exact device from app instances at each
+  start, under the app's lifecycle lock (an app busy with an operation keeps it until the next start;
+  `removeAppHostPorts` in `lib/infrastructure/security-posture.ts`, YE-189).
 - **Credential probe.** After install the CP runs a small Node script inside the container that calls
   `$YOUEYE_GATEWAY/credential-probe` with the app's token. If that fails, the app is left stopped with its
   credential pending until the credentials are reconciled in the Market.
@@ -180,41 +190,89 @@ pnpm build        # next build with output: "standalone"
   script writes `release-manifest.json` (`version`: the line, `source_tree`) into the tree and the release copy of
   `youeye-app.yaml` with `version: <line>`. No released file names a build. The tree is packed as a reproducible `standalone.tar` (sorted, fixed owner and mtime).
 - A build is published as release `v<X.Y.Z>-dev.N` of the app's repository, with `product-release.json`,
-  `standalone.tar` and `youeye-app.yaml`, and the channel index's product key (the app id: `notes`, `wiki`, …)
-  points at it. Promotion names the same build `-alpha.N`, `-beta.N`, then `X.Y.Z`. See [releases.md](releases.md)
-  and [development.md](development.md).
+  `standalone.tar` and `youeye-app.yaml`; promotion names the same build `-alpha.N`, `-beta.N`, then `X.Y.Z` and copies
+  it to GitHub `YouEye-Platform/<Name>` for stable. See [releases.md](releases.md) and [development.md](development.md).
+- **A release reaches boxes through a market.** Its market folder (`YE-AppMarket` `apps/<id>/youeye-app.yaml`) is the
+  released `youeye-app.yaml` with the release's version, `requires: {youeye: ">=0.6.20"}` and `source.package`:
+
+  ```yaml
+  version: 0.6.4
+  requires: {youeye: '>=0.6.20'}
+  source:
+    node: '24'
+    package:
+      url: https://github.com/YouEye-Platform/Notes/releases/download/v0.6.4/standalone.tar
+      sha256: a32e8740335410066a17564685996d68b2989c82544591af6ec73d1cc6e96cfd
+      size: 199936000
+  ```
+
+  `Tools/market/native-pin <id> <tag> [--host github|forgejo] [--write <YE-AppMarket>]` writes these lines from the
+  release's `product-release.json`. The `/` lane names stable releases (GitHub); the `/dev/` lane may name a dev build
+  (Forgejo) being tried. Before 0.6.20 native apps came from the box's channel index instead; those index entries are
+  frozen for older boxes and go once 0.6.20 is on stable.
 
 What the CP checks when it installs or updates a native app (`src/lib/market/native-artifact.ts`):
-1. It resolves product `<id>` from the box's channel index; the release must be a `native` build.
-2. `youeye-app.yaml` must match the build's `contract_sha256`, pass the strict parser and name the same id. Its
-   `version` becomes the release version; listing icon files and screenshots are dropped (a native release has
-   no setup files and no images).
-3. `standalone.tar` may be at most 1 GiB (`MAX_ARTIFACT_BYTES`) and 2 GiB unpacked, with at most 100,000
-   entries, no hard links or special files, symbolic links only inside the package, and a `server.js`. It is
-   hashed again right before it is deployed.
+1. The market's manifest passes the strict parser read as a market's (`source.package` is required) and its index
+   entry says `kind: native`; `requires.youeye` is checked as for any app.
+2. The package is downloaded from `source.package.url` by the release-download rules (HTTPS only, redirects checked,
+   403/429 back-off), never more than `size` bytes, and must have exactly that size and SHA-256. Any market, official
+   or custom, may name any HTTPS host: the pin is what is trusted.
+3. `standalone.tar` may be at most 1 GiB (`MAX_ARTIFACT_BYTES`, also the manifest's limit) and 2 GiB unpacked, with at
+   most 100,000 entries, no hard links or special files, symbolic links only inside the package, and a `server.js`.
+   It is hashed again right before it is deployed. The install record keeps its SHA-256 and size
+   (`nativeArtifacts`, `verification: manifest`).
 
-Updates compare releases by line, then the build's `sequence`, never by name
-([releases.md](releases.md#ordering-line-then-sequence)): only a release with a higher key is an update. The same
-build under another release name (the box changed channel, or the build was promoted) is no update (since 0.6.17,
-YE-139): Settings, the Market, the dashboard and `youeye app check-updates`/`info` offer nothing, `youeye app update`
-answers "already up to date", and the app keeps the name it was installed with until a newer build arrives, which
-brings its own. An older release is never offered or applied (the box waits for its channel to catch up).
+The install screen of a native app from a market other than the official one lists what it gets beyond a container
+app: a key to the app API (the UI gateway token), its dashboard surfaces, notifications and its `proxy:` hosts.
 
-The installed key is the app's recorded release, or else its product floor (the last release the box accepted). An app
-with neither (installed or restored before 0.6.15) is never offered or given a build that could be older (since
-0.6.18, YE-141). The box orders the release by what it can see of the installed build
-(`compareToInstalledNative` in `update-routing.ts`):
-- the same installed `standalone.tar` is the same build: no update;
-- another line is older or newer by its line, as the key would order it;
-- in the same line, a release whose `sequence` (its publish time) is after the install record was created
-  (`installedAt`) is newer, because the installed build was published before it was installed or restored;
-- anything else can't be ordered: it is not offered, and `youeye app update` refuses it with "can't tell that it is
-  newer; waiting for a newer build". The app takes the next build published after it was installed, or the next
-  line, and records its release from then on.
+Updates work as for every Market app ([market.md](market.md)): the market's version is an update when it is newer
+(`isNewer`); an older version is never offered. An update stops the app, replaces `/opt/app` with the new package,
+writes the env again, starts it and waits for its health check; a failure restores the checkpoint.
 
-Pointer follows the same rules, with its provenance record's time in place of `installedAt`. An update stops the
-app, replaces `/opt/app` with the new package, writes the env again, starts it and waits for its health check; a
-failure restores the checkpoint (see [market.md](market.md)).
+**The same package is decided by its manifest, not its version name** (YE-139's rule, by package; YE-194). When
+`source.package.sha256` equals the installed `standalone.tar`:
+- the same manifest (the record's `manifestDigest` equals the market's; the digest leaves `listing:` out, so store text
+  alone never counts) is no update: Settings, the Market, the dashboard and `youeye app check-updates`/`info` offer
+  nothing and `youeye app update` answers "already up to date";
+- another manifest that configures the app the same way (`runtimeContract`: the same containers, env, ports, surfaces,
+  sign-in and the rest; a new version name or `requires` does not count) is taken by the update check itself, metadata
+  only (`adoptNativeMarketManifest`, below): the record and the dashboard's frozen copy name the new manifest and
+  version, nothing is downloaded or restarted. `youeye app update` does the same and says so;
+- another manifest that configures the app differently is offered as an update, and `youeye app update` applies it as
+  an ordinary update of the same package (the app restarts with the new configuration).
+
+Two such manifests wait (YE-212), so the record never names what the box cannot honour; the app keeps running on its
+record meanwhile:
+- one whose `requires.youeye` this box does not meet is neither taken nor offered (the ordinary update refuses it the
+  same way). Usually the market's index already says so and the app is held back like any app (`youeye app update`:
+  it needs a newer YouEye); the adoption checks the manifest itself too, in case it asks more than the index, and
+  while Spine does not say the box's version. It is taken by the first update check after the box's version meets
+  it: the pass remembers each refusal with the version it saw;
+- one whose version name is lower than a Market record's is never taken or offered, as for any app; `youeye app
+  update` answers "already up to date". A channel record (below) names a channel release, another scheme, so its move
+  to the market is not ordered by version names.
+
+When the adoption itself refuses, the log says why: `[Market] <id> keeps its recorded manifest for now: …`.
+
+The update check compares first and locks only on a change (YE-210, `native-adoption.ts`). It reads each native app's
+record and its market's manifest and compares their digests without any lock. Only an app whose manifest changed (and
+was not already tried for that record, manifest and YouEye version) takes the update exclusion and the app's
+lifecycle and network locks; the comparison is made again inside them before anything is written. An app that is up
+to date never waits behind a user's operation and never counts as an operation: the reconcile queue is not re-run,
+and the default-route guard (YE-198) does not see it as busy.
+
+**Apps installed before 0.6.20** have a channel record (`manifestPath: youeye-app.yaml`, the release repository and
+tag, a product release receipt). The update check (also 45 s after every Control Panel start) and `youeye app update`
+move such an app to its market when the market pins the very package it runs and configures the same runtime: one
+metadata-only transaction (`adoptNativeMarketManifest`, `update-release-metadata.ts`, the same one as above) writes the market's manifest fields
+and frozen copy, the market version, `verification: manifest`, and clears `installedTag`/`channelSource`. Nothing is
+downloaded or restarted; secrets, the app token, the sign-in client, volumes and the database are keyed by the app id
+and stay. With another package it is an ordinary update by version, with the same package and another runtime
+configuration an ordinary update of that package; an app its market does not list keeps running and
+says "No update source: <id> is not in the YouEye Market".
+
+Pointer is part of the System, not a Market app: it stays on the box's release channel, ordered by line and
+`sequence` (`compareToInstalledNative`, [releases.md](releases.md#ordering-line-then-sequence)).
 
 ## A new app from Canvas
 
@@ -226,8 +284,15 @@ From `YouEye-Canvas/README.md`:
 5. `pnpm test && pnpm validate:source && pnpm build`.
 
 Canvas itself is released as source (`source.tar.gz` + `youeye-app.yaml`), not as an installable app. It carries the
-same release build as the shipped native apps (`output: "standalone"` in `next.config.ts`, `.youeye/build/`, the
-`scripts/` of its `build` script including `write-release-manifest.mjs`, and `THIRD_PARTY_NOTICES.txt`; Canvas `dev`
-`329afc2`), so a fork builds an installable `standalone.tar` without copying anything from another app. To ship a
-fork, add its repository and product key (the manifest `id`) to the release tooling and the id to the official
-catalog's `native:` list.
+same release build as the reference apps (`output: "standalone"` in `next.config.ts`, `.youeye/build/`, the
+`scripts/` of its `build` script including `write-release-manifest.mjs`, and `THIRD_PARTY_NOTICES.txt`), so a fork
+builds an installable `standalone.tar` without copying anything from another app.
+
+To ship a fork, publish it yourself; nothing in YouEye's release tooling is needed:
+1. Build it (`pnpm build`, or `.youeye/build/app`) and publish `standalone.tar` at a stable HTTPS address, for example
+   as an asset of a release of your repository.
+2. Make a market ([market-format.md](market-format.md), "Make your own market" on market.youeye.me): an
+   `apps/<id>/youeye-app.yaml` that is your manifest with `requires: {youeye: ">=0.6.20"}` and `source.package` (the
+   URL, `sha256sum` and size in bytes of that `standalone.tar`), built with `control-panel/scripts/market-build.ts`.
+3. Owners add your market (`youeye market add <address> --i-trust-this-market`) and install the app from it; the
+   install screen shows what a native app gets. A new version is a new release plus a new market commit that pins it.

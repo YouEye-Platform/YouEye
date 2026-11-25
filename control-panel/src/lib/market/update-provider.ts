@@ -12,6 +12,7 @@ import { getConfig, setConfig } from '@/lib/caddy/client';
 import { routeServers } from '@/lib/caddy/servers';
 import { withCaddyMutation } from '@/lib/caddy/serial';
 import { readInstallMetadata, saveInstallMetadata, listInstalledApps } from './metadata';
+import { removeGeneratedSecrets } from './manifest-secrets';
 import { appServiceCredentials } from '../apps/service-credential-store';
 import { getAdmissionSnapshot } from '../admission/store';
 import { identityRows, identitySql } from '../identity/store';
@@ -58,6 +59,20 @@ type RecoveryPlan = {
   volumeDescriptions: Array<{ pool: string; name: string; description: string }>;
 };
 function code(code: string, message: string): never { throw new AppUpdatePreflightError(code, message); }
+/**
+ * After an app operation starts one of its containers, before any health wait: the default route back on eth0 when a
+ * connection NIC took it at the start (YE-220). The operation holds the app, so the route guard's own repair after the
+ * start event waits for the hold to end; a connected app whose start needs the internet failed its health meanwhile.
+ * Best effort: a failure is logged and the health check decides.
+ */
+async function repairDefaultRoute(name: string, reason: string): Promise<void> {
+  try {
+    const { defaultRouteGuard } = await import('@/lib/incus/default-route-watch');
+    await (await defaultRouteGuard()).repairAfterOperationStart(name, reason);
+  } catch (error) {
+    console.warn(`[app-update] default route check of ${name} failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 async function read<T>(url: string): Promise<T> {
   const response = await incusRequest<T>('GET', url);
   if (response.type === 'error' || !response.metadata) throw new Error('App update provider inspection failed');
@@ -95,13 +110,14 @@ function stateOf(app: NonNullable<Awaited<ReturnType<typeof getInstalledApp>>>):
 }
 /**
  * The app's own security state that an update must never roll back across: who owns it and its data, how users
- * reach it, its credentials and its secrets. Only this app's state: no timestamps, no box-wide user list. Fields the
- * update itself writes (versions, manifest references, containers, release floors, updatedAt) are not here.
+ * reach it, its service credential and its secrets. Only this app's state: no timestamps, no box-wide user list.
+ * Fields the update itself writes (versions, manifest references, containers, release floors, updatedAt, and the
+ * shown `credentials` since YE-208) are not here.
  */
 const SECURITY_FIELDS = ['appId', 'installationId', 'admissionOwnerId', 'integration', 'enableSSO', 'hasSSO',
   'ssoClientId', 'ssoSlug', 'forwardAuthEnabled', 'forwardAuthSlug', 'protectWithAccountLogin', 'perUserData',
   'subdomain', 'domain', 'selectedIntegrations', 'usePerAppBridge', 'databaseMode', 'databaseName', 'databaseUser',
-  'databasePasswordFile', 'sharedFolders', 'storageVolumes', 'credentials', 'aiConnection',
+  'databasePasswordFile', 'sharedFolders', 'storageVolumes', 'aiConnection',
   'serviceCredentialState'] as const satisfies ReadonlyArray<keyof InstallMetadata>;
 const SECRET_FILE_LIMIT = { files: 256, fileBytes: 1024 * 1024, totalBytes: 16 * 1024 * 1024, depth: 4 };
 type SecurityParts = { metadata: string; files: string; credential: string; admission: string; resources: string };
@@ -660,6 +676,7 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
     if (await containerState(name) !== 'Running') await startContainer(name);
     await waitForRunning(name);
     await waitForContainerExec(name);
+    await repairDefaultRoute(name, 'app update start');
     const role = containerTargets(plan.metadata.containers).find(c => c.name === name)?.role;
     if (role === 'database' || role === 'cache') await this.waitReady(plan, name, manifest ?? plan.manifest);
   }
@@ -816,6 +833,12 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
       if (!this.plan) return;
     }
     const plan = this.load(record);
+    // The secrets this update generated (YE-208) go first: the restored release never declared them. Only the ones
+    // its journal names; every secret the app had before stays.
+    const removedSecrets = await removeGeneratedSecrets(record);
+    if (removedSecrets.length) {
+      console.log(`[app-update] ${record.appId} ${record.id}: removed the secrets this update added: ${removedSecrets.join(', ')}`);
+    }
     const securityChanged = await this.securityChanges(record);
     if (securityChanged.length) {
       console.warn(`[app-update] ${record.appId} ${record.id}: ${securityChanged.join(', ')} changed during the update; `
@@ -913,13 +936,14 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
           },
         });
       }
-      // Current policy and credential metadata wins. Restore only update-owned fields.
+      // Current policy and credential metadata wins. Restore only update-owned fields: `credentials` (the sign-in
+      // details shown for the app) is one since an update writes it from its manifest (YE-208).
       const current = await readInstallMetadata(record.appId);
       if (!current) throw new Error('App metadata disappeared during recovery');
       const restored = { ...current };
       const keys = ['installedVersion', 'catalogKey', 'itemKind', 'sourceId', 'sourceName', 'sourceRepoUrl',
         'manifestSource', 'manifestPath', 'manifestRepo', 'manifestBranch', 'manifestDigest',
-        'nativeArtifacts', 'containers'] as const;
+        'nativeArtifacts', 'containers', 'credentials'] as const;
       for (const key of keys) {
         if (Object.hasOwn(plan.metadata, key)) Object.assign(restored, { [key]: plan.metadata[key] });
         else delete restored[key];
@@ -947,6 +971,7 @@ export class IncusAppUpdateProvider implements AppUpdateProvider {
         if (await containerState(name) !== 'Running') await startContainer(name);
         await waitForRunning(name);
         await waitForContainerExec(name);
+        await repairDefaultRoute(name, 'app rollback start');
         await this.waitReady(plan, name, plan.manifest);
       } else if (await containerState(name) !== 'Stopped') throw new Error('Original stopped state was not restored');
     }

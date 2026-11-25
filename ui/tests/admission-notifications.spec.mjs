@@ -19,7 +19,7 @@ function loadTypeScript(url) {
   return exports;
 }
 
-function notifications({ session = null, serviceUser = null, permission = false, bridge = false } = {}) {
+function notifications({ session = null, serviceUser = null, permission = false, bridge = false, inbox = [], surfaces = {} } = {}) {
   const calls = [];
   const mocks = {
     'next/server': { NextResponse: { json: (body, init) => Response.json(body, init) } },
@@ -31,7 +31,7 @@ function notifications({ session = null, serviceUser = null, permission = false,
       checkPermission: async (...args) => { calls.push(['permission', ...args]); return permission; },
     },
     '@/lib/db/queries/notifications': {
-      getUserNotifications: async id => { calls.push(['read', id]); return []; },
+      getUserNotifications: async id => { calls.push(['read', id]); return inbox; },
       getUnreadCount: async () => 0,
       getNotificationCount: async () => 0,
       createNotification: async data => { calls.push(['create', data]); return data; },
@@ -39,9 +39,10 @@ function notifications({ session = null, serviceUser = null, permission = false,
       deleteReadNotifications: async id => { calls.push(['delete', id]); },
     },
     '@/lib/db/queries/app-management': {
-      getNotificationSurfaceMap: async () => ({}),
+      getNotificationSurfaceMap: async () => surfaces,
       getAppMetaMap: async () => ({}),
     },
+    '@/lib/surfaces/app-url': loadTypeScript(new URL('../src/lib/surfaces/app-url.ts', import.meta.url)),
     '@/lib/rate-limit': {
       checkRateLimit: () => ({ allowed: true }),
       RATE_LIMITS: { notifications: {} },
@@ -107,4 +108,21 @@ test('mixed bridge and app credentials cannot use an administrator browser sessi
   assert.equal((await handlers.POST(request('POST', { title: 'System', user_id: 'victim' },
     { 'X-UI-Bridge-Token': 'test-bridge' }))).status, 401);
   assert.deepEqual(calls, []);
+});
+
+test('each notification surface carries its app\'s address on the box\'s domain, by its own subdomain (YE-151)', async () => {
+  const surface = { surface_id: 'n', embed_path: '/embed/notification', name: null, description: null };
+  const { handlers } = notifications({
+    session: { userId: 'browser-user' },
+    inbox: [{ id: '1', appId: 'ye-notes' }, { id: '2', appId: 'wiki' }, { id: '3', appId: null }],
+    surfaces: { notes: { ...surface, subdomain: 'my-notes' }, wiki: { ...surface, subdomain: null } },
+  });
+  for (const [host, notes] of [['azure-delta.ui.bingo', 'https://my-notes.azure-delta.ui.bingo'], ['byka.wtf:443', 'https://my-notes.byka.wtf'], ['192.168.31.40', null]]) {
+    const body = await (await handlers.GET(request('GET', undefined, { host }, false))).json();
+    assert.equal(body.notifications[0].surface.app_url, notes, host);
+    assert.equal(body.notifications[1].surface.app_url, null, 'an app with no subdomain has no address: its standard row shows');
+    assert.equal(body.notifications[2].surface, undefined);
+    assert.equal(body.notification_surfaces.notes.app_url, notes);
+    assert.equal('subdomain' in body.notification_surfaces.notes, false);
+  }
 });

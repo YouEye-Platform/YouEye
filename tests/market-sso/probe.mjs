@@ -2,15 +2,15 @@
 // Usage: node probe.mjs <appId> [admin|user]
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { USERS, signIn } from './lib.mjs';
+import { USERS, signIn, launchOptions, contextOptions } from './lib.mjs';
 import { apps } from './apps.config.mjs';
 const [id, only] = process.argv.slice(2);
 const cfg = apps[id];
 if (!cfg) { console.error('unknown app', id); process.exit(2); }
 mkdirSync('test-results', { recursive: true });
-const browser = await chromium.launch();
+const browser = await chromium.launch(launchOptions);
 for (const who of only ? [only] : ['admin', 'user']) {
-  const context = await browser.newContext({ storageState: USERS[who].storageState });
+  const context = await browser.newContext({ ...contextOptions, storageState: USERS[who].storageState });
   const page = await context.newPage();
   let signin = { hops: [], urls: [] }, res;
   try {

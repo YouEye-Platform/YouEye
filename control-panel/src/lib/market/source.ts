@@ -16,8 +16,9 @@ const sourcesPath = () => path.join(marketStateDir(), 'market-sources.json');
  *
  * A market is a folder of static files at an HTTPS address (`youeye.market.v1`, market-format.ts).
  *
- * - The official Market (`kind: 'official'`) always exists and can only be turned off. Its address is not stored: it
- *   follows the box's channel (`officialMarketAddress`).
+ * - The official Market (`kind: 'official'`) always exists and can only be turned off. Its address is not stored: it is
+ *   its lane's (`officialMarketAddress`): `main` unless the owner chose `dev` (`lane` on its entry; YE-142, 0.6.20).
+ *   Before 0.6.20 the lane followed the box's release channel.
  * - Custom markets (`kind: 'url'`) are addresses the owner added. Their ids are the box's (`custom-N`); a market never
  *   names its own id.
  *
@@ -32,6 +33,8 @@ export interface MarketSource {
   url: string;
   enabled: boolean;
   priority: number;
+  /** The official Market only: the lane the box reads (`main` when not set, the default for every box). */
+  lane?: OfficialMarketLane;
   /**
    * When the owner accepted this custom market (ISO time). Set only by the Control Panel: when the market is added
    * with `acceptRisk: true`, or by `POST /api/market/source/accept`. Without it, the market's apps are listed but
@@ -42,6 +45,8 @@ export interface MarketSource {
 
 interface StoredMarketSource {
   id?: string;
+  /** The official entry only: `main` or `dev`. Another value (a later reader's lane) reads as `main`. */
+  lane?: string;
   name?: string;
   url?: string;
   /** Written before 0.6.11 by sources that were git repositories; such an entry is removed when it is read. */
@@ -70,11 +75,18 @@ interface StoredSourceList {
 export const OFFICIAL_MARKET_SOURCE_ID = 'official';
 export const OFFICIAL_MARKET_NAME = 'Official YouEye Market';
 
-/** The official Market's two lanes: `main` for boxes on the beta and stable channels, `dev` for dev and alpha. */
+/**
+ * The official Market's two lanes. Every box reads `main` unless its owner chose `dev` (`youeye market official-lane
+ * dev`, Settings → Market); the lane no longer follows the release channel (owner, 2026-11-23, YE-142).
+ */
 export const OFFICIAL_MARKET_ADDRESSES = {
   main: 'https://market.youeye.me/',
   dev: 'https://market.youeye.me/dev/',
 } as const;
+export type OfficialMarketLane = keyof typeof OFFICIAL_MARKET_ADDRESSES;
+export const OFFICIAL_MARKET_LANES = Object.keys(OFFICIAL_MARKET_ADDRESSES) as OfficialMarketLane[];
+export const isOfficialMarketLaneName = (value: unknown): value is OfficialMarketLane =>
+  typeof value === 'string' && (OFFICIAL_MARKET_LANES as string[]).includes(value);
 
 export function isOfficialMarketAddress(address: string | null | undefined): boolean {
   return address === OFFICIAL_MARKET_ADDRESSES.main || address === OFFICIAL_MARKET_ADDRESSES.dev;
@@ -85,7 +97,7 @@ export const OFFICIAL_MARKET_AS_CUSTOM = 'This is the official YouEye Market; yo
 
 /**
  * True for the address of an official lane, however its host is spelled (a trailing dot names the same server).
- * A custom market is never one of these: the box already follows the lane of its channel, and the other lane would
+ * A custom market is never one of these: the box already follows its official lane, and the other lane would
  * list every app twice. Other folders of the same host (`https://market.youeye.me/test/…`) are ordinary markets.
  */
 export function isOfficialMarketLane(address: string | null | undefined): boolean {
@@ -98,43 +110,20 @@ export function isOfficialMarketLane(address: string | null | undefined): boolea
   }
 }
 
-/** The official Market address for a release channel, or null for a channel this reader does not know. */
-export function officialMarketAddressForChannel(channel: unknown): string | null {
-  if (channel === 'dev' || channel === 'alpha') return OFFICIAL_MARKET_ADDRESSES.dev;
-  if (channel === 'beta' || channel === 'stable') return OFFICIAL_MARKET_ADDRESSES.main;
-  return null;
-}
-
-export interface ReleaseChannelClient {
-  getReleaseChannel(): Promise<{ channel: string }>;
-}
-
-const CHANNEL_TIMEOUT_MS = 5_000;
-
 /**
- * The official Market's address now. Spine knows the box's channel. When Spine cannot be asked (or names a channel
- * this reader does not know), the lane last used (`lastKnown`, kept with the official market's store) stays; with
- * none, the `main` lane is used. The dev lane is never a guess: it is only ever chosen because Spine said dev or alpha.
+ * The official Market's address now: its lane's (`lane` on the official entry of market-sources.json), `main` when
+ * none is set. Nothing is asked of Spine: the lane is the box's own setting, not its release channel (YE-142).
  */
-export async function officialMarketAddress(
-  lastKnown?: string | null, client?: ReleaseChannelClient,
-): Promise<{ address: string; from: 'channel' | 'last-known' | 'default'; channel?: string }> {
-  try {
-    const spine = client ?? (await import('../spine/client')).spineClient;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const answer = await Promise.race([
-      spine.getReleaseChannel(),
-      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Spine did not answer')), CHANNEL_TIMEOUT_MS); }),
-    ]).finally(() => { if (timer) clearTimeout(timer); });
-    const address = officialMarketAddressForChannel(answer?.channel);
-    if (address) return { address, from: 'channel', channel: answer.channel };
-  } catch { /* Spine cannot be asked right now */ }
-  if (isOfficialMarketAddress(lastKnown)) return { address: lastKnown!, from: 'last-known' };
-  return { address: OFFICIAL_MARKET_ADDRESSES.main, from: 'default' };
+export function officialMarketAddress(source?: Pick<MarketSource, 'lane'> | null): { address: string; lane: OfficialMarketLane; from: 'setting' | 'default' } {
+  const lane = source?.lane;
+  return isOfficialMarketLaneName(lane)
+    ? { address: OFFICIAL_MARKET_ADDRESSES[lane], lane, from: 'setting' }
+    : { address: OFFICIAL_MARKET_ADDRESSES.main, lane: 'main', from: 'default' };
 }
 
-export function officialMarketSource(options: { enabled?: boolean } = {}): MarketSource {
-  return { id: OFFICIAL_MARKET_SOURCE_ID, name: OFFICIAL_MARKET_NAME, kind: 'official', url: '', enabled: options.enabled ?? true, priority: 0 };
+export function officialMarketSource(options: { enabled?: boolean; lane?: OfficialMarketLane } = {}): MarketSource {
+  return { id: OFFICIAL_MARKET_SOURCE_ID, name: OFFICIAL_MARKET_NAME, kind: 'official', url: '', enabled: options.enabled ?? true, priority: 0,
+    ...(options.lane ? { lane: options.lane } : {}) };
 }
 
 export const isOfficialMarketSource = (source: Pick<MarketSource, 'kind'>) => source.kind === 'official';
@@ -169,7 +158,7 @@ async function atomicWriteJSON(filePath: string, value: unknown): Promise<void> 
 
 function stored(source: MarketSource): StoredMarketSource {
   return isOfficialMarketSource(source)
-    ? { id: source.id, enabled: source.enabled }
+    ? { id: source.id, enabled: source.enabled, ...(source.lane ? { lane: source.lane } : {}) }
     : { id: source.id, name: source.name, url: source.url, enabled: source.enabled, priority: source.priority, accepted_at: source.accepted_at };
 }
 
@@ -216,7 +205,9 @@ function marketSourcesFromStored(raw: StoredSourceList | null | undefined, now =
     }
   }
   return {
-    sources: [officialMarketSource({ enabled: officialEntry?.enabled !== false }), ...custom].sort((a, b) => a.priority - b.priority),
+    sources: [officialMarketSource({ enabled: officialEntry?.enabled !== false,
+      ...(isOfficialMarketLaneName(officialEntry?.lane) ? { lane: officialEntry!.lane as OfficialMarketLane } : {}) }), ...custom]
+      .sort((a, b) => a.priority - b.priority),
     removed,
     stale,
   };
@@ -338,6 +329,24 @@ export function applyMarketSourceListEdit(current: MarketSource[], requested: Ma
 /** Apply a client's edit of the source list (see `applyMarketSourceListEdit`). */
 export async function updateMarketSourceList(requested: MarketSourceListEntry[]): Promise<MarketSource[]> {
   return (await mutateMarketSources((current) => ({ sources: applyMarketSourceListEdit(current, requested) }))).sources;
+}
+
+/** The official Market's lane as configured (`main` when none is set). */
+export async function getOfficialMarketLane(): Promise<OfficialMarketLane> {
+  return officialMarketAddress((await getConfiguredMarketSources()).find(isOfficialMarketSource)).lane;
+}
+
+/**
+ * Set the official Market's lane (`main` or `dev`). The next read of the official Market reads the new lane's address;
+ * its store starts a new sequence floor there, and installed apps compare their versions with the new lane's (an app
+ * installed from `dev` keeps its version until `main` has a newer one).
+ */
+export async function setOfficialMarketLane(lane: unknown): Promise<MarketSource> {
+  if (!isOfficialMarketLaneName(lane)) throw new Error(`The official Market lane is ${OFFICIAL_MARKET_LANES.join(' or ')}`);
+  const { sources } = await mutateMarketSources((current) => ({
+    sources: current.map((source) => (isOfficialMarketSource(source) ? { ...source, lane } : source)),
+  }));
+  return sources.find(isOfficialMarketSource)!;
 }
 
 /** A normalised market address that is not an internal host by name (the fetcher checks what it resolves to). */

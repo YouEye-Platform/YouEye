@@ -76,7 +76,7 @@ the start of its sha256. `youeye channel get` prints only the repository and cha
 Other commands people use on a box: `youeye status`, `youeye doctor`, `youeye logs [control|ui|<app>]`,
 `youeye channel get|set`, `youeye update core …` (see [core-release-contract.md](core-release-contract.md)),
 `youeye appliance health|ssh-key`, `youeye app …` (for example `app install <id> [--source <id>]`,
-`app update <id> [--allow-setup]`; see [market.md](market.md)), `youeye market list|add|remove|accept|refresh|search|info`
+`app update <id> [--allow-setup]`; see [market.md](market.md)), `youeye market list|add|remove|accept|refresh|search|info|official-lane`
 (markets by address, [market.md](market.md#markets-and-consent); `youeye market source …` and `repo …` no longer
 exist) and `youeye backup …`. `youeye --help` lists all of them;
 [troubleshooting.md](troubleshooting.md) shows them in use.
@@ -104,6 +104,30 @@ groups are:
 | `/api/appliance/core-update/{status,check,stage,activate,resume,recover,cancel}` | System updates |
 | `/api/appliance/remote-access/keys`, `/api/console…` (console access), `/api/appliance/network` | host access and network |
 | `/api/backup/*` | backups and restore |
+
+### PAM sign-in checks
+
+`POST /api/auth/verify` (`{username, password}` → `{authenticated, username, groups}`) checks a password against
+the host's PAM with `pamtester login`. Its only caller is the Control Panel's password sign-in (`/api/auth/login`,
+`lib/auth/pam.ts`), which answers only on the local setup host before setup and on loopback `:3000`. No app
+container gets the socket. The Control Panel's sign-in limits (YE-149) are the front door. Spine's gate
+(`spine/internal/api/pam_gate.go`, since 0.6.19, YE-164) is a backstop that slows and caps, and never locks a
+username:
+- **Bounds first (0.6.20, YE-169).** The body is read up to 4 KiB, and the username must match
+  `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (at most 32 characters, never a leading `-`, the Control Panel's
+  `PAM_USERNAME`). Past either the answer is `400` before the gate, so such a name keys nothing and reaches no
+  command line; `id` gets `--` before the name.
+- **Failures only.** Only wrong passwords count, per username, within `api.auth.window_minutes` (5). A success
+  clears them, and the right password is always answered at once with `authenticated: true`.
+- **Slow-down.** Past `api.auth.max_attempts` (5) failures, the answer to a wrong password is held 1 s per further
+  failure, at most 5 s. The hold happens after the check has given back its slot.
+- **Cap.** At most 4 checks start at once. A check gives its slot back after 750 ms even while pamtester still runs
+  (a wrong password sits in PAM's own fail delay), so the owner waits at most about that long behind failures. At
+  most 32 pamtester processes run in all.
+- **Queue.** At most 64 requests wait, each at most 10 s. Past either, the answer is `503` with `Retry-After: 10`.
+  The endpoint never answers `429`. The Control Panel shows both as "try again in N s".
+
+Nothing is stored: the counts live in memory, and the config keys keep their names and defaults.
 
 **Control Panel restarts** (`spine/internal/api/control_restart.go`). The Control Panel asks for one after setup, a
 server restore, a URL change and new YouEye ID clients (`POST /api/control/restart?delay=<s>`; `POST

@@ -14,7 +14,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
-// The Control Panel reads apps from markets: the official YouEye Market (its address follows the box's channel) and
+// The Control Panel reads apps from markets: the official YouEye Market (its lane, main unless the owner chose dev) and
 // custom markets the owner added by address. These commands use its API with the CLI token:
 //   GET/POST/PATCH /api/market/source, POST /api/market/source/accept, POST /api/market/source/refresh,
 //   GET /api/market/catalog, GET /api/market/app/<id>?source=<market id>.
@@ -506,7 +506,7 @@ func printMarketList(data map[string]interface{}) {
 }
 
 // marketListRows renders the sources of GET /api/market/source. ADDRESS is where the box reads the market (for the
-// official Market, the lane the box's channel follows); MARKET SAYS is the market's own name and publisher.
+// official Market, its lane: main unless the owner chose dev); MARKET SAYS is the market's own name and publisher.
 func marketListRows(data map[string]interface{}) [][]string {
 	rows := [][]string{}
 	for _, source := range marketSources(data) {
@@ -754,6 +754,73 @@ func newerYouEyeRefusal(err error) error {
 	return errors.New(message)
 }
 
+// marketOfficialLaneCmd sets the official Market's lane (YE-142, 0.6.20): every box reads main unless its owner
+// chooses dev, whatever its release channel. Without an argument it says which lane the box reads.
+var marketOfficialLaneCmd = &cobra.Command{
+	Use:   "official-lane [main|dev]",
+	Short: "Show or set the official Market's lane (main or dev)",
+	Long: `The official YouEye Market has two lanes: main (https://market.youeye.me/, the released apps) and dev
+(https://market.youeye.me/dev/, apps being tried). Every box reads main unless you choose dev; the release channel of
+YouEye does not change it. Apps installed from dev keep their versions after a switch back to main and update when
+main has a newer one.`,
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"main", "dev"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			if err := validateOfficialLane(args[0]); err != nil {
+				return err
+			}
+		}
+		if err := requireCP(); err != nil {
+			return err
+		}
+		var data map[string]interface{}
+		var err error
+		if len(args) == 0 {
+			data, err = controlClient.Get("/api/market/source")
+		} else {
+			data, err = controlClient.Patch("/api/market/source", map[string]interface{}{"official_lane": args[0]})
+		}
+		if err != nil {
+			return cpPlainError(err)
+		}
+		lane := officialLaneOf(data)
+		if len(args) == 0 {
+			fmt.Printf("Official Market: %s lane (%s)\n", lane, officialLaneAddress(lane))
+			return nil
+		}
+		output.Success(fmt.Sprintf("Official Market: %s lane (%s). Its apps are read from there from now on.", lane, officialLaneAddress(lane)))
+		return nil
+	},
+}
+
+func validateOfficialLane(lane string) error {
+	if lane != "main" && lane != "dev" {
+		return fmt.Errorf("the official Market lane is main or dev, not %q", lane)
+	}
+	return nil
+}
+
+// officialLaneOf reads the official source's lane from GET/PATCH /api/market/source; no lane is main.
+func officialLaneOf(data map[string]interface{}) string {
+	for _, source := range marketSources(data) {
+		if textOf(source, "kind") == "official" || textOf(source, "id") == officialMarketID {
+			if textOf(source, "lane") == "dev" {
+				return "dev"
+			}
+			return "main"
+		}
+	}
+	return "main"
+}
+
+func officialLaneAddress(lane string) string {
+	if lane == "dev" {
+		return "https://market.youeye.me/dev/"
+	}
+	return "https://market.youeye.me/"
+}
+
 func init() {
 	marketAddCmd.Flags().BoolVar(&marketAddTrusted, "i-trust-this-market", false, "Confirm you trust this market (required)")
 	marketAddCmd.Flags().StringVar(&marketAddName, "name", "", "Your name for the market (default: its host)")
@@ -766,4 +833,5 @@ func init() {
 	marketCmd.AddCommand(marketRefreshCmd)
 	marketCmd.AddCommand(marketSearchCmd)
 	marketCmd.AddCommand(marketInfoCmd)
+	marketCmd.AddCommand(marketOfficialLaneCmd)
 }

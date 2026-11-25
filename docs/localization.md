@@ -23,7 +23,14 @@ should use consistent wording across the interface.
 Every supported catalogue needs the same keys and arguments. Run
 `pnpm i18n:check` in both `ui` and `control-panel`; their build commands run it.
 Checks validate message coverage, ICU syntax and argument agreement. They also
-reject new visible string literals detected by the source audit.
+reject new visible string literals detected by the source audit. In
+`control-panel`, `scripts/check-i18n-keys.mjs` also fails when the source uses a
+message key that a catalogue lacks (next-intl would show the raw key): keys in
+translator calls, the literal head of a computed key, and every literal shaped
+like an interface key (`m` and 12 hex digits). A translator passed to a
+component as a prop is followed to the translator its callers in the same file
+pass. A key guarded by `t.has` must exist too. Remove a message only once
+nothing uses it.
 
 The source audit is a guard, not a proof of full coverage. The checked-in
 `src/i18n/untranslated-baseline.json` files inventory existing translation debt

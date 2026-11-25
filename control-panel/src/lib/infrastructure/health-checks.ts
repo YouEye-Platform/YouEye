@@ -162,6 +162,8 @@ export async function waitForCaddy(
         const resp = await fetch(`http://${ip}:2019/config/`, {
           signal: AbortSignal.timeout(5000),
         });
+        // Only the status counts; an unread body (the whole Caddy config) would keep its connection paused (YE-213).
+        await resp.body?.cancel().catch(() => undefined);
         // Any HTTP response (including 403) means Caddy is running.
         // Admin API returns 403 for non-localhost origins which is expected.
         if (resp.ok || resp.status === 403) return true;

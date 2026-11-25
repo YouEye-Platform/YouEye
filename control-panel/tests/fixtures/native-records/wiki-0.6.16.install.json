@@ -1,0 +1,85 @@
+{
+  "schema": "youeye.install.v1",
+  "appId": "wiki",
+  "installationId": "654c8954-6a5c-494c-9d56-38a8802085fa",
+  "lifecycleState": "active",
+  "recoveryPreserveData": false,
+  "storageVolumes": [],
+  "catalogKey": "official:app:wiki",
+  "itemKind": "app",
+  "sourceId": "official",
+  "sourceName": "Official YouEye Market",
+  "manifestPath": "youeye-app.yaml",
+  "manifestRepo": "https://github.com/YouEye-Platform/Wiki",
+  "manifestBranch": "v0.6.4",
+  "manifestDigest": "sha256:194ba01c430eabe964d2283c3f61eee1d8adc4797110da87a6b62231e7106a05",
+  "nativeArtifacts": [
+    {
+      "productRelease": {
+        "manifestBase64": "ewogICJzY2hlbWEiOiAieW91ZXllLnByb2R1Y3QtcmVsZWFzZS52MSIsCiAgInByb2R1Y3QiOiAid2lraSIsCiAgInZlcnNpb24iOiAiMC42LjQiLAogICJ0YWciOiAidjAuNi40IiwKICAic291cmNlX3RyZWUiOiAiMTI0YjM3ODc3ZmFmMTkzM2JlYzU0MTYzMmI4MzQ0OGRjMGVhYmU2ZSIsCiAgInNlcXVlbmNlIjogMTc5NTA4MzU0OCwKICAibWluaW11bV9yZWFkZXIiOiAyLAogICJhdXRob3JpdHkiOiAiZGlnZXN0IiwKICAiYnVpbGRfbWFuaWZlc3RfYmFzZTY0IjogImV5SnpZMmhsYldFaU9pSjViM1ZsZVdVdWNISnZaSFZqZEMxaWRXbHNaQzUyTVNJc0luQnliMlIxWTNRaU9pSjNhV3RwSWl3aWEybHVaQ0k2SW01aGRHbDJaU0lzSW5OdmRYSmpaVjkwY21WbElqb2lNVEkwWWpNM09EYzNabUZtTVRrek0ySmxZelUwTVRZek1tSTRNelEwT0dSak1HVmhZbVUyWlNJc0ltbHVjSFYwWDNOb1lUSTFOaUk2SWpsaE5qazJZamN5TVROak9XUTVObUZoTlROa01UYzBPV1V5TURKa1lURTVZMkkzTnpnMU5ERXdOVEpqTjJReU5UWXpPR000T0RVME1tSTVaV1kzTVdZaUxDSmpiMjUwY21GamRGOXphR0V5TlRZaU9pSXpZVEkyWXpVeU5HVmxPV1psWVRVM1pqaGtZV1ZsTVdFNFlUWmxaak0zWkRWbE1XVTFNMk5oTVRnd1lqSTRNVFJtWWpJeE4ySmlPRE0yTkdNelkyUTRJaXdpY0hKcGJXRnllU0k2SW5OMFlXNWtZV3h2Ym1VdWRHRnlJaXdpWVhOelpYUnpJanBiZXlKdVlXMWxJam9pYzNSaGJtUmhiRzl1WlM1MFlYSWlMQ0p6YUdFeU5UWWlPaUkxWkRGa1ptTTNOREl6WmpBNU5qVmlaalZrTW1Jd1ptVXlORFE0TkdNMlpHRXlNV0U1WWpnME1ETTNZVFpoTW1VMk9HRmhNalF4WmpCa056bGhZV014SWl3aWMybDZaVjlpZVhSbGN5STZNVGs1TkRNME1qUXdmU3g3SW01aGJXVWlPaUo1YjNWbGVXVXRZWEJ3TG5saGJXd2lMQ0p6YUdFeU5UWWlPaUl6WVRJMll6VXlOR1ZsT1dabFlUVTNaamhrWVdWbE1XRTRZVFpsWmpNM1pEVmxNV1UxTTJOaE1UZ3dZakk0TVRSbVlqSXhOMkppT0RNMk5HTXpZMlE0SWl3aWMybDZaVjlpZVhSbGN5STZNek16TUgxZGZRPT0iCn0K",
+        "manifestSHA256": "2d79b999c13e7e7d40304907742fa36c63e879d737478d9e729321ddc44fd80b",
+        "repository": "https://github.com/YouEye-Platform/Wiki"
+      },
+      "runtimeUUID": "24d0b409-d4f3-44e9-8b7a-dbb45899a6d3",
+      "containerName": "main",
+      "sourceRepo": "https://github.com/YouEye-Platform/Wiki",
+      "releaseTag": "v0.6.4",
+      "version": "0.6.4",
+      "artifactName": "standalone.tar",
+      "sha256": "5d1dfc7423f0965bf5d2b0fe24484c6da21a9b84037a6a2e68aa241f0d79aac1",
+      "bytes": 199434240,
+      "verification": "product-release",
+      "productReleaseSHA256": "2d79b999c13e7e7d40304907742fa36c63e879d737478d9e729321ddc44fd80b"
+    }
+  ],
+  "integration": "native",
+  "perUserData": "identity_uuid",
+  "subdomain": "wiki",
+  "domain": "azure-delta.ui.bingo",
+  "enableSSO": true,
+  "forwardAuthEnabled": false,
+  "protectWithAccountLogin": true,
+  "installedAt": "2026-11-24T00:41:13.557Z",
+  "installedVersion": "0.6.4",
+  "catalogVersion": "0.6.4",
+  "enabled": true,
+  "desiredState": "running",
+  "autoRestart": true,
+  "containers": [
+    {
+      "name": "main",
+      "containerName": "app-wiki",
+      "type": "lxd",
+      "primary": true,
+      "network": "isolated",
+      "port": 3000,
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "timeout": 120000,
+        "retries": 3,
+        "startPeriod": 0,
+        "autoRestart": true
+      }
+    }
+  ],
+  "ssoSlug": "youeye-app-wiki",
+  "ssoClientId": "youeye-app-wiki",
+  "manifestSource": "market",
+  "selectedIntegrations": [],
+  "databaseMode": "none",
+  "hasSSO": true,
+  "usePerAppBridge": true,
+  "productReleaseFloors": {
+    "wiki": {
+      "line": "0.6.4",
+      "sequence": 1795083548,
+      "build": "0.6.4",
+      "buildSHA256": "1da3b440e2434352d3a76905eef06184cacd5895d9e070b9e87397df7a20b041",
+      "manifestSHA256": "2d79b999c13e7e7d40304907742fa36c63e879d737478d9e729321ddc44fd80b"
+    }
+  },
+  "updatedAt": "2026-11-24T00:41:47.471Z",
+  "serviceCredentialState": "ready",
+  "admissionOwnerId": "8d29a2e6-b00e-4608-8d3c-e708e76e97b6"
+}

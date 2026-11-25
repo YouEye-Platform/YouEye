@@ -1245,6 +1245,7 @@
     "m1b3650fe2b8f": "Otro navegador está aplicando cambios de configuración.",
     "m47bdd7fe238a": "Introduce el nombre de usuario y la contraseña",
     "m5a96e8452f1e": "Error al iniciar sesión",
+    "m1a403ef0db2d": "{seconds, plural, one {Demasiados intentos. Inténtalo de nuevo en # segundo.} other {Demasiados intentos. Inténtalo de nuevo en # segundos.}}",
     "m9ff8cfaf7d94": "Error de red. Inténtalo de nuevo.",
     "ma32fb655eebd": "Preajustes guardados del servidor",
     "mae45ee9018ae": "+ Guardar actual",
@@ -1429,6 +1430,7 @@
     "m442c4b893915": "Actualizar estado",
     "m950e51efd783": "Versión anterior restaurada y recuperación verificada.",
     "m2ca13025d60c": "Actualización completada",
+    "m3211e08d269c": "Actualización completada: v{version}",
     "meccb6abcf328": "Servicios e infraestructura principales gestionados por YouEye.",
     "m2786efec8c30": "No hay URL de ajustes disponible.",
     "mf8a9594de662": "Cargando ajustes de la aplicación",
@@ -1437,7 +1439,7 @@
     "m283317ddeb03": "Esta conexión necesita atención porque su propietario no está disponible. Otro administrador puede asumirla explícitamente.",
     "m26f9ccc0629f": "Algunas rutas necesitan conexión con un proveedor.",
     "m8d2a4592acd4": "Alias del modelo predeterminado:",
-    "m0eba3d4ee43f": "Propiedad de",
+    "m7f013bd610dc": "Propiedad de {name}",
     "mc13dc9685345": "otro administrador",
     "m615937f6702b": "Tras asumirla, el uso futuro del proveedor de IA pertenecerá a tu cuenta.",
     "m3213cd836138": "Asumir conexión de IA",
@@ -1571,7 +1573,7 @@
     "m7460797e6c6d": "Las operaciones actuales están terminando. Los nuevos cambios se pausan mientras espera la actualización.",
     "m2708962963e3": "Resuelve las actualizaciones, operaciones de contenedores o copias pendientes y comprueba la política de acceso antes de reintentar.",
     "mfa12e6c66819": "La espera terminó antes del siguiente paso. Finaliza las operaciones activas y reintenta.",
-    "m159713231bf6": "Reiniciar e instalar",
+    "m0bf8bea46557": "Reiniciar e instalar {version}",
     "me5013ddb039e": "Cancelar preparación",
     "md29ed82b9eeb": "Reintentar actualización",
     "m5aff816e24b2": "Reanudar comprobaciones",
@@ -1681,7 +1683,7 @@
     "m3b546dc70b11": "La última comprobación del ciclo de vida requiere atención.",
     "m5cdb07c69226": "Aviso de certificado y privacidad",
     "m5a9d2532161c": "Entiendo que esta dirección y sus certificados aparecen en los registros públicos de Certificate Transparency.",
-    "mc6ed61c15986": "Condiciones del certificado",
+    "mdcb91ff99eb6": "Condiciones del certificado {version}",
     "m8839f06e85b7": "Revisar y aceptar el aviso actual",
     "m3af396c523a5": "Paquete de recuperación",
     "m128e4d5fada6": "Datos del servicio",
@@ -1947,6 +1949,7 @@
     "m6973dddd3ef9": "bloqueado",
     "meabc01f12ec3": "permitido",
     "m1b0ec1954eec": "dominios",
+    "m1da897576823": "{count, plural, one {# dominio} other {# dominios}}",
     "m42d58222b328": "expresión regular",
     "m8e7f7b6938c5": "lista de bloqueo",
     "mabc12f8d6665": "suscrito",
@@ -2615,7 +2618,23 @@
     "m2c0729afc9a9": "Actualizaciones de",
     "mdcc839a4015c": "Ver",
     "m9bf2d11af31a": "{count, plural, =0 {ninguna ejecuta pasos de configuración} one {# de ellas ejecuta pasos de configuración en sus contenedores} other {# de ellas ejecutan pasos de configuración en sus contenedores}}",
-    "m3fdd7247b42c": "{source} tiene la versión {version}"
+    "m3fdd7247b42c": "{source} tiene la versión {version}",
+    "m176648d8341c": "La eliminación de esta aplicación no terminó y el acceso del servicio ya está revocado. Elimínala de nuevo abajo para terminar.",
+    "mdc273117482b": "Conexiones",
+    "m0c420ea290e0": "Aplicaciones con las que trabaja {app}. Una conexión permite que una aplicación use la otra en este servidor.",
+    "m7b0526da26e5": "{from} puede usar {to}",
+    "m8c8eb54074f4": "Sugerida. Al aprobarla se conectan y se ejecuta la configuración de {from} para esta conexión.",
+    "me1d37689abed": "Instala primero {to} para conectarlas.",
+    "m6007acbe30b2": "Aprobar",
+    "m7b02fe45a8ef": "{from} usa {to}",
+    "ma812e71f3ba9": "Su configuración se ejecuta de nuevo cuando ambas aplicaciones estén en marcha.",
+    "m5e27a7a74502": "Esperando a {to}",
+    "mbc3c7686445c": "No hay conexiones. Cuando {app} pueda usar otra aplicación instalada, se sugerirá aquí.",
+    "m5b2cc4b8f41d": "No se pudo cambiar la conexión. Inténtalo de nuevo.",
+    "m78148aaa805a": "¿Desconectar {from} de {to}?",
+    "mf69084b4e263": "{count, plural, one {# conexión por aprobar} other {# conexiones por aprobar}}",
+    "mb9db095f614a": "No se pudieron cargar las conexiones. Inténtalo de nuevo más tarde.",
+    "m6e6e13ff28bc": "{from} deja de usar {to}. Se elimina la configuración hecha para esta conexión; ambas aplicaciones conservan sus datos y la conexión sigue sugerida aquí para volver a conectarlas."
   },
   "settingsNavigation": {
     "profile": "Perfil",
@@ -2748,9 +2767,34 @@
       "opensAt": "Se abre en {address}",
       "access": "Quién puede usarla",
       "uses": "Qué puede usar",
-      "options": "Nombre, dirección y más"
+      "options": "Nombre, dirección y más",
+      "onlyUsersOn": "Solo tú puedes abrirla. Elige quién en {app} → Acceso.",
+      "onlyUsersOnEveryone": "Todos en tu hogar pueden abrirla, nadie más. Elige quién en {app} → Acceso.",
+      "onlyUsersOnKept": "Conserva quién podía abrirla antes. Cámbialo en {app} → Acceso.",
+      "accessLabel": "Quién del hogar puede usarla",
+      "accessEveryone": "Todos",
+      "accessOnlyMe": "Solo yo",
+      "accessHint": "Puedes cambiarlo después en {app} → Acceso.",
+      "onlyUsersOff": "Cualquiera que llegue a {host} verá la página de inicio de sesión propia de {app}.",
+      "onlyUsersOffSignIn": "Las cuentas de {site} siguen iniciando sesión con {site} ID.",
+      "onlyUsersLockedNoSignIn": "{app} no tiene inicio de sesión propio, así que sigue siendo solo para usuarios de {site}.",
+      "onlyUsersLockedHeader": "{app} toma de {site} ID quién ha iniciado sesión, así que sigue siendo solo para usuarios de {site}.",
+      "nativeTitle": "Una app nativa se une a tu panel",
+      "nativeIntro": "{name} viene de {market}, no del Market propio de YouEye. Además de lo que recibe una app de contenedor, recibe:",
+      "nativeGateway": "Una clave para la API de apps de YouEye, para mostrar y leer cosas para las personas que la usan",
+      "nativeSurfaces": "Lugares en el panel: {surfaces}",
+      "nativeNotifications": "Notificaciones a las personas que la usan",
+      "nativeProxy": "Llamadas a estos sitios a través de YouEye, cuando cada persona las permita: {hosts}"
     },
-    "seeAll": "Ver todas"
+    "seeAll": "Ver todas",
+    "sources": {
+      "officialLane": "Market oficial: carril {lane}",
+      "laneChange": "Cambiar…",
+      "laneHint": "El carril main tiene las apps publicadas; el carril dev, apps en prueba. El canal de versiones de YouEye no lo cambia. Las apps del otro carril conservan su versión y se actualizan cuando este carril tiene una más nueva.",
+      "laneMain": "main: apps publicadas",
+      "laneDev": "dev: apps en prueba",
+      "laneFailed": "No se pudo cambiar el carril."
+    }
   },
   "systemPages": {
     "services": {
@@ -2890,7 +2934,13 @@
       "customiseTitleHint": "Letras, colores y un emblema, en el estudio de títulos."
     },
     "access": {
-      "title": "Quién puede usarla"
+      "title": "Quién puede usarla",
+      "onlyUsersOn": "Solo las personas elegidas abajo pueden abrirla.",
+      "whoPublic": "También decide en qué paneles aparece {app} y quién puede entrar con {site} ID.",
+      "opening": "Abriendo para todos…",
+      "notOpen": "{app} aún no está abierta para todos: {error}",
+      "stillPending": "el cambio está guardado pero aún no se ha aplicado",
+      "retry": "Reintentar"
     },
     "defaultSignIn": {
       "title": "Acceso con el que se instaló"
@@ -2903,7 +2953,11 @@
     },
     "uninstall": {
       "hint": "Quita {app} de este servidor. Tú eliges si se conservan sus datos.",
-      "action": "Desinstalar…"
+      "action": "Desinstalar…",
+      "done": "{app} está desinstalada.",
+      "leftIn": "Puede que {other} aún muestre {app}: quítala en los ajustes de {other}.",
+      "leftSomewhere": "Puede que una app conectada aún muestre {app}: quítala en los ajustes de esa app.",
+      "backToApps": "Volver a las apps"
     },
     "title": {
       "heading": "Tu título para {app}",

@@ -82,9 +82,24 @@ function bridge(from: string, to: string, fields: Partial<FixtureBridge> = {}): 
 }
 
 /** The real `manager.ts`: every dependency replaced; one store of connections, one UI row map, one ACL log. */
-function connections(initial: FixtureBridge[], options: { download?: () => Promise<Buffer>; failRevoke?: boolean } = {}) {
+function connections(initial: FixtureBridge[], options: {
+  download?: () => Promise<Buffer>; failRevoke?: boolean;
+  /** The wire runner's answer for one connection (default: nothing to run). */
+  wire?: (from: string, to: string, wireOptions?: { remove?: boolean; deadlineMs?: number }) => Promise<{ ran: boolean; error?: string }>;
+  /** Apps whose lifecycle lock is held by another operation (it fails at once, as the real one does). */
+  busy?: string[];
+  /** Apps this process holds right now (`isAppHeld`), e.g. a start inside its own hold; the test may change it. */
+  held?: string[];
+  /** Running instances for the periodic pass (absent: the listing fails, nothing is filtered). */
+  running?: string[];
+  /** Called as a network operation lock is taken (e.g. to stop an app while a pass waits for its locks). */
+  onLock?: (lock: string) => void;
+} = {}) {
   let bridges = structuredClone(initial);
-  const posts: any[] = []; const acl: string[] = []; const warnings: string[] = [];
+  let runningNow = options.running ? [...options.running] : undefined;
+  const deadlines: Array<number | undefined> = [];
+  const posts: any[] = []; const acl: string[] = []; const warnings: string[] = []; const wired: string[] = [];
+  const locks: string[] = []; const errors: string[] = [];
   const installed: Record<string, any> = {
     search: { appId: 'search', subdomain: 'search', domain: 'byka.test', containers: [{ containerName: 'app-search', port: 3000 }] },
     searxng: { appId: 'searxng', subdomain: 'searxng', domain: 'byka.test', containers: [{ containerName: 'app-searxng', port: 8080 }] },
@@ -102,6 +117,11 @@ function connections(initial: FixtureBridge[], options: { download?: () => Promi
         bridges = bridges.map(b => b.id === id ? { ...b, ...updates } : b);
         return structuredClone(bridges.find(b => b.id === id) ?? null);
       },
+      removeBridge: async (id: string) => {
+        const before = bridges.length;
+        bridges = bridges.filter(b => b.id !== id);
+        return bridges.length < before;
+      },
     },
     './internet-store': { listInternetGrants: async () => [] },
     '../market/metadata': {
@@ -110,33 +130,65 @@ function connections(initial: FixtureBridge[], options: { download?: () => Promi
     },
     '../market/frozen-manifest': { readInstalledAppManifest: async () => { throw new Error('no manifest in this fixture'); } },
     '../incus/container-ip': { getContainerIP: async (name: string) => ips[name] },
-    '../incus/server': { incusDownloadFile: options.download ?? (async () => Buffer.from('fixture-ca')) },
+    '../incus/server': {
+      incusDownloadFile: options.download ?? (async () => Buffer.from('fixture-ca')),
+      incusRequest: async (_method: string, route: string) => {
+        if (!runningNow || !route.startsWith('/1.0/instances')) throw new Error('no instance listing in this fixture');
+        const state = /^\/1\.0\/instances\/([^/]+)\/state$/.exec(route);
+        if (state) return { type: 'sync', metadata: { status: runningNow.includes(decodeURIComponent(state[1])) ? 'Running' : 'Stopped' } };
+        return { type: 'sync', metadata: runningNow.map((name) => ({ name, status: 'Running' })) };
+      },
+    },
     '../incus/app-network': {
-      withAppNetworkOperationLock: (_lock: string, _operation: string, work: () => Promise<unknown>) => work(),
+      withAppNetworkOperationLock: async (lock: string, _operation: string, work: () => Promise<unknown>) => {
+        options.onLock?.(lock);
+        locks.push(`+${lock}`);
+        try { return await work(); } finally { locks.push(`-${lock}`); }
+      },
       grantBridgeAccess: async (container: string, target: string) => { acl.push(`grant ${container} -> ${target}`); },
       revokeBridgeAccess: async (container: string, target: string) => {
         acl.push(`revoke ${container} -> ${target}`);
         if (options.failRevoke) throw new Error('integration ACL delete failed');
       },
     },
-    '../market/update-admission': { withAppLifecycle: (_appId: string, work: () => Promise<unknown>) => work() },
+    '../market/update-admission': {
+      isAppHeld: (appId: string) => (options.held ?? []).includes(appId),
+      withAppLifecycle: async (appId: string, work: () => Promise<unknown>) => {
+        if (options.busy?.includes(appId)) {
+          const error = new Error(`app-${appId} executor lock is busy`);
+          error.name = 'AppLifecycleBusyError';
+          throw error;
+        }
+        locks.push(`+${appId}`);
+        try { return await work(); } finally { locks.push(`-${appId}`); }
+      },
+    },
     '../../../../shared/managed-proxy': {
       managedProxyTransport: (value: any, url: string) => ({ schema: value.schema, address: value.address, hostname: value.hostname, ca: value.ca, url }),
     },
     '../market/install-tracker': { describeErrorChainForLog: chain },
-    '../market/wire-runner': { runConnectionWiring: async () => {} },
+    '../market/wire-runner': {
+      runConnectionWiring: async (from: string, to: string, _deps: unknown, wireOptions?: { remove?: boolean; leaving?: string; deadlineMs?: number }) => {
+        if (!wireOptions?.remove) deadlines.push(wireOptions?.deadlineMs);
+        wired.push(`${wireOptions?.remove ? 'unwire' : 'wire'} ${from} -> ${to}${wireOptions?.leaving ? ` (leaving ${wireOptions.leaving})` : ''}`);
+        locks.push(`wire ${from} -> ${to}`);
+        return options.wire ? options.wire(from, to, wireOptions) : { ran: false };
+      },
+    },
     'fs/promises': { readFile: async () => 'fixture-token' },
     './connection-projection': { sameConnectionProjection },
   }, {
     fetch: async (_url: string, request: any) => { posts.push(JSON.parse(request.body)); return { ok: true }; },
-    console: { ...console, warn: (line: string) => warnings.push(line) },
+    console: { ...console, warn: (line: string) => warnings.push(line), error: (line: string) => errors.push(line) },
   });
   /** The stored row a UI would hold if it equals what was just posted for `appId`. */
   const observed = (bridgesProjected: unknown[]) => ({
     updatedAt: '2026-11-22T22:50:00Z', bridges: bridgesProjected,
     internet: { granted: false, hosts: [], proxy: [] }, available: [],
   });
-  return { api, posts, acl, warnings, observed, bridges: () => bridges };
+  return { api, posts, acl, warnings, errors, wired, locks, observed, deadlines, bridges: () => bridges,
+    setBridges: (next: FixtureBridge[]) => { bridges = structuredClone(next); },
+    setRunning: (next: string[]) => { runningNow = [...next]; } };
 }
 
 const searchToSearxng = bridge('search', 'searxng', { accessMode: 'proxy', url: 'https://searxng.byka.test', allowedPaths: ['/search'], allowedMethods: ['GET'] });
@@ -241,6 +293,289 @@ test('direction change keeps a reverse grant another connection uses, and deacti
   assert.deepEqual(f.acl, []);
   await f.api.deactivateBridge('search-to-searxng');
   assert.deepEqual(f.acl, ['revoke app-search -> searxng'], 'only the forward grant nothing else needs is revoked');
+});
+
+test('an uninstall that did not complete marks the app\'s active network connections for re-wiring (YE-209)', async () => {
+  const f = connections([
+    bridge('sonarr', 'sabnzbd', { accessMode: 'network' }),
+    bridge('sabnzbd', 'search', { accessMode: 'network', direction: 'both-ways' }),
+    bridge('notes', 'sabnzbd', { accessMode: 'network', active: false }),
+    bridge('lidarr', 'sabnzbd', { accessMode: 'proxy', url: 'https://sabnzbd.byka.test' }),
+    bridge('search', 'searxng', { accessMode: 'network' }),
+  ]);
+  const marked = await f.api.markConnectionsForRewire('sabnzbd');
+  // Both ways; a waiting connection was never wired, a scoped-proxy one has no connect file, another app's is not touched.
+  assert.deepEqual([...marked], ['sonarr-to-sabnzbd', 'sabnzbd-to-search']);
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending).map((b: any) => b.id), ['sonarr-to-sabnzbd', 'sabnzbd-to-search']);
+  assert.ok(f.bridges().every((b: any) => b.active || b.id === 'notes-to-sabnzbd'), 'the records stay active');
+  assert.deepEqual(f.wired, [], 'marking runs nothing');
+});
+
+test('a pass wires a marked connection again and clears the mark; a failed wiring keeps it and backs off (YE-209, YE-223)', async () => {
+  let peerUp = false;
+  let clock = 1_000_000;
+  const now = () => clock;
+  const f = connections([
+    bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>),
+    bridge('sabnzbd', 'search', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>),
+    bridge('notes', 'sabnzbd', { accessMode: 'network', active: false, rewirePending: true } as Partial<FixtureBridge>),
+    bridge('radarr', 'sabnzbd', { accessMode: 'network' }),
+  ], { wire: async (from, to) => from === 'sabnzbd' && !peerUp ? { ran: false, error: `Could not wire ${from} → ${to}` } : { ran: true } });
+  // search does not answer: its connection stays marked; the inactive one only loses its mark; an unmarked one is not run.
+  assert.deepEqual([...await f.api.rewirePendingConnections('sabnzbd', now)], ['sabnzbd-to-search']);
+  assert.deepEqual(f.wired, ['wire sonarr -> sabnzbd', 'wire sabnzbd -> search']);
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending).map((b: any) => b.id), ['sabnzbd-to-search']);
+  // The next pass, 10 s later, does not try it again (back-off), even with search up.
+  peerUp = true;
+  clock += 10_000;
+  assert.deepEqual([...await f.api.rewirePendingConnections(undefined, now)], ['sabnzbd-to-search']);
+  assert.equal(f.wired.length, 2);
+  // search's start brings it forward: the next pass wires it and clears the mark.
+  f.api.requestRewire('search');
+  assert.deepEqual([...await f.api.rewirePendingConnections(undefined, now)], []);
+  assert.deepEqual(f.wired.slice(2), ['wire sabnzbd -> search']);
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending), []);
+  assert.deepEqual([...await f.api.rewirePendingConnections(undefined, now)], []);
+  assert.equal(f.wired.length, 3, 'nothing marked, nothing run');
+});
+
+test('re-wiring holds both apps\' lifecycle locks and the bridge lock, and clears the mark inside them (YE-218)', async () => {
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: true }) });
+  assert.deepEqual([...await f.api.rewirePendingConnections('sabnzbd')], []);
+  // Sorted app locks (the same order as activation and unwiring), then the bridge lock, the wiring inside all three.
+  assert.deepEqual(f.locks, ['+sabnzbd', '+sonarr', '+bridge-lifecycle', 'wire sonarr -> sabnzbd', '-bridge-lifecycle', '-sonarr', '-sabnzbd']);
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending), []);
+});
+
+test('a busy peer (its retried uninstall or update rollback runs) is not re-wired now; the mark stays, quietly (YE-218)', async () => {
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: true }), busy: ['sonarr'] });
+  assert.deepEqual([...await f.api.rewirePendingConnections('sabnzbd')], ['sonarr-to-sabnzbd']);
+  assert.deepEqual(f.wired, [], 'nothing runs against an app another operation holds');
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending).map((b: any) => b.id), ['sonarr-to-sabnzbd']);
+  assert.deepEqual(f.errors, [], 'busy is not an error: the next start or pass retries');
+});
+
+test('the mark is read again inside the locks and cleared only while it is still the same connection (YE-218)', async () => {
+  const marked = bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>);
+  // (a) Gone by the time the locks are held (a peer's uninstall deleted it): nothing runs, nothing is written.
+  let f = connections([marked], { wire: async () => ({ ran: true }) });
+  const read = f.api.rewirePendingConnections('sabnzbd');
+  f.setBridges([]);
+  assert.deepEqual([...await read], []);
+  assert.deepEqual(f.wired, []);
+  // (b) Replaced while the connect file ran (another connection now holds the id): its mark is not cleared.
+  let swap = () => {};
+  f = connections([marked], { wire: async () => { swap(); return { ran: true }; } });
+  swap = () => f.setBridges([{ ...marked, from: 'radarr' }]);
+  await f.api.rewirePendingConnections('sabnzbd');
+  assert.equal(f.bridges()[0].rewirePending, true, 'compare and clear: the new connection keeps its mark');
+});
+
+test('the periodic pass wires marked connections whose two apps run (Incus autostart, an app left running) (YE-218)', async () => {
+  const f = connections([
+    bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>),
+    bridge('sabnzbd', 'search', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>),
+    bridge('radarr', 'sabnzbd', { accessMode: 'network' }),
+  ], { wire: async () => ({ ran: true }), running: ['app-sonarr', 'app-sabnzbd'] });
+  // No app started: the pass (no app id) wires the one whose apps both run; search is stopped, so its stays marked.
+  assert.deepEqual([...await f.api.rewirePendingConnections()], ['sabnzbd-to-search']);
+  assert.deepEqual(f.wired, ['wire sonarr -> sabnzbd']);
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending).map((b: any) => b.id), ['sabnzbd-to-search']);
+  // The reconcile pass starts it after refreshing the grants, and does not wait for it (YE-223).
+  const reconciler = readFileSync('src/lib/market/reconciler.ts', 'utf8');
+  assert.match(reconciler, /refreshConnectionGrants\(\)\) unresolved\.push[^\n]*\n[\s\S]{0,400}void startRewirePass\(\);/);
+  assert.doesNotMatch(reconciler, /await (startRewirePass|rewirePendingConnections)\(/);
+});
+
+test('a start and a restart bring marked connections forward without waiting; the bridge store accepts the mark (YE-209, YE-223)', () => {
+  const lifecycle = readFileSync('src/lib/apps/lifecycle.ts', 'utf8');
+  const start = lifecycle.slice(lifecycle.indexOf("if (action === 'start')"), lifecycle.indexOf("if (action === 'restart')"));
+  assert.match(start, /refreshConnectionGrants\(meta\.appId\);\s*requestRewire\(meta\.appId\);/);
+  const restart = lifecycle.slice(lifecycle.indexOf("if (action === 'restart')"));
+  assert.match(restart, /requestRewire\(meta\.appId\)/);
+  // No wiring, and no wait for a peer's lock, inside a user's start or restart.
+  assert.doesNotMatch(lifecycle, /rewirePendingConnections|startRewirePass/);
+  const store = readFileSync('src/lib/bridges/store.ts', 'utf8');
+  assert.match(store, /bridge\.rewirePending !== undefined && typeof bridge\.rewirePending !== 'boolean'/);
+});
+
+test('the re-wiring is bounded: the connect file gets REWIRE_LIMIT_MS (20 s) for all its steps (YE-223)', async () => {
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: true }) });
+  assert.equal(f.api.REWIRE_LIMIT_MS, 20_000);
+  await f.api.rewirePendingConnections();
+  assert.deepEqual(f.deadlines, [20_000]);
+});
+
+test('an app that stopped while the pass waited for its locks is checked again inside them: nothing runs (YE-223)', async () => {
+  let stopOnLock = true;
+  const f: ReturnType<typeof connections> = connections(
+    [bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: true }), running: ['app-sonarr', 'app-sabnzbd'],
+      // Both run at the listing; sabnzbd stops while the pass waits for the bridge lock.
+      onLock: (lock) => { if (lock === 'bridge-lifecycle' && stopOnLock) f.setRunning(['app-sonarr']); } });
+  assert.deepEqual([...await f.api.rewirePendingConnections()], ['sonarr-to-sabnzbd']);
+  assert.ok(f.locks.includes('+bridge-lifecycle'), 'the check ran inside the locks');
+  assert.deepEqual(f.wired, [], 'no connect file ran against a stopped app');
+  assert.equal(f.bridges()[0].rewirePending, true);
+  assert.deepEqual(f.warnings.filter((line: string) => /still not wired/.test(line)), [], 'a stopped app is not a failure');
+  // It is not backed off: once sabnzbd runs again, the next pass wires it.
+  stopOnLock = false;
+  f.setRunning(['app-sonarr', 'app-sabnzbd']);
+  assert.deepEqual([...await f.api.rewirePendingConnections()], []);
+  assert.deepEqual(f.wired, ['wire sonarr -> sabnzbd']);
+});
+
+test('a wiring that keeps failing is tried after 30 s, 1, 2, 4… up to 30 min, one log line per try (YE-223)', async () => {
+  let clock = 0;
+  const now = () => clock;
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: false, error: 'Could not wire sonarr → sabnzbd' }) });
+  const tries: number[] = [];
+  // A pass every 30 s for 3 hours (the reconcile interval).
+  for (clock = 0; clock <= 3 * 3600_000; clock += 30_000) {
+    const before = f.wired.length;
+    await f.api.rewirePendingConnections(undefined, now);
+    if (f.wired.length > before) tries.push(clock / 1000);
+  }
+  assert.deepEqual(tries.slice(0, 7), [0, 30, 90, 210, 450, 930, 1890]);
+  // Then every 30 min.
+  assert.deepEqual(tries.slice(7).map((t, i) => t - tries[6 + i]), tries.slice(7).map(() => 1800));
+  assert.equal(f.warnings.filter((line: string) => /still not wired again/.test(line)).length, tries.length);
+  assert.equal(f.bridges()[0].rewirePending, true, 'the mark stays');
+});
+
+test('a start that asks from inside its own hold is served once the hold ends, never lost (alpha.7 review)', async () => {
+  const held = ['sabnzbd'];
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => ({ ran: true }), held });
+  // lifecycle.ts asks while it still holds sabnzbd: a pass now would skip it as busy and the request would be gone.
+  f.api.requestRewire('sabnzbd');
+  f.api.rewireWatchTick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.wired.length, 0, 'no pass while the only requesting app is held');
+  // The hold ends: the next look serves the kept request.
+  held.length = 0;
+  f.api.rewireWatchTick();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.wired.length, 1, 'served after the hold');
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending), []);
+});
+
+test('a start is served by the re-wire watch, not the reconcile round; a request during a pass waits for the next look (YE-224)', async () => {
+  let release: () => void = () => {};
+  let fail = true;
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: () => fail ? Promise.resolve({ ran: false, error: 'Could not wire sonarr → sabnzbd' })
+      : new Promise((resolve) => { release = () => resolve({ ran: true }); }) });
+  // A failed try backs off for 30 s; no request, so the watch does nothing.
+  await f.api.rewirePendingConnections();
+  f.api.rewireWatchTick();
+  assert.equal(f.wired.length, 1);
+  // sabnzbd starts: the next look of the watch starts a pass at once, back-off or not, whatever the reconcile round does.
+  fail = false;
+  f.api.requestRewire('sabnzbd');
+  f.api.rewireWatchTick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.wired.length, 2, 'the watch started a pass');
+  // sonarr starts while that pass runs: kept for the next look, not swallowed by the running pass.
+  f.api.requestRewire('sonarr');
+  f.api.rewireWatchTick();
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.bridges().filter((b: any) => b.rewirePending), []);
+  f.api.rewireWatchTick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.wired.length, 2, 'nothing left marked: the next pass runs nothing');
+  // The watch is started by instrumentation, apart from the reconcile round (which can return early).
+  const instrumentation = readFileSync('src/instrumentation.ts', 'utf8');
+  assert.match(instrumentation, /const \{ startRewireWatch \} = await import\("@\/lib\/bridges\/manager"\);\s*startRewireWatch\(\);/);
+  assert.equal(f.api.REWIRE_WATCH_MS, 5_000);
+  // None of the round's early returns (reconfigure journal, install-operation state, unlistable app networks, a
+  // probe that throws) can hold it up: the watch never goes through the reconciler or the health checker.
+  const manager = readFileSync('src/lib/bridges/manager.ts', 'utf8');
+  assert.doesNotMatch(manager, /from ['"][^'"]*(reconciler|health-checker|health\/issues)['"]/);
+  const watch = manager.slice(manager.indexOf('export function rewireWatchTick('), manager.indexOf('export function startRewireWatch('));
+  assert.match(watch, /void startRewirePass\(\);/);
+});
+
+test('a start during a failing try is not overwritten by that try\'s back-off (YE-224)', async () => {
+  let clock = 0;
+  const now = () => clock;
+  let f: ReturnType<typeof connections>;
+  let startDuringTry = false;
+  f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: async () => {
+      if (startDuringTry) { clock += 1_000; f.api.requestRewire('sonarr', now); }
+      return { ran: false, error: 'Could not wire sonarr → sabnzbd' };
+    } });
+  // Three failures: the back-off is at 2 min.
+  for (const at of [0, 30_000, 90_000]) { clock = at; await f.api.rewirePendingConnections(undefined, now); }
+  assert.equal(f.wired.length, 3);
+  // The fourth try fails while sonarr starts: no back-off from that stale count, the next pass tries again.
+  clock = 210_000;
+  startDuringTry = true;
+  await f.api.rewirePendingConnections(undefined, now);
+  startDuringTry = false;
+  clock += 5_000;
+  await f.api.rewirePendingConnections(undefined, now);
+  assert.equal(f.wired.length, 5, 'tried again 5 s later, not after 4 min');
+  assert.match(f.warnings.join('\n'), /an app of it started meanwhile/);
+  // A failure after that starts counting afresh: 30 s.
+  clock += 10_000;
+  await f.api.rewirePendingConnections(undefined, now);
+  assert.equal(f.wired.length, 5);
+  clock += 25_000;
+  await f.api.rewirePendingConnections(undefined, now);
+  assert.equal(f.wired.length, 6);
+});
+
+test('only one re-wiring pass runs at a time; the reconcile round does not wait for it (YE-223)', async () => {
+  let release: () => void = () => {};
+  const f = connections([bridge('sonarr', 'sabnzbd', { accessMode: 'network', rewirePending: true } as Partial<FixtureBridge>)],
+    { wire: () => new Promise((resolve) => { release = () => resolve({ ran: true }); }) });
+  const first = f.api.startRewirePass();
+  const second = f.api.startRewirePass();
+  assert.equal(first, second, 'a pass still running is joined, not started twice');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.wired, ['wire sonarr -> sabnzbd']);
+  release();
+  assert.deepEqual([...await first], []);
+  // Once it ended, the next round starts a new one.
+  assert.notEqual(f.api.startRewirePass(), first);
+});
+
+test('an uninstall undoes every active connection of the app, both ways, and reports the ones that failed (YE-199)', async () => {
+  const f = connections([
+    bridge('search', 'searxng', { accessMode: 'network' }),
+    bridge('searxng', 'search', { accessMode: 'network' }),
+    bridge('notes', 'searxng', { accessMode: 'network', active: false }),
+  ], { wire: async (from, to) => from === 'searxng' ? { ran: false, error: `Could not unwire ${from} → ${to}` } : { ran: true } });
+  const failed = await f.api.unwireAppConnections('searxng');
+  // The app as the connected app (search's file) and as the consumer (its own); a waiting connection was never wired.
+  assert.deepEqual(f.wired, ['unwire search -> searxng (leaving searxng)', 'unwire searxng -> search (leaving searxng)']);
+  // The other app's name comes from its installed manifest; without one (this fixture), its id.
+  assert.deepEqual(JSON.parse(JSON.stringify(failed)), [{ appId: 'search', name: 'search',
+    message: 'Could not unwire searxng → search: the remove steps of this connection did not all run; search may still list searxng' }]);
+  assert.equal(f.bridges().length, 3, 'the connections themselves stay until they are deleted');
+  // Deleting them afterwards does not run the steps again; a plain delete (disconnect) still does.
+  assert.equal(await f.api.deleteBridge('search-to-searxng', { unwired: true }), true);
+  assert.deepEqual(f.wired.length, 2);
+  assert.equal(await f.api.deleteBridge('searxng-to-search'), true);
+  assert.deepEqual(f.wired.slice(2), ['unwire searxng -> search']);
+});
+
+test('an error while undoing one connection is reported, and the others are still undone (YE-199)', async () => {
+  const f = connections([bridge('search', 'searxng', { accessMode: 'network' }), bridge('notes', 'searxng', { accessMode: 'network' })],
+    { wire: async (from) => { if (from === 'search') throw new Error('lifecycle busy'); return { ran: true }; } });
+  const failed = await f.api.unwireAppConnections('searxng');
+  assert.deepEqual(f.wired, ['unwire search -> searxng (leaving searxng)', 'unwire notes -> searxng (leaving searxng)']);
+  assert.deepEqual([...failed.map((left: { message: string }) => left.message)],
+    ['Could not unwire search → searxng: the remove steps of this connection did not all run; search may still list searxng']);
 });
 
 test('a failed revoke during a direction change restores the grant and leaves the record unchanged', async () => {

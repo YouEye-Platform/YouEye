@@ -17,8 +17,14 @@ import {
   type PeerRoles,
   requestClientAddress,
 } from '../src/lib/auth/client-address';
-import { resetAllRateLimits } from '../src/lib/auth/rate-limit';
-import { beginSignInAttempt, SIGN_IN_ADDRESS_ATTEMPTS, signInSucceeded } from '../src/lib/identity/sign-in-limit';
+import {
+  beginSignInAttempt,
+  resetSignInLimits,
+  SIGN_IN_ADDRESS_ATTEMPTS,
+  SIGN_IN_MAX_DELAY_SECONDS,
+  signInRetryAfterSeconds,
+  signInSucceeded,
+} from '../src/lib/identity/sign-in-limit';
 
 // Not the usual offset on purpose: Caddy's addresses come from Incus, never from a constant.
 const CADDY = '10.80.3.7';
@@ -39,7 +45,7 @@ function request(peer: string | null, headers: Record<string, string> = {}): Hea
 }
 
 beforeEach(() => {
-  resetAllRateLimits();
+  resetSignInLimits();
   mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-23T12:00:00Z') });
 });
 afterEach(() => mock.timers.reset());
@@ -103,9 +109,26 @@ test('the host\'s bridge address (every NATing app, the UI) is no client: one ap
     assert.equal(attempt.allowed, true, `attempt ${i + 1}`);
   }
   assert.equal(beginSignInAttempt('alice', clientAddressFrom(request(HOST), ROLES)).allowed, true);
-  // The per-username limit still holds there.
-  for (let i = 0; i < 10; i++) beginSignInAttempt('owner', clientAddressFrom(request(HOST), ROLES));
-  assert.equal(beginSignInAttempt('owner', clientAddressFrom(request(HOST), ROLES)).allowed, false);
+  // The per-username slow-down still holds there (YE-149), whatever X-Forwarded-For the app sends, and never locks.
+  for (let i = 0; i < 30; i++) {
+    const attempt = beginSignInAttempt('owner', clientAddressFrom(request(HOST, { 'x-forwarded-for': `203.0.113.${i}` }), ROLES));
+    if (!attempt.allowed) {
+      assert.equal(attempt.refusal, 'wait', `attempt ${i + 1}`);
+      assert.ok(signInRetryAfterSeconds(attempt) <= SIGN_IN_MAX_DELAY_SECONDS);
+      mock.timers.tick(signInRetryAfterSeconds(attempt) * 1000);
+    }
+  }
+  // One more failure (after any wait), then a new forged address must wait too: it is still the one shared source.
+  const fromApp = (xff: string) => beginSignInAttempt('owner', clientAddressFrom(request(HOST, { 'x-forwarded-for': xff }), ROLES));
+  const next = fromApp('198.51.100.249');
+  if (!next.allowed) {
+    mock.timers.tick(signInRetryAfterSeconds(next) * 1000);
+    assert.equal(fromApp('198.51.100.249').allowed, true);
+  }
+  assert.equal(fromApp('198.51.100.250').refusal, 'wait');
+  // A browser through Caddy is another source: the owner's right password works at once.
+  const browser = beginSignInAttempt('owner', clientAddressFrom(request(CADDY, { 'x-forwarded-for': '192.168.31.50' }), ROLES));
+  assert.equal(browser.allowed, true);
 });
 
 test('loopback and no peer are no client address; local callers are never limited by address', () => {
@@ -203,7 +226,9 @@ test('only client-address.ts reads a client address header; the limited routes u
   assert.match(claim, /signInSucceeded\(attempt\);/);
 
   const reset = read('src/app/api/auth/reset-owner/route.ts');
-  assert.match(reset, /const address = await requestClientAddress\(request\.headers\);\n\s+const limit = address \? checkRateLimit\(`owner-reset:\$\{address\}`/);
+  assert.match(reset, /beginSignInAttempt\(OWNER, await requestClientAddress\(request\.headers\), 'owner-reset'\)/);
+  assert.match(reset, /if \(result\.status === 200\) \{\n\s+signInSucceeded\(attempt\);/);
+  assert.match(reset, /if \(result\.code !== 'invalid_code'\) signInNotCounted\(attempt\);/);
 
   const launcher = readFileSync(join(root, 'scripts/bundle-node-runtime.mjs'), 'utf8');
   assert.match(launcher, /request\.headers\['x-youeye-peer'\] = \(request\.socket && request\.socket\.remoteAddress\) \|\| '';/);

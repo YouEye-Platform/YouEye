@@ -8,3 +8,9 @@ import { createHash } from 'node:crypto';
 export function connectionInterface(peerAppId: string): string {
   return `eth-${createHash('sha256').update(peerAppId).digest('hex').slice(0, 11)}`;
 }
+
+/** The Incus network ACL of the connection NIC that lets `containerName` reach `targetAppId` (`grantBridgeAccess`). */
+export function integrationAclName(containerName: string, targetAppId: string): string {
+  const safe = `${containerName}-to-${targetAppId}`.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 42);
+  return `ye-grant-${safe}`;
+}
